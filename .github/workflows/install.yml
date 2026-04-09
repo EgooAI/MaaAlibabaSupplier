@@ -147,6 +147,8 @@ jobs:
           retention-days: 1
 
   changelog:
+    # Disabled
+    if: false
     name: Generate changelog
     needs: meta
     runs-on: ubuntu-latest
@@ -191,7 +193,7 @@ jobs:
         with:
           files: assets/*
           tag_name: ${{ needs.meta.outputs.tag }}
-          body: ${{ needs.changelog.outputs.release_body }}
+          # body: ${{ needs.changelog.outputs.release_body }}
           draft: false
           prerelease: ${{ needs.meta.outputs.is_prerelease == 'true' }}
 
