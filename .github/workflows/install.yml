@@ -72,8 +72,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [win, macos, linux, android]
-        arch: [aarch64, x86_64]
+        # os: [win, macos, linux, android]
+        os: [win, macos]
+        # arch: [aarch64, x86_64]
+        arch: [x86_64]
       fail-fast: false
 
     steps:
@@ -142,6 +144,7 @@ jobs:
         with:
           name: MaaXXX-${{ matrix.os }}-${{ matrix.arch }}
           path: "install"
+          retention-days: 1
 
   changelog:
     name: Generate changelog
