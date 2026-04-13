@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import os
 import shutil
 import sys
 
@@ -18,6 +19,8 @@ from configure import configure_ocr_model
 working_dir = Path(__file__).parent.parent.resolve()
 install_path = working_dir / Path("install")
 version = len(sys.argv) > 1 and sys.argv[1] or "v0.0.1"
+bundled_python_dir = os.getenv("BUNDLED_PYTHON_DIR")
+bundled_python_exec_relpath = os.getenv("BUNDLED_PYTHON_EXEC_RELPATH", "")
 
 # the first parameter is self name
 if sys.argv.__len__() < 4:
@@ -98,6 +101,45 @@ def install_deps():
         )
 
 
+def install_python_runtime():
+    if not bundled_python_dir:
+        print("No bundled Python runtime configured, skipping.")
+        return
+
+    python_dir = Path(bundled_python_dir).resolve()
+    if not python_dir.exists():
+        print(f"Bundled Python runtime not found: {python_dir}")
+        sys.exit(1)
+
+    shutil.copytree(
+        python_dir,
+        install_path / "python",
+        dirs_exist_ok=True,
+        symlinks=True,
+    )
+
+
+def get_bundled_python_exec():
+    if not bundled_python_exec_relpath:
+        return None
+
+    normalized_relpath = bundled_python_exec_relpath.replace("\\", "/").lstrip("./")
+    return f"./python/{normalized_relpath}"
+
+
+def normalize_agent_args(child_args):
+    if not isinstance(child_args, list):
+        return child_args
+
+    normalized_args = []
+    for arg in child_args:
+        if isinstance(arg, str) and arg.startswith("./../agent/"):
+            normalized_args.append("./agent/" + arg.removeprefix("./../agent/"))
+        else:
+            normalized_args.append(arg)
+    return normalized_args
+
+
 
 def install_resource():
 
@@ -117,6 +159,14 @@ def install_resource():
         interface = jsonc.load(f)
 
     interface["version"] = version
+
+    agent_config = interface.get("agent")
+    if isinstance(agent_config, dict):
+        agent_config["child_args"] = normalize_agent_args(agent_config.get("child_args"))
+
+        packaged_python_exec = get_bundled_python_exec()
+        if packaged_python_exec is not None:
+            agent_config["child_exec"] = packaged_python_exec
 
     with open(install_path / "interface.json", "w", encoding="utf-8") as f:
         jsonc.dump(interface, f, ensure_ascii=False, indent=4)
@@ -143,6 +193,7 @@ def install_agent():
 
 if __name__ == "__main__":
     install_deps()
+    install_python_runtime()
     install_resource()
     install_chores()
     install_agent()
