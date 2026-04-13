@@ -1,12 +1,13 @@
 {
-    "MyTask1": {},
-    "MyTask2": {},
-    "MyTask3": {},
-    "MyTask4": {
-        "recognition": "Custom",
-        "custom_recognition": "my_reco_222",
-        "action": "Custom",
-        "custom_action": "my_action_111"
-    },
-    "OcrTask": {}
+    "Menu_OpenAll": {
+        "recognition": "TemplateMatch",
+        "template": "Menu_全部.png",
+        "roi": [
+            0,
+            106,
+            96,
+            141
+        ],
+        "action": "Click"
+    }
 }
