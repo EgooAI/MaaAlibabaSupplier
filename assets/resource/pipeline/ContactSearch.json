@@ -1,0 +1,91 @@
+{
+    "ContactSearch": {
+        "desc": "【入口点】跳转到指定联系人的聊天窗口",
+        "pre_delay": 0,
+        "post_delay": 0,
+        "next": [
+            "ContactSearch_GoToSearch"
+        ]
+    },
+    "ContactSearch_GoToSearch": {
+        "desc": "聚焦到联系人搜索框（守卫节点）",
+        "pre_delay": 0,
+        "post_delay": 0,
+        "next": [
+            "ContactSearch_ClearSearchBox",
+            "ContactSearch_ClickSearchButton"
+        ]
+    },
+    "ContactSearch_ClickSearchButton": {
+        "desc": "聚焦到联系人搜索框，通过点击联系人搜索按钮",
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "Contact/联系人_搜索.png"
+                ],
+                "roi": [
+                    36,
+                    18,
+                    117,
+                    117
+                ],
+                "order_by": "Score"
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "next": [
+            "ContactSearch_InputText"
+        ]
+    },
+    "ContactSearch_ClearSearchBox": {
+        "desc": "聚焦到联系人搜索框，通过清除联系人搜索框中的文本",
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "Contact/联系人_清除搜索.png"
+                ],
+                "roi": [
+                    212,
+                    19,
+                    115,
+                    114
+                ],
+                "order_by": "Score"
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "next": [
+            "ContactSearch_InputText"
+        ]
+    },
+    "ContactSearch_InputText": {
+        "desc": "在搜索框中输入联系人 login_id",
+        "recognition": "DirectHit",
+        "action": {
+            "type": "InputText",
+            "param": {
+                "input_text": ""
+            }
+        },
+        "post_delay": 2000, // 等待搜索结果加载出来
+        "next": [
+            "ContactSearch_PressEnter"
+        ]
+    },
+    "ContactSearch_PressEnter": {
+        "desc": "按下回车键选中搜索结果",
+        "recognition": "DirectHit",
+        "action": {
+            "type": "ClickKey",
+            "param": {
+                "key": 13
+            }
+        }
+    }
+}

@@ -1,0 +1,249 @@
+{ // 已弃用，现在采用 yak 网络拦截的方案来获取聊天记录
+    "ChatHistory_Enter": {
+        "desc": "聊天记录获取任务的入口点",
+        "next": [
+            "ChatHistory_FocusChat"
+        ]
+    },
+    "ChatHistory_FocusChat": {
+        "desc": "点击聊天视图以确保其获得焦点",
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "Chat/按钮_音视频通话.png"
+                ],
+                "roi": [
+                    719,
+                    14,
+                    121,
+                    124
+                ]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target_offset": [
+                    15,
+                    45,
+                    -20,
+                    -20
+                ]
+            }
+        },
+        "next": [
+            "ChatHistory_TypeHome"
+        ]
+    },
+    "ChatHistory_TypeHome": {
+        "desc": "在聊天中键入Home按键以滚动到顶部",
+        "action": {
+            "type": "ClickKey",
+            "param": {
+                "key": 36
+            }
+        },
+        "next": [
+            "ChatHistory_SelectStart"
+        ]
+    },
+    "ChatHistory_SelectStart": {
+        "desc": "开始选取聊天消息的文本",
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "Chat/按钮_音视频通话.png"
+                ],
+                "roi": [
+                    719,
+                    14,
+                    121,
+                    124
+                ]
+            }
+        },
+        "action": {
+            "type": "TouchDown",
+            "param": {
+                "target_offset": [
+                    15,
+                    45,
+                    -20,
+                    -20
+                ]
+            }
+        },
+        "next": [
+            "ChatHistory_SelectMove1"
+        ]
+    },
+    "__ChatHistory_SelectMoveCandidate1": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "Chat/按钮_买家特征.png"
+                ],
+                "roi": [
+                    296,
+                    463,
+                    550,
+                    167
+                ]
+            }
+        }
+    },
+    "__ChatHistory_SelectMoveCandidate2": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "Chat/按钮_商机汇总.png"
+                ],
+                "roi": [
+                    296,
+                    463,
+                    550,
+                    167
+                ]
+            }
+        }
+    },
+    "ChatHistory_SelectMove1": {
+        "desc": "滑动选取光标",
+        "recognition": {
+            "type": "Or",
+            "param": {
+                "any_of": [
+                    "__ChatHistory_SelectMoveCandidate1",
+                    "__ChatHistory_SelectMoveCandidate2"
+                ]
+            }
+        },
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": "ChatHistory_SelectStart",
+                "begin_offset": [
+                    30,
+                    45,
+                    -20,
+                    -20
+                ],
+                "end_offset": [
+                    20,
+                    -15,
+                    -20,
+                    -20
+                ],
+                "only_hover": true
+            }
+        },
+        "next": [
+            "ChatHistory_ClickEnd"
+        ]
+    },
+    "ChatHistory_ClickEnd": {
+        "desc": "在聊天输入框中键入End按键以滚动到底部",
+        "action": {
+            "type": "ClickKey",
+            "param": {
+                "key": 35
+            }
+        },
+        "next": [
+            "ChatHistory_SelectMove2"
+        ]
+    },
+    "ChatHistory_SelectMove2": {
+        "desc": "滑动选取光标",
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "Chat/按钮_买家特征.png"
+                ],
+                "roi": [
+                    644,
+                    476,
+                    126,
+                    131
+                ]
+            }
+        },
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": "ChatHistory_SelectStart",
+                "begin_offset": [
+                    30,
+                    45,
+                    -20,
+                    -20
+                ],
+                "end_offset": [
+                    20,
+                    -20,
+                    -20,
+                    -20
+                ],
+                "only_hover": true
+            }
+        },
+        "next": [
+            "ChatHistory_SelectEnd"
+        ]
+    },
+    "ChatHistory_SelectEnd": {
+        "desc": "结束选取聊天消息的文本",
+        "action": {
+            "type": "TouchUp"
+        },
+        "next": [
+            "ChatHistory_Copy"
+        ]
+    },
+    "ChatHistory_Copy": {
+        "desc": "复制选取的聊天文本",
+        "recognition": {
+            "type": "Custom",
+            "param": {
+                "custom_recognition": "CopyText"
+            }
+        },
+        "next": [
+            "ChatHistory_FocusChatReset"
+        ]
+    },
+    "ChatHistory_FocusChatReset": {
+        "desc": "点击聊天视图以确保其重新获得焦点",
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "Chat/按钮_音视频通话.png"
+                ],
+                "roi": [
+                    719,
+                    14,
+                    121,
+                    124
+                ]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target_offset": [
+                    15,
+                    45,
+                    -20,
+                    -20
+                ]
+            }
+        },
+        "next": []
+    }
+}

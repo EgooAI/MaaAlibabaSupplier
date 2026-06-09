@@ -1,0 +1,135 @@
+{
+    "ChatInput": {
+        "desc": "【入口点】聚焦到输入框并发送指定的聊天文本",
+        "pre_delay": 0,
+        "post_delay": 0,
+        "next": [
+            "ChatInput_GoToInput"
+        ]
+    },
+    "ChatInput_GoToInput": {
+        "desc": "聚焦到聊天输入框，通过点击发送按钮上方空白处",
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "Chat/按钮_发送_禁用.png",
+                    "Chat/按钮_发送_可用.png"
+                ], // 二者匹配其一
+                "roi": [
+                    593,
+                    571,
+                    181,
+                    172
+                ],
+                "order_by": "Score"
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target_offset": [
+                    0,
+                    -45,
+                    0,
+                    0
+                ]
+            }
+        },
+        "next": [
+            "ChatInput_SelectAll"
+        ]
+    },
+    "ChatInput_SelectAll": {
+        "desc": "全选，按下 Ctrl 键",
+        "recognition": "DirectHit",
+        "action": {
+            "type": "KeyDown",
+            "param": {
+                "key": 17
+            }
+        },
+        "next": [
+            "ChatInput_SelectAll_A"
+        ]
+    },
+    "ChatInput_SelectAll_A": {
+        "desc": "按下 A 键完成全选",
+        "recognition": "DirectHit",
+        "action": {
+            "type": "ClickKey",
+            "param": {
+                "key": 65
+            }
+        },
+        "next": [
+            "ChatInput_SelectAll_ReleaseCtrl"
+        ]
+    },
+    "ChatInput_SelectAll_ReleaseCtrl": {
+        "desc": "释放 Ctrl 键",
+        "recognition": "DirectHit",
+        "action": {
+            "type": "KeyUp",
+            "param": {
+                "key": 17
+            }
+        },
+        "next": [
+            "ChatInput_ClearText"
+        ]
+    },
+    "ChatInput_ClearText": {
+        "desc": "Backspace 清空已选文本",
+        "recognition": "DirectHit",
+        "action": {
+            "type": "ClickKey",
+            "param": {
+                "key": 8
+            }
+        },
+        "next": [
+            "ChatInput_InputText"
+        ]
+    },
+    "ChatInput_InputText": {
+        "desc": "输入新文本（调用方需通过 pipeline_override 设置 input_text）",
+        "recognition": "DirectHit",
+        "action": {
+            "type": "InputText",
+            "param": {
+                "input_text": ""
+            }
+        },
+        "next": [
+            "ChatInput_SendMessage",
+            "ChatInput_SendMessageNotHit"
+        ]
+    },
+    "ChatInput_SendMessage": {
+        "desc": "点击发送按钮发送消息",
+        "enabled": false,
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "Chat/按钮_发送_可用.png",
+                    "Chat/按钮_发送_禁用.png"
+                ],
+                "roi": [
+                    593,
+                    571,
+                    181,
+                    172
+                ],
+                "order_by": "Score"
+            }
+        },
+        "action": {
+            "type": "Click"
+        }
+    },
+    "ChatInput_SendMessageNotHit": {
+        "desc": "点击发送按钮发送消息未启用或命中时走这个空节点正常结束"
+    }
+}

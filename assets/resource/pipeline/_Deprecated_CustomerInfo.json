@@ -1,0 +1,220 @@
+{ // 已弃用，现在采用 yak 网络拦截的方案来获取客户信息
+    "CustomerInfo_ClickCustomerInfoPanel": {
+        "desc": "确保侧边栏当前处于客户信息面板",
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "ChatSide/客户信息_已激活.png",
+                    "ChatSide/客户信息_未激活.png"
+                ],
+                "roi": [
+                    792,
+                    10,
+                    152,
+                    134
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "next": [
+            "CustomerInfo_Refresh"
+        ]
+    },
+    "CustomerInfo_Refresh": {
+        "desc": "刷新客户信息面板",
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "ChatSide/按钮_刷新.png"
+                ],
+                "roi": [
+                    1191,
+                    13,
+                    89,
+                    117
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_wait_freezes": 2000,
+        "next": [
+            "[JumpBack]CustomerInfo_ExpandDetail",
+            "CustomerInfo_SelectStart"
+        ]
+    },
+    "__CustomerInfo_IsNotExpandDetail": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "ChatSide/客户信息_未展开.png"
+                ],
+                "roi": [
+                    823,
+                    102,
+                    431,
+                    676
+                ]
+            }
+        }
+    },
+    "__CustomerInfo_IsExpandDetail": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "ChatSide/客户信息_已展开.png"
+                ],
+                "roi": [
+                    823,
+                    102,
+                    431,
+                    676
+                ]
+            }
+        },
+        "inverse": true
+    },
+    "__CustomerInfo_IsExpandDetailReverse": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "ChatSide/客户信息_已展开.png"
+                ],
+                "roi": [
+                    823,
+                    102,
+                    431,
+                    676
+                ]
+            }
+        },
+        "inverse": true
+    },
+    "CustomerInfo_ExpandDetail": {
+        "desc": "如果未展开客户信息详情，则点击展开",
+        "recognition": {
+            "type": "Or",
+            "param": {
+                "any_of": [
+                    "__CustomerInfo_IsNotExpandDetail"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target_offset": [
+                    10,
+                    10,
+                    -20,
+                    -20
+                ]
+            }
+        },
+        "max_hit": 10
+    },
+    "CustomerInfo_SelectStart": {
+        "desc": "点击客户信息面板以准备选取文本",
+        "action": {
+            "type": "TouchDown",
+            "param": {
+                "target": "CustomerInfo_ClickCustomerInfoPanel",
+                "target_offset": [
+                    30,
+                    50,
+                    -50,
+                    -30
+                ]
+            }
+        },
+        "next": [
+            "CustomerInfo_SelectMove"
+        ]
+    },
+    "CustomerInfo_SelectMove": {
+        "desc": "滑动选取光标到窗口右下角，从而选取所有文本",
+        "recognition": {
+            "type": "Or",
+            "param": {
+                "any_of": [
+                    "__CustomerInfo_IsExpandDetail",
+                    "__CustomerInfo_IsNotExpandDetail"
+                ]
+            }
+        },
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "end": [
+                    -2,
+                    -2
+                ],
+                "end_hold": 500,
+                "only_hover": true
+            }
+        },
+        "next": [
+            "CustomerInfo_SelectEnd"
+        ]
+    },
+    "CustomerInfo_SelectEnd": {
+        "desc": "结束客户信息的文本选取",
+        "action": {
+            "type": "TouchUp"
+        },
+        "next": [
+            "CustomerInfo_ReadText"
+        ],
+        "timeout": 2000
+    },
+    "CustomerInfo_ReadText": {
+        "desc": "复制客户信息的文本",
+        "recognition": {
+            "type": "Custom",
+            "param": {
+                "custom_recognition": "CopyText"
+            }
+        },
+        "next": [
+            "CustomerInfo_Refresh2",
+            "CustomerInfo_ExtractCustomerInfo"
+        ]
+    },
+    "CustomerInfo_Refresh2": {
+        "desc": "再次刷新客户信息面板以恢复初始状态",
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "ChatSide/按钮_刷新.png"
+                ],
+                "roi": [
+                    1191,
+                    13,
+                    89,
+                    117
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "next": [
+            "CustomerInfo_ExtractCustomerInfo"
+        ]
+    },
+    "CustomerInfo_ExtractCustomerInfo": {
+        "desc": "从复制的文本中提取客户信息"
+        // 此处可以有 CustomRecognition 驱动来进行文本后处理
+        // 但现在的解析方案改成了 yak 网络拦截
+        // 暂时就不需要这一步骤了
+    }
+}
