@@ -1,0 +1,93 @@
+# Yak MITM 流量转发脚本
+
+YAK_MITM_HOST = "127.0.0.1"
+MITM_PORT = 8084  // 监听该端口的流量
+PYTHON_RECEIVER = "http://127.0.0.1:8085"  // 流量将会转发到这里进行处理
+
+// Known API keywords — capture body for these
+API_KEYWORDS = ["queryCustomerInfo", "getuserinfobyparams", "icbu.im.id.get", "contact.extinfo.get", "fetchcard"]
+
+postToPython = fn(payload) {
+    _, err = http.Post(
+        PYTHON_RECEIVER,
+        http.header("Content-Type", "application/json"),
+        http.body(payload),
+    )
+    if err != nil {
+        println("[!] 转发到 Python 失败: " + string(err))
+    }
+}
+
+matchesApi = fn(rawUrl) {
+    for kw = range API_KEYWORDS {
+        if rawUrl[kw] >= 0 {
+            return true
+        }
+    }
+    return false
+}
+
+// handleHijackResponse uses mitm.hijackHTTPResponseEx to capture response body
+// from the MITM proxy's raw response bytes (already decompressed by the proxy).
+// This is non-consuming — rspRaw is a copy, not a stream read.
+handleHijackResponse = fn(isHttps, urlStr, reqRaw, rspRaw, forward, dropped) {
+    if !matchesApi(urlStr) {
+        forward(rspRaw)
+        return
+    }
+
+    // Extract body from raw response bytes (minimum poc calls)
+    respBody = ""
+    try {
+        respBody = poc.GetHTTPPacketBody(string(rspRaw))
+    } catch e {
+        println("[!] GetHTTPPacketBody failed: " + string(e))
+        forward(rspRaw)
+        return
+    }
+
+    if respBody == "" {
+        forward(rspRaw)
+        return
+    }
+
+    // Extract method from raw request bytes (built-in poc function)
+    method = "GET"
+    try {
+        method = poc.GetHTTPRequestMethod(string(reqRaw))
+    } catch e {
+    }
+
+    try {
+        payload = json.dumps({
+            "is_https":         isHttps,
+            "url":              urlStr,
+            "method":           method,
+            "request_headers":  {},
+            "request_body":     "",
+            "status_code":      0,
+            "response_headers": {},
+            "response_body":    respBody,
+        })
+        go postToPython(payload)
+    } catch e {
+        println("[!] payload error: " + string(e))
+    }
+    forward(rspRaw)
+}
+
+hijackCb = mitm.hijackHTTPResponseEx(handleHijackResponse)
+go mitm.Start(
+    MITM_PORT,
+    mitm.host(YAK_MITM_HOST),
+    hijackCb,
+)
+
+sleep(1)
+println("[*] Yak MITM 代理已启动于 " + YAK_MITM_HOST + ":" + string(MITM_PORT))
+println("[*] 流量链路：APP -> " + YAK_MITM_HOST + ":" + string(MITM_PORT) "-> " + PYTHON_RECEIVER)
+println("[*] 需要设置被劫持的 APP 的网络代理为 " + YAK_MITM_HOST + ":" + string(MITM_PORT))
+
+for {
+    sleep(3600)
+}
