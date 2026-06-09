@@ -1,3 +1,6 @@
 [submodule "assets/MaaCommonAssets"]
 	path = assets/MaaCommonAssets
 	url = https://github.com/MaaXYZ/MaaCommonAssets
+[submodule ".claude/skills/using-yak/resources/yaklang.github.io"]
+	path = .claude/skills/using-yak/resources/yaklang.github.io
+	url = https://github.com/yaklang/yaklang.github.io
