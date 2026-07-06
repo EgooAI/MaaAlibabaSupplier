@@ -13,16 +13,31 @@ except ModuleNotFoundError as e:
         "Or add it to your project's requirements."
     ) from e
 
-from configure import configure_ocr_model
-
-
 working_dir = Path(__file__).parent.parent.resolve()
 install_path = working_dir / Path("install")
+assets_dir = working_dir / "assets"
 version = len(sys.argv) > 1 and sys.argv[1] or "v0.0.1"
 bundled_python_dir = os.getenv("BUNDLED_PYTHON_DIR")
 bundled_python_exec_relpath = os.getenv("BUNDLED_PYTHON_EXEC_RELPATH", "")
 
 DOTNET_PLATFORM_TAG = "win-x64"
+
+
+def configure_ocr_model():
+    assets_ocr_dir = assets_dir / "MaaCommonAssets" / "OCR"
+    if not assets_ocr_dir.exists():
+        print(f"File Not Found: {assets_ocr_dir}")
+        sys.exit(1)
+
+    ocr_dir = assets_dir / "resource" / "model" / "ocr"
+    if not ocr_dir.exists():
+        shutil.copytree(
+            assets_ocr_dir / "ppocr_v5" / "zh_cn",
+            ocr_dir,
+            dirs_exist_ok=True,
+        )
+    else:
+        print("Found existing OCR directory, skipping default OCR model import.")
 
 
 def install_deps():
@@ -98,16 +113,15 @@ def normalize_agent_args(child_args):
 
 
 def install_resource():
-
     configure_ocr_model()
 
     shutil.copytree(
-        working_dir / "assets" / "resource",
+        assets_dir / "resource",
         install_path / "resource",
         dirs_exist_ok=True,
     )
     shutil.copy2(
-        working_dir / "assets" / "interface.json",
+        assets_dir / "interface.json",
         install_path,
     )
 
