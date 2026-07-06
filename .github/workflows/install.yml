@@ -75,17 +75,7 @@ jobs:
 
   install:
     needs: meta
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: win
-            arch: x86_64
-            runner: windows-latest
-          - os: macos
-            arch: x86_64
-            runner: macos-latest
+    runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -101,7 +91,7 @@ jobs:
         uses: robinraju/release-downloader@v1
         with:
           repository: MaaXYZ/MaaFramework
-          fileName: "MAA-${{ matrix.os }}-${{ matrix.arch }}*"
+          fileName: "MAA-win-x86_64*"
           latest: ${{ env.MAAFW_VERSION == '' }}
           tag: ${{ env.MAAFW_VERSION }}
           out-file-path: deps
@@ -112,7 +102,7 @@ jobs:
         uses: robinraju/release-downloader@v1
         with:
           repository: SweetSmellFox/MFAAvalonia
-          fileName: "MFAAvalonia-*-${{ (matrix.os == 'win' && 'win') || (matrix.os == 'macos' && 'osx') || (matrix.os == 'linux' && 'linux') }}-${{ (matrix.arch == 'x86_64' && 'x64') || (matrix.arch == 'aarch64' && 'arm64') }}*"
+          fileName: "MFAAvalonia-*-win-x64*"
           latest: ${{ env.MFAA_VERSION == '' }}
           tag: ${{ env.MFAA_VERSION }}
           out-file-path: MFA
@@ -137,8 +127,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python tools/prepare_portable_python.py \
-            ${{ matrix.os }} \
-            ${{ matrix.arch }} \
             .portable-python \
             --github-output "$GITHUB_OUTPUT"
 
@@ -173,11 +161,11 @@ jobs:
           BUNDLED_PYTHON_DIR: .portable-python
           BUNDLED_PYTHON_EXEC_RELPATH: ${{ steps.bundled_python.outputs.python_exec_relpath }}
         run: |
-          python tools/install.py ${{ needs.meta.outputs.tag }} ${{ matrix.os }} ${{ matrix.arch }}
+          python tools/install.py ${{ needs.meta.outputs.tag }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.PROJECT_NAME }}-${{ matrix.os }}-${{ matrix.arch }}
+          name: ${{ env.PROJECT_NAME }}-win-x86_64
           path: install
           retention-days: 1
 

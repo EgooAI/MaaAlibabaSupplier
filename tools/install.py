@@ -22,39 +22,7 @@ version = len(sys.argv) > 1 and sys.argv[1] or "v0.0.1"
 bundled_python_dir = os.getenv("BUNDLED_PYTHON_DIR")
 bundled_python_exec_relpath = os.getenv("BUNDLED_PYTHON_EXEC_RELPATH", "")
 
-# the first parameter is self name
-if sys.argv.__len__() < 4:
-    print("Usage: python install.py <version> <os> <arch>")
-    print("Example: python install.py v1.0.0 win x86_64")
-    sys.exit(1)
-
-os_name = sys.argv[2]
-arch = sys.argv[3]
-
-
-def get_dotnet_platform_tag():
-    """自动检测当前平台并返回对应的dotnet平台标签"""
-    if os_name == "win" and arch == "x86_64":
-        platform_tag = "win-x64"
-    elif os_name == "win" and arch == "aarch64":
-        platform_tag = "win-arm64"
-    elif os_name == "macos" and arch == "x86_64":
-        platform_tag = "osx-x64"
-    elif os_name == "macos" and arch == "aarch64":
-        platform_tag = "osx-arm64"
-    elif os_name == "linux" and arch == "x86_64":
-        platform_tag = "linux-x64"
-    elif os_name == "linux" and arch == "aarch64":
-        platform_tag = "linux-arm64"
-    else:
-        print("Unsupported OS or architecture.")
-        print("available parameters:")
-        print("version: e.g., v1.0.0")
-        print("os: [win, macos, linux, android]")
-        print("arch: [aarch64, x86_64]")
-        sys.exit(1)
-
-    return platform_tag
+DOTNET_PLATFORM_TAG = "win-x64"
 
 
 def install_deps():
@@ -63,42 +31,30 @@ def install_deps():
         print('请先下载 MaaFramework 到 "deps"。')
         sys.exit(1)
 
-    if os_name == "android":
-        shutil.copytree(
-            working_dir / "deps" / "bin",
-            install_path,
-            dirs_exist_ok=True,
-        )
-        shutil.copytree(
-            working_dir / "deps" / "share" / "MaaAgentBinary",
-            install_path / "MaaAgentBinary",
-            dirs_exist_ok=True,
-        )
-    else:
-        shutil.copytree(
-            working_dir / "deps" / "bin",
-            install_path / "runtimes" / get_dotnet_platform_tag() / "native",
-            ignore=shutil.ignore_patterns(
-                "*MaaDbgControlUnit*",
-                "*MaaThriftControlUnit*",
-                "*MaaRpc*",
-                "*MaaHttp*",
-                "plugins",
-                "*.node",
-                "*MaaPiCli*",
-            ),
-            dirs_exist_ok=True,
-        )
-        shutil.copytree(
-            working_dir / "deps" / "share" / "MaaAgentBinary",
-            install_path / "libs" / "MaaAgentBinary",
-            dirs_exist_ok=True,
-        )
-        shutil.copytree(
-            working_dir / "deps" / "bin" / "plugins",
-            install_path / "plugins" / get_dotnet_platform_tag(),
-            dirs_exist_ok=True,
-        )
+    shutil.copytree(
+        working_dir / "deps" / "bin",
+        install_path / "runtimes" / DOTNET_PLATFORM_TAG / "native",
+        ignore=shutil.ignore_patterns(
+            "*MaaDbgControlUnit*",
+            "*MaaThriftControlUnit*",
+            "*MaaRpc*",
+            "*MaaHttp*",
+            "plugins",
+            "*.node",
+            "*MaaPiCli*",
+        ),
+        dirs_exist_ok=True,
+    )
+    shutil.copytree(
+        working_dir / "deps" / "share" / "MaaAgentBinary",
+        install_path / "libs" / "MaaAgentBinary",
+        dirs_exist_ok=True,
+    )
+    shutil.copytree(
+        working_dir / "deps" / "bin" / "plugins",
+        install_path / "plugins" / DOTNET_PLATFORM_TAG,
+        dirs_exist_ok=True,
+    )
 
 
 def install_python_runtime():

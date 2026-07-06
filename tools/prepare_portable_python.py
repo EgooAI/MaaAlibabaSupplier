@@ -15,25 +15,16 @@ from pathlib import Path
 
 PYTHON_BUILD_STANDALONE_REPOSITORY = "astral-sh/python-build-standalone"
 GITHUB_API_BASE = "https://api.github.com/repos"
-
-TARGETS = {
-    ("win", "x86_64"): {
-        "asset_pattern": r"^cpython-.*-x86_64-pc-windows-msvc(?:-shared)?-install_only\.tar\.gz$",
-        "exec_candidates": ("python.exe",),
-    },
-    ("macos", "x86_64"): {
-        "asset_pattern": r"^cpython-.*-x86_64-apple-darwin-install_only\.tar\.gz$",
-        "exec_candidates": ("python3", "python"),
-    },
-}
+PYTHON_ASSET_PATTERN = re.compile(
+    r"^cpython-.*-x86_64-pc-windows-msvc(?:-shared)?-install_only\.tar\.gz$"
+)
+PYTHON_EXEC_CANDIDATES = ("python.exe",)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Download and extract a relocatable Python runtime for packaging."
     )
-    parser.add_argument("target_os", choices=sorted({target[0] for target in TARGETS}))
-    parser.add_argument("target_arch", choices=sorted({target[1] for target in TARGETS}))
     parser.add_argument("destination", type=Path)
     parser.add_argument("--github-output", type=Path)
     return parser.parse_args()
@@ -65,22 +56,14 @@ def download_file(url: str, destination: Path) -> None:
         shutil.copyfileobj(response, target)
 
 
-def resolve_archive_asset(target_os: str, target_arch: str) -> dict:
+def resolve_archive_asset() -> dict:
     release = fetch_latest_release(PYTHON_BUILD_STANDALONE_REPOSITORY)
-    target = TARGETS.get((target_os, target_arch))
-    if target is None:
-        supported = ", ".join(f"{os_name}/{arch}" for os_name, arch in sorted(TARGETS))
-        raise ValueError(
-            f"Unsupported Python packaging target: {target_os}/{target_arch}. Supported: {supported}"
-        )
-
-    asset_pattern = re.compile(target["asset_pattern"])
     for asset in release.get("assets", []):
-        if asset_pattern.match(asset["name"]):
+        if PYTHON_ASSET_PATTERN.match(asset["name"]):
             return asset
 
     raise RuntimeError(
-        f"Unable to find a Python archive for {target_os}/{target_arch} in the latest "
+        "Unable to find a Windows x86_64 Python archive in the latest "
         f"{PYTHON_BUILD_STANDALONE_REPOSITORY} release."
     )
 
@@ -125,13 +108,9 @@ def write_github_outputs(output_file: Path, outputs: dict[str, str]) -> None:
 
 def main() -> int:
     args = parse_args()
-    target = TARGETS.get((args.target_os, args.target_arch))
-    if target is None:
-        print(f"Unsupported target: {args.target_os}/{args.target_arch}", file=sys.stderr)
-        return 1
 
     try:
-        asset = resolve_archive_asset(args.target_os, args.target_arch)
+        asset = resolve_archive_asset()
         with tempfile.TemporaryDirectory() as temp_dir_name:
             temp_dir = Path(temp_dir_name)
             archive_path = temp_dir / asset["name"]
@@ -149,7 +128,7 @@ def main() -> int:
 
         python_executable = locate_python_executable(
             args.destination,
-            target["exec_candidates"],
+            PYTHON_EXEC_CANDIDATES,
         )
         outputs = {
             "python_dir": str(args.destination.resolve()),
