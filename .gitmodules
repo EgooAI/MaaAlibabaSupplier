@@ -4,3 +4,6 @@
 [submodule ".claude/skills/using-yak/resources/yaklang.github.io"]
 	path = .claude/skills/using-yak/resources/yaklang.github.io
 	url = https://github.com/yaklang/yaklang.github.io
+[submodule "app/crm_sdk"]
+	path = app/crm_sdk
+	url = https://github.com/EgooAI/Egooai-CRM-SDK-Py

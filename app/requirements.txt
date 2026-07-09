@@ -1,0 +1,15 @@
+# Core libs
+maafw==5.10.5
+nicegui==3.12.1
+openai==2.41.0
+
+# CRM SDK
+sqlalchemy==2.0.51
+sqlmodel==0.0.39
+
+# Utility libs
+python-dotenv>=1,<2
+pillow>=12,<13
+pycryptodome>=3,<4
+pydantic>=2,<3
+loguru>=0.7,<0.8
