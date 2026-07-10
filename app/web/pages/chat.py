@@ -1,4 +1,4 @@
-"""Chat page — tabbed interface with messages and customer info."""
+"""Chat page — tabbed interface with messages, customer info, and batch tools."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from app.shared.crm.views import format_created_at
 from app.shared.mitm.pool import get_input_pending_pool, get_translation_cache
 from app.web.chat_presenter import contact_display_name, group_conversations
 from app.web.components.nav import nav
-from app.web.pages import chat_info, chat_msg
+from app.web.pages import chat_batch, chat_info, chat_msg
 
 
 def create() -> None:
@@ -76,6 +76,8 @@ def create() -> None:
             "translation_state": translation_state,
             "send_state": send_state,
             "task_queue": task_queue,
+            "conversation_groups": all_groups,
+            "batch_selected_contacts": set(),
         }
 
         # Default no-op; overwritten by chat_info.render once the tab renders
@@ -153,6 +155,7 @@ def create() -> None:
                 with ui.tabs().classes("flex-grow") as tabs:
                     tab_msg = ui.tab("聊天消息", icon="chat")
                     tab_info = ui.tab("客户信息", icon="person")
+                    tab_batch = ui.tab("批量客户管理", icon="groups")
 
             with ui.tab_panels(tabs, value=tab_msg).classes("w-full flex-grow flex flex-col"):
                 with ui.tab_panel(tab_msg).classes("flex flex-col flex-grow p-0"):
@@ -160,3 +163,6 @@ def create() -> None:
 
                 with ui.tab_panel(tab_info).classes("flex flex-col flex-grow p-0"):
                     ctx["refresh_info"] = chat_info.render(ctx)
+
+                with ui.tab_panel(tab_batch).classes("flex flex-col flex-grow p-0"):
+                    chat_batch.render(ctx)
