@@ -36,23 +36,33 @@ def _start_yak_mitm(repo_root: Path) -> subprocess.Popen | None:
     """Start the Yak MITM proxy via ``yak yak_mitm.yak`` in a subprocess."""
     yak_exe = os.environ.get("YAK_EXECUTABLE", "yak")
     yak_script = repo_root / "yak_mitm.yak"
+    log_dir = repo_root / "data" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "yak_mitm.log"
 
     if not yak_script.exists():
         logger.warning("yak_mitm.yak not found at {}, skipping", yak_script)
         return None
 
     try:
+        log_file = log_path.open("ab")
         proc = subprocess.Popen(
             [yak_exe, str(yak_script)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
         )
     except FileNotFoundError:
         logger.error("'{}' not found — is Yak installed?", yak_exe)
         return None
+    except OSError as exc:
+        logger.error("Failed to start Yak MITM proxy: {}", exc)
+        return None
 
     # Give the MITM server a moment to bind the port.
     time.sleep(1.5)
+    if proc.poll() is not None:
+        logger.error("Yak MITM proxy exited early with code {}. See {}", proc.returncode, log_path)
+        return None
     logger.info("Yak MITM proxy started (pid={})", proc.pid)
     return proc
 

@@ -25,6 +25,9 @@ def _get_connection() -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("DROP TABLE IF EXISTS user_info")
+    conn.execute("DROP TABLE IF EXISTS translation_cache")
+    conn.commit()
     return conn
 
 
@@ -42,11 +45,6 @@ def _save_model(conn: sqlite3.Connection, table: str, key_column: str, key, mode
 
 def _clear_table(conn: sqlite3.Connection, table: str) -> None:
     conn.execute(f"DELETE FROM {table}")
-    conn.commit()
-
-
-def _delete_model(conn: sqlite3.Connection, table: str, key_column: str, key) -> None:
-    conn.execute(f"DELETE FROM {table} WHERE {key_column} = ?", (key,))
     conn.commit()
 
 
@@ -242,7 +240,7 @@ class _DictPool(Generic[M]):
 
 
 class UserInfoPool:
-    """Thread-safe pool backed by SQLite, keyed by ali_id with login_id index."""
+    """Thread-safe in-memory pool keyed by ali_id with login_id index."""
 
     _instance: UserInfoPool | None = None
     _instance_lock = threading.Lock()
@@ -252,24 +250,10 @@ class UserInfoPool:
             if cls._instance is None:
                 instance = super().__new__(cls)
                 instance._lock = threading.Lock()
-                instance._conn = _get_connection()
-                _execute_schema(
-                    instance._conn,
-                    "CREATE TABLE IF NOT EXISTS user_info "
-                    "(ali_id TEXT PRIMARY KEY, data TEXT NOT NULL)",
-                )
                 instance._data: dict[str, UserInfo] = {}
                 instance._login_id_index: dict[str, str] = {}
-                instance._load_all()
                 cls._instance = instance
             return cls._instance
-
-    def _load_all(self) -> None:
-        for row in self._conn.execute("SELECT ali_id, data FROM user_info"):
-            info = UserInfo.model_validate_json(row[1])
-            self._data[row[0]] = info
-            if info.login_id:
-                self._login_id_index[info.login_id] = info.ali_id
 
     def put(self, info: UserInfo) -> None:
         with self._lock:
@@ -307,7 +291,6 @@ class UserInfoPool:
                     # ali_id changed (e.g. im.id.get provided real ali_id) — migrate key
                     if old_key:
                         self._data.pop(old_key, None)
-                        _delete_model(self._conn, "user_info", "ali_id", old_key)
                     self._data[info.ali_id] = info
                 elif info.ali_id:
                     self._data[info.ali_id] = info
@@ -315,9 +298,6 @@ class UserInfoPool:
             lid = info.login_id
             if lid:
                 self._login_id_index[lid] = info.ali_id
-                _save_model(self._conn, "user_info", "ali_id", info.ali_id, info)
-            elif info.ali_id:
-                _save_model(self._conn, "user_info", "ali_id", info.ali_id, info)
 
     def get(self, ali_id: str) -> UserInfo | None:
         with self._lock:
@@ -336,7 +316,6 @@ class UserInfoPool:
 
     def clear(self) -> None:
         with self._lock:
-            _clear_table(self._conn, "user_info")
             self._data.clear()
             self._login_id_index.clear()
 
@@ -512,7 +491,7 @@ def get_inquiry_card_pool() -> InquiryCardPool:
 # ---------------------------------------------------------------------------
 
 class TranslationCache:
-    """Thread-safe SQLite-backed translation cache keyed by message text hash."""
+    """Thread-safe in-memory translation cache keyed by message text hash."""
 
     _instance: TranslationCache | None = None
     _instance_lock = threading.Lock()
@@ -522,12 +501,7 @@ class TranslationCache:
             if cls._instance is None:
                 instance = super().__new__(cls)
                 instance._lock = threading.Lock()
-                instance._conn = _get_connection()
-                _execute_schema(
-                    instance._conn,
-                    "CREATE TABLE IF NOT EXISTS translation_cache "
-                    "(hash TEXT PRIMARY KEY, original TEXT NOT NULL, translated TEXT)",
-                )
+                instance._cache: dict[str, str | None] = {}
                 cls._instance = instance
             return cls._instance
 
@@ -538,32 +512,22 @@ class TranslationCache:
     def is_cached(self, text: str) -> bool:
         h = self._hash(text)
         with self._lock:
-            row = self._conn.execute(
-                "SELECT 1 FROM translation_cache WHERE hash = ?", (h,)
-            ).fetchone()
-        return row is not None
+            return h in self._cache
 
     def get(self, text: str) -> str | None:
         """Return translated text or None (already Chinese). Must check is_cached first."""
         h = self._hash(text)
         with self._lock:
-            row = self._conn.execute(
-                "SELECT translated FROM translation_cache WHERE hash = ?", (h,)
-            ).fetchone()
-        return row[0] if row else None
+            return self._cache.get(h)
 
     def put(self, text: str, translated: str | None) -> None:
         h = self._hash(text)
         with self._lock:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO translation_cache (hash, original, translated) VALUES (?, ?, ?)",
-                (h, text, translated),
-            )
-            self._conn.commit()
+            self._cache[h] = translated
 
     def clear(self) -> None:
         with self._lock:
-            _clear_table(self._conn, "translation_cache")
+            self._cache.clear()
 
 
 def get_translation_cache() -> TranslationCache:

@@ -7,8 +7,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable
 
-from app.shared.backend.im_chat_db import ContactConv, MessageRow, coerce_epoch, format_created_at
-from app.shared.mitm.pool import get_generic_card_pool, get_product_card_pool, get_user_info_pool
+from app.shared.crm import get_user_info as get_crm_user_info
+from app.shared.crm.views import CrmConversation, CrmMessage, coerce_epoch, format_created_at
+from app.shared.mitm.pool import get_generic_card_pool, get_product_card_pool
 from app.shared.mitm.pool import GenericCard, ProductCard
 from app.web.components.card import card_type_name
 
@@ -19,7 +20,7 @@ _ANY_CARD_JSON_RE = re.compile(
 )
 
 
-def _extract_card_info(message: MessageRow) -> tuple[int, str]:
+def _extract_card_info(message: CrmMessage) -> tuple[int, str]:
     """Extract (card_type, card_id) from message content BLOB."""
     if not message.content:
         return 0, ""
@@ -33,7 +34,7 @@ def _extract_card_info(message: MessageRow) -> tuple[int, str]:
     return int(m.group(1)), m.group(2)
 
 
-def generic_card_from_message(message: MessageRow) -> GenericCard | None:
+def generic_card_from_message(message: CrmMessage) -> GenericCard | None:
     """Look up GenericCard from pool using card type and ID from message content."""
     if message.user_content_type != 10010:
         return None
@@ -43,7 +44,7 @@ def generic_card_from_message(message: MessageRow) -> GenericCard | None:
     return get_generic_card_pool().get(card_type, card_id)
 
 
-def product_card_from_message(message: MessageRow) -> ProductCard | None:
+def product_card_from_message(message: CrmMessage) -> ProductCard | None:
     """Look up ProductCard from pool using the product ID in message content."""
     if message.user_content_type != 10010 or not message.content:
         return None
@@ -61,20 +62,19 @@ def product_card_from_message(message: MessageRow) -> ProductCard | None:
 @dataclass(frozen=True)
 class ConversationGroup:
     label: str
-    conversations: list[ContactConv]
+    conversations: list[CrmConversation]
     expanded: bool
 
 
 def contact_display_name(contact_ali_id: str) -> str:
-    pool = get_user_info_pool()
-    info = pool.get(contact_ali_id) or pool.get_by_login_id(contact_ali_id)
+    info = get_crm_user_info(contact_ali_id)
     if info is None:
         return contact_ali_id
     name = f"{info.first_name} {info.last_name}".strip()
     return name or info.login_id or contact_ali_id
 
 
-def message_text(message: MessageRow) -> str:
+def message_text(message: CrmMessage) -> str:
     if message.user_content_type == 10010:
         if message.content_label:
             return message.content_label
@@ -86,17 +86,17 @@ def message_text(message: MessageRow) -> str:
     return message.content_label or ""
 
 
-def message_datetime(message: MessageRow) -> datetime:
+def message_datetime(message: CrmMessage) -> datetime:
     return datetime.fromtimestamp(coerce_epoch(message.created_at), tz=timezone.utc).astimezone()
 
 
-def message_speaker(message: MessageRow, *, is_self: bool) -> str:
+def message_speaker(message: CrmMessage, *, is_self: bool) -> str:
     if message.is_system:
         return "系统"
     return "商家(我)" if is_self else "买家"
 
 
-def conversation_for_suggestions(messages: Iterable[MessageRow], resolver, limit: int = 30) -> list[tuple[str, str, str]]:
+def conversation_for_suggestions(messages: Iterable[CrmMessage], resolver, limit: int = 30) -> list[tuple[str, str, str]]:
     rows = list(messages)[-limit:]
     return [
         (
@@ -108,7 +108,7 @@ def conversation_for_suggestions(messages: Iterable[MessageRow], resolver, limit
     ]
 
 
-def conversation_for_translation(messages: Iterable[MessageRow], resolver, cache, *, force: bool = False) -> list[tuple[str, str, str | None]]:
+def conversation_for_translation(messages: Iterable[CrmMessage], resolver, cache, *, force: bool = False) -> list[tuple[str, str, str | None]]:
     conversation: list[tuple[str, str, str | None]] = []
     for message in messages:
         text = message_text(message)
@@ -123,7 +123,7 @@ def conversation_for_translation(messages: Iterable[MessageRow], resolver, cache
     return conversation
 
 
-def group_conversations(conversations: list[ContactConv], now: float | None = None) -> list[ConversationGroup]:
+def group_conversations(conversations: list[CrmConversation], now: float | None = None) -> list[ConversationGroup]:
     current = time.time() if now is None else now
     cutoffs = [current - 86400, current - 7 * 86400, current - 30 * 86400]
     groups = [

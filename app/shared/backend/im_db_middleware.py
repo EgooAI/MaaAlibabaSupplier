@@ -23,6 +23,7 @@ from app.shared.backend.im_chat_db import (
     MsgTableResolver,
     open_readonly,
 )
+from app.shared.crm import sync_im_database
 
 _CACHE_TTL = 5.0  # seconds
 
@@ -190,8 +191,21 @@ class IMDBMiddleware:
             except sqlite3.Error as exc:
                 logger.error("Failed to open cached IM database: {}", exc)
                 return False
+            self._sync_cached_db(cached, ali_id)
             logger.info("IM database refreshed (cached at {})", cached)
             return True
+
+    def _sync_cached_db(self, cached: Path, ali_id: str) -> None:
+        sync_im_database(cached, ali_id, get_self_info_pool().get())
+
+    def sync_to_crm(self, wait: bool = False) -> None:
+        cached = self._cached_db_path
+        ali_id = self._get_self_ali_id()
+        if cached is None or not ali_id:
+            return
+        future = sync_im_database(cached, ali_id, get_self_info_pool().get())
+        if wait:
+            future.result()
 
     # -- Public API ------------------------------------------------------------
 

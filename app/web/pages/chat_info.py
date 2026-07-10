@@ -9,8 +9,8 @@ from typing import Callable
 from nicegui import ui
 
 from app.shared.backend.maafw_runner import goto_contact
+from app.shared.crm import get_user_info as get_crm_user_info
 from app.task_queue import TaskStatus, get_task_queue
-from app.shared.mitm.pool import get_user_info_pool
 from app.web.components.ui_helpers import empty_state, info_row, section_card
 
 
@@ -25,7 +25,7 @@ def render(ctx: dict) -> Callable[[], None]:
             empty_state("person", "选择一个会话查看客户信息")
             return
 
-        info = get_user_info_pool().get(contact) or get_user_info_pool().get_by_login_id(contact)
+        info = get_crm_user_info(contact)
         if info is None:
             empty_state("person_off", "暂无客户信息")
             return

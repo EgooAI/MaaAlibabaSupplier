@@ -11,6 +11,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class MessageRow:
+    table_name: str
     cid: str
     mid: str
     sender_id: str | None
@@ -154,6 +155,7 @@ def build_conversations(conn: sqlite3.Connection, self_ali_id: str) -> list[Cont
             if not contact:
                 continue
             groups[contact].append(MessageRow(
+                table_name=table,
                 cid=str(row["cid"]),
                 mid=str(row["mid"]),
                 sender_id=row["sender_id"],

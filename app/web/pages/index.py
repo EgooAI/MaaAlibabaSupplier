@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from nicegui import ui
 
+from app.shared.crm import get_self_info
 from app.shared.mitm.pool import (
-    SelfInfo,
     get_generic_card_pool,
     get_inquiry_card_pool,
     get_product_card_pool,
@@ -37,8 +37,7 @@ def create() -> None:
         with drawer:
             nav("/")
 
-        pool = get_self_info_pool()
-        info: SelfInfo | None = pool.get()
+        info = get_self_info()
 
         with ui.column().classes("w-full max-w-md mx-auto p-6 gap-4"):
             with ui.row().classes("items-center gap-2"):

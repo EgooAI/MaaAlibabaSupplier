@@ -47,11 +47,11 @@ Yak/Yakit 负责 HTTPS MITM 和证书兼容性。`yak_mitm.yak` 使用 `mitm.hij
 对外暴露若干池子/缓存，其中部分会持久化到 `data/pools.db` 并在程序启动时自动加载。
 
 - **自身信息池**（`SelfInfoPool`）— 当前登录用户的信息，从 Cookie 中提取 ali_id，从 `contact.extinfo.get` API 补充详情；
-- **用户信息池**（`UserInfoPool`）— 联系人信息，从 `queryCustomerInfo`、`getuserinfobyparams`、`im.id.get`、`contact.extinfo.get` 四个 API 拦截填充，按 ali_id 索引，支持 login_id 副索引查询；
+- **用户信息池**（`UserInfoPool`）— 联系人信息的进程内合并缓存，从 `queryCustomerInfo`、`getuserinfobyparams`、`im.id.get`、`contact.extinfo.get` 四个 API 拦截填充，按 ali_id 索引，支持 login_id 副索引查询；持久化资料由 CRM SDK 的 `Account.extra` 承接；
 - **商品卡片池**（`ProductCardPool`）— 聊天中的商品卡片，从 `fetchcard` API 拦截填充。聊天页面通过消息 `content` BLOB 中的产品 ID（`params.id`）与池子的 `productIdTitle` 关联匹配，展示图片、价格等信息；
 - **通用卡片池**（`GenericCardPool`）— 非商品类卡片（RFQ、订单、反馈等），从 `fetchcard` API 拦截填充；
 - **询盘卡片池**（`InquiryCardPool`）— 询盘卡片，从 `fetchcard` API 拦截填充；
-- **翻译缓存**（`TranslationCache`）— 买家消息翻译结果，按文本哈希索引，不持久化；
+- **翻译缓存**（`TranslationCache`）— 买家消息翻译结果，按文本哈希索引，仅进程内缓存，不持久化；
 - **输入暂存池**（`InputPendingPool`）— 各联系人的未发送输入文本，按联系人 ID 索引，不持久化。
 
 持久化池子提供 `put()`（写入/合并）、`get()`（查询）、`clear()`（清空持久化+内存）方法。
@@ -72,7 +72,7 @@ Yak/Yakit 负责 HTTPS MITM 和证书兼容性。`yak_mitm.yak` 使用 `mitm.hij
 
 该中间件可用的条件包含三重：首先要求 MITM 模块的个人信息池已经获取到自己的 Ali ID，其次需要成功执行过密钥获取，最后需要保证数据库的解密拉取顺利。
 
-聊天页面在每次请求时动态调用中间件获取数据库连接，如果条件不满足会显示等待界面。
+聊天页面在每次请求时动态调用中间件确认源数据库就绪，并触发同步到 CRM SDK；页面业务读取通过 CRM facade 获取会话、消息和客户资料，不直接依赖原始 IM 行对象。
 
 ## 环境变量
 

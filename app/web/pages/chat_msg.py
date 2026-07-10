@@ -11,9 +11,9 @@ from nicegui import ui
 
 from app.shared.backend.chat_ai import translate_buyer_messages
 from app.shared.backend.maafw_runner import chat_input, chat_send, goto_contact
+from app.shared.crm import get_user_info as get_crm_user_info
 from app.task_queue import TaskStatus, get_task_queue
-from app.shared.mitm.pool import get_user_info_pool
-from app.shared.backend.im_chat_db import format_created_at
+from app.shared.crm.views import format_created_at
 from app.web.chat_presenter import (
     contact_display_name,
     conversation_for_translation,
@@ -44,10 +44,14 @@ def _is_all_cached(messages, resolver, cache) -> bool:
 
 
 def _login_id_for_contact(contact_ali_id: str) -> str:
-    info = get_user_info_pool().get(contact_ali_id) or get_user_info_pool().get_by_login_id(contact_ali_id)
+    info = _user_info_for_contact(contact_ali_id)
     if info and info.login_id:
         return info.login_id
     return contact_ali_id.removesuffix("@icbu")
+
+
+def _user_info_for_contact(contact_ali_id: str):
+    return get_crm_user_info(contact_ali_id)
 
 
 def render(ctx: dict) -> None:
@@ -84,7 +88,7 @@ def render(ctx: dict) -> None:
         scroll = ui.scroll_area().classes("w-full flex-grow")
         with scroll:
             # Quick customer overview card
-            info = get_user_info_pool().get(contact) or get_user_info_pool().get_by_login_id(contact)
+            info = _user_info_for_contact(contact)
             if info:
                 with ui.card().classes("w-full max-w-sm mx-auto my-4").props("flat bordered"):
                     with ui.column().classes("items-center gap-1 w-full py-2"):

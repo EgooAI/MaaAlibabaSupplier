@@ -5,19 +5,15 @@ from __future__ import annotations
 from nicegui import ui
 
 from app.task_queue import get_task_queue
-from app.shared.backend.im_chat_db import MsgTableResolver, build_conversations, format_created_at
-from app.shared.mitm.pool import get_input_pending_pool, get_self_info_pool, get_translation_cache
+from app.shared.crm import CrmResolver, list_conversations, refresh_chat_data
+from app.shared.crm.views import format_created_at
+from app.shared.mitm.pool import get_input_pending_pool, get_translation_cache
 from app.web.chat_presenter import contact_display_name, group_conversations
 from app.web.components.nav import nav
 from app.web.pages import chat_info, chat_msg
 
 
-def _get_self_ali_id() -> str:
-    info = get_self_info_pool().get()
-    return info.ali_id if info else ""
-
-
-def create(mw) -> None:
+def create() -> None:
     """Register the /chat page on the current NiceGUI app."""
 
     @ui.page("/chat")
@@ -29,17 +25,17 @@ def create(mw) -> None:
             "@media(min-width:993px){.drawer-toggle{display:none!important}}"
             "</style>"
         )
-        conn = mw.get_connection()
-        if conn is None:
+        sync_state = refresh_chat_data(wait=True)
+        if not sync_state.ready:
             with ui.column().classes("items-center justify-center w-full h-screen"):
                 ui.spinner(size="lg", color="primary")
                 ui.label("等待数据库就绪…").classes("text-gray-500 mt-4")
                 ui.label("请确保已登录阿里卖家客户端").classes("text-xs text-gray-400")
             return
 
-        self_ali_id = _get_self_ali_id()
-        convs = build_conversations(conn, self_ali_id)
-        resolver = MsgTableResolver(self_ali_id)
+        self_ali_id = sync_state.self_ali_id
+        convs = list_conversations(self_ali_id)
+        resolver = CrmResolver(self_ali_id)
 
         if not convs:
             with ui.column().classes("items-center justify-center w-full h-screen"):

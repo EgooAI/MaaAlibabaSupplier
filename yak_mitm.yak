@@ -85,7 +85,7 @@ go mitm.Start(
 
 sleep(1)
 println("[*] Yak MITM 代理已启动于 " + YAK_MITM_HOST + ":" + string(MITM_PORT))
-println("[*] 流量链路：APP -> " + YAK_MITM_HOST + ":" + string(MITM_PORT) "-> " + PYTHON_RECEIVER)
+println("[*] 流量链路：APP -> " + YAK_MITM_HOST + ":" + string(MITM_PORT) + " -> " + PYTHON_RECEIVER)
 println("[*] 需要设置被劫持的 APP 的网络代理为 " + YAK_MITM_HOST + ":" + string(MITM_PORT))
 
 for {

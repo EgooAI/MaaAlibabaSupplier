@@ -23,6 +23,7 @@ from app.shared.mitm.parsers import (
     parse_query_customer_info,
 )
 from app.shared.mitm.pool import SelfInfo, UserInfo, get_generic_card_pool, get_inquiry_card_pool, get_product_card_pool, get_self_info_pool, get_user_info_pool
+from app.shared.crm import sync_self_info, sync_user_info
 from app.shared.utils.logging import configure_logging
 
 _COOKIE_ALI_ID_RE = re.compile(r"xman_i=.*?aid=(\d+)")
@@ -134,7 +135,9 @@ class TrafficRouter:
             return
         self._self_ali_id = m.group(1)
         logger.info("Self ali_id detected from Cookie: {}", self._self_ali_id)
-        get_self_info_pool().put(SelfInfo(ali_id=self._self_ali_id))
+        info = SelfInfo(ali_id=self._self_ali_id)
+        get_self_info_pool().put(info)
+        sync_self_info(info)
 
     def _handle_query_customer_info(self, event: _TrafficEvent) -> None:
         qs = parse_qs(urlparse(event.url).query)
@@ -143,6 +146,7 @@ class TrafficRouter:
         if info:
             logger.info("  -> UserInfo (CRM): ali_id={} login_id={}", info.ali_id, info.login_id)
             get_user_info_pool().put(info)
+            sync_user_info(info)
 
     @staticmethod
     def _put_users(users: list[UserInfo], source: str) -> None:
@@ -150,6 +154,7 @@ class TrafficRouter:
         for user in users:
             logger.info("  -> UserInfo ({}): ali_id={} login_id={}", source, user.ali_id, user.login_id)
             pool.put(user)
+            sync_user_info(user)
 
     def _handle_get_user_info_by_params(self, event: _TrafficEvent) -> None:
         self._put_users(parse_get_user_info_by_params(event.response_body), "batch")
@@ -165,7 +170,7 @@ class TrafficRouter:
         self_pool = get_self_info_pool()
         user_pool = get_user_info_pool()
         for account in accounts:
-            user_pool.put(UserInfo(
+            user_info = UserInfo(
                 ali_id=account.ali_id,
                 login_id=account.login_id,
                 encrypt_account_id=account.encrypt_account_id,
@@ -173,10 +178,13 @@ class TrafficRouter:
                 last_name=account.last_name,
                 country_code=account.country,
                 company_name=account.company_name,
-            ))
+            )
+            user_pool.put(user_info)
+            sync_user_info(user_info)
             if self._self_ali_id and account.ali_id == self._self_ali_id:
                 logger.info("  -> SelfInfo: ali_id={} login_id={}", account.ali_id, account.login_id)
                 self_pool.put(account)
+                sync_self_info(account)
 
     @staticmethod
     def _handle_fetch_card(event: _TrafficEvent) -> None:
