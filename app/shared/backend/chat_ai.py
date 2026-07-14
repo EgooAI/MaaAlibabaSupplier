@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
+import re
+from typing import Any
+
 from pydantic import BaseModel, Field
 
-from app.shared.llm.structured_llm import StructuredLLM
+from app.shared.crm.sdk import load_sdk
 
 
 def strip_html(text: str) -> str:
@@ -55,9 +59,79 @@ def build_inquiry_prompt(conversation: list[tuple[str, str, str]]) -> str:
         "```\n"
         f"{transcript}\n"
         "```\n"
+        "\nReturn JSON only with this exact top-level shape:\n"
+        "{\"buyer_language\": \"English\", \"items\": [{\"zh\": \"中文建议\", \"reply\": \"buyer language reply\"}]}\n"
+        "Do not use top-level keys such as suggestions, replies, or reply_suggestions.\n"
     )
 
 
+def _strip_json_fence(text: str) -> str:
+    value = text.strip()
+    match = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", value, flags=re.DOTALL | re.IGNORECASE)
+    return match.group(1).strip() if match else value
+
+
+def _load_reply_suggestions(raw_text: str) -> ReplySuggestions:
+    payload = json.loads(_strip_json_fence(raw_text))
+    if not isinstance(payload, dict):
+        raise ValueError("reply suggestion agent output must be a JSON object")
+
+    if "items" not in payload:
+        for fallback_key in ("suggestions", "replies", "reply_suggestions"):
+            fallback_value = payload.get(fallback_key)
+            if isinstance(fallback_value, list):
+                payload["items"] = fallback_value
+                break
+
+    raw_items = payload.get("items")
+    if isinstance(raw_items, list):
+        normalized_items: list[dict[str, Any]] = []
+        for item in raw_items[:3]:
+            if not isinstance(item, dict):
+                continue
+            normalized_items.append(
+                {
+                    "zh": str(item.get("zh") or item.get("cn") or item.get("chinese") or "").strip(),
+                    "reply": str(
+                        item.get("reply")
+                        or item.get("buyer_reply")
+                        or item.get("message")
+                        or item.get("text")
+                        or ""
+                    ).strip(),
+                }
+            )
+        payload["items"] = normalized_items
+
+    return ReplySuggestions.model_validate(payload)
+
+
 def generate_reply_suggestions(conversation: list[tuple[str, str, str]]) -> ReplySuggestions:
-    llm = StructuredLLM(timeout=60.0)
-    return llm.process(build_inquiry_prompt(conversation), ReplySuggestions)
+    sdk = load_sdk()
+    from agent_pipeline import AgentPipeline, AgentPipelineInput
+    from agent_pipeline.llm import OpenAICompatibleLLMClient
+    from agent_pipeline.llm_api import register_default_llms
+    from core import llm_registry
+
+    register_default_llms()
+    client = OpenAICompatibleLLMClient(llm_registry.require(0), timeout_seconds=60.0)
+    preset = sdk["AgentPreset"](
+        apid="builtin-reply-suggestion-agent",
+        name="Built-in Reply Suggestion Agent",
+        description="Generate reply suggestions for Alibaba supplier chat.",
+        prompt=(
+            "You are a reply suggestion agent for Alibaba supplier chat. "
+            "Generate concise, professional reply suggestions. "
+            "You must output JSON only. "
+            "The top-level JSON keys must be exactly buyer_language and items; do not use suggestions."
+        ),
+        intelevel=0,
+        tools=[],
+    )
+    result = AgentPipeline(llm_client=client).run(
+        AgentPipelineInput(
+            user_input=build_inquiry_prompt(conversation),
+            agent_preset=preset,
+        )
+    )
+    return _load_reply_suggestions(result.output_text)
