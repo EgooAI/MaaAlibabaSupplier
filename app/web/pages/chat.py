@@ -6,7 +6,7 @@ from nicegui import ui
 
 from app.shared.crm import CrmResolver, list_conversations, refresh_chat_data
 from app.shared.crm.views import format_created_at
-from app.shared.mitm.pool import get_input_pending_pool, get_translation_cache
+from app.shared.mitm.pool import get_input_pending_pool
 from app.task_queue import get_task_queue
 from app.web.chat_presenter import contact_display_name, group_conversations
 from app.web.components.nav import nav
@@ -85,7 +85,6 @@ def create() -> None:
 
             conv_map = {c.contact_ali_id: c for c in convs}
             all_groups = [g for g in group_conversations(convs) if g.conversations]
-            cache = get_translation_cache()
             pending_pool = get_input_pending_pool()
             task_queue = get_task_queue()
 
@@ -93,7 +92,6 @@ def create() -> None:
                 "selected": selected,
                 "conv_map": conv_map,
                 "resolver": resolver,
-                "cache": cache,
                 "pending_pool": pending_pool,
                 "suggestion_state": suggestion_state,
                 "translation_state": translation_state,

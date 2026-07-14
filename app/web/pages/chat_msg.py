@@ -9,14 +9,17 @@ from loguru import logger
 
 from nicegui import ui
 
-from app.shared.backend.chat_ai import translate_buyer_messages
 from app.shared.backend.maafw_runner import chat_input, chat_send, goto_contact
-from app.shared.crm import get_user_info as get_crm_user_info
+from app.shared.crm import (
+    get_translation,
+    get_user_info as get_crm_user_info,
+    request_translations,
+    translation_cached,
+)
 from app.task_queue import TaskStatus, get_task_queue
 from app.shared.crm.views import format_created_at
 from app.web.chat_presenter import (
     contact_display_name,
-    conversation_for_translation,
     generic_card_from_message,
     message_datetime,
     message_text,
@@ -32,13 +35,13 @@ def _avatar_url(name: str, color: str) -> str:
     return f"{_AVATAR_API}?name={name}&background={color}&color=fff&size=32"
 
 
-def _is_all_cached(messages, resolver, cache) -> bool:
+def _is_all_cached(messages, resolver) -> bool:
     """Return True when every buyer message in the conversation is already cached."""
     for m in messages:
         if resolver.is_self(m.sender_id) or m.is_system:
             continue
         text = message_text(m)
-        if text and not cache.is_cached(text):
+        if text and not translation_cached(text):
             return False
     return True
 
@@ -62,7 +65,6 @@ def render(ctx: dict) -> None:
     selected = ctx["selected"]
     conv_map = ctx["conv_map"]
     resolver = ctx["resolver"]
-    cache = ctx["cache"]
     pending_pool = ctx["pending_pool"]
     suggestion_state = ctx["suggestion_state"]
     translation_state = ctx["translation_state"]
@@ -158,9 +160,9 @@ def render(ctx: dict) -> None:
                         continue
 
                 # Normal text message
-                if not is_sent and text and cache.is_cached(text):
-                    translated = cache.get(text)
-                    if translated is not None:
+                if not is_sent and text and translation_cached(text):
+                    translated = get_translation(text)
+                    if translated:
                         display_text = [text, f"[译] {translated}"]
                     else:
                         display_text = text
@@ -205,7 +207,7 @@ def render(ctx: dict) -> None:
             return
 
         conv = conv_map[contact]
-        all_cached = _is_all_cached(conv.messages, resolver, cache)
+        all_cached = _is_all_cached(conv.messages, resolver)
 
         with ui.card().classes("w-full"):
             with ui.row().classes("items-center justify-between w-full"):
@@ -246,34 +248,18 @@ def render(ctx: dict) -> None:
                 translate_section.refresh()
 
                 try:
-                    convo_for_llm = conversation_for_translation(conv.messages, resolver, cache, force=force)
-                    result = await asyncio.to_thread(translate_buyer_messages, convo_for_llm)
-                    if result is None:
-                        translation_state["done"] = True
-                        translation_state["loading"] = False
-                        translate_section.refresh()
-                        return
-
-                    # Map msg IDs back to original texts and cache
-                    counter = 0
+                    texts: list[str] = []
                     for m in conv.messages:
                         is_me = resolver.is_self(m.sender_id)
                         text = message_text(m)
                         if is_me or not text or m.is_system:
                             continue
-                        if not force and cache.is_cached(text):
+                        if not force and translation_cached(text):
                             continue
-                        counter += 1
-                        msg_id = f"msg{counter}"
-                        translated = result.translations.get(msg_id)
-                        cache.put(text, translated)
-                        logger.info(
-                            "Translated {}: {} -> {}",
-                            msg_id,
-                            text[:40],
-                            (translated or "[已是中文]")[:40],
-                        )
+                        texts.append(text)
 
+                    saved = await asyncio.to_thread(request_translations, texts, force=force)
+                    logger.info("Translation agent saved {} rows", saved)
                     translation_state["done"] = True
                     messages.refresh()
                 except Exception as exc:

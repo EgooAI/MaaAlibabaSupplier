@@ -16,6 +16,7 @@ def run() -> None:
     port = int(os.environ.get("MAA_WEB_PORT", "8787"))
 
     # Register pages — importing triggers @ui.page decorators.
+    import app.web.pages.agent as agent_page
     import app.web.pages.card as card_page
     import app.web.pages.chat as chat_page
     import app.web.pages.index as index_page
@@ -25,6 +26,7 @@ def run() -> None:
     card_page.create()
     chat_page.create()
     status_page.create()
+    agent_page.create()
 
     ui.run(host=host, port=port, title="Alibaba Supplier Agent", language="zh-CN", show=False, reload=False)
 

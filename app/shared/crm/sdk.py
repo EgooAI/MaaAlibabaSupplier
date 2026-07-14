@@ -41,4 +41,7 @@ def load_sdk() -> dict[str, Any]:
         "PlatformManager": core.PlatformManager,
         "SessionMeta": models.SessionMeta,
         "SessionMetaManager": core.SessionMetaManager,
+        "Translate": models.Translate,
+        "TranslateManager": core.TranslateManager,
+        "AgentPreset": models.AgentPreset,
     }

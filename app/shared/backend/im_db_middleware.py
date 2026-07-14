@@ -95,17 +95,6 @@ class IMDBMiddleware:
         if self._key is not None:
             return True
 
-        logger.info("Retrieving AES key from process memory...")
-        try:
-            self._key = retrieve_db_key(str(db_path))
-            logger.info("AES key retrieved successfully")
-            self._key_source = "live"
-            self._save_key()
-            return True
-        except (ValueError, EOFError, OSError) as exc:
-            logger.error("Failed to retrieve DB key from live process: {}", exc)
-
-        # Fall back to cached key
         cached = self._key_cache_path()
         if cached.exists():
             try:
@@ -115,6 +104,16 @@ class IMDBMiddleware:
                 return True
             except OSError as exc:
                 logger.warning("Failed to read cached key: {}", exc)
+
+        logger.info("Retrieving AES key from process memory...")
+        try:
+            self._key = retrieve_db_key(str(db_path))
+            logger.info("AES key retrieved successfully")
+            self._key_source = "live"
+            self._save_key()
+            return True
+        except (ValueError, EOFError, OSError) as exc:
+            logger.warning("Failed to retrieve DB key from live process: {}", exc)
 
         return False
 
