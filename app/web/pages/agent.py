@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import yaml
@@ -169,6 +170,52 @@ def _read_agent_form(
     return payload
 
 
+def _prompt_editor(label: str = "Prompt", value: str = "") -> SimpleNamespace:
+    prompt_state = SimpleNamespace(value=value or "")
+    preview_text = prompt_state.value or "尚未填写 Prompt，点击右侧按钮开始编辑。"
+
+    with ui.card().classes("w-full gap-2 rounded-lg border border-gray-300 bg-white p-3 shadow-none"):
+        with ui.row().classes("w-full items-center justify-between gap-3"):
+            with ui.column().classes("gap-1"):
+                ui.label(label).classes("text-sm text-gray-700")
+                counter = ui.label(f"{len(prompt_state.value)} 字符").classes("text-xs text-gray-500")
+            edit_btn = ui.button("编辑 Prompt", icon="edit").props("outline color=primary size=sm")
+
+        preview = ui.label(preview_text).classes(
+            "w-full rounded-md border border-gray-200 bg-gray-50 p-3 text-sm leading-relaxed text-gray-700"
+        )
+        preview.style("white-space: pre-wrap; max-height: 9rem; overflow: hidden;")
+
+    with ui.dialog() as dialog, ui.card().classes("max-w-none gap-4 rounded-2xl p-5").style("width: min(920px, 92vw);"):
+        with ui.row().classes("w-full items-center justify-between"):
+            with ui.column().classes("gap-1"):
+                ui.label(f"编辑 {label}").classes("text-lg font-bold")
+                ui.label("在这里维护 Agent 的完整系统提示词，确认后再保存 Agent。").classes("text-xs text-gray-500")
+            ui.button(icon="close", on_click=dialog.close).props("flat round dense")
+
+        editor = ui.textarea(label, value=prompt_state.value).props("outlined autogrow autofocus").classes(
+            "w-full min-h-[320px]"
+        )
+        editor.style("font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;")
+
+        def _apply_prompt() -> None:
+            prompt_state.value = editor.value or ""
+            preview.text = prompt_state.value or "尚未填写 Prompt，点击右侧按钮开始编辑。"
+            counter.text = f"{len(prompt_state.value)} 字符"
+            dialog.close()
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("取消", on_click=dialog.close).props("flat")
+            ui.button("确认使用", icon="check", on_click=_apply_prompt).props("color=primary")
+
+    def _open_dialog() -> None:
+        editor.set_value(prompt_state.value)
+        dialog.open()
+
+    edit_btn.on("click", _open_dialog)
+    return prompt_state
+
+
 def _render_llm_config_panel() -> None:
     controls: dict[int, dict[str, Any]] = {}
 
@@ -200,7 +247,7 @@ def _render_llm_config_panel() -> None:
                 for level in _LEVELS:
                     data = _level_payload(config, level)
                     max_rounds_label = data.get("max_tool_rounds") or "未设置"
-                    with ui.expansion(f"Level {level} | max_tool_rounds: {max_rounds_label}", value=True).classes("w-full"):
+                    with ui.expansion(f"Level {level} | max_tool_rounds: {max_rounds_label}", value=False).classes("w-full"):
                         with ui.card().classes("w-full p-4 gap-3"):
                             base_url = ui.input("Base URL", value=data["base_url"]).classes("w-full")
                             api_key = ui.input(
@@ -300,15 +347,16 @@ def _render_agent_management_panel() -> None:
             status_label.classes(replace="text-sm text-green-600")
             with container:
                 with ui.expansion("新增 Agent", value=not presets).classes("w-full"):
-                    with ui.card().classes("w-full p-4 gap-3"):
-                        new_name = ui.input("名称").props("required").classes("w-full")
+                    with ui.card().classes("w-full rounded-2xl border border-slate-100 p-4 gap-4 shadow-sm"):
+                        with ui.row().classes("w-full gap-3"):
+                            new_name = ui.input("名称").props("required").classes("flex-1")
+                            new_level = ui.select(
+                                list(_LEVELS),
+                                label="LLM Level",
+                                value=0,
+                            ).props("outlined required").classes("w-40")
                         new_description = ui.input("描述").props("required").classes("w-full")
-                        new_prompt = ui.textarea("Prompt").props("outlined autogrow required").classes("w-full")
-                        new_level = ui.select(
-                            list(_LEVELS),
-                            label="LLM Level",
-                            value=0,
-                        ).props("outlined required").classes("w-full")
+                        new_prompt = _prompt_editor()
                         new_tools = ui.select(
                             _tool_options(),
                             label="Tools",
@@ -345,15 +393,16 @@ def _render_agent_management_panel() -> None:
                 for preset in presets:
                     title = f"{preset.name} | level={preset.intelevel}"
                     with ui.expansion(title, value=False).classes("w-full"):
-                        with ui.card().classes("w-full p-4 gap-3"):
-                            name = ui.input("名称", value=preset.name).props("required").classes("w-full")
+                        with ui.card().classes("w-full rounded-2xl border border-slate-100 p-4 gap-4 shadow-sm"):
+                            with ui.row().classes("w-full gap-3"):
+                                name = ui.input("名称", value=preset.name).props("required").classes("flex-1")
+                                level = ui.select(
+                                    list(_LEVELS),
+                                    label="LLM Level",
+                                    value=preset.intelevel,
+                                ).props("outlined required").classes("w-40")
                             description = ui.input("描述", value=preset.description).props("required").classes("w-full")
-                            prompt = ui.textarea("Prompt", value=preset.prompt).props("outlined autogrow required").classes("w-full")
-                            level = ui.select(
-                                list(_LEVELS),
-                                label="LLM Level",
-                                value=preset.intelevel,
-                            ).props("outlined required").classes("w-full")
+                            prompt = _prompt_editor(value=preset.prompt)
                             tools = ui.select(
                                 _tool_options(preset.tools),
                                 label="Tools",
