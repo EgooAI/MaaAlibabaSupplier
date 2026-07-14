@@ -44,7 +44,7 @@ install
 gui
 
 # Tools
-tools/ImageCropper/**/*.png
+tools/ImageCropper/**/*.pngfoobar
 
 # Python
 __pycache__/
@@ -58,3 +58,7 @@ data
 
 # Agent
 .opencode/
+foobar
+
+项目结构.md
+node_modules

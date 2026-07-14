@@ -14,6 +14,7 @@ from typing import Generic, TypeVar
 from pydantic import BaseModel, Field
 
 _DEFAULT_DB_PATH = Path("data/pools.db")
+FIXED_SELF_ALI_ID = "2500001168191"
 
 
 def _get_db_path() -> Path:
@@ -357,8 +358,7 @@ class SelfInfoPool:
             self._data = SelfInfo.model_validate_json(row[0])
 
     def put(self, info: SelfInfo) -> None:
-        if not info.ali_id:
-            return
+        info = info.model_copy(update={"ali_id": FIXED_SELF_ALI_ID})
         with self._lock:
             if self._data is None:
                 self._data = info
@@ -372,7 +372,9 @@ class SelfInfoPool:
 
     def get(self) -> SelfInfo | None:
         with self._lock:
-            return self._data
+            if self._data is not None:
+                return self._data.model_copy(update={"ali_id": FIXED_SELF_ALI_ID})
+            return SelfInfo(ali_id=FIXED_SELF_ALI_ID)
 
     def clear(self) -> None:
         with self._lock:

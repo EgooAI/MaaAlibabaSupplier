@@ -452,4 +452,5 @@ def render(ctx: dict) -> None:
 
     suggest_btn.on("click", _open_suggestions)
     send_btn.on("click", _send_current_message)
-    ui.timer(1.0, _refresh_send_status)
+    send_status_timer = ui.timer(1.0, _refresh_send_status)
+    ui.context.client.on_disconnect(lambda _client: send_status_timer.cancel())

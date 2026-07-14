@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import sys
 from pathlib import Path
 from typing import Any
@@ -18,34 +19,26 @@ def load_sdk() -> dict[str, Any]:
     """Load the standalone SDK without changing SDK package import style."""
     _ensure_sdk_path()
 
-    from core import (  # type: ignore[import-not-found]
-        AccountManager,
-        AccountMappingManager,
-        CustomerManager,
-        MessageManager,
-        PlatformManager,
-        SessionMetaManager,
-    )
-    from models import (  # type: ignore[import-not-found]
-        Account,
-        AccountMapping,
-        Customer,
-        Message,
-        Platform,
-        SessionMeta,
-    )
+    try:
+        importlib.import_module("app.crm_sdk")
+    except ModuleNotFoundError:
+        # Fall back to the standalone SDK layout when the package path is unavailable.
+        pass
+
+    core = importlib.import_module("core")
+    models = importlib.import_module("models")
 
     return {
-        "Account": Account,
-        "AccountManager": AccountManager,
-        "AccountMapping": AccountMapping,
-        "AccountMappingManager": AccountMappingManager,
-        "Customer": Customer,
-        "CustomerManager": CustomerManager,
-        "Message": Message,
-        "MessageManager": MessageManager,
-        "Platform": Platform,
-        "PlatformManager": PlatformManager,
-        "SessionMeta": SessionMeta,
-        "SessionMetaManager": SessionMetaManager,
+        "Account": models.Account,
+        "AccountManager": core.AccountManager,
+        "AccountMapping": models.AccountMapping,
+        "AccountMappingManager": core.AccountMappingManager,
+        "Customer": models.Customer,
+        "CustomerManager": core.CustomerManager,
+        "Message": models.Message,
+        "MessageManager": core.MessageManager,
+        "Platform": models.Platform,
+        "PlatformManager": core.PlatformManager,
+        "SessionMeta": models.SessionMeta,
+        "SessionMetaManager": core.SessionMetaManager,
     }
