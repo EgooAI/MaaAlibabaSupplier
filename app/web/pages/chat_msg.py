@@ -160,7 +160,12 @@ def render(ctx: dict) -> None:
                         continue
 
                 # Normal text message
-                if not is_sent and text and translation_cached(text):
+                if (
+                    translation_state.get("show_results", True)
+                    and not is_sent
+                    and text
+                    and translation_cached(text)
+                ):
                     translated = get_translation(text)
                     if translated:
                         display_text = [text, f"[译] {translated}"]
@@ -222,6 +227,12 @@ def render(ctx: dict) -> None:
                     trans_btn = ui.button("翻译买家消息", icon="translate").props(
                         "size=sm flat"
                     )
+                show_results = bool(translation_state.get("show_results", True))
+                toggle_text = "隐藏翻译结果" if show_results else "显示翻译结果"
+                toggle_icon = "visibility_off" if show_results else "visibility"
+                toggle_btn = ui.button(toggle_text, icon=toggle_icon).props(
+                    "size=sm flat color=grey"
+                )
 
             if translation_state.get("loading"):
                 with ui.row().classes("items-center gap-2 py-2"):
@@ -269,7 +280,15 @@ def render(ctx: dict) -> None:
                     translation_state["loading"] = False
                     translate_section.refresh()
 
+            def _toggle_translation_results() -> None:
+                translation_state["show_results"] = not bool(
+                    translation_state.get("show_results", True)
+                )
+                messages.refresh()
+                translate_section.refresh()
+
             trans_btn.on("click", lambda: asyncio.create_task(_translate(force=all_cached)))
+            toggle_btn.on("click", _toggle_translation_results)
 
     # ------------------------------------------------------------------
     # Send status
