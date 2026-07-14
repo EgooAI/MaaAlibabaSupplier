@@ -78,6 +78,7 @@ def create() -> None:
                 "loading": False,
                 "error": None,
                 "done": False,
+                "show_results": True,
             }
             send_state: dict[str, object] = {
                 "task_id": None,
