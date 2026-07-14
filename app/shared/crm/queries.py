@@ -4,14 +4,14 @@ from loguru import logger
 
 from app.shared.crm.sync import CRMAdapter
 from app.shared.crm.views import CrmConversation
-from app.shared.mitm.pool import SelfInfo, UserInfo, get_self_info_pool
+from app.shared.mitm.pool import FIXED_SELF_ALI_ID, SelfInfo, UserInfo, get_self_info_pool
 
 
 def get_self_info() -> SelfInfo | None:
     try:
         info = CRMAdapter().get_self_info()
         if info is not None:
-            return info
+            return info.model_copy(update={"ali_id": FIXED_SELF_ALI_ID})
     except Exception:
         logger.exception("Failed to load SelfInfo from CRM SDK")
     return get_self_info_pool().get()
