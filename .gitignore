@@ -48,6 +48,7 @@ tools/ImageCropper/**/*.pngfoobar
 
 # Python
 __pycache__/
+.venv/
 *.py[cod]
 
 # Data
