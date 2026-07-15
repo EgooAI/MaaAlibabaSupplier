@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -106,6 +107,41 @@ def _agent_manager_and_model():
     return AgentPresetManager(), sdk["AgentPreset"]
 
 
+def _run_agent_chat_message(apid: str, user_input: str) -> str:
+    load_sdk()
+    from agent_pipeline import AgentPipeline, AgentPipelineInput
+    from agent_pipeline.llm import OpenAICompatibleLLMClient
+    from agent_pipeline.llm_api import register_default_llms
+
+    manager, _ = _agent_manager_and_model()
+    preset = manager.get_agent_preset(apid)
+    if preset is None:
+        raise ValueError(f"AgentPreset {apid} not found")
+
+    llm_levels = register_default_llms()
+    llm_config = llm_levels.get(int(preset.intelevel))
+    if llm_config is None:
+        raise ValueError(f"LLM level {preset.intelevel} is not configured")
+
+    result = AgentPipeline(
+        llm_client=OpenAICompatibleLLMClient(llm_config),
+        manager=manager,
+    ).run(AgentPipelineInput(user_input=user_input, apid=apid))
+    return result.output_text
+
+
+def _compose_agent_chat_input(messages: list[dict[str, str]]) -> str:
+    history = "\n".join(
+        f"{'User' if message['role'] == 'user' else 'Agent'}: {message['content']}"
+        for message in messages
+    )
+    return (
+        "You are chatting with the user in a multi-turn dialog.\n"
+        "Use the conversation history below as context, and answer the latest User message.\n\n"
+        f"{history}"
+    )
+
+
 def _available_agent_tools() -> list[str]:
     load_sdk()
     import agent_tools
@@ -159,8 +195,6 @@ def _read_agent_form(
         missing.append("Prompt")
     if payload["intelevel"] is None or payload["intelevel"] == "":
         missing.append("LLM Level")
-    if not payload["tools"]:
-        missing.append("Tools")
     if missing:
         raise ValueError("必填项不能为空：" + "、".join(missing))
 
@@ -214,6 +248,86 @@ def _prompt_editor(label: str = "Prompt", value: str = "") -> SimpleNamespace:
 
     edit_btn.on("click", _open_dialog)
     return prompt_state
+
+
+async def _open_agent_chat_dialog(apid: str, agent_name: str) -> None:
+    messages: list[dict[str, str]] = []
+
+    with ui.dialog() as dialog, ui.card().classes("max-w-none gap-4 rounded-2xl p-5").style("width: min(760px, 94vw);"):
+        with ui.row().classes("w-full items-center justify-between"):
+            with ui.column().classes("gap-1"):
+                ui.label(f"与 {agent_name} 对话").classes("text-lg font-bold")
+                ui.label("使用当前保存的 AgentPreset 和 LLM 配置运行，本弹窗内保留临时上下文。").classes(
+                    "text-xs text-gray-500"
+                )
+            ui.button(icon="close", on_click=dialog.close).props("flat round dense")
+
+        status_label = ui.label("").classes("text-xs text-gray-500")
+        message_container = ui.column().classes("w-full gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3")
+        message_container.style("height: min(440px, 55vh); overflow-y: auto;")
+
+        def _render_messages() -> None:
+            message_container.clear()
+            with message_container:
+                if not messages:
+                    ui.label("输入一条消息开始测试这个 Agent。").classes("text-sm text-gray-500")
+                    return
+                for message in messages:
+                    is_user = message["role"] == "user"
+                    with ui.chat_message(
+                        name="你" if is_user else agent_name,
+                        sent=is_user,
+                    ).classes("w-full"):
+                        ui.label(message["content"]).style("white-space: pre-wrap;")
+
+        user_input = ui.textarea("消息").props("outlined autogrow").classes("w-full")
+        send_button = None
+
+        async def _send() -> None:
+            text = str(user_input.value or "").strip()
+            if not text:
+                ui.notify("请输入消息", type="warning")
+                return
+
+            messages.append({"role": "user", "content": text})
+            user_input.set_value("")
+            status_label.text = "Agent 正在回复..."
+            status_label.classes(replace="text-xs text-gray-500")
+            if send_button is not None:
+                send_button.disable()
+            _render_messages()
+
+            try:
+                reply = await asyncio.to_thread(
+                    _run_agent_chat_message,
+                    apid,
+                    _compose_agent_chat_input(messages),
+                )
+            except Exception as exc:
+                status_label.text = f"回复失败：{exc}"
+                status_label.classes(replace="text-xs text-red-600")
+                ui.notify(f"回复失败：{exc}", type="negative")
+            else:
+                messages.append({"role": "assistant", "content": reply or ""})
+                status_label.text = "回复完成"
+                status_label.classes(replace="text-xs text-green-600")
+                _render_messages()
+            finally:
+                if send_button is not None:
+                    send_button.enable()
+
+        with ui.row().classes("w-full justify-between gap-2"):
+            ui.button("清空对话", icon="delete_sweep", on_click=lambda: (messages.clear(), _render_messages())).props(
+                "outline color=warning"
+            )
+            with ui.row().classes("gap-2"):
+                ui.button("关闭", on_click=dialog.close).props("flat")
+                send_button = ui.button("发送", icon="send", on_click=_send).props("color=primary")
+
+        _render_messages()
+
+    dialog.open()
+    await asyncio.sleep(0)
 
 
 def _render_llm_config_panel() -> None:
@@ -362,7 +476,7 @@ def _render_agent_management_panel() -> None:
                             label="Tools",
                             value=[],
                             multiple=True,
-                        ).props("outlined use-chips required").classes("w-full")
+                        ).props("outlined use-chips").classes("w-full")
 
                         def _create_agent() -> None:
                             try:
@@ -408,7 +522,7 @@ def _render_agent_management_panel() -> None:
                                 label="Tools",
                                 value=_selected_tools(preset.tools),
                                 multiple=True,
-                            ).props("outlined use-chips required").classes("w-full")
+                            ).props("outlined use-chips").classes("w-full")
 
                             def _make_save_agent(
                                 preset_apid: str,
@@ -452,7 +566,18 @@ def _render_agent_management_panel() -> None:
 
                                 return _delete_agent
 
+                            def _make_open_agent_chat(preset_apid: str, preset_name: str):
+                                async def _open_chat() -> None:
+                                    await _open_agent_chat_dialog(preset_apid, preset_name)
+
+                                return _open_chat
+
                             with ui.row().classes("gap-2"):
+                                ui.button(
+                                    "对话",
+                                    icon="forum",
+                                    on_click=_make_open_agent_chat(preset.apid, preset.name),
+                                ).props("outline color=primary size=sm")
                                 ui.button(
                                     "保存",
                                     icon="save",
