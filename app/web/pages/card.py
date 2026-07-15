@@ -30,9 +30,9 @@ def create() -> None:
 
         # Collect available card types for filter
         generic_type_ids = sorted({c.card_type for _, c in generic_items})
-        filter_options = {"全部": None, "产品卡片": "product", "询盘": "inquiry"}
+        filter_options = {None: "全部", "product": "产品卡片", "inquiry": "询盘"}
         for ct in generic_type_ids:
-            filter_options[card_type_name(ct)] = ct
+            filter_options[ct] = card_type_name(ct)
 
         with ui.column().classes("w-full max-w-3xl mx-auto p-6 gap-4"):
             with ui.row().classes("items-center gap-2"):
@@ -63,15 +63,9 @@ def create() -> None:
             def _render_filter() -> None:
                 filter_row.clear()
                 with filter_row:
-                    f = state["filter"]
-                    label = "全部"
-                    for k, v in filter_options.items():
-                        if v == f:
-                            label = k
-                            break
                     ui.select(
                         filter_options,
-                        value=f,
+                        value=state["filter"],
                         label="筛选",
                         on_change=lambda e: _apply_filter(e.value),
                     ).props("dense outlined").classes("w-48")
