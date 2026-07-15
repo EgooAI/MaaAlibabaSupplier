@@ -183,7 +183,7 @@ class CRMAdapter:
             sender=sender_aid,
             read=None,
             content=content,
-            type=str(row.content_label or row.user_content_type or "unknown"),
+            type=_message_type(row),
         )
         self.messages.upsert_message(message)
 
@@ -399,6 +399,10 @@ def _message_content(row: MessageRow) -> dict[str, Any]:
         "is_system": row.is_system,
         "is_auto_reply": row.is_auto_reply,
     }
+
+
+def _message_type(row: MessageRow) -> str:
+    return str(row.user_content_type) if row.user_content_type is not None else "unknown"
 
 
 def _decode_content(content: bytes | None) -> Any:
