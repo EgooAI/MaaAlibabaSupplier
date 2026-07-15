@@ -7,6 +7,7 @@ _NAV_ITEMS = [
     ("chat", "Chat", "/chat"),
     ("inventory_2", "Cards", "/card"),
     ("health_and_safety", "Status", "/status"),
+    ("smart_toy", "Agent", "/status/agent"),
 ]
 
 

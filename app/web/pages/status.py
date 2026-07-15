@@ -184,4 +184,5 @@ def create() -> None:
                                 ui.label(snap.status.value).classes("text-xs text-gray-500")
 
             queue_status_card()
-            ui.timer(2.0, lambda: queue_status_card.refresh())
+            queue_timer = ui.timer(2.0, lambda: queue_status_card.refresh())
+            ui.context.client.on_disconnect(lambda _client: queue_timer.cancel())

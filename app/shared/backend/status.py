@@ -10,7 +10,7 @@ from pathlib import Path
 
 from app.shared.backend.im_db_middleware import get_im_db_middleware
 from app.shared.mitm.pool import get_self_info_pool
-from app.shared.utils.env import get_env_str
+from app.shared.utils.env import get_env_str, load_workdir_env
 
 
 @dataclass(frozen=True)
@@ -31,6 +31,7 @@ class NetworkStatus:
 
 
 def check_user_status() -> KeyStatus:
+    load_workdir_env()
     info = get_self_info_pool().get()
     ali_id = info.ali_id if info and info.ali_id else ""
 

@@ -16,8 +16,8 @@ from pathlib import Path
 
 from Crypto.Cipher import AES
 
-from app.shared.mitm.pool import get_self_info_pool
-from app.shared.utils.env import get_env_str
+from app.shared.mitm.pool import FIXED_SELF_ALI_ID, get_self_info_pool
+from app.shared.utils.env import get_env_str, load_workdir_env
 from app.shared.utils.im_db_decryptor import retrieve_db_key
 from app.shared.backend.im_chat_db import (
     MsgTableResolver,
@@ -52,6 +52,7 @@ class IMDBMiddleware:
             return cls._instance
 
     def _init_data_dir(self) -> None:
+        load_workdir_env()
         raw = get_env_str("ALIBABA_DATA_DIR")
         if raw:
             self._data_dir = Path(raw)
@@ -61,8 +62,7 @@ class IMDBMiddleware:
     # -- Path resolution ------------------------------------------------------
 
     def _get_self_ali_id(self) -> str:
-        info = get_self_info_pool().get()
-        return info.ali_id if info and info.ali_id else ""
+        return FIXED_SELF_ALI_ID
 
     def _resolve_encrypted_db_path(self, ali_id: str) -> Path | None:
         if self._data_dir is None:
@@ -95,17 +95,6 @@ class IMDBMiddleware:
         if self._key is not None:
             return True
 
-        logger.info("Retrieving AES key from process memory...")
-        try:
-            self._key = retrieve_db_key(str(db_path))
-            logger.info("AES key retrieved successfully")
-            self._key_source = "live"
-            self._save_key()
-            return True
-        except (ValueError, EOFError, OSError) as exc:
-            logger.error("Failed to retrieve DB key from live process: {}", exc)
-
-        # Fall back to cached key
         cached = self._key_cache_path()
         if cached.exists():
             try:
@@ -115,6 +104,16 @@ class IMDBMiddleware:
                 return True
             except OSError as exc:
                 logger.warning("Failed to read cached key: {}", exc)
+
+        logger.info("Retrieving AES key from process memory...")
+        try:
+            self._key = retrieve_db_key(str(db_path))
+            logger.info("AES key retrieved successfully")
+            self._key_source = "live"
+            self._save_key()
+            return True
+        except (ValueError, EOFError, OSError) as exc:
+            logger.warning("Failed to retrieve DB key from live process: {}", exc)
 
         return False
 
