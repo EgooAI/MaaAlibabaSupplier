@@ -1,4 +1,8 @@
 {
+    "black-formatter.args": [
+        "-l",
+        "120"
+    ],
     "json.schemas": [
         {
             "fileMatch": [
@@ -33,7 +37,7 @@
         "editor.indentSize": "tabSize"
     },
     "[python]": {
-        "editor.defaultFormatter": "ms-python.black-formatter"
+        "editor.defaultFormatter": "ms-python.black-formatter",
     },
     "[markdown]": {
         "editor.formatOnSave": true,
