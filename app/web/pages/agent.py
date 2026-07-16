@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ from app.shared.agent.chat_tools import (
     CHAT_TRANSLATION_AGENT_APID,
 )
 from app.shared.crm.sdk import load_sdk
+from app.shared.utils.env import get_env_text, set_env_text
 from app.web.components.nav import nav
 
 _LEVELS = range(5)
@@ -207,6 +209,47 @@ def _message_preview(messages: list[dict[str, str]]) -> str:
         if text:
             return text[:80]
     return "暂无消息"
+
+
+def _undo_last_turn_messages(messages: list[dict[str, str]]) -> bool:
+    if not messages:
+        return False
+
+    removed = False
+    if messages[-1].get("role") == "assistant":
+        messages.pop()
+        removed = True
+
+    if messages and messages[-1].get("role") == "user":
+        messages.pop()
+        removed = True
+
+    return removed
+
+
+def _copy_messages_through_index(messages: list[dict[str, str]], end_index: int) -> list[dict[str, str]]:
+    if end_index < 0:
+        return []
+    return [dict(message) for message in messages[: end_index + 1]]
+
+
+def _remove_turn_at_index(messages: list[dict[str, str]], message_index: int) -> bool:
+    if message_index < 0 or message_index >= len(messages):
+        return False
+
+    start_index = message_index
+    end_index = message_index + 1
+    role = messages[message_index].get("role")
+
+    if role == "assistant":
+        if message_index > 0 and messages[message_index - 1].get("role") == "user":
+            start_index = message_index - 1
+    elif role == "user":
+        if message_index + 1 < len(messages) and messages[message_index + 1].get("role") == "assistant":
+            end_index = message_index + 2
+
+    del messages[start_index:end_index]
+    return True
 
 
 async def _confirm_delete_history(history_name: str) -> bool:
@@ -414,13 +457,23 @@ async def _open_agent_chat_dialog(apid: str, agent_name: str, history_id: int | 
                 if not messages:
                     ui.label("输入一条消息开始测试这个 Agent。").classes("text-sm text-gray-500")
                     return
-                for message in messages:
+                for message_index, message in enumerate(messages):
                     is_user = message["role"] == "user"
                     with ui.chat_message(
                         name="你" if is_user else agent_name,
                         sent=is_user,
                     ).classes("w-full"):
-                        ui.label(message["content"]).style("white-space: pre-wrap;")
+                        with ui.element("div").classes("w-full"):
+                            ui.label(message["content"]).style("white-space: pre-wrap;")
+                            with ui.context_menu():
+                                ui.menu_item(
+                                    "从这里开启新对话",
+                                    on_click=lambda index=message_index: _start_new_conversation_from_message(index),
+                                )
+                                ui.menu_item(
+                                    "撤销这一轮对话",
+                                    on_click=lambda index=message_index: _undo_turn_from_message(index),
+                                )
 
         def _open_new_dialog_conversation() -> None:
             messages.clear()
@@ -429,6 +482,40 @@ async def _open_agent_chat_dialog(apid: str, agent_name: str, history_id: int | 
             state["created_content"] = {}
             status_label.text = "已切换到新对话"
             status_label.classes(replace="text-xs text-gray-500")
+            _render_messages()
+            _render_sidebar()
+
+        def _start_new_conversation_from_message(message_index: int) -> None:
+            copied_messages = _copy_messages_through_index(messages, message_index)
+            if not copied_messages:
+                ui.notify("未找到可用于新对话的消息", type="warning")
+                return
+
+            messages.clear()
+            messages.extend(copied_messages)
+            state["history_id"] = None
+            state["history_name"] = None
+            state["created_content"] = {}
+            status_label.text = "已从所选消息开启新对话"
+            status_label.classes(replace="text-xs text-green-600")
+            _render_messages()
+            _render_sidebar()
+
+        def _undo_turn_from_message(message_index: int) -> None:
+            if not _remove_turn_at_index(messages, message_index):
+                ui.notify("没有可撤销的对话", type="warning")
+                return
+
+            try:
+                _persist_history_after_undo()
+            except Exception as exc:
+                status_label.text = f"撤销失败：{exc}"
+                status_label.classes(replace="text-xs text-red-600")
+                ui.notify(f"撤销失败：{exc}", type="negative")
+                return
+
+            status_label.text = "已撤销所选轮次" if messages else "已撤销所选轮次，当前对话已删除"
+            status_label.classes(replace="text-xs text-green-600")
             _render_messages()
             _render_sidebar()
 
@@ -473,6 +560,45 @@ async def _open_agent_chat_dialog(apid: str, agent_name: str, history_id: int | 
             ui.notify("历史对话已删除", type="positive")
             _render_sidebar()
 
+        def _copy_sidebar_history(selected_history_id: int) -> None:
+            source_history = message_test_manager.get_message_test(selected_history_id)
+            if source_history is None:
+                ui.notify("历史对话不存在", type="negative")
+                _render_sidebar()
+                return
+
+            source_content = _history_content(source_history)
+            if source_content.get("apid") != apid:
+                ui.notify("历史对话与当前 Agent 不匹配", type="negative")
+                return
+
+            copied_messages = _history_messages(copy.deepcopy(source_content))
+            copied_record = MessageTest(
+                name=(source_history.name or f"历史 #{source_history.id}") + " 副本",
+                content=_build_history_content(
+                    apid=apid,
+                    agent_name=agent_name,
+                    messages=copied_messages,
+                    existing={},
+                ),
+            )
+
+            try:
+                message_test_manager.add_message_test(copied_record)
+            except Exception as exc:
+                ui.notify(f"复制历史失败：{exc}", type="negative")
+                return
+
+            messages.clear()
+            messages.extend(copied_messages)
+            state["history_id"] = copied_record.id
+            state["history_name"] = copied_record.name
+            state["created_content"] = copied_record.content
+            status_label.text = "已复制历史对话并切换到副本"
+            status_label.classes(replace="text-xs text-green-600")
+            _render_messages()
+            _render_sidebar()
+
         def _render_sidebar() -> None:
             sidebar_container.clear()
             histories = _load_agent_histories()
@@ -502,6 +628,10 @@ async def _open_agent_chat_dialog(apid: str, agent_name: str, history_id: int | 
                                 ui.label(f"{len(history_messages)} 条 · {updated_at}").classes("text-[11px] text-gray-500")
                                 ui.label(_message_preview(history_messages)).classes("text-xs text-gray-600")
                             ui.button(
+                                icon="content_copy",
+                                on_click=lambda _, selected_id=history.id: _copy_sidebar_history(selected_id),
+                            ).props("flat round dense color=secondary").tooltip("复制历史对话")
+                            ui.button(
                                 icon="delete",
                                 on_click=lambda _, selected_id=history.id, selected_name=history.name: _delete_sidebar_history(
                                     selected_id,
@@ -528,6 +658,20 @@ async def _open_agent_chat_dialog(apid: str, agent_name: str, history_id: int | 
                 record = MessageTest(id=current_history_id, name=title, content=content)
                 message_test_manager.edit_message_test(current_history_id, record)
             state["created_content"] = content
+
+        def _delete_current_history_state() -> None:
+            current_history_id = state.get("history_id")
+            if current_history_id is not None:
+                message_test_manager.delete_message_test(current_history_id)
+            state["history_id"] = None
+            state["history_name"] = None
+            state["created_content"] = {}
+
+        def _persist_history_after_undo() -> None:
+            if not messages:
+                _delete_current_history_state()
+                return
+            _save_history()
 
         with ui.row().classes("w-full gap-4 items-start"):
             with ui.column().classes("w-64 shrink-0 gap-2"):
@@ -582,8 +726,32 @@ async def _open_agent_chat_dialog(apid: str, agent_name: str, history_id: int | 
                         if send_button is not None:
                             send_button.enable()
 
+                def _undo_last_turn() -> None:
+                    if not _undo_last_turn_messages(messages):
+                        ui.notify("没有可撤销的对话", type="warning")
+                        return
+
+                    try:
+                        _persist_history_after_undo()
+                    except Exception as exc:
+                        status_label.text = f"撤销失败：{exc}"
+                        status_label.classes(replace="text-xs text-red-600")
+                        ui.notify(f"撤销失败：{exc}", type="negative")
+                        return
+
+                    status_label.text = "已撤销上一轮对话" if messages else "已撤销上一轮对话，历史已清空"
+                    status_label.classes(replace="text-xs text-green-600")
+                    _render_messages()
+                    _render_sidebar()
+
                 with ui.row().classes("w-full justify-between gap-2"):
-                    ui.button("新对话", icon="add", on_click=_open_new_dialog_conversation).props("outline color=warning")
+                    with ui.row().classes("gap-2"):
+                        ui.button("新对话", icon="add", on_click=_open_new_dialog_conversation).props(
+                            "outline color=warning"
+                        )
+                        ui.button("撤销上一轮", icon="undo", on_click=_undo_last_turn).props(
+                            "outline color=secondary"
+                        )
                     with ui.row().classes("gap-2"):
                         ui.button("关闭", on_click=dialog.close).props("flat")
                         send_button = ui.button("发送", icon="send", on_click=_send).props("color=primary")
@@ -597,6 +765,7 @@ async def _open_agent_chat_dialog(apid: str, agent_name: str, history_id: int | 
 
 def _render_llm_config_panel() -> None:
     controls: dict[int, dict[str, Any]] = {}
+    env_controls: dict[str, Any] = {}
 
     with ui.card().classes("w-full p-4 gap-3"):
         with ui.row().classes("items-center justify-between w-full"):
@@ -612,9 +781,11 @@ def _render_llm_config_panel() -> None:
 
         def _render_form() -> None:
             controls.clear()
+            env_controls.clear()
             form_container.clear()
             try:
                 config = _load_llm_config()
+                global_system_prompt = get_env_text("SYSTEM_PROMPT")
             except Exception as exc:
                 status_label.text = f"加载失败：{exc}"
                 status_label.classes(replace="text-sm text-red-600")
@@ -623,6 +794,13 @@ def _render_llm_config_panel() -> None:
             status_label.text = "配置已加载"
             status_label.classes(replace="text-sm text-green-600")
             with form_container:
+                with ui.card().classes("w-full p-4 gap-3"):
+                    ui.label("全局 SYSTEM_PROMPT").classes("text-base font-semibold")
+                    system_prompt = ui.textarea("SYSTEM_PROMPT", value=global_system_prompt).props(
+                        "outlined autogrow"
+                    ).classes("w-full")
+                    env_controls["system_prompt"] = system_prompt
+
                 for level in _LEVELS:
                     data = _level_payload(config, level)
                     max_rounds_label = data.get("max_tool_rounds") or "未设置"
@@ -673,6 +851,7 @@ def _render_llm_config_panel() -> None:
 
         def _save() -> None:
             try:
+                set_env_text("SYSTEM_PROMPT", env_controls["system_prompt"].value or "")
                 _save_llm_config(_read_llm_controls(controls))
             except Exception as exc:
                 ui.notify(f"保存失败：{exc}", type="negative")

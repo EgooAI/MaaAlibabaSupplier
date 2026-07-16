@@ -1,4 +1,5 @@
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -6,6 +7,7 @@ from dotenv import load_dotenv
 
 
 _ENV_LOADED_PATHS: dict[str, Path] = {}
+_ENV_ASSIGNMENT_PATTERN = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=")
 
 
 @dataclass(frozen=True)
@@ -53,12 +55,55 @@ def load_workdir_env(env_filename: str = ".env") -> Path:
     return resolved
 
 
+def _decode_env_text(value: str) -> str:
+    return value.replace("\\r", "\r").replace("\\n", "\n").replace("\\\\", "\\")
+
+
+def _encode_env_text(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n").replace('"', '\\"')
+
+
 def get_env_str(key: str, default: str = "", *, required: bool = False) -> str:
     value = os.getenv(key, default)
     value = value.strip() if isinstance(value, str) else ""
     if required and not value:
         raise ValueError(f"Missing required env var: {key}")
     return value
+
+
+def get_env_text(key: str, default: str = "") -> str:
+    load_workdir_env()
+    value = os.getenv(key)
+    if value is None:
+        return default
+    return _decode_env_text(value)
+
+
+def set_env_text(key: str, value: str, *, env_filename: str = ".env") -> Path:
+    env_path = load_workdir_env(env_filename)
+    normalized_value = value or ""
+    encoded_value = _encode_env_text(normalized_value)
+    rendered_line = f'{key}="{encoded_value}"'
+
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+    updated = False
+    for index, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            continue
+        match = _ENV_ASSIGNMENT_PATTERN.match(line)
+        if match and match.group(1) == key:
+            lines[index] = rendered_line
+            updated = True
+            break
+    if not updated:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append(rendered_line)
+
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.environ[key] = normalized_value
+    return env_path
 
 
 def get_env_int(key: str, default: int) -> int:
