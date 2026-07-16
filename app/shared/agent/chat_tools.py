@@ -53,19 +53,7 @@ def run_chat_tool_agent(apid: str, user_input: str) -> str:
 
 
 def build_translation_input(items: list[dict[str, str]]) -> str:
-    return json.dumps(
-        {
-            "task": "translate_buyer_messages_to_simplified_chinese",
-            "instructions": [
-                "Translate each item.text into Simplified Chinese.",
-                "Return JSON only: {\"translations\": {\"<text_hash>\": \"<translation or null>\"}}.",
-                "If an item is already Simplified Chinese, return null for that text_hash.",
-                "Do not omit any text_hash.",
-            ],
-            "items": items,
-        },
-        ensure_ascii=False,
-    )
+    return json.dumps({"items": items}, ensure_ascii=False)
 
 
 def build_reply_suggestion_input(conversation: list[tuple[str, str, str]]) -> str:
@@ -76,25 +64,7 @@ def build_reply_suggestion_input(conversation: list[tuple[str, str, str]]) -> st
             lines.append(f"[{timestamp}] {speaker}: {safe_text}")
 
     transcript = "\n".join(lines).strip() or "(empty)"
-    return (
-        "你是一名阿里巴巴国际站供应商客服，正在处理买家的询盘对话。\n"
-        "请根据【对话记录】生成可直接发送给买家的回复建议。\n\n"
-        "输出要求：\n"
-        "1) 只输出 JSON，字段见 schema。\n"
-        "2) 先判断买家主要语言 buyer_language，然后为每条建议同时给出中文 zh 和买家语言 reply。\n"
-        "3) reply 必须使用买家在对话中使用的语言，不要默认翻译为英文。\n"
-        "4) 最多给出 3 条建议，按推荐顺序排列。\n"
-        "5) 语气专业、友好、简洁，优先推进成交。\n"
-        "6) 不要编造任何无法从对话中确定的信息；信息不足时用提问补齐。\n"
-        "7) 不要提及你是 AI，也不要输出解释性文字。\n\n"
-        "对话记录：\n"
-        "```\n"
-        f"{transcript}\n"
-        "```\n"
-        "\nReturn JSON only with this exact top-level shape:\n"
-        "{\"buyer_language\": \"English\", \"items\": [{\"zh\": \"中文建议\", \"reply\": \"buyer language reply\"}]}\n"
-        "Do not use top-level keys such as suggestions, replies, or reply_suggestions.\n"
-    )
+    return f"对话记录：\n```\n{transcript}\n```"
 
 
 def build_analysis_input(
@@ -108,15 +78,7 @@ def build_analysis_input(
         if safe_text:
             lines.append(f"[{timestamp}] {speaker}: {safe_text}")
     transcript = "\n".join(lines).strip() or "(empty)"
-    return (
-        f"任务：{task}\n\n"
-        "请基于下面的聊天记录进行分析，结论必须来自聊天内容，不要编造未出现的信息。\n"
-        "输出中文，结构清晰，重点给出可执行建议。\n\n"
-        "聊天记录：\n"
-        "```\n"
-        f"{transcript}\n"
-        "```"
-    )
+    return f"任务：{task}\n\n" "聊天记录：\n" "```\n" f"{transcript}\n" "```"
 
 
 __all__ = [
