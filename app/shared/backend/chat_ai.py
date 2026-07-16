@@ -6,9 +6,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.shared.crm.sdk import load_sdk
-
-
 def strip_html(text: str) -> str:
     import html
     import re
@@ -107,31 +104,14 @@ def _load_reply_suggestions(raw_text: str) -> ReplySuggestions:
 
 
 def generate_reply_suggestions(conversation: list[tuple[str, str, str]]) -> ReplySuggestions:
-    sdk = load_sdk()
-    from agent_pipeline import AgentPipeline, AgentPipelineInput
-    from agent_pipeline.llm import OpenAICompatibleLLMClient
-    from agent_pipeline.llm_api import register_default_llms
-    from core import llm_registry
+    from app.shared.agent.chat_tools import (
+        CHAT_REPLY_SUGGESTION_AGENT_APID,
+        build_reply_suggestion_input,
+        run_chat_tool_agent,
+    )
 
-    register_default_llms()
-    client = OpenAICompatibleLLMClient(llm_registry.require(0), timeout_seconds=60.0)
-    preset = sdk["AgentPreset"](
-        apid="builtin-reply-suggestion-agent",
-        name="Built-in Reply Suggestion Agent",
-        description="Generate reply suggestions for Alibaba supplier chat.",
-        prompt=(
-            "You are a reply suggestion agent for Alibaba supplier chat. "
-            "Generate concise, professional reply suggestions. "
-            "You must output JSON only. "
-            "The top-level JSON keys must be exactly buyer_language and items; do not use suggestions."
-        ),
-        intelevel=0,
-        tools=[],
+    raw_text = run_chat_tool_agent(
+        CHAT_REPLY_SUGGESTION_AGENT_APID,
+        build_reply_suggestion_input(conversation),
     )
-    result = AgentPipeline(llm_client=client).run(
-        AgentPipelineInput(
-            user_input=build_inquiry_prompt(conversation),
-            agent_preset=preset,
-        )
-    )
-    return _load_reply_suggestions(result.output_text)
+    return _load_reply_suggestions(raw_text)

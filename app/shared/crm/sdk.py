@@ -35,6 +35,8 @@ def load_sdk() -> dict[str, Any]:
         "AccountMappingManager": core.AccountMappingManager,
         "Customer": models.Customer,
         "CustomerManager": core.CustomerManager,
+        "LLMApiConfig": models.LLMApiConfig,
+        "LLMApiConfigManager": core.LLMApiConfigManager,
         "Message": models.Message,
         "MessageManager": core.MessageManager,
         "MessageTest": models.MessageTest,
