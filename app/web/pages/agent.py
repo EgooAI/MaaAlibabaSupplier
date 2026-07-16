@@ -28,6 +28,17 @@ _SYSTEM_AGENT_DEFINITIONS: tuple[tuple[str, str, str], ...] = (
     ("客户所处阶段分析", CHAT_CUSTOMER_STAGE_AGENT_APID, "Chat 页面客户阶段分析工具绑定的系统 Agent。"),
 )
 _SYSTEM_AGENT_APIDS = {apid for _, apid, _ in _SYSTEM_AGENT_DEFINITIONS}
+_SYSTEM_AGENT_TOOLS = {
+    CHAT_TRANSLATION_AGENT_APID: ["process_chat_translation_result"],
+    CHAT_REPLY_SUGGESTION_AGENT_APID: ["process_chat_suggestion_result"],
+    CHAT_CUSTOMER_INTENT_AGENT_APID: ["process_customer_intent_analysis_result"],
+    CHAT_CUSTOMER_STAGE_AGENT_APID: ["process_customer_stage_analysis_result"],
+}
+_SYSTEM_AGENT_ONLY_TOOLS = {
+    tool_name
+    for tool_names in _SYSTEM_AGENT_TOOLS.values()
+    for tool_name in tool_names
+}
 
 
 def _default_level_config() -> dict[str, Any]:
@@ -263,26 +274,24 @@ def _compose_agent_chat_input(messages: list[dict[str, str]]) -> str:
 def _available_agent_tools() -> list[str]:
     load_sdk()
     import agent_tools
-    import utils
 
     agent_tool_names = getattr(agent_tools, "__all__", [])
-    util_tool_names = [
-        "process_chat_translation_result",
-        "process_chat_suggestion_result",
-        "process_customer_intent_analysis_result",
-        "process_customer_stage_analysis_result",
-    ]
     return sorted(
         name
-        for module, names in ((agent_tools, agent_tool_names), (utils, util_tool_names))
+        for module, names in ((agent_tools, agent_tool_names),)
         for name in names
         if not name.startswith("register_")
         and callable(getattr(module, name, None))
+        and name not in _SYSTEM_AGENT_ONLY_TOOLS
     )
 
 
 def _tool_options(selected_tools: Any = None) -> list[str]:
-    selected = _selected_tools(selected_tools)
+    selected = [
+        tool
+        for tool in _selected_tools(selected_tools)
+        if tool not in _SYSTEM_AGENT_ONLY_TOOLS
+    ]
     return sorted(set(_available_agent_tools()) | set(selected))
 
 
@@ -327,6 +336,9 @@ def _read_agent_form(
     payload["intelevel"] = int(payload["intelevel"])
     if payload["intelevel"] not in _LEVELS:
         raise ValueError("LLM Level 必须在 0~4 之间")
+    forbidden_tools = sorted(_SYSTEM_AGENT_ONLY_TOOLS.intersection(payload["tools"]))
+    if forbidden_tools:
+        raise ValueError("普通 Agent 不能使用系统 Chat 工具：" + "、".join(forbidden_tools))
     return payload
 
 
@@ -912,12 +924,10 @@ def _render_system_agent_management_panel() -> None:
                                 ).props("outlined required").classes("w-40")
                             description = ui.input("描述", value=preset.description).props("required").classes("w-full")
                             prompt = _prompt_editor(value=preset.prompt)
-                            tools = ui.select(
-                                _tool_options(preset.tools),
-                                label="Tools",
-                                value=_selected_tools(preset.tools),
-                                multiple=True,
-                            ).props("outlined use-chips").classes("w-full")
+                            fixed_tools = _SYSTEM_AGENT_TOOLS.get(preset.apid, [])
+                            ui.label("固定工具：" + ("、".join(fixed_tools) if fixed_tools else "无")).classes(
+                                "text-xs text-gray-500"
+                            )
 
                             def _make_save_system_agent(
                                 preset_apid: str,
@@ -925,17 +935,29 @@ def _render_system_agent_management_panel() -> None:
                                 description_input,
                                 prompt_input,
                                 level_input,
-                                tools_input,
                             ):
                                 def _save_agent() -> None:
                                     try:
-                                        payload = _read_agent_form(
-                                            name=name_input.value,
-                                            description=description_input.value,
-                                            prompt=prompt_input.value,
-                                            level=level_input.value,
-                                            tools=tools_input.value,
-                                        )
+                                        payload = {
+                                            "name": str(name_input.value or "").strip(),
+                                            "description": str(description_input.value or "").strip(),
+                                            "prompt": str(prompt_input.value or "").strip(),
+                                            "intelevel": int(level_input.value),
+                                            "tools": list(_SYSTEM_AGENT_TOOLS.get(preset_apid, [])),
+                                        }
+                                        missing = [
+                                            label
+                                            for label, value in (
+                                                ("名称", payload["name"]),
+                                                ("描述", payload["description"]),
+                                                ("Prompt", payload["prompt"]),
+                                            )
+                                            if not value
+                                        ]
+                                        if missing:
+                                            raise ValueError("必填项不能为空：" + "、".join(missing))
+                                        if payload["intelevel"] not in _LEVELS:
+                                            raise ValueError("LLM Level 必须在 0~4 之间")
                                         updated = AgentPreset(
                                             apid=preset_apid,
                                             **payload,
@@ -964,7 +986,7 @@ def _render_system_agent_management_panel() -> None:
                                 ui.button(
                                     "保存",
                                     icon="save",
-                                    on_click=_make_save_system_agent(preset.apid, name, description, prompt, level, tools),
+                                    on_click=_make_save_system_agent(preset.apid, name, description, prompt, level),
                                 ).props("color=primary size=sm")
                                 ui.button("不可删除", icon="lock").props("outline color=grey size=sm disable")
 
