@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
 
 from loguru import logger
@@ -36,6 +37,54 @@ from app.web.components.ai_suggestion import open_suggestion_dialog
 from app.web.components.card import generic_card, product_card
 
 _AVATAR_API = "https://ui-avatars.com/api/"
+
+
+def _as_text_list(value) -> list[str]:
+    if value is None or value == "":
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [line.strip() for line in str(value).splitlines() if line.strip()]
+
+
+def _markdown_list(title: str, items: list[str]) -> str:
+    if not items:
+        return ""
+    lines = [f"**{title}**"]
+    lines.extend(f"- {item}" for item in items)
+    return "\n".join(lines)
+
+
+def _format_analysis_result(raw_text: str) -> str:
+    text = (raw_text or "").strip()
+    if not text:
+        return "暂无分析结果。"
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    if not isinstance(payload, dict):
+        return text
+
+    sections: list[str] = []
+    if payload.get("intent"):
+        sections.append(f"**客户意图**\n\n{str(payload['intent']).strip()}")
+    if payload.get("stage"):
+        sections.append(f"**客户阶段**\n\n{str(payload['stage']).strip()}")
+    if payload.get("confidence"):
+        sections.append(f"**置信度**\n\n{str(payload['confidence']).strip()}")
+
+    for key, title in (
+        ("evidence", "判断依据"),
+        ("concerns", "客户顾虑"),
+        ("next_actions", "下一步建议"),
+    ):
+        section = _markdown_list(title, _as_text_list(payload.get(key)))
+        if section:
+            sections.append(section)
+
+    return "\n\n".join(sections) if sections else text
 
 
 def _avatar_url(name: str, color: str) -> str:
@@ -426,7 +475,7 @@ def render(ctx: dict) -> None:
                     error_ele.text = f"分析失败：{exc}"
                     error_ele.visible = True
                 else:
-                    result_ele.content = result or "暂无分析结果。"
+                    result_ele.content = _format_analysis_result(result)
                 finally:
                     loading_ele.visible = False
 

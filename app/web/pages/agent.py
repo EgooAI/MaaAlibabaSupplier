@@ -28,17 +28,6 @@ _SYSTEM_AGENT_DEFINITIONS: tuple[tuple[str, str, str], ...] = (
     ("客户所处阶段分析", CHAT_CUSTOMER_STAGE_AGENT_APID, "Chat 页面客户阶段分析工具绑定的系统 Agent。"),
 )
 _SYSTEM_AGENT_APIDS = {apid for _, apid, _ in _SYSTEM_AGENT_DEFINITIONS}
-_SYSTEM_AGENT_TOOLS = {
-    CHAT_TRANSLATION_AGENT_APID: ["process_chat_translation_result"],
-    CHAT_REPLY_SUGGESTION_AGENT_APID: ["process_chat_suggestion_result"],
-    CHAT_CUSTOMER_INTENT_AGENT_APID: ["process_customer_intent_analysis_result"],
-    CHAT_CUSTOMER_STAGE_AGENT_APID: ["process_customer_stage_analysis_result"],
-}
-_SYSTEM_AGENT_ONLY_TOOLS = {
-    tool_name
-    for tool_names in _SYSTEM_AGENT_TOOLS.values()
-    for tool_name in tool_names
-}
 
 
 def _default_level_config() -> dict[str, Any]:
@@ -282,16 +271,11 @@ def _available_agent_tools() -> list[str]:
         for name in names
         if not name.startswith("register_")
         and callable(getattr(module, name, None))
-        and name not in _SYSTEM_AGENT_ONLY_TOOLS
     )
 
 
 def _tool_options(selected_tools: Any = None) -> list[str]:
-    selected = [
-        tool
-        for tool in _selected_tools(selected_tools)
-        if tool not in _SYSTEM_AGENT_ONLY_TOOLS
-    ]
+    selected = _selected_tools(selected_tools)
     return sorted(set(_available_agent_tools()) | set(selected))
 
 
@@ -336,9 +320,6 @@ def _read_agent_form(
     payload["intelevel"] = int(payload["intelevel"])
     if payload["intelevel"] not in _LEVELS:
         raise ValueError("LLM Level 必须在 0~4 之间")
-    forbidden_tools = sorted(_SYSTEM_AGENT_ONLY_TOOLS.intersection(payload["tools"]))
-    if forbidden_tools:
-        raise ValueError("普通 Agent 不能使用系统 Chat 工具：" + "、".join(forbidden_tools))
     return payload
 
 
@@ -924,10 +905,7 @@ def _render_system_agent_management_panel() -> None:
                                 ).props("outlined required").classes("w-40")
                             description = ui.input("描述", value=preset.description).props("required").classes("w-full")
                             prompt = _prompt_editor(value=preset.prompt)
-                            fixed_tools = _SYSTEM_AGENT_TOOLS.get(preset.apid, [])
-                            ui.label("固定工具：" + ("、".join(fixed_tools) if fixed_tools else "无")).classes(
-                                "text-xs text-gray-500"
-                            )
+                            ui.label("系统 Agent 不暴露工具；输出会在代码侧自动规范化。").classes("text-xs text-gray-500")
 
                             def _make_save_system_agent(
                                 preset_apid: str,
@@ -943,7 +921,7 @@ def _render_system_agent_management_panel() -> None:
                                             "description": str(description_input.value or "").strip(),
                                             "prompt": str(prompt_input.value or "").strip(),
                                             "intelevel": int(level_input.value),
-                                            "tools": list(_SYSTEM_AGENT_TOOLS.get(preset_apid, [])),
+                                            "tools": [],
                                         }
                                         missing = [
                                             label
