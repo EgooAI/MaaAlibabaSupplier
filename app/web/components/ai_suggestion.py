@@ -29,7 +29,9 @@ async def open_suggestion_dialog(
     suggestion_state["buyer_language"] = ""
 
     with ui.dialog() as dialog, ui.card().classes("w-[520px] max-w-[90vw]"):
-        ui.label("AI 建议").classes("text-base font-semibold")
+        with ui.row().classes("w-full items-center justify-between"):
+            ui.label("AI 建议").classes("text-base font-semibold")
+            ui.button(icon="close", on_click=dialog.close).props("flat round dense")
 
         loading_ele = ui.row().classes("items-center gap-2 py-2")
         with loading_ele:

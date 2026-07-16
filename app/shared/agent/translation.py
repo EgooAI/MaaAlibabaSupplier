@@ -6,6 +6,11 @@ from dataclasses import dataclass
 
 from loguru import logger
 
+from app.shared.agent.chat_tools import (
+    CHAT_TRANSLATION_AGENT_APID,
+    build_translation_input,
+    run_chat_tool_agent,
+)
 from app.shared.crm.sdk import load_sdk
 from app.shared.crm.translations import text_hash, translation_cached
 
@@ -40,27 +45,8 @@ def _load_translation_payload(raw_text: str) -> dict[str, str | None]:
     return result
 
 
-def _build_agent_input(requests: list[TranslationRequest]) -> str:
-    return json.dumps(
-        {
-            "task": "translate_buyer_messages_to_simplified_chinese",
-            "instructions": [
-                "Translate each item.text into Simplified Chinese.",
-                "Return JSON only: {\"translations\": {\"<text_hash>\": \"<translation or null>\"}}.",
-                "If an item is already Simplified Chinese, return null for that text_hash.",
-                "Do not omit any text_hash.",
-            ],
-            "items": [
-                {"text_hash": request.text_hash, "text": request.text}
-                for request in requests
-            ],
-        },
-        ensure_ascii=False,
-    )
-
-
 def translate_texts_to_crm(texts: list[str], *, force: bool = False) -> int:
-    """Translate texts with crm_sdk level=0 agent and persist results into translate table.
+    """Translate texts with the database chat translation agent and persist results.
 
     Empty translation strings are stored for messages that are already Chinese.
     The business layer should read translation results from the translate table.
@@ -75,29 +61,16 @@ def translate_texts_to_crm(texts: list[str], *, force: bool = False) -> int:
         return 0
 
     sdk = load_sdk()
-    from agent_pipeline import AgentPipeline, AgentPipelineInput
-    from agent_pipeline.llm import OpenAICompatibleLLMClient
-    from agent_pipeline.llm_api import register_default_llms
-    from core import llm_registry
-
-    register_default_llms()
-    llm_config = llm_registry.require(0)
-    client = OpenAICompatibleLLMClient(llm_config)
-    preset = sdk["AgentPreset"](
-        apid="builtin-translation-agent",
-        name="Built-in Translation Agent",
-        description="Translate buyer messages and persist translations.",
-        prompt=(
-            "You are a translation agent for Alibaba supplier chat. "
-            "Translate buyer messages into Simplified Chinese. "
-            "You must output JSON only and follow the user's requested schema exactly."
+    raw_text = run_chat_tool_agent(
+        CHAT_TRANSLATION_AGENT_APID,
+        build_translation_input(
+            [
+                {"text_hash": request.text_hash, "text": request.text}
+                for request in requests
+            ]
         ),
-        intelevel=0,
-        tools=[],
     )
-    pipeline = AgentPipeline(llm_client=client)
-    result = pipeline.run(AgentPipelineInput(user_input=_build_agent_input(requests), agent_preset=preset))
-    translations = _load_translation_payload(result.output_text)
+    translations = _load_translation_payload(raw_text)
 
     manager = sdk["TranslateManager"]()
     saved = 0

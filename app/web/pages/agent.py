@@ -12,12 +12,25 @@ from typing import Any
 import yaml
 from nicegui import ui
 
+from app.shared.agent.chat_tools import (
+    CHAT_CUSTOMER_INTENT_AGENT_APID,
+    CHAT_CUSTOMER_STAGE_AGENT_APID,
+    CHAT_REPLY_SUGGESTION_AGENT_APID,
+    CHAT_TRANSLATION_AGENT_APID,
+)
 from app.shared.crm.sdk import load_sdk
 from app.web.components.nav import nav
 
 _CONFIG_PATH = Path("app/crm_sdk/llm_api.yaml")
 _EXAMPLE_CONFIG_PATH = Path("app/crm_sdk/llm_api.example.yaml")
 _LEVELS = range(5)
+_SYSTEM_AGENT_DEFINITIONS: tuple[tuple[str, str, str], ...] = (
+    ("翻译", CHAT_TRANSLATION_AGENT_APID, "Chat 页面买家消息翻译工具绑定的系统 Agent。"),
+    ("建议", CHAT_REPLY_SUGGESTION_AGENT_APID, "Chat 页面 AI 回复建议工具绑定的系统 Agent。"),
+    ("客户意图分析", CHAT_CUSTOMER_INTENT_AGENT_APID, "Chat 页面客户意图分析工具绑定的系统 Agent。"),
+    ("客户所处阶段分析", CHAT_CUSTOMER_STAGE_AGENT_APID, "Chat 页面客户阶段分析工具绑定的系统 Agent。"),
+)
+_SYSTEM_AGENT_APIDS = {apid for _, apid, _ in _SYSTEM_AGENT_DEFINITIONS}
 
 
 def _default_level_config() -> dict[str, Any]:
@@ -34,10 +47,12 @@ def _default_level_config() -> dict[str, Any]:
 
 
 def _load_yaml_file(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {"levels": {level: _default_level_config() for level in _LEVELS}}
-    with path.open("r", encoding="utf-8") as file:
-        payload = yaml.safe_load(file) or {}
+    sdk = load_sdk()
+    payload = sdk["LLMApiConfigManager"]().to_payload()
+    if payload is None:
+        if not path.exists():
+            return {"levels": {level: _default_level_config() for level in _LEVELS}}
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(payload, dict):
         raise ValueError("llm_api.yaml 顶层必须是 YAML mapping")
     return payload
@@ -96,9 +111,33 @@ def _validate_llm_config(config: dict[str, Any]) -> None:
 
 def _save_llm_config(config: dict[str, Any]) -> None:
     _validate_llm_config(config)
-    _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with _CONFIG_PATH.open("w", encoding="utf-8", newline="\n") as file:
-        yaml.safe_dump(config, file, allow_unicode=True, sort_keys=False)
+    sdk = load_sdk()
+    levels = config.get("levels") or {}
+    rows = []
+    for level in _LEVELS:
+        data = levels.get(level, levels.get(str(level), {})) or {}
+        rows.append(
+            sdk["LLMApiConfig"](
+                level=level,
+                base_url=data["base_url"],
+                api_key=data["api_key"],
+                model_name=data["model_name"],
+                system_prompt=data.get("system_prompt") or "",
+                context=int(data["context"]),
+                context_limit_output_text=data.get("context_limit_output_text") or "",
+                tool_round_limit_output_text=data.get("tool_round_limit_output_text") or "",
+                max_tool_rounds=data.get("max_tool_rounds"),
+            )
+        )
+    sdk["LLMApiConfigManager"]().replace_configs(rows)
+
+
+def _read_llm_config_raw_text() -> str:
+    sdk = load_sdk()
+    payload = sdk["LLMApiConfigManager"]().to_payload()
+    if payload is not None:
+        return yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
+    return _CONFIG_PATH.read_text(encoding="utf-8") if _CONFIG_PATH.exists() else ""
 
 
 def _agent_manager_and_model():
@@ -563,7 +602,7 @@ def _render_llm_config_panel() -> None:
         with ui.row().classes("items-center justify-between w-full"):
             with ui.column().classes("gap-1"):
                 ui.label("LLM 配置").classes("text-lg font-bold")
-                ui.label(str(_CONFIG_PATH)).classes("text-xs text-gray-500")
+                ui.label("存储位置：data/crm.sqlite 表 llm_api_config").classes("text-xs text-gray-500")
             with ui.row().classes("gap-2"):
                 reload_btn = ui.button("重新加载", icon="refresh").props("outline size=sm")
                 save_btn = ui.button("保存配置", icon="save").props("color=primary size=sm")
@@ -629,7 +668,7 @@ def _render_llm_config_panel() -> None:
                             }
 
                 with ui.expansion("原始 YAML 预览", value=False).classes("w-full"):
-                    raw_text = _CONFIG_PATH.read_text(encoding="utf-8") if _CONFIG_PATH.exists() else ""
+                    raw_text = _read_llm_config_raw_text()
                     ui.code(raw_text or "# llm_api.yaml 不存在").classes("w-full")
 
         def _save() -> None:
@@ -649,13 +688,20 @@ def _render_llm_config_panel() -> None:
             if not _EXAMPLE_CONFIG_PATH.exists():
                 ui.notify("示例配置不存在", type="negative")
                 return
-            _CONFIG_PATH.write_text(_EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8"), encoding="utf-8")
-            ui.notify("已从示例配置生成 llm_api.yaml", type="positive")
+            try:
+                payload = yaml.safe_load(_EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+                if not isinstance(payload, dict):
+                    raise ValueError("示例配置顶层必须是 YAML mapping")
+                _save_llm_config(payload)
+            except Exception as exc:
+                ui.notify(f"重置失败：{exc}", type="negative")
+                return
+            ui.notify("已从示例配置写入 llm_api_config 表", type="positive")
             _render_form()
 
         with ui.row().classes("w-full gap-2"):
             ui.button("从示例重置", icon="restore_page", on_click=_copy_example).props("outline color=warning size=sm")
-            ui.label("保存后，新配置会在下次注册或重新加载 LLM 配置时生效。").classes("text-xs text-gray-500 self-center")
+            ui.label("保存后，新配置会写入 llm_api_config 表，并在下次注册或重新加载 LLM 配置时生效。").classes("text-xs text-gray-500 self-center")
 
         reload_btn.on("click", _render_form)
         save_btn.on("click", _save)
@@ -677,13 +723,14 @@ def _render_agent_management_panel() -> None:
             container.clear()
             try:
                 manager, AgentPreset = _agent_manager_and_model()
-                presets = manager.list_agent_preset()
+                all_presets = manager.list_agent_preset()
+                presets = [preset for preset in all_presets if preset.apid not in _SYSTEM_AGENT_APIDS]
             except Exception as exc:
                 status_label.text = f"加载失败：{exc}"
                 status_label.classes(replace="text-sm text-red-600")
                 return
 
-            status_label.text = f"已加载 {len(presets)} 个 Agent"
+            status_label.text = f"已加载 {len(presets)} 个普通 Agent"
             status_label.classes(replace="text-sm text-green-600")
             with container:
                 with ui.expansion("新增 Agent", value=not presets).classes("w-full"):
@@ -727,7 +774,7 @@ def _render_agent_management_panel() -> None:
                         ui.button("保存新增 Agent", icon="add", on_click=_create_agent).props("color=primary")
 
                 if not presets:
-                    ui.label("暂无 AgentPreset。可以在上方新增一个 Agent。").classes("text-sm text-gray-500")
+                    ui.label("暂无普通 AgentPreset。系统 Agent 请在“系统 Agent”页签管理。").classes("text-sm text-gray-500")
                     return
 
                 for preset in presets:
@@ -782,6 +829,9 @@ def _render_agent_management_panel() -> None:
 
                             def _make_delete_agent(preset_apid: str):
                                 def _delete_agent() -> None:
+                                    if preset_apid in _SYSTEM_AGENT_APIDS:
+                                        ui.notify("系统 Agent 不可删除", type="warning")
+                                        return
                                     try:
                                         manager.delete_agent_preset(preset_apid)
                                     except Exception as exc:
@@ -813,39 +863,158 @@ def _render_agent_management_panel() -> None:
                                     "删除",
                                     icon="delete",
                                     on_click=_make_delete_agent(preset.apid),
-                                ).props("outline color=negative size=sm")
+                                ).props(
+                                    "outline color=negative size=sm"
+                                    + (" disable" if preset.apid in _SYSTEM_AGENT_APIDS else "")
+                                )
 
         refresh_btn.on("click", _render)
         _render()
 
 
+def _render_system_agent_management_panel() -> None:
+    with ui.card().classes("w-full p-4 gap-4"):
+        with ui.row().classes("items-center justify-between w-full"):
+            with ui.column().classes("gap-1"):
+                ui.label("系统 Agent 管理").classes("text-lg font-bold")
+                ui.label("Chat 工具栏固定绑定的四个系统 Agent；可编辑配置，但不可删除。").classes(
+                    "text-xs text-gray-500"
+                )
+            refresh_btn = ui.button("刷新", icon="refresh").props("outline size=sm")
+
+        status_label = ui.label("").classes("text-sm")
+        container = ui.column().classes("w-full gap-4")
+
+        def _render() -> None:
+            container.clear()
+            try:
+                manager, AgentPreset = _agent_manager_and_model()
+            except Exception as exc:
+                status_label.text = f"加载失败：{exc}"
+                status_label.classes(replace="text-sm text-red-600")
+                return
+
+            status_label.text = "已加载系统 Agent 绑定"
+            status_label.classes(replace="text-sm text-green-600")
+
+            with container:
+                for display_name, apid, helper_text in _SYSTEM_AGENT_DEFINITIONS:
+                    preset = manager.get_agent_preset(apid)
+                    title = display_name
+                    with ui.expansion(title, value=False).classes("w-full"):
+                        with ui.card().classes("w-full rounded-2xl border border-slate-100 p-4 gap-4 shadow-sm"):
+                            with ui.column().classes("gap-1"):
+                                ui.label(helper_text).classes("text-xs text-gray-500")
+
+                            if preset is None:
+                                ui.label("该系统 Agent 在数据库中不存在，Chat 工具调用时会报错。").classes(
+                                    "text-sm text-red-600"
+                                )
+                                continue
+
+                            with ui.row().classes("w-full gap-3"):
+                                name = ui.input("名称", value=preset.name).props("required").classes("flex-1")
+                                level = ui.select(
+                                    list(_LEVELS),
+                                    label="LLM Level",
+                                    value=preset.intelevel,
+                                ).props("outlined required").classes("w-40")
+                            description = ui.input("描述", value=preset.description).props("required").classes("w-full")
+                            prompt = _prompt_editor(value=preset.prompt)
+                            tools = ui.select(
+                                _tool_options(preset.tools),
+                                label="Tools",
+                                value=_selected_tools(preset.tools),
+                                multiple=True,
+                            ).props("outlined use-chips").classes("w-full")
+
+                            def _make_save_system_agent(
+                                preset_apid: str,
+                                name_input,
+                                description_input,
+                                prompt_input,
+                                level_input,
+                                tools_input,
+                            ):
+                                def _save_agent() -> None:
+                                    try:
+                                        payload = _read_agent_form(
+                                            name=name_input.value,
+                                            description=description_input.value,
+                                            prompt=prompt_input.value,
+                                            level=level_input.value,
+                                            tools=tools_input.value,
+                                        )
+                                        updated = AgentPreset(
+                                            apid=preset_apid,
+                                            **payload,
+                                        )
+                                        manager.upsert_agent_preset(updated)
+                                    except Exception as exc:
+                                        ui.notify(f"保存失败：{exc}", type="negative")
+                                        return
+                                    ui.notify("系统 Agent 已保存", type="positive")
+                                    _render()
+
+                                return _save_agent
+
+                            def _make_open_agent_chat(preset_apid: str, preset_name: str):
+                                async def _open_chat() -> None:
+                                    await _open_agent_chat_dialog(preset_apid, preset_name)
+
+                                return _open_chat
+
+                            with ui.row().classes("gap-2"):
+                                ui.button(
+                                    "对话",
+                                    icon="forum",
+                                    on_click=_make_open_agent_chat(preset.apid, preset.name),
+                                ).props("outline color=primary size=sm")
+                                ui.button(
+                                    "保存",
+                                    icon="save",
+                                    on_click=_make_save_system_agent(preset.apid, name, description, prompt, level, tools),
+                                ).props("color=primary size=sm")
+                                ui.button("不可删除", icon="lock").props("outline color=grey size=sm disable")
+
+        refresh_btn.on("click", _render)
+        _render()
+
+
+def _render_agent_page(active_path: str) -> None:
+    ui.add_head_html(
+        "<style>@media(min-width:993px){.drawer-toggle{display:none!important}}</style>"
+    )
+    drawer = ui.left_drawer(top_corner=True, bottom_corner=True).props("bordered")
+    with drawer:
+        nav(active_path)
+
+    with ui.column().classes("w-full max-w-5xl mx-auto p-6 gap-4"):
+        with ui.row().classes("items-center gap-2 w-full"):
+            ui.button(icon="menu", on_click=drawer.toggle).props(
+                "flat dense round"
+            ).classes("drawer-toggle")
+            with ui.column().classes("gap-1"):
+                ui.label("Agent 控制台").classes("text-xl font-bold")
+                ui.label("统一管理 LLM 配置与 AgentPreset").classes("text-xs text-gray-500")
+
+        with ui.tabs().classes("w-full") as tabs:
+            llm_tab = ui.tab("LLM 配置", icon="settings")
+            system_agent_tab = ui.tab("系统 Agent", icon="shield")
+            agent_tab = ui.tab("普通 Agent", icon="smart_toy")
+
+        with ui.tab_panels(tabs, value=system_agent_tab).classes("w-full"):
+            with ui.tab_panel(llm_tab).classes("p-0"):
+                _render_llm_config_panel()
+            with ui.tab_panel(system_agent_tab).classes("p-0"):
+                _render_system_agent_management_panel()
+            with ui.tab_panel(agent_tab).classes("p-0"):
+                _render_agent_management_panel()
+
+
 def create() -> None:
-    """Register the /status/agent page."""
+    """Register the /agent page."""
 
-    @ui.page("/status/agent")
+    @ui.page("/agent")
     def agent_page() -> None:
-        ui.add_head_html(
-            "<style>@media(min-width:993px){.drawer-toggle{display:none!important}}</style>"
-        )
-        drawer = ui.left_drawer(top_corner=True, bottom_corner=True).props("bordered")
-        with drawer:
-            nav("/status/agent")
-
-        with ui.column().classes("w-full max-w-5xl mx-auto p-6 gap-4"):
-            with ui.row().classes("items-center gap-2 w-full"):
-                ui.button(icon="menu", on_click=drawer.toggle).props(
-                    "flat dense round"
-                ).classes("drawer-toggle")
-                with ui.column().classes("gap-1"):
-                    ui.label("Agent 控制台").classes("text-xl font-bold")
-                    ui.label("统一管理 LLM 配置与 AgentPreset").classes("text-xs text-gray-500")
-
-            with ui.tabs().classes("w-full") as tabs:
-                llm_tab = ui.tab("LLM 配置", icon="settings")
-                agent_tab = ui.tab("Agent 管理", icon="smart_toy")
-
-            with ui.tab_panels(tabs, value=llm_tab).classes("w-full"):
-                with ui.tab_panel(llm_tab).classes("p-0"):
-                    _render_llm_config_panel()
-                with ui.tab_panel(agent_tab).classes("p-0"):
-                    _render_agent_management_panel()
+        _render_agent_page("/agent")
