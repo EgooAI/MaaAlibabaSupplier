@@ -441,7 +441,6 @@ async def _open_agent_chat_dialog(apid: str, agent_name: str, history_id: int | 
             with sidebar_container:
                 with ui.row().classes("w-full items-center justify-between"):
                     ui.label("历史对话").classes("font-semibold")
-                    ui.button("新对话", icon="add", on_click=_open_new_dialog_conversation).props("outline dense color=primary")
                 if not histories:
                     ui.label("暂无历史。成功完成一次回复后会保存。").classes("text-xs text-gray-500")
                     return
