@@ -270,7 +270,6 @@ def _run_agent_chat_message(apid: str, user_input: str) -> str:
     from agent_pipeline.llm import OpenAICompatibleLLMClient
     from agent_pipeline.llm_api import register_default_llms
     from agent_tools import register_builtin_tools
-    from utils import register_chat_result_tools
 
     manager, _ = _agent_manager_and_model()
     preset = manager.get_agent_preset(apid)
@@ -279,7 +278,6 @@ def _run_agent_chat_message(apid: str, user_input: str) -> str:
 
     llm_levels = register_default_llms()
     register_builtin_tools()
-    register_chat_result_tools()
     llm_config = llm_levels.get(int(preset.intelevel))
     if llm_config is None:
         raise ValueError(f"LLM level {preset.intelevel} is not configured")
