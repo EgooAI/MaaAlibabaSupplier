@@ -37,6 +37,8 @@ def load_sdk() -> dict[str, Any]:
         "CustomerManager": core.CustomerManager,
         "Message": models.Message,
         "MessageManager": core.MessageManager,
+        "MessageTest": models.MessageTest,
+        "MessageTestManager": core.MessageTestManager,
         "Platform": models.Platform,
         "PlatformManager": core.PlatformManager,
         "SessionMeta": models.SessionMeta,
