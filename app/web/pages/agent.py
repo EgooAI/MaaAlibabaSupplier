@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -21,8 +20,6 @@ from app.shared.agent.chat_tools import (
 from app.shared.crm.sdk import load_sdk
 from app.web.components.nav import nav
 
-_CONFIG_PATH = Path("app/crm_sdk/llm_api.yaml")
-_EXAMPLE_CONFIG_PATH = Path("app/crm_sdk/llm_api.example.yaml")
 _LEVELS = range(5)
 _SYSTEM_AGENT_DEFINITIONS: tuple[tuple[str, str, str], ...] = (
     ("翻译", CHAT_TRANSLATION_AGENT_APID, "Chat 页面买家消息翻译工具绑定的系统 Agent。"),
@@ -46,15 +43,13 @@ def _default_level_config() -> dict[str, Any]:
     }
 
 
-def _load_yaml_file(path: Path) -> dict[str, Any]:
+def _load_llm_config() -> dict[str, Any]:
     sdk = load_sdk()
     payload = sdk["LLMApiConfigManager"]().to_payload()
     if payload is None:
-        if not path.exists():
-            return {"levels": {level: _default_level_config() for level in _LEVELS}}
-        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return {"levels": {level: _default_level_config() for level in _LEVELS}}
     if not isinstance(payload, dict):
-        raise ValueError("llm_api.yaml 顶层必须是 YAML mapping")
+        raise ValueError("llm_api_config 顶层必须是 YAML mapping")
     return payload
 
 
@@ -137,7 +132,7 @@ def _read_llm_config_raw_text() -> str:
     payload = sdk["LLMApiConfigManager"]().to_payload()
     if payload is not None:
         return yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
-    return _CONFIG_PATH.read_text(encoding="utf-8") if _CONFIG_PATH.exists() else ""
+    return ""
 
 
 def _agent_manager_and_model():
@@ -231,6 +226,8 @@ def _run_agent_chat_message(apid: str, user_input: str) -> str:
     from agent_pipeline import AgentPipeline, AgentPipelineInput
     from agent_pipeline.llm import OpenAICompatibleLLMClient
     from agent_pipeline.llm_api import register_default_llms
+    from agent_tools import register_builtin_tools
+    from utils import register_chat_result_tools
 
     manager, _ = _agent_manager_and_model()
     preset = manager.get_agent_preset(apid)
@@ -238,6 +235,8 @@ def _run_agent_chat_message(apid: str, user_input: str) -> str:
         raise ValueError(f"AgentPreset {apid} not found")
 
     llm_levels = register_default_llms()
+    register_builtin_tools()
+    register_chat_result_tools()
     llm_config = llm_levels.get(int(preset.intelevel))
     if llm_config is None:
         raise ValueError(f"LLM level {preset.intelevel} is not configured")
@@ -264,13 +263,21 @@ def _compose_agent_chat_input(messages: list[dict[str, str]]) -> str:
 def _available_agent_tools() -> list[str]:
     load_sdk()
     import agent_tools
+    import utils
 
-    names = getattr(agent_tools, "__all__", [])
+    agent_tool_names = getattr(agent_tools, "__all__", [])
+    util_tool_names = [
+        "process_chat_translation_result",
+        "process_chat_suggestion_result",
+        "process_customer_intent_analysis_result",
+        "process_customer_stage_analysis_result",
+    ]
     return sorted(
         name
+        for module, names in ((agent_tools, agent_tool_names), (utils, util_tool_names))
         for name in names
         if not name.startswith("register_")
-        and callable(getattr(agent_tools, name, None))
+        and callable(getattr(module, name, None))
     )
 
 
@@ -614,7 +621,7 @@ def _render_llm_config_panel() -> None:
             controls.clear()
             form_container.clear()
             try:
-                config = _load_yaml_file(_CONFIG_PATH)
+                config = _load_llm_config()
             except Exception as exc:
                 status_label.text = f"加载失败：{exc}"
                 status_label.classes(replace="text-sm text-red-600")
@@ -669,7 +676,7 @@ def _render_llm_config_panel() -> None:
 
                 with ui.expansion("原始 YAML 预览", value=False).classes("w-full"):
                     raw_text = _read_llm_config_raw_text()
-                    ui.code(raw_text or "# llm_api.yaml 不存在").classes("w-full")
+                    ui.code(raw_text or "# llm_api_config 表暂无配置").classes("w-full")
 
         def _save() -> None:
             try:
@@ -684,23 +691,7 @@ def _render_llm_config_panel() -> None:
             status_label.classes(replace="text-sm text-green-600")
             _render_form()
 
-        def _copy_example() -> None:
-            if not _EXAMPLE_CONFIG_PATH.exists():
-                ui.notify("示例配置不存在", type="negative")
-                return
-            try:
-                payload = yaml.safe_load(_EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")) or {}
-                if not isinstance(payload, dict):
-                    raise ValueError("示例配置顶层必须是 YAML mapping")
-                _save_llm_config(payload)
-            except Exception as exc:
-                ui.notify(f"重置失败：{exc}", type="negative")
-                return
-            ui.notify("已从示例配置写入 llm_api_config 表", type="positive")
-            _render_form()
-
         with ui.row().classes("w-full gap-2"):
-            ui.button("从示例重置", icon="restore_page", on_click=_copy_example).props("outline color=warning size=sm")
             ui.label("保存后，新配置会写入 llm_api_config 表，并在下次注册或重新加载 LLM 配置时生效。").classes("text-xs text-gray-500 self-center")
 
         reload_btn.on("click", _render_form)
