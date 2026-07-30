@@ -72,31 +72,30 @@ async def open_suggestion_dialog(
             items_ele.clear()
             with items_ele:
                 for item in suggestion_state["items"]:
-                    zh_text = getattr(item, "zh", "") or ""
-                    reply_text = getattr(item, "reply", "") or ""
-                    if not zh_text.strip() and not reply_text.strip():
+                    zh_text = (item.zh or "").strip()
+                    reply_text = (item.reply or "").strip()
+                    if not zh_text and not reply_text:
                         continue
 
                     with ui.card().props("flat bordered").classes("w-full p-3"):
                         with ui.column().classes("w-full gap-1"):
-                            if zh_text.strip():
+                            if zh_text:
                                 with ui.column().classes("gap-0"):
                                     ui.label("中文").classes(
                                         "text-xs text-gray-400 font-medium"
                                     )
-                                    ui.label(zh_text.strip()).classes("text-sm")
-                            if reply_text.strip():
+                                    ui.label(zh_text).classes("text-sm")
+                            if reply_text:
                                 with ui.column().classes("gap-0"):
                                     lang_label = (
                                         buyer_lang.strip()
-                                        if isinstance(buyer_lang, str)
-                                        and buyer_lang.strip()
+                                        if isinstance(buyer_lang, str) and buyer_lang.strip()
                                         else "买家语言"
                                     )
                                     ui.label(lang_label).classes(
                                         "text-xs text-gray-400 font-medium"
                                     )
-                                    ui.label(reply_text.strip()).classes("text-sm")
+                                    ui.label(reply_text).classes("text-sm")
                         ui.separator()
                         with ui.row().classes("w-full justify-end"):
                             def _fill(text=reply_text) -> None:

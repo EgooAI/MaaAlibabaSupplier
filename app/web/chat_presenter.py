@@ -108,21 +108,6 @@ def conversation_for_suggestions(messages: Iterable[CrmMessage], resolver, limit
     ]
 
 
-def conversation_for_translation(messages: Iterable[CrmMessage], resolver, cache, *, force: bool = False) -> list[tuple[str, str, str | None]]:
-    conversation: list[tuple[str, str, str | None]] = []
-    for message in messages:
-        text = message_text(message)
-        is_self = resolver.is_self(message.sender_id)
-        speaker = "商家(我)" if is_self else "买家"
-        if is_self or not text or message.is_system:
-            conversation.append((format_created_at(message.created_at), speaker, text))
-        elif not force and cache.is_cached(text):
-            conversation.append((format_created_at(message.created_at), speaker, None))
-        else:
-            conversation.append((format_created_at(message.created_at), speaker, text))
-    return conversation
-
-
 def group_conversations(conversations: list[CrmConversation], now: float | None = None) -> list[ConversationGroup]:
     current = time.time() if now is None else now
     cutoffs = [current - 86400, current - 7 * 86400, current - 30 * 86400]

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 
 from loguru import logger
@@ -21,17 +20,11 @@ class TranslationRequest:
     text: str
 
 
-def _strip_json_fence(text: str) -> str:
-    value = text.strip()
-    match = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", value, flags=re.DOTALL | re.IGNORECASE)
-    return match.group(1).strip() if match else value
-
-
 def _load_translation_payload(raw_text: str) -> dict[str, str | None]:
-    payload = json.loads(_strip_json_fence(raw_text))
+    payload = json.loads(raw_text)
     if not isinstance(payload, dict):
         raise ValueError("translation agent output must be a JSON object")
-    translations = payload.get("translations", payload)
+    translations = payload.get("translations")
     if not isinstance(translations, dict):
         raise ValueError("translation agent output must contain a translations object")
     result: dict[str, str | None] = {}
@@ -46,11 +39,6 @@ def _load_translation_payload(raw_text: str) -> dict[str, str | None]:
 
 
 def translate_texts_to_crm(texts: list[str], *, force: bool = False) -> int:
-    """Translate texts with the database chat translation agent and persist results.
-
-    Empty translation strings are stored for messages that are already Chinese.
-    The business layer should read translation results from the translate table.
-    """
     unique_texts = list(dict.fromkeys(text.strip() for text in texts if text and text.strip()))
     requests = [
         TranslationRequest(text_hash=text_hash(text), text=text)
@@ -64,10 +52,7 @@ def translate_texts_to_crm(texts: list[str], *, force: bool = False) -> int:
     raw_text = run_chat_tool_agent(
         CHAT_TRANSLATION_AGENT_APID,
         build_translation_input(
-            [
-                {"text_hash": request.text_hash, "text": request.text}
-                for request in requests
-            ]
+            [{"text_hash": request.text_hash, "text": request.text} for request in requests]
         ),
     )
     translations = _load_translation_payload(raw_text)
