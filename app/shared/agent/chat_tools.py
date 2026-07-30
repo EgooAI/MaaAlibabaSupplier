@@ -28,6 +28,16 @@ SYSTEM_AGENT_DEFINITIONS: tuple[tuple[str, str, str], ...] = (
     ("客户所处阶段分析", CHAT_CUSTOMER_STAGE_AGENT_APID, "Chat 页面客户阶段分析工具绑定的系统 Agent。"),
 )
 
+_TRANSLATION_RULES = (
+    "你是专业的阿里巴巴国际站供应商客服翻译。\n"
+    "请将标记了 text_hash 的买家消息翻译为简体中文。\n"
+    "商家与系统消息仅供理解上下文，不要翻译。\n"
+    "如果某条买家消息已经是简体中文，translations 中对应 value 必须为 null。\n"
+    "只输出 JSON 对象，格式："
+    '{"translations":{"<text_hash>":"简体中文译文或null"}}。\n'
+    "translations 必须覆盖下方全部待翻译 text_hash；不要输出解释性文字。"
+)
+
 
 def strip_html(text: str) -> str:
     if not text:
@@ -76,8 +86,46 @@ def run_chat_tool_agent(apid: str, user_input: str, *, timeout_seconds: float = 
     return result.output_text
 
 
-def build_translation_input(items: list[dict[str, str]]) -> str:
-    return json.dumps({"items": items}, ensure_ascii=False)
+def build_translation_input(
+    items: list[dict[str, str]],
+    *,
+    conversation: list[tuple[str, str, str]] | None = None,
+) -> str:
+    """Build translation user input with main-parity rules + optional dialog context.
+
+    *items* entries are ``{"text_hash", "text"}`` for buyer lines that must be translated.
+    *conversation* is ``(timestamp, speaker, text)`` rows; buyer lines present in *items*
+    are annotated with ``text_hash=...`` so the model can use seller/system context.
+    """
+    if not items:
+        return ""
+
+    text_to_hash = {item["text"]: item["text_hash"] for item in items}
+    parts: list[str] = [_TRANSLATION_RULES, ""]
+
+    if conversation:
+        lines: list[str] = []
+        for timestamp, speaker, text in conversation:
+            safe = strip_html(text)
+            if not safe:
+                continue
+            if speaker == "买家" and safe in text_to_hash:
+                lines.append(f"[{timestamp}] 买家: text_hash={text_to_hash[safe]}: {safe}")
+            else:
+                lines.append(f"[{timestamp}] {speaker}: {safe}")
+        parts.append("对话记录：")
+        parts.append("```")
+        parts.append("\n".join(lines) if lines else "(empty)")
+        parts.append("```")
+        parts.append("")
+
+    hash_list = ", ".join(item["text_hash"] for item in items)
+    parts.append(f"请翻译以下 text_hash：{hash_list}")
+    parts.append("待翻译条目：")
+    parts.append("```json")
+    parts.append(json.dumps({"items": items}, ensure_ascii=False))
+    parts.append("```")
+    return "\n".join(parts)
 
 
 def build_reply_suggestion_input(conversation: list[tuple[str, str, str]]) -> str:

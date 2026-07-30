@@ -29,7 +29,18 @@ def _load_translations(raw_text: str) -> dict[str, str | None]:
     return result
 
 
-def translate_texts_to_crm(texts: list[str], *, force: bool = False) -> int:
+def translate_texts_to_crm(
+    texts: list[str],
+    *,
+    force: bool = False,
+    conversation: list[tuple[str, str, str]] | None = None,
+) -> int:
+    """Translate buyer texts via the translation agent and upsert CRM Translate rows.
+
+    *conversation* is optional ``(timestamp, speaker, text)`` context (same shape as
+    reply-suggestion input). When provided, seller/system lines help disambiguate,
+    matching main-branch behavior while still keying results by text_hash.
+    """
     items = [
         {"text_hash": text_hash(text), "text": text}
         for text in dict.fromkeys(t.strip() for t in texts if t and t.strip())
@@ -38,9 +49,13 @@ def translate_texts_to_crm(texts: list[str], *, force: bool = False) -> int:
     if not items:
         return 0
 
+    user_input = build_translation_input(items, conversation=conversation)
+    if not user_input:
+        return 0
+
     sdk = load_sdk()
     translations = _load_translations(
-        run_chat_tool_agent(CHAT_TRANSLATION_AGENT_APID, build_translation_input(items))
+        run_chat_tool_agent(CHAT_TRANSLATION_AGENT_APID, user_input)
     )
     manager = sdk["TranslateManager"]()
     saved = 0

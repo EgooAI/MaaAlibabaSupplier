@@ -62,7 +62,7 @@ APP -> 127.0.0.1:8084 Yak/Yakit MITM -> 127.0.0.1:8085 Python receiver -> parser
 UI/业务以 `app.shared.crm` 为稳定入口：
 
 - `get_self_info()` / `get_user_info()` / `list_conversations()` / `refresh_chat_data()`；
-- 翻译：`get_translation()` / `request_translations()` / `translation_cached()`。
+- 翻译：`get_translation()` / `request_translations(texts, conversation=…)` / `translation_cached()`；user 侧规则与对话上下文在 `build_translation_input`（git 可版本化），结果仍按 `text_hash` 写入 `Translate`。
 
 `get_self_info()` 在 CRM 未就绪时内部可回退 `SelfInfoPool`，页面仍只调 CRM 入口。卡片池与输入草稿仍属 UI/业务缓存，不并入 CRM core。重同步勿阻塞 MITM 或 IM 解密锁，宜后台队列。
 
