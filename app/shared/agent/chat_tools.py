@@ -6,6 +6,7 @@ import re
 
 from app.shared.crm.sdk import load_sdk
 
+# Keep in sync with app.crm_sdk.core.system_agents
 CHAT_TRANSLATION_AGENT_APID = "agent-1bad27aabaac439da678f31d53855b5d"
 CHAT_REPLY_SUGGESTION_AGENT_APID = "agent-5a43bda9e1304108a1a78a3575a44e27"
 CHAT_CUSTOMER_STAGE_AGENT_APID = "agent-f6fb1e0ddff44d27bb3e19e243a70584"
@@ -38,12 +39,12 @@ def strip_html(text: str) -> str:
 
 
 def format_conversation_transcript(conversation: list[tuple[str, str, str]]) -> str:
-    lines: list[str] = []
-    for timestamp, speaker, text in conversation:
-        safe_text = strip_html(text)
-        if safe_text:
-            lines.append(f"[{timestamp}] {speaker}: {safe_text}")
-    return "\n".join(lines).strip() or "(empty)"
+    lines = [
+        f"[{timestamp}] {speaker}: {safe}"
+        for timestamp, speaker, text in conversation
+        if (safe := strip_html(text))
+    ]
+    return "\n".join(lines) or "(empty)"
 
 
 def run_chat_tool_agent(apid: str, user_input: str, *, timeout_seconds: float = 60.0) -> str:

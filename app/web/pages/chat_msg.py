@@ -3,18 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import datetime, timezone
 
 from loguru import logger
-
 from nicegui import ui
 
 from app.shared.agent.chat_tools import (
     CHAT_CUSTOMER_INTENT_AGENT_APID,
     CHAT_CUSTOMER_STAGE_AGENT_APID,
-    build_analysis_input,
-    run_chat_tool_agent,
 )
 from app.shared.backend.maafw_runner import chat_input, chat_send, goto_contact
 from app.shared.crm import (
@@ -23,59 +19,20 @@ from app.shared.crm import (
     request_translations,
     translation_cached,
 )
-from app.task_queue import TaskStatus, get_task_queue
 from app.shared.crm.views import format_created_at
+from app.task_queue import TaskStatus, get_task_queue
 from app.web.chat_presenter import (
     contact_display_name,
-    conversation_for_suggestions,
     generic_card_from_message,
     message_datetime,
     message_text,
     product_card_from_message,
 )
 from app.web.components.ai_suggestion import open_suggestion_dialog
+from app.web.components.analysis_dialog import open_analysis_dialog
 from app.web.components.card import generic_card, product_card
 
 _AVATAR_API = "https://ui-avatars.com/api/"
-
-
-def _markdown_list(title: str, items: list[str]) -> str:
-    if not items:
-        return ""
-    lines = [f"**{title}**"]
-    lines.extend(f"- {item}" for item in items)
-    return "\n".join(lines)
-
-
-def _format_analysis_result(raw_text: str) -> str:
-    text = (raw_text or "").strip()
-    if not text:
-        return "暂无分析结果。"
-
-    payload = json.loads(text)
-    if not isinstance(payload, dict):
-        raise ValueError("analysis result must be a JSON object")
-
-    sections: list[str] = []
-    if payload.get("intent"):
-        sections.append(f"**客户意图**\n\n{str(payload['intent']).strip()}")
-    if payload.get("stage"):
-        sections.append(f"**客户阶段**\n\n{str(payload['stage']).strip()}")
-    if payload.get("confidence"):
-        sections.append(f"**置信度**\n\n{str(payload['confidence']).strip()}")
-
-    for key, title in (
-        ("evidence", "判断依据"),
-        ("concerns", "客户顾虑"),
-        ("next_actions", "下一步建议"),
-    ):
-        raw_items = payload.get(key) or []
-        items = [str(item).strip() for item in raw_items if str(item).strip()] if isinstance(raw_items, list) else []
-        section = _markdown_list(title, items)
-        if section:
-            sections.append(section)
-
-    return "\n\n".join(sections) if sections else text
 
 
 def _avatar_url(name: str, color: str) -> str:
@@ -83,7 +40,6 @@ def _avatar_url(name: str, color: str) -> str:
 
 
 def _is_all_cached(messages, resolver) -> bool:
-    """Return True when every buyer message in the conversation is already cached."""
     for m in messages:
         if resolver.is_self(m.sender_id) or m.is_system:
             continue
@@ -94,14 +50,10 @@ def _is_all_cached(messages, resolver) -> bool:
 
 
 def _login_id_for_contact(contact_ali_id: str) -> str:
-    info = _user_info_for_contact(contact_ali_id)
+    info = get_crm_user_info(contact_ali_id)
     if info and info.login_id:
         return info.login_id
     return contact_ali_id.removesuffix("@icbu")
-
-
-def _user_info_for_contact(contact_ali_id: str):
-    return get_crm_user_info(contact_ali_id)
 
 
 def render(ctx: dict) -> None:
@@ -137,7 +89,7 @@ def render(ctx: dict) -> None:
         scroll = ui.scroll_area().classes("w-full flex-grow")
         with scroll:
             # Quick customer overview card
-            info = _user_info_for_contact(contact)
+            info = get_crm_user_info(contact)
             if info:
                 with ui.card().classes("w-full max-w-sm mx-auto my-4").props("flat bordered"):
                     with ui.column().classes("items-center gap-1 w-full py-2"):
@@ -299,14 +251,14 @@ def render(ctx: dict) -> None:
             tool_bar_section.refresh()
 
         async def _handle_stage_analysis() -> None:
-            await _open_analysis(
+            await _run_analysis(
                 title="客户所处阶段分析",
                 apid=CHAT_CUSTOMER_STAGE_AGENT_APID,
                 task="分析客户当前所处成交阶段，并给出下一步推进建议。",
             )
 
         async def _handle_intent_analysis() -> None:
-            await _open_analysis(
+            await _run_analysis(
                 title="客户意图分析",
                 apid=CHAT_CUSTOMER_INTENT_AGENT_APID,
                 task="分析客户真实意图、关注点、潜在异议和建议动作。",
@@ -426,47 +378,18 @@ def render(ctx: dict) -> None:
 
         await open_suggestion_dialog(conv, resolver, suggestion_state, _on_fill)
 
-    async def _open_analysis(*, title: str, apid: str, task: str) -> None:
+    async def _run_analysis(*, title: str, apid: str, task: str) -> None:
         contact = selected.get("contact")
         if not contact or contact not in conv_map:
             ui.notify("请选择一个会话", type="warning")
             return
-
-        conv = conv_map[contact]
-        with ui.dialog() as dialog, ui.card().classes("w-[640px] max-w-[92vw] gap-3"):
-            with ui.row().classes("w-full items-center justify-between"):
-                ui.label(title).classes("text-base font-semibold")
-                ui.button(icon="close", on_click=dialog.close).props("flat round dense")
-
-            loading_ele = ui.row().classes("items-center gap-2 py-2")
-            with loading_ele:
-                ui.spinner(size="sm", color="primary")
-                ui.label("分析中...").classes("text-xs text-gray-500")
-
-            error_ele = ui.label().classes("text-xs text-red-600 py-1")
-            error_ele.visible = False
-            result_ele = ui.markdown("").classes("w-full text-sm")
-            result_ele.style("max-height: 60vh; overflow-y: auto;")
-
-            async def _run() -> None:
-                try:
-                    convo = conversation_for_suggestions(conv.messages, resolver)
-                    result = await asyncio.to_thread(
-                        run_chat_tool_agent,
-                        apid,
-                        build_analysis_input(task=task, conversation=convo),
-                    )
-                except Exception as exc:
-                    error_ele.text = f"分析失败：{exc}"
-                    error_ele.visible = True
-                else:
-                    result_ele.content = _format_analysis_result(result)
-                finally:
-                    loading_ele.visible = False
-
-        dialog.open()
-        await asyncio.sleep(0)
-        await _run()
+        await open_analysis_dialog(
+            title=title,
+            apid=apid,
+            task=task,
+            conv=conv_map[contact],
+            resolver=resolver,
+        )
 
     async def _confirm_send(contact: str, login_id: str, text: str) -> str:
         with ui.dialog() as dialog, ui.card().classes("w-[520px] max-w-[90vw]"):
