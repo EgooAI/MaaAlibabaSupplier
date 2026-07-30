@@ -64,11 +64,9 @@ def run_chat_tool_agent(apid: str, user_input: str, *, timeout_seconds: float = 
     from agent_pipeline.llm_api import register_default_llms
     from agent_tools import register_builtin_tools
     from core import AgentPresetManager
-    from utils import register_chat_result_tools
 
     llm_levels = register_default_llms()
     register_builtin_tools()
-    register_chat_result_tools()
 
     manager = AgentPresetManager()
     preset = manager.get_agent_preset(apid)
