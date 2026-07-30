@@ -44,12 +44,15 @@ install
 gui
 
 # Tools
-tools/ImageCropper/**/*.pngfoobar
+tools/ImageCropper/**/*.png
 
 # Python
 __pycache__/
 .venv/
 *.py[cod]
+
+# NodeJS
+node_modules/
 
 # Data
 config
@@ -59,7 +62,3 @@ data
 
 # Agent
 .opencode/
-foobar
-
-项目结构.md
-node_modules

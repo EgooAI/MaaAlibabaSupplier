@@ -138,7 +138,7 @@ jobs:
             "$python_exe" -m ensurepip --upgrade
           fi
           "$python_exe" -m pip install --upgrade pip
-          "$python_exe" -m pip install --upgrade --no-cache-dir --pre -r agent/requirements.txt
+          "$python_exe" -m pip install --upgrade --no-cache-dir --pre -r app/requirements.txt
 
       - name: Install build dependencies
         shell: bash
