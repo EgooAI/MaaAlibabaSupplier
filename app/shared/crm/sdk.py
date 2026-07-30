@@ -19,12 +19,6 @@ def load_sdk() -> dict[str, Any]:
     """Load the standalone SDK without changing SDK package import style."""
     _ensure_sdk_path()
 
-    try:
-        importlib.import_module("app.crm_sdk")
-    except ModuleNotFoundError:
-        # Fall back to the standalone SDK layout when the package path is unavailable.
-        pass
-
     core = importlib.import_module("core")
     models = importlib.import_module("models")
 

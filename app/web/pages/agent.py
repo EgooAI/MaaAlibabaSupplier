@@ -12,22 +12,14 @@ import yaml
 from nicegui import ui
 
 from app.shared.agent.chat_tools import (
-    CHAT_CUSTOMER_INTENT_AGENT_APID,
-    CHAT_CUSTOMER_STAGE_AGENT_APID,
-    CHAT_REPLY_SUGGESTION_AGENT_APID,
-    CHAT_TRANSLATION_AGENT_APID,
+    SYSTEM_AGENT_APIDS,
+    SYSTEM_AGENT_DEFINITIONS,
+    run_chat_tool_agent,
 )
 from app.shared.crm.sdk import load_sdk
 from app.web.components.nav import nav
 
 _LEVELS = range(5)
-_SYSTEM_AGENT_DEFINITIONS: tuple[tuple[str, str, str], ...] = (
-    ("翻译", CHAT_TRANSLATION_AGENT_APID, "Chat 页面买家消息翻译工具绑定的系统 Agent。"),
-    ("建议", CHAT_REPLY_SUGGESTION_AGENT_APID, "Chat 页面 AI 回复建议工具绑定的系统 Agent。"),
-    ("客户意图分析", CHAT_CUSTOMER_INTENT_AGENT_APID, "Chat 页面客户意图分析工具绑定的系统 Agent。"),
-    ("客户所处阶段分析", CHAT_CUSTOMER_STAGE_AGENT_APID, "Chat 页面客户阶段分析工具绑定的系统 Agent。"),
-)
-_SYSTEM_AGENT_APIDS = {apid for _, apid, _ in _SYSTEM_AGENT_DEFINITIONS}
 
 
 def _default_level_config() -> dict[str, Any]:
@@ -221,33 +213,6 @@ async def _confirm_delete_history(history_name: str) -> bool:
     return bool(await dialog)
 
 
-def _run_agent_chat_message(apid: str, user_input: str) -> str:
-    load_sdk()
-    from agent_pipeline import AgentPipeline, AgentPipelineInput
-    from agent_pipeline.llm import OpenAICompatibleLLMClient
-    from agent_pipeline.llm_api import register_default_llms
-    from agent_tools import register_builtin_tools
-    from utils import register_chat_result_tools
-
-    manager, _ = _agent_manager_and_model()
-    preset = manager.get_agent_preset(apid)
-    if preset is None:
-        raise ValueError(f"AgentPreset {apid} not found")
-
-    llm_levels = register_default_llms()
-    register_builtin_tools()
-    register_chat_result_tools()
-    llm_config = llm_levels.get(int(preset.intelevel))
-    if llm_config is None:
-        raise ValueError(f"LLM level {preset.intelevel} is not configured")
-
-    result = AgentPipeline(
-        llm_client=OpenAICompatibleLLMClient(llm_config),
-        manager=manager,
-    ).run(AgentPipelineInput(user_input=user_input, apid=apid))
-    return result.output_text
-
-
 def _compose_agent_chat_input(messages: list[dict[str, str]]) -> str:
     history = "\n".join(
         f"{'User' if message['role'] == 'user' else 'Agent'}: {message['content']}"
@@ -264,13 +229,10 @@ def _available_agent_tools() -> list[str]:
     load_sdk()
     import agent_tools
 
-    agent_tool_names = getattr(agent_tools, "__all__", [])
     return sorted(
         name
-        for module, names in ((agent_tools, agent_tool_names),)
-        for name in names
-        if not name.startswith("register_")
-        and callable(getattr(module, name, None))
+        for name in getattr(agent_tools, "__all__", [])
+        if not name.startswith("register_") and callable(getattr(agent_tools, name, None))
     )
 
 
@@ -555,7 +517,7 @@ async def _open_agent_chat_dialog(apid: str, agent_name: str, history_id: int | 
 
                     try:
                         reply = await asyncio.to_thread(
-                            _run_agent_chat_message,
+                            run_chat_tool_agent,
                             apid,
                             _compose_agent_chat_input(messages),
                         )
@@ -708,7 +670,7 @@ def _render_agent_management_panel() -> None:
             try:
                 manager, AgentPreset = _agent_manager_and_model()
                 all_presets = manager.list_agent_preset()
-                presets = [preset for preset in all_presets if preset.apid not in _SYSTEM_AGENT_APIDS]
+                presets = [preset for preset in all_presets if preset.apid not in SYSTEM_AGENT_APIDS]
             except Exception as exc:
                 status_label.text = f"加载失败：{exc}"
                 status_label.classes(replace="text-sm text-red-600")
@@ -813,7 +775,7 @@ def _render_agent_management_panel() -> None:
 
                             def _make_delete_agent(preset_apid: str):
                                 def _delete_agent() -> None:
-                                    if preset_apid in _SYSTEM_AGENT_APIDS:
+                                    if preset_apid in SYSTEM_AGENT_APIDS:
                                         ui.notify("系统 Agent 不可删除", type="warning")
                                         return
                                     try:
@@ -849,7 +811,7 @@ def _render_agent_management_panel() -> None:
                                     on_click=_make_delete_agent(preset.apid),
                                 ).props(
                                     "outline color=negative size=sm"
-                                    + (" disable" if preset.apid in _SYSTEM_AGENT_APIDS else "")
+                                    + (" disable" if preset.apid in SYSTEM_AGENT_APIDS else "")
                                 )
 
         refresh_btn.on("click", _render)
@@ -882,7 +844,7 @@ def _render_system_agent_management_panel() -> None:
             status_label.classes(replace="text-sm text-green-600")
 
             with container:
-                for display_name, apid, helper_text in _SYSTEM_AGENT_DEFINITIONS:
+                for display_name, apid, helper_text in SYSTEM_AGENT_DEFINITIONS:
                     preset = manager.get_agent_preset(apid)
                     title = display_name
                     with ui.expansion(title, value=False).classes("w-full"):
@@ -916,30 +878,15 @@ def _render_system_agent_management_panel() -> None:
                             ):
                                 def _save_agent() -> None:
                                     try:
-                                        payload = {
-                                            "name": str(name_input.value or "").strip(),
-                                            "description": str(description_input.value or "").strip(),
-                                            "prompt": str(prompt_input.value or "").strip(),
-                                            "intelevel": int(level_input.value),
-                                            "tools": [],
-                                        }
-                                        missing = [
-                                            label
-                                            for label, value in (
-                                                ("名称", payload["name"]),
-                                                ("描述", payload["description"]),
-                                                ("Prompt", payload["prompt"]),
-                                            )
-                                            if not value
-                                        ]
-                                        if missing:
-                                            raise ValueError("必填项不能为空：" + "、".join(missing))
-                                        if payload["intelevel"] not in _LEVELS:
-                                            raise ValueError("LLM Level 必须在 0~4 之间")
-                                        updated = AgentPreset(
-                                            apid=preset_apid,
-                                            **payload,
+                                        payload = _read_agent_form(
+                                            name=name_input.value,
+                                            description=description_input.value,
+                                            prompt=prompt_input.value,
+                                            level=level_input.value,
+                                            tools=[],
                                         )
+                                        payload["tools"] = []
+                                        updated = AgentPreset(apid=preset_apid, **payload)
                                         manager.upsert_agent_preset(updated)
                                     except Exception as exc:
                                         ui.notify(f"保存失败：{exc}", type="negative")

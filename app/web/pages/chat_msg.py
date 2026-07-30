@@ -39,14 +39,6 @@ from app.web.components.card import generic_card, product_card
 _AVATAR_API = "https://ui-avatars.com/api/"
 
 
-def _as_text_list(value) -> list[str]:
-    if value is None or value == "":
-        return []
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    return [line.strip() for line in str(value).splitlines() if line.strip()]
-
-
 def _markdown_list(title: str, items: list[str]) -> str:
     if not items:
         return ""
@@ -60,12 +52,9 @@ def _format_analysis_result(raw_text: str) -> str:
     if not text:
         return "暂无分析结果。"
 
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        return text
+    payload = json.loads(text)
     if not isinstance(payload, dict):
-        return text
+        raise ValueError("analysis result must be a JSON object")
 
     sections: list[str] = []
     if payload.get("intent"):
@@ -80,7 +69,9 @@ def _format_analysis_result(raw_text: str) -> str:
         ("concerns", "客户顾虑"),
         ("next_actions", "下一步建议"),
     ):
-        section = _markdown_list(title, _as_text_list(payload.get(key)))
+        raw_items = payload.get(key) or []
+        items = [str(item).strip() for item in raw_items if str(item).strip()] if isinstance(raw_items, list) else []
+        section = _markdown_list(title, items)
         if section:
             sections.append(section)
 
@@ -307,12 +298,6 @@ def render(ctx: dict) -> None:
             messages.refresh()
             tool_bar_section.refresh()
 
-        async def _handle_translate() -> None:
-            await _translate(force=all_cached)
-
-        async def _handle_suggestions() -> None:
-            await _open_suggestions()
-
         async def _handle_stage_analysis() -> None:
             await _open_analysis(
                 title="客户所处阶段分析",
@@ -336,7 +321,7 @@ def render(ctx: dict) -> None:
                     ui.button(
                         "AI建议",
                         icon="tips_and_updates",
-                        on_click=_handle_suggestions,
+                        on_click=_open_suggestions,
                     ).props("size=sm flat color=amber")
                     ui.button(
                         "客户阶段",
@@ -352,13 +337,13 @@ def render(ctx: dict) -> None:
                     ui.button(
                         "重新翻译",
                         icon="refresh",
-                        on_click=_handle_translate,
+                        on_click=lambda: _translate(force=True),
                     ).props("size=sm flat color=secondary")
                 else:
                     ui.button(
                         "翻译",
                         icon="translate",
-                        on_click=_handle_translate,
+                        on_click=lambda: _translate(force=False),
                     ).props("size=sm flat")
                 show_results = bool(translation_state.get("show_results", True))
                 toggle_text = "隐藏译文" if show_results else "显示译文"
