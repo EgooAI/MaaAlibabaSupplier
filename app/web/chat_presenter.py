@@ -96,8 +96,15 @@ def message_speaker(message: CrmMessage, *, is_self: bool) -> str:
     return "商家(我)" if is_self else "买家"
 
 
-def conversation_for_suggestions(messages: Iterable[CrmMessage], resolver, limit: int = 30) -> list[tuple[str, str, str]]:
-    rows = list(messages)[-limit:]
+def conversation_rows(
+    messages: Iterable[CrmMessage],
+    resolver,
+    *,
+    limit: int | None = 30,
+) -> list[tuple[str, str, str]]:
+    rows = list(messages)
+    if limit is not None:
+        rows = rows[-limit:]
     return [
         (
             format_created_at(message.created_at),
@@ -106,6 +113,19 @@ def conversation_for_suggestions(messages: Iterable[CrmMessage], resolver, limit
         )
         for message in rows
     ]
+
+
+def conversation_for_suggestions(
+    messages: Iterable[CrmMessage], resolver, limit: int = 30
+) -> list[tuple[str, str, str]]:
+    return conversation_rows(messages, resolver, limit=limit)
+
+
+def conversation_for_translation(
+    messages: Iterable[CrmMessage], resolver
+) -> list[tuple[str, str, str]]:
+    """Full dialog context for translation (seller lines included for disambiguation)."""
+    return conversation_rows(messages, resolver, limit=None)
 
 
 def group_conversations(conversations: list[CrmConversation], now: float | None = None) -> list[ConversationGroup]:

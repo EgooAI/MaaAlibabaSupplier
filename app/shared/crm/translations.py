@@ -28,10 +28,15 @@ def get_translation(text: str) -> str | None:
     return record.translation or None
 
 
-def request_translations(texts: list[str], *, force: bool = False) -> int:
+def request_translations(
+    texts: list[str],
+    *,
+    force: bool = False,
+    conversation: list[tuple[str, str, str]] | None = None,
+) -> int:
     from app.shared.agent.translation import translate_texts_to_crm
 
-    return translate_texts_to_crm(texts, force=force)
+    return translate_texts_to_crm(texts, force=force, conversation=conversation)
 
 
 __all__ = ["get_translation", "request_translations", "text_hash", "translation_cached"]

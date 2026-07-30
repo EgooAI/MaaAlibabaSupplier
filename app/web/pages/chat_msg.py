@@ -23,6 +23,7 @@ from app.shared.crm.views import format_created_at
 from app.task_queue import TaskStatus, get_task_queue
 from app.web.chat_presenter import (
     contact_display_name,
+    conversation_for_translation,
     generic_card_from_message,
     message_datetime,
     message_text,
@@ -232,7 +233,13 @@ def render(ctx: dict) -> None:
                         continue
                     texts.append(text)
 
-                saved = await asyncio.to_thread(request_translations, texts, force=force)
+                conversation = conversation_for_translation(conv.messages, resolver)
+                saved = await asyncio.to_thread(
+                    request_translations,
+                    texts,
+                    force=force,
+                    conversation=conversation,
+                )
                 logger.info("Translation agent saved {} rows", saved)
                 translation_state["done"] = True
                 messages.refresh()
