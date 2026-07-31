@@ -13,23 +13,18 @@ from app.web.components.nav import nav
 from app.web.pages import chat_batch, chat_info, chat_msg
 
 
-_SYNC_MESSAGES = {
-    "im_database_not_ready": (
-        "等待聊天数据库就绪…",
-        "请从 app/main.py 启动，或确认 ALIBABA_DATA_DIR 指向当前登录账号的 Alibaba Supplier 数据目录。",
-    ),
-    "self_identity_not_ready": (
-        "等待当前登录账号识别…",
-        "请确认 Alibaba Supplier 客户端已登录，并让主程序完成一次身份初始化。",
-    ),
-}
-
-
 def _sync_reason_message(reason: str) -> tuple[str, str]:
-    return _SYNC_MESSAGES.get(
-        reason,
-        ("等待聊天数据加载…", "聊天数据正在初始化，请稍后自动重试。"),
-    )
+    if reason == "im_database_not_ready":
+        return (
+            "等待聊天数据库就绪…",
+            "请从 app/main.py 启动，或确认 ALIBABA_DATA_DIR 指向当前登录账号的 Alibaba Supplier 数据目录。",
+        )
+    if reason == "self_identity_not_ready":
+        return (
+            "等待当前登录账号识别…",
+            "请确认 Alibaba Supplier 客户端已登录，并让主程序完成一次身份初始化。",
+        )
+    return ("等待聊天数据加载…", "聊天数据正在初始化，请稍后自动重试。")
 
 
 def create() -> None:
@@ -120,10 +115,13 @@ def create() -> None:
                         pending_pool.put(prev, ctx["msg_input"].value or "")
                     selected["contact"] = c
                     ctx["msg_input"].value = pending_pool.get(c)
-                    suggestion_state.update(
-                        loading=False, items=[], buyer_language="", error=None
-                    )
-                    translation_state.update(loading=False, error=None, done=False)
+                    suggestion_state["loading"] = False
+                    suggestion_state["items"] = []
+                    suggestion_state["buyer_language"] = ""
+                    suggestion_state["error"] = None
+                    translation_state["loading"] = False
+                    translation_state["error"] = None
+                    translation_state["done"] = False
                     send_state["task_id"] = None
                     ctx["refresh_messages"]()
                     ctx["refresh_translate"]()

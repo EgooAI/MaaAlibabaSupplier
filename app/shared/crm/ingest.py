@@ -15,12 +15,16 @@ class ChatSyncState:
 def refresh_chat_data(*, wait: bool = False) -> ChatSyncState:
     """Refresh source IM data into CRM without exposing source details to UI."""
     from app.shared.backend.im_db_middleware import get_im_db_middleware
+    from loguru import logger
 
     mw = get_im_db_middleware()
     if mw.get_connection() is None:
         return ChatSyncState(ready=False, self_ali_id="", reason="im_database_not_ready")
 
-    mw.sync_to_crm(wait=wait)
+    try:
+        mw.sync_to_crm(wait=wait)
+    except Exception:
+        logger.exception("CRM sync failed; continuing with local IM database readiness")
     self_info = get_self_info()
     self_ali_id = self_info.ali_id if self_info and self_info.ali_id else ""
     if not self_ali_id:

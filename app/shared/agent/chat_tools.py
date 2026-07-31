@@ -1,45 +1,19 @@
 from __future__ import annotations
 
-import html
 import json
 import re
 
 from app.shared.crm.sdk import load_sdk
 
-# Keep in sync with app.crm_sdk.core.system_agents
 CHAT_TRANSLATION_AGENT_APID = "agent-1bad27aabaac439da678f31d53855b5d"
 CHAT_REPLY_SUGGESTION_AGENT_APID = "agent-5a43bda9e1304108a1a78a3575a44e27"
 CHAT_CUSTOMER_STAGE_AGENT_APID = "agent-f6fb1e0ddff44d27bb3e19e243a70584"
 CHAT_CUSTOMER_INTENT_AGENT_APID = "agent-c9b80fdfad234392b55d84de93a186ae"
 
-SYSTEM_AGENT_APIDS = frozenset(
-    {
-        CHAT_TRANSLATION_AGENT_APID,
-        CHAT_REPLY_SUGGESTION_AGENT_APID,
-        CHAT_CUSTOMER_STAGE_AGENT_APID,
-        CHAT_CUSTOMER_INTENT_AGENT_APID,
-    }
-)
-
-SYSTEM_AGENT_DEFINITIONS: tuple[tuple[str, str, str], ...] = (
-    ("翻译", CHAT_TRANSLATION_AGENT_APID, "Chat 页面买家消息翻译工具绑定的系统 Agent。"),
-    ("建议", CHAT_REPLY_SUGGESTION_AGENT_APID, "Chat 页面 AI 回复建议工具绑定的系统 Agent。"),
-    ("客户意图分析", CHAT_CUSTOMER_INTENT_AGENT_APID, "Chat 页面客户意图分析工具绑定的系统 Agent。"),
-    ("客户所处阶段分析", CHAT_CUSTOMER_STAGE_AGENT_APID, "Chat 页面客户阶段分析工具绑定的系统 Agent。"),
-)
-
-_TRANSLATION_RULES = (
-    "你是专业的阿里巴巴国际站供应商客服翻译。\n"
-    "请将标记了 text_hash 的买家消息翻译为简体中文。\n"
-    "商家与系统消息仅供理解上下文，不要翻译。\n"
-    "如果某条买家消息已经是简体中文，translations 中对应 value 必须为 null。\n"
-    "只输出 JSON 对象，格式："
-    '{"translations":{"<text_hash>":"简体中文译文或null"}}。\n'
-    "translations 必须覆盖下方全部待翻译 text_hash；不要输出解释性文字。"
-)
-
 
 def strip_html(text: str) -> str:
+    import html
+
     if not text:
         return ""
     value = html.unescape(text)
@@ -48,16 +22,7 @@ def strip_html(text: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
-def format_conversation_transcript(conversation: list[tuple[str, str, str]]) -> str:
-    lines = [
-        f"[{timestamp}] {speaker}: {safe}"
-        for timestamp, speaker, text in conversation
-        if (safe := strip_html(text))
-    ]
-    return "\n".join(lines) or "(empty)"
-
-
-def run_chat_tool_agent(apid: str, user_input: str, *, timeout_seconds: float = 60.0) -> str:
+def run_chat_tool_agent(apid: str, user_input: str) -> str:
     load_sdk()
     from agent_pipeline import AgentPipeline, AgentPipelineInput
     from agent_pipeline.llm import OpenAICompatibleLLMClient
@@ -65,7 +30,7 @@ def run_chat_tool_agent(apid: str, user_input: str, *, timeout_seconds: float = 
     from agent_tools import register_builtin_tools
     from core import AgentPresetManager
 
-    llm_levels = register_default_llms()
+    register_default_llms()
     register_builtin_tools()
 
     manager = AgentPresetManager()
@@ -73,65 +38,45 @@ def run_chat_tool_agent(apid: str, user_input: str, *, timeout_seconds: float = 
     if preset is None:
         raise ValueError(f"AgentPreset {apid} not found")
 
+    llm_levels = register_default_llms()
     llm_config = llm_levels.get(int(preset.intelevel))
     if llm_config is None:
         raise ValueError(f"LLM level {preset.intelevel} is not configured")
 
     result = AgentPipeline(
-        llm_client=OpenAICompatibleLLMClient(llm_config, timeout_seconds=timeout_seconds),
+        llm_client=OpenAICompatibleLLMClient(llm_config, timeout_seconds=60.0),
         manager=manager,
     ).run(AgentPipelineInput(user_input=user_input, apid=apid))
     return result.output_text
 
 
-def build_translation_input(
-    items: list[dict[str, str]],
-    *,
-    conversation: list[tuple[str, str, str]] | None = None,
-) -> str:
-    """Build translation user input with main-parity rules + optional dialog context.
-
-    *items* entries are ``{"text_hash", "text"}`` for buyer lines that must be translated.
-    *conversation* is ``(timestamp, speaker, text)`` rows; buyer lines present in *items*
-    are annotated with ``text_hash=...`` so the model can use seller/system context.
-    """
-    if not items:
-        return ""
-
-    text_to_hash = {item["text"]: item["text_hash"] for item in items}
-    parts: list[str] = [_TRANSLATION_RULES, ""]
-
-    if conversation:
-        lines: list[str] = []
-        for timestamp, speaker, text in conversation:
-            safe = strip_html(text)
-            if not safe:
-                continue
-            if speaker == "买家" and safe in text_to_hash:
-                lines.append(f"[{timestamp}] 买家: text_hash={text_to_hash[safe]}: {safe}")
-            else:
-                lines.append(f"[{timestamp}] {speaker}: {safe}")
-        parts.append("对话记录：")
-        parts.append("```")
-        parts.append("\n".join(lines) if lines else "(empty)")
-        parts.append("```")
-        parts.append("")
-
-    hash_list = ", ".join(item["text_hash"] for item in items)
-    parts.append(f"请翻译以下 text_hash：{hash_list}")
-    parts.append("待翻译条目：")
-    parts.append("```json")
-    parts.append(json.dumps({"items": items}, ensure_ascii=False))
-    parts.append("```")
-    return "\n".join(parts)
+def build_translation_input(items: list[dict[str, str]]) -> str:
+    return json.dumps({"items": items}, ensure_ascii=False)
 
 
 def build_reply_suggestion_input(conversation: list[tuple[str, str, str]]) -> str:
-    return f"对话记录：\n```\n{format_conversation_transcript(conversation)}\n```"
+    lines: list[str] = []
+    for timestamp, speaker, text in conversation:
+        safe_text = strip_html(text)
+        if safe_text:
+            lines.append(f"[{timestamp}] {speaker}: {safe_text}")
+
+    transcript = "\n".join(lines).strip() or "(empty)"
+    return f"对话记录：\n```\n{transcript}\n```"
 
 
-def build_analysis_input(*, task: str, conversation: list[tuple[str, str, str]]) -> str:
-    return f"任务：{task}\n\n聊天记录：\n```\n{format_conversation_transcript(conversation)}\n```"
+def build_analysis_input(
+    *,
+    task: str,
+    conversation: list[tuple[str, str, str]],
+) -> str:
+    lines: list[str] = []
+    for timestamp, speaker, text in conversation:
+        safe_text = strip_html(text)
+        if safe_text:
+            lines.append(f"[{timestamp}] {speaker}: {safe_text}")
+    transcript = "\n".join(lines).strip() or "(empty)"
+    return f"任务：{task}\n\n" "聊天记录：\n" "```\n" f"{transcript}\n" "```"
 
 
 __all__ = [
@@ -139,12 +84,8 @@ __all__ = [
     "CHAT_CUSTOMER_STAGE_AGENT_APID",
     "CHAT_REPLY_SUGGESTION_AGENT_APID",
     "CHAT_TRANSLATION_AGENT_APID",
-    "SYSTEM_AGENT_APIDS",
-    "SYSTEM_AGENT_DEFINITIONS",
     "build_analysis_input",
     "build_reply_suggestion_input",
     "build_translation_input",
-    "format_conversation_transcript",
     "run_chat_tool_agent",
-    "strip_html",
 ]

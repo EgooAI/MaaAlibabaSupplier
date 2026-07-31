@@ -1,11 +1,12 @@
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-
 _ENV_LOADED_PATHS: dict[str, Path] = {}
+_ENV_ASSIGNMENT_PATTERN = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=")
 
 
 @dataclass(frozen=True)
@@ -53,12 +54,24 @@ def load_workdir_env(env_filename: str = ".env") -> Path:
     return resolved
 
 
+def _decode_env_text(value: str) -> str:
+    return value.replace("\\r", "\r").replace("\\n", "\n").replace("\\\\", "\\")
+
+
+def _encode_env_text(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n").replace('"', '\\"')
+
+
 def get_env_str(key: str, default: str = "", *, required: bool = False) -> str:
     value = os.getenv(key, default)
     value = value.strip() if isinstance(value, str) else ""
     if required and not value:
         raise ValueError(f"Missing required env var: {key}")
     return value
+
+
+def get_env_text(key: str, default: str = "") -> str:
+    return get_env_str(key, default)
 
 
 def get_env_int(key: str, default: int) -> int:

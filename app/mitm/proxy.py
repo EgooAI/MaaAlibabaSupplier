@@ -22,7 +22,7 @@ from app.shared.mitm.parsers import (
     parse_inquiry_card,
     parse_query_customer_info,
 )
-from app.shared.mitm.pool import SelfInfo, UserInfo, get_generic_card_pool, get_inquiry_card_pool, get_product_card_pool, get_self_info_pool, get_user_info_pool
+from app.shared.mitm.pool import FIXED_SELF_ALI_ID, SelfInfo, UserInfo, get_generic_card_pool, get_inquiry_card_pool, get_product_card_pool, get_self_info_pool, get_user_info_pool
 from app.shared.crm import sync_self_info, sync_user_info
 from app.shared.utils.logging import configure_logging
 
@@ -78,7 +78,7 @@ class ReusableThreadingHTTPServer(ThreadingHTTPServer):
 class TrafficRouter:
     def __init__(self, url_filters: list[str] | None = None) -> None:
         self.url_filters = url_filters or []
-        self._self_ali_id = ""
+        self._self_ali_id = FIXED_SELF_ALI_ID
         self._routes: list[tuple[str, Callable[[_TrafficEvent], None]]] = [
             ("queryCustomerInfo", self._handle_query_customer_info),
             ("getuserinfobyparams", self._handle_get_user_info_by_params),
@@ -86,6 +86,9 @@ class TrafficRouter:
             ("contact.extinfo.get", self._handle_contact_extinfo_get),
             ("fetchcard", self._handle_fetch_card),
         ]
+        info = SelfInfo(ali_id=FIXED_SELF_ALI_ID)
+        get_self_info_pool().put(info)
+        sync_self_info(info)
 
     def process(self, data: dict[str, Any]) -> None:
         event = _TrafficEvent.from_payload(data)
@@ -133,7 +136,7 @@ class TrafficRouter:
         m = _COOKIE_ALI_ID_RE.search(cookie)
         if not m:
             return
-        self._self_ali_id = m.group(1)
+        self._self_ali_id = FIXED_SELF_ALI_ID
         logger.info("Self ali_id detected from Cookie: {}", self._self_ali_id)
         info = SelfInfo(ali_id=self._self_ali_id)
         get_self_info_pool().put(info)
