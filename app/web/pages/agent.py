@@ -18,7 +18,7 @@ from app.shared.agent.chat_tools import (
     CHAT_TRANSLATION_AGENT_APID,
 )
 from app.shared.crm.sdk import load_sdk
-from app.shared.crm.system_agents_seed import restore_system_agent_default
+from app.shared.crm.system_agents import restore_system_agent_default
 from app.shared.utils.env import get_env_text, set_env_text
 from app.web.components.nav import nav
 
@@ -1179,5 +1179,4 @@ def create() -> None:
     @ui.page("/agent")
     def agent_page() -> None:
         _render_agent_page("/agent")
-
 

@@ -14,7 +14,7 @@ if __package__ in {None, ""}:
 
 from app.maafw_process import MaaFWProcess, MaaFWProcessError
 from app.mitm.proxy import run_receiver
-from app.shared.crm.system_agents_seed import ensure_system_agents_seeded
+from app.shared.crm import ensure_system_agents_seeded
 from app.web.server import run as run_web
 from app.shared.utils.env import load_workdir_env
 from app.shared.utils.logging import configure_logging

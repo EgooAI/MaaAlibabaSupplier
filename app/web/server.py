@@ -13,12 +13,10 @@ from app.shared.utils.env import load_workdir_env
 
 def run() -> None:
     load_workdir_env()
-    ensure_system_agents_seeded()
-
-    host = os.environ.get("MAA_WEB_HOST", "127.0.0.1")
-    port = int(os.environ.get("MAA_WEB_PORT", "8787"))
     repo_root = Path(__file__).resolve().parents[2]
     ensure_system_agents_seeded(repo_root / "data" / "crm.sqlite")
+    host = os.environ.get("MAA_WEB_HOST", "127.0.0.1")
+    port = int(os.environ.get("MAA_WEB_PORT", "8787"))
 
     import app.web.pages.agent as agent_page
     import app.web.pages.card as card_page
