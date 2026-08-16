@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import yaml
 from nicegui import ui
 
 from app.shared.crm.sdk import load_sdk
@@ -16,8 +15,6 @@ def _default_level_config() -> dict[str, Any]:
         "model_name": "",
         "system_prompt": "",
         "context": 12000,
-        "context_limit_output_text": "上下文超过限制",
-        "tool_round_limit_output_text": "工具调用超过次数限制",
         "max_tool_rounds": None,
     }
 
@@ -27,7 +24,7 @@ def _load_llm_config() -> dict[str, Any]:
     if payload is None:
         return {"levels": {level: _default_level_config() for level in LEVELS}}
     if not isinstance(payload, dict):
-        raise ValueError("llm_api_config 顶层必须是 YAML mapping")
+        raise ValueError("llm_api_config 配置格式无效")
     return payload
 
 
@@ -53,8 +50,6 @@ def _read_controls(controls: dict[int, dict[str, Any]]) -> dict[str, Any]:
             "model_name": (fields["model_name"].value or "").strip(),
             "system_prompt": fields["system_prompt"].value or "",
             "context": int(fields["context"].value or 0),
-            "context_limit_output_text": fields["context_limit_output_text"].value or "",
-            "tool_round_limit_output_text": fields["tool_round_limit_output_text"].value or "",
         }
         if raw_max:
             level_config["max_tool_rounds"] = int(raw_max)
@@ -96,19 +91,10 @@ def _save(config: dict[str, Any]) -> None:
                 model_name=data["model_name"],
                 system_prompt=data.get("system_prompt") or "",
                 context=int(data["context"]),
-                context_limit_output_text=data.get("context_limit_output_text") or "",
-                tool_round_limit_output_text=data.get("tool_round_limit_output_text") or "",
                 max_tool_rounds=data.get("max_tool_rounds"),
             )
         )
     sdk["LLMApiConfigManager"]().replace_configs(rows)
-
-
-def _raw_yaml() -> str:
-    payload = load_sdk()["LLMApiConfigManager"]().to_payload()
-    if payload is None:
-        return ""
-    return yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
 
 
 def render_llm_config_panel() -> None:
@@ -170,14 +156,6 @@ def render_llm_config_panel() -> None:
                             ui.label(
                                 "max_tool_rounds 控制单次 agent 执行最多允许调用工具的轮数；为空时不限制。"
                             ).classes("text-xs text-gray-500")
-                            context_limit_output_text = ui.input(
-                                "Context Limit Output Text",
-                                value=data["context_limit_output_text"],
-                            ).classes("w-full")
-                            tool_round_limit_output_text = ui.input(
-                                "Tool Round Limit Output Text",
-                                value=data["tool_round_limit_output_text"],
-                            ).classes("w-full")
                             controls[level] = {
                                 "base_url": base_url,
                                 "api_key": api_key,
@@ -185,12 +163,7 @@ def render_llm_config_panel() -> None:
                                 "system_prompt": system_prompt,
                                 "context": context,
                                 "max_tool_rounds": max_tool_rounds,
-                                "context_limit_output_text": context_limit_output_text,
-                                "tool_round_limit_output_text": tool_round_limit_output_text,
                             }
-
-                with ui.expansion("原始 YAML 预览", value=False).classes("w-full"):
-                    ui.code(_raw_yaml() or "# llm_api_config 表暂无配置").classes("w-full")
 
         def _on_save() -> None:
             try:
