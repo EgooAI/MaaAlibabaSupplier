@@ -14,13 +14,12 @@ from app.web.pages.agent.common import (
 )
 
 
-def _action_row(*, on_chat, on_save, on_delete=None, locked: bool = False) -> None:
+def _action_row(*, on_chat, on_save=None, on_delete=None) -> None:
     with ui.row().classes("gap-2"):
         ui.button("对话", icon="forum", on_click=on_chat).props("outline color=primary size=sm")
-        ui.button("保存", icon="save", on_click=on_save).props("color=primary size=sm")
-        if locked:
-            ui.button("不可删除", icon="lock").props("outline color=grey size=sm disable")
-        elif on_delete is not None:
+        if on_save is not None:
+            ui.button("保存", icon="save", on_click=on_save).props("color=primary size=sm")
+        if on_delete is not None:
             ui.button("删除", icon="delete", on_click=on_delete).props(
                 "outline color=negative size=sm"
             )
@@ -142,7 +141,7 @@ def render_system_agent_management_panel() -> None:
         with ui.row().classes("items-center justify-between w-full"):
             with ui.column().classes("gap-1"):
                 ui.label("系统 Agent 管理").classes("text-lg font-bold")
-                ui.label("Chat 工具栏固定绑定的四个系统 Agent；可编辑配置，但不可删除。").classes(
+                ui.label("Chat 工具栏固定绑定的四个系统 Agent；由程序启动时统一维护，不可编辑。").classes(
                     "text-xs text-gray-500"
                 )
             refresh_btn = ui.button("刷新", icon="refresh").props("outline size=sm")
@@ -153,7 +152,7 @@ def render_system_agent_management_panel() -> None:
         def _render() -> None:
             container.clear()
             try:
-                manager, AgentPreset = agent_manager_and_model()
+                manager, _ = agent_manager_and_model()
             except Exception as exc:
                 set_status(status_label, f"加载失败：{exc}", ok=False)
                 return
@@ -173,24 +172,16 @@ def render_system_agent_management_panel() -> None:
                                 ).classes("text-sm text-red-600")
                                 continue
 
-                            fields = agent_form_fields(
-                                name=preset.name,
-                                description=preset.description,
-                                prompt=preset.prompt,
-                                level=preset.intelevel,
-                                allow_tools=False,
-                            )
-
-                            def _save(preset_apid: str = apid, form=fields) -> None:
-                                try:
-                                    manager.upsert_agent_preset(
-                                        AgentPreset(apid=preset_apid, **form_to_payload(form))
-                                    )
-                                except Exception as exc:
-                                    ui.notify(f"保存失败：{exc}", type="negative")
-                                    return
-                                ui.notify("系统 Agent 已保存", type="positive")
-                                _render()
+                            with ui.row().classes("w-full items-center gap-3"):
+                                ui.label("名称").classes("w-16 text-xs text-gray-500")
+                                ui.label(preset.name).classes("text-sm font-medium")
+                            with ui.row().classes("w-full items-center gap-3"):
+                                ui.label("LLM Level").classes("w-16 text-xs text-gray-500")
+                                ui.label(str(preset.intelevel)).classes("text-sm")
+                            if preset.description:
+                                with ui.row().classes("w-full items-start gap-3"):
+                                    ui.label("描述").classes("w-16 text-xs text-gray-500")
+                                    ui.label(preset.description).classes("text-sm text-gray-700")
 
                             def _open_chat(
                                 preset_apid: str = preset.apid, preset_name: str = preset.name
@@ -200,11 +191,7 @@ def render_system_agent_management_panel() -> None:
 
                                 return _run
 
-                            _action_row(
-                                on_chat=_open_chat(),
-                                on_save=_save,
-                                locked=True,
-                            )
+                            _action_row(on_chat=_open_chat())
 
         refresh_btn.on("click", _render)
         _render()

@@ -57,14 +57,13 @@ def read_agent_form(
     prompt: Any,
     level: Any,
     tools: Any = None,
-    allow_tools: bool = True,
 ) -> dict[str, Any]:
     payload = {
         "name": str(name or "").strip(),
         "description": str(description or "").strip(),
         "prompt": str(prompt or "").strip(),
         "intelevel": level,
-        "tools": selected_tools(tools) if allow_tools else [],
+        "tools": selected_tools(tools),
     }
     missing = [
         label
@@ -138,7 +137,6 @@ def agent_form_fields(
     prompt: str = "",
     level: int = 0,
     tools: Any = None,
-    allow_tools: bool = True,
 ) -> SimpleNamespace:
     with ui.row().classes("w-full gap-3"):
         name_input = ui.input("名称", value=name).props("required").classes("flex-1")
@@ -149,27 +147,22 @@ def agent_form_fields(
         )
     description_input = ui.input("描述", value=description).props("required").classes("w-full")
     prompt_input = prompt_editor(value=prompt)
-    tools_input = None
-    if allow_tools:
-        tools_input = (
-            ui.select(
-                tool_options(tools),
-                label="Tools",
-                value=selected_tools(tools),
-                multiple=True,
-            )
-            .props("outlined use-chips")
-            .classes("w-full")
+    tools_input = (
+        ui.select(
+            tool_options(tools),
+            label="Tools",
+            value=selected_tools(tools),
+            multiple=True,
         )
-    else:
-        ui.label("系统 Agent 不暴露工具；输出会在代码侧自动规范化。").classes("text-xs text-gray-500")
+        .props("outlined use-chips")
+        .classes("w-full")
+    )
     return SimpleNamespace(
         name=name_input,
         description=description_input,
         prompt=prompt_input,
         level=level_input,
         tools=tools_input,
-        allow_tools=allow_tools,
     )
 
 
@@ -180,7 +173,6 @@ def form_to_payload(fields: SimpleNamespace) -> dict[str, Any]:
         prompt=fields.prompt.value,
         level=fields.level.value,
         tools=None if fields.tools is None else fields.tools.value,
-        allow_tools=fields.allow_tools,
     )
 
 
