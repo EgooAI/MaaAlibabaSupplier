@@ -6,7 +6,6 @@ import re
 
 from app.shared.crm.sdk import load_sdk
 
-# Keep in sync with app.crm_sdk.core.system_agents
 CHAT_TRANSLATION_AGENT_APID = "agent-1bad27aabaac439da678f31d53855b5d"
 CHAT_REPLY_SUGGESTION_AGENT_APID = "agent-5a43bda9e1304108a1a78a3575a44e27"
 CHAT_CUSTOMER_STAGE_AGENT_APID = "agent-f6fb1e0ddff44d27bb3e19e243a70584"
@@ -64,9 +63,11 @@ def run_chat_tool_agent(apid: str, user_input: str, *, timeout_seconds: float = 
     from agent_pipeline.llm_api import register_default_llms
     from agent_tools import register_builtin_tools
     from core import AgentPresetManager
+    from app.shared.agent.output_normalizers import register_system_output_normalizers
 
     llm_levels = register_default_llms()
     register_builtin_tools()
+    register_system_output_normalizers()
 
     manager = AgentPresetManager()
     preset = manager.get_agent_preset(apid)
