@@ -1,8 +1,8 @@
 """Business output normalizers for the four system chat agents.
 
 系统 Agent 的输出归一化属于 AlibabaSupplier 业务逻辑，注册到 SDK 的
-通用输出归一化注册表（``core.output_normalizer_registry``）中，SDK 本身
-不包含任何业务内容。
+通用输出归一化注册表（``agent_pipeline.registry.output_normalizer_registry``）中，
+SDK 本身不包含任何业务内容。
 """
 
 from __future__ import annotations
@@ -123,7 +123,7 @@ def _normalize_stage(raw_text: str) -> str:
 def register_system_output_normalizers() -> None:
     """Register the four system-agent output normalizers (idempotent)."""
     from app.shared.crm.sdk import load_sdk
-    from core import register_output_normalizer
+    from agent_pipeline.registry import register_output_normalizer
 
     load_sdk()
     register_output_normalizer(CHAT_TRANSLATION_AGENT_APID, _normalize_translation)

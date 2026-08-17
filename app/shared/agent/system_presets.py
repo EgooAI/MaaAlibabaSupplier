@@ -84,7 +84,7 @@ def system_agent_presets() -> list[dict[str, object]]:
                 "name": name,
                 "description": description,
                 "prompt": prompt,
-                "intelevel": 0,
+                "llm_level": 0,
                 "tools": [],
             }
         )
@@ -100,12 +100,9 @@ def ensure_system_agents_seeded() -> None:
     from core import AgentPresetManager
 
     manager = AgentPresetManager()
-    try:
-        for payload in system_agent_presets():
-            manager.upsert_agent_preset(sdk["AgentPreset"](**payload))
-        logger.info("Seeded {} system agent presets into {}", len(_SYSTEM_AGENT_PROMPTS), manager.database_path)
-    finally:
-        manager.engine.dispose()
+    for payload in system_agent_presets():
+        manager.upsert_agent_preset(sdk["AgentPreset"](**payload))
+    logger.info("Seeded {} system agent presets into {}", len(_SYSTEM_AGENT_PROMPTS), manager.database_path)
 
 
 __all__ = ["ensure_system_agents_seeded", "system_agent_presets"]

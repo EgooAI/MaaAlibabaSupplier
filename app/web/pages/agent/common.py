@@ -62,7 +62,7 @@ def read_agent_form(
         "name": str(name or "").strip(),
         "description": str(description or "").strip(),
         "prompt": str(prompt or "").strip(),
-        "intelevel": level,
+        "llm_level": level,
         "tools": selected_tools(tools),
     }
     missing = [
@@ -71,16 +71,18 @@ def read_agent_form(
             ("名称", payload["name"]),
             ("描述", payload["description"]),
             ("Prompt", payload["prompt"]),
-            ("LLM Level", "" if payload["intelevel"] is None or payload["intelevel"] == "" else "ok"),
+            ("LLM Level", "" if payload["llm_level"] is None or payload["llm_level"] == "" else "ok"),
         )
         if not value
     ]
     if missing:
         raise ValueError("必填项不能为空：" + "、".join(missing))
 
-    payload["intelevel"] = int(payload["intelevel"])
-    if payload["intelevel"] not in LEVELS:
-        raise ValueError("LLM Level 必须在 0~4 之间")
+    from models.agent_preset import LLM_MAX_LEVEL
+
+    payload["llm_level"] = int(payload["llm_level"])
+    if not 0 <= payload["llm_level"] <= LLM_MAX_LEVEL:
+        raise ValueError(f"LLM Level 必须在 0~{LLM_MAX_LEVEL} 之间")
     return payload
 
 

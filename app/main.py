@@ -20,6 +20,20 @@ from app.shared.utils.env import load_workdir_env
 from app.shared.utils.logging import configure_logging
 
 
+def _register_agent_runtime() -> None:
+    """Register LLM levels, built-in tools and output normalizers once at startup.
+
+    注册动作只需要执行一次（幂等覆盖），不要在每次调用工具 Agent 时重复注册。
+    """
+    from agent_pipeline.llm_api import register_default_llms
+    from agent_tools import register_builtin_tools
+    from app.shared.agent.output_normalizers import register_system_output_normalizers
+
+    register_default_llms()
+    register_builtin_tools()
+    register_system_output_normalizers()
+
+
 def _start_mitm_receiver() -> threading.Thread:
     host = os.environ.get("MITM_RECEIVER_HOST", "127.0.0.1")
     port = int(os.environ.get("MITM_RECEIVER_PORT", "8085"))
@@ -74,6 +88,7 @@ def main() -> None:
 
     repo_root = Path(__file__).resolve().parents[1]
     ensure_system_agents_seeded()
+    _register_agent_runtime()
     maafw = MaaFWProcess(repo_root)
     yak_proc: subprocess.Popen | None = None
 

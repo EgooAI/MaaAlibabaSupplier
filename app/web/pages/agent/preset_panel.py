@@ -79,7 +79,7 @@ def render_agent_management_panel() -> None:
 
                 for preset in presets:
                     with ui.expansion(
-                        f"{preset.name} | level={preset.intelevel}", value=False
+                        f"{preset.name} | level={preset.llm_level}", value=False
                     ).classes("w-full"):
                         with ui.card().classes(
                             "w-full rounded-2xl border border-slate-100 p-4 gap-4 shadow-sm"
@@ -88,7 +88,7 @@ def render_agent_management_panel() -> None:
                                 name=preset.name,
                                 description=preset.description,
                                 prompt=preset.prompt,
-                                level=preset.intelevel,
+                                level=preset.llm_level,
                                 tools=preset.tools,
                             )
 
@@ -177,7 +177,7 @@ def render_system_agent_management_panel() -> None:
                                 ui.label(preset.name).classes("text-sm font-medium")
                             with ui.row().classes("w-full items-center gap-3"):
                                 ui.label("LLM Level").classes("w-16 text-xs text-gray-500")
-                                ui.label(str(preset.intelevel)).classes("text-sm")
+                                ui.label(str(preset.llm_level)).classes("text-sm")
                             if preset.description:
                                 with ui.row().classes("w-full items-start gap-3"):
                                     ui.label("描述").classes("w-16 text-xs text-gray-500")

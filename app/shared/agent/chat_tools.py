@@ -58,30 +58,25 @@ def format_conversation_transcript(conversation: list[tuple[str, str, str]]) -> 
 
 def run_chat_tool_agent(apid: str, user_input: str, *, timeout_seconds: float = 60.0) -> str:
     load_sdk()
-    from agent_pipeline import AgentPipeline, AgentPipelineInput
+    from agent_pipeline import (
+        AgentPipeline,
+        AgentPipelineInput,
+        AgentPipelineResultStatus,
+    )
     from agent_pipeline.llm import OpenAICompatibleLLMClient
-    from agent_pipeline.llm_api import register_default_llms
-    from agent_tools import register_builtin_tools
+    from agent_pipeline.resolver import require_agent_preset_by_apid
     from core import AgentPresetManager
-    from app.shared.agent.output_normalizers import register_system_output_normalizers
-
-    llm_levels = register_default_llms()
-    register_builtin_tools()
-    register_system_output_normalizers()
 
     manager = AgentPresetManager()
-    preset = manager.get_agent_preset(apid)
-    if preset is None:
-        raise ValueError(f"AgentPreset {apid} not found")
-
-    llm_config = llm_levels.get(int(preset.intelevel))
-    if llm_config is None:
-        raise ValueError(f"LLM level {preset.intelevel} is not configured")
-
+    runtime = require_agent_preset_by_apid(manager, apid)
     result = AgentPipeline(
-        llm_client=OpenAICompatibleLLMClient(llm_config, timeout_seconds=timeout_seconds),
+        llm_client=OpenAICompatibleLLMClient(runtime.llm, timeout_seconds=timeout_seconds),
         manager=manager,
     ).run(AgentPipelineInput(user_input=user_input, apid=apid))
+    if result.status is AgentPipelineResultStatus.CONTEXT_LIMITED:
+        return "上下文超过限制"
+    if result.status is AgentPipelineResultStatus.TOOL_ROUNDS_LIMITED:
+        return "调用超过次数限制"
     return result.output_text
 
 
