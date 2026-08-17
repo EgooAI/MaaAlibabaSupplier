@@ -2,23 +2,30 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from nicegui import ui
 
-from app.shared.crm import CrmResolver, list_conversations, refresh_chat_data
-from app.shared.crm.views import format_created_at
+from app.shared.crm import (
+    REASON_IM_DB_NOT_READY,
+    REASON_SELF_IDENTITY_NOT_READY,
+    CrmResolver,
+    list_conversations,
+    refresh_chat_data,
+)
 from app.shared.mitm.pool import get_input_pending_pool
 from app.task_queue import get_task_queue
-from app.web.chat_presenter import contact_display_name, group_conversations
+from app.web.chat_presenter import contact_display_name, group_conversations, short_ts
 from app.web.components.nav import nav
 from app.web.pages import chat_batch, chat_info, chat_msg
 
 
 _SYNC_MESSAGES = {
-    "im_database_not_ready": (
+    REASON_IM_DB_NOT_READY: (
         "等待聊天数据库就绪…",
         "请从 app/main.py 启动，或确认 ALIBABA_DATA_DIR 指向当前登录账号的 Alibaba Supplier 数据目录。",
     ),
-    "self_identity_not_ready": (
+    REASON_SELF_IDENTITY_NOT_READY: (
         "等待当前登录账号识别…",
         "请确认 Alibaba Supplier 客户端已登录，并让主程序完成一次身份初始化。",
     ),
@@ -44,6 +51,17 @@ def create() -> None:
             "</style>"
         )
         retry_timer = None
+
+        async def _poll_sync_state() -> None:
+            """Poll sync state off the event loop; stop once ready.
+
+            解密整库是阻塞操作，不能在事件循环线程执行；轮询就绪后取消定时器，
+            避免每 2 秒空转、每 5 秒重复解密。
+            """
+            state = await asyncio.to_thread(refresh_chat_data, False)
+            if state.ready and retry_timer is not None:
+                retry_timer.cancel()
+            content.refresh()
 
         @ui.refreshable
         def content() -> None:
@@ -106,12 +124,10 @@ def create() -> None:
                 "conversation_groups": all_groups,
                 "batch_selected_contacts": set(),
             }
-            ctx["refresh_info"] = lambda: None
 
             def _render_conv_item(conv) -> None:
                 title = contact_display_name(conv.contact_ali_id)
-                ts = format_created_at(conv.last_created_at)
-                subtitle = ts[:16] if len(ts) >= 16 else ts
+                subtitle = short_ts(conv.last_created_at)
                 is_selected = selected["contact"] == conv.contact_ali_id
 
                 def _select(c: str = conv.contact_ali_id) -> None:
@@ -128,7 +144,9 @@ def create() -> None:
                     ctx["refresh_messages"]()
                     ctx["refresh_translate"]()
                     ctx["refresh_send_status"]()
-                    ctx["refresh_info"]()
+                    refresh_info = ctx.get("refresh_info")
+                    if refresh_info is not None:
+                        refresh_info()
                     conv_list.refresh()
 
                 item_classes = "rounded-lg" if is_selected else ""
@@ -178,5 +196,5 @@ def create() -> None:
                             chat_batch.render(ctx)
 
         content()
-        retry_timer = ui.timer(2.0, lambda: None if refresh_chat_data(wait=False).ready else content.refresh())
+        retry_timer = ui.timer(2.0, _poll_sync_state)
         ui.context.client.on_disconnect(lambda _client: retry_timer.cancel())

@@ -12,11 +12,16 @@ from loguru import logger
 from sqlmodel import Session, select
 
 from app.shared.backend.im_chat_db import ContactConv, MessageRow, coerce_epoch
+from app.shared.crm.identities import (
+    PLATFORM_PID,
+    self_sender_id,
+    session_key,
+    session_key_prefix,
+)
 from app.shared.crm.sdk import load_sdk
 from app.shared.crm.views import CrmConversation, CrmMessage
-from app.shared.mitm.pool import SelfInfo, UserInfo, get_self_info_pool, get_user_info_pool
+from app.shared.mitm.pool import SelfInfo, UserInfo, get_user_info_pool
 
-PID_ALIBABA = "alibaba_icbu"
 MAPPING_ALI_ID = "ali_id"
 MAPPING_LOGIN_ID = "login_id"
 MAPPING_ENCRYPT_ACCOUNT_ID = "encrypt_account_id"
@@ -50,7 +55,7 @@ class CRMAdapter:
         self.engine = self.accounts.engine
 
     def ensure_platform(self) -> None:
-        platform = self.Platform(pid=PID_ALIBABA, name="Alibaba", extra={"source": "app_adapter"})
+        platform = self.Platform(pid=PLATFORM_PID, name="Alibaba", extra={"source": "app_adapter"})
         self.platforms.upsert_platform(platform)
 
     def upsert_user_info(self, info: UserInfo) -> int | None:
@@ -143,16 +148,13 @@ class CRMAdapter:
         account_payload = self.Account(
             aid=account.aid if account is not None else None,
             cid=customer.cid,
-            pid=PID_ALIBABA,
+            pid=PLATFORM_PID,
             account=login_id or ali_id or encrypt_account_id,
             nickname=display_name or login_id or ali_id or encrypt_account_id,
             avatar=avatar or None,
             extra={**_merge_extra(account.extra if account is not None else None, extra), "is_self": is_self},
         )
-        if account_payload.aid is None:
-            self.accounts.upsert_account(account_payload)
-        else:
-            self.accounts.upsert_account(account_payload)
+        self.accounts.upsert_account(account_payload)
         if account_payload.aid is None:
             return None
 
@@ -165,7 +167,7 @@ class CRMAdapter:
         return account_payload.aid
 
     def _upsert_session(self, self_ali_id: str, contact_ali_id: str, participants: list[int]) -> Any:
-        session_key = _session_key(self_ali_id, contact_ali_id)
+        session_key = session_key(self_ali_id, contact_ali_id)
         existing = self._session_by_key(session_key)
         session_meta = self.SessionMeta(
             sid=existing.sid if existing is not None else None,
@@ -260,7 +262,7 @@ class CRMAdapter:
             return None
 
     def list_conversations(self, self_ali_id: str) -> list[CrmConversation]:
-        prefix = f"{PID_ALIBABA}:{self_ali_id}:"
+        prefix = session_key_prefix(self_ali_id)
         conversations: list[CrmConversation] = []
         with Session(self.engine) as session:
             session_statement = select(self.SessionMeta).where(self.SessionMeta.key.startswith(prefix))
@@ -294,14 +296,6 @@ def sync_self_info(info: SelfInfo) -> Future:
     return _submit_sync(_sync_self_info_now, info)
 
 
-def sync_all_identities() -> Future:
-    return _submit_sync(_sync_all_identities_now)
-
-
-def sync_conversations(conversations: list[ContactConv], self_info: SelfInfo | None) -> Future:
-    return _submit_sync(_sync_conversations_now, conversations, self_info)
-
-
 def sync_im_database(db_path: Path, self_ali_id: str, self_info: SelfInfo | None) -> Future:
     return _submit_sync(_sync_im_database_now, db_path, self_ali_id, self_info)
 
@@ -327,19 +321,6 @@ def _sync_self_info_now(info: SelfInfo) -> None:
     CRMAdapter().upsert_self_info(info)
 
 
-def _sync_all_identities_now() -> None:
-    adapter = CRMAdapter()
-    self_info = get_self_info_pool().get()
-    if self_info is not None:
-        adapter.upsert_self_info(self_info)
-    for info in get_user_info_pool().all().values():
-        adapter.upsert_user_info(info)
-
-
-def _sync_conversations_now(conversations: list[ContactConv], self_info: SelfInfo | None) -> None:
-    CRMAdapter().sync_conversations(conversations, self_info)
-
-
 def _sync_im_database_now(db_path: Path, self_ali_id: str, self_info: SelfInfo | None) -> None:
     from app.shared.backend.im_chat_db import build_conversations, open_readonly
 
@@ -352,10 +333,6 @@ def _sync_im_database_now(db_path: Path, self_ali_id: str, self_info: SelfInfo |
 
 def _default_database_path() -> Path:
     return Path(os.environ.get("MAA_CRM_DB_PATH", "data/crm.sqlite"))
-
-
-def _session_key(self_ali_id: str, contact_ali_id: str) -> str:
-    return f"{PID_ALIBABA}:{self_ali_id}:{contact_ali_id}"
 
 
 def _user_display_name(info: UserInfo) -> str:
@@ -386,7 +363,7 @@ def _self_display_name(info: SelfInfo) -> str:
 def _message_from_self(row: MessageRow, self_info: SelfInfo | None) -> bool:
     if self_info is None or not self_info.ali_id:
         return False
-    return row.sender_id == f"{self_info.ali_id}@icbu"
+    return row.sender_id == self_sender_id(self_info.ali_id)
 
 
 def _message_content(row: MessageRow) -> dict[str, Any]:

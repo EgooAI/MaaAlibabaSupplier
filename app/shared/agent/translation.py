@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 from loguru import logger
 
 from app.shared.agent.chat_tools import (
@@ -9,24 +7,9 @@ from app.shared.agent.chat_tools import (
     build_translation_input,
     run_chat_tool_agent,
 )
+from app.shared.agent.output_normalizers import parse_translation_payload
 from app.shared.crm.sdk import load_sdk
-from app.shared.crm.translations import text_hash, translation_cached
-
-
-def _load_translations(raw_text: str) -> dict[str, str | None]:
-    payload = json.loads(raw_text)
-    if not isinstance(payload, dict):
-        raise ValueError("translation agent output must be a JSON object")
-    translations = payload.get("translations")
-    if not isinstance(translations, dict):
-        raise ValueError("translation agent output must contain a translations object")
-    result: dict[str, str | None] = {}
-    for key, value in translations.items():
-        if value is None:
-            result[str(key)] = None
-        else:
-            result[str(key)] = str(value).strip()
-    return result
+from app.shared.crm.translation_cache import text_hash, translation_cached
 
 
 def translate_texts_to_crm(
@@ -54,7 +37,7 @@ def translate_texts_to_crm(
         return 0
 
     sdk = load_sdk()
-    translations = _load_translations(
+    translations = parse_translation_payload(
         run_chat_tool_agent(CHAT_TRANSLATION_AGENT_APID, user_input)
     )
     manager = sdk["TranslateManager"]()

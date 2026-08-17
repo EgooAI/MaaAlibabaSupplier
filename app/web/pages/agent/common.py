@@ -14,16 +14,21 @@ LEVELS = range(5)
 
 def agent_manager_and_model():
     sdk = load_sdk()
-    from core import AgentPresetManager
-
-    return AgentPresetManager(), sdk["AgentPreset"]
+    return sdk["AgentPresetManager"](), sdk["AgentPreset"]
 
 
 def chat_history_manager_and_model():
     sdk = load_sdk()
-    from core import ChatHistoryManager
+    return sdk["ChatHistoryManager"](), sdk["ChatHistory"]
 
-    return ChatHistoryManager(), sdk["ChatHistory"]
+
+def open_chat_action(apid: str, name: str):
+    from app.web.pages.agent.chat_dialog import open_agent_chat_dialog
+
+    async def _run() -> None:
+        await open_agent_chat_dialog(apid, name)
+
+    return _run
 
 
 def selected_tools(value: Any) -> list[str]:

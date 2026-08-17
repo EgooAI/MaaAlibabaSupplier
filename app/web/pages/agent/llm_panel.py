@@ -49,10 +49,11 @@ def _read_controls(controls: dict[int, dict[str, Any]]) -> dict[str, Any]:
             "api_key": fields["api_key"].value or "",
             "model_name": (fields["model_name"].value or "").strip(),
             "system_prompt": fields["system_prompt"].value or "",
-            "context": int(fields["context"].value or 0),
+            "context": int(round(fields["context"].value or 0)),
         }
         if raw_max:
-            level_config["max_tool_rounds"] = int(raw_max)
+            rounds = int(raw_max)
+            level_config["max_tool_rounds"] = rounds if rounds > 0 else None
         levels[level] = level_config
     return {"levels": levels}
 

@@ -42,7 +42,7 @@ async def open_suggestion_dialog(
             try:
                 convo = conversation_for_suggestions(conv.messages, resolver)
                 result = await asyncio.to_thread(generate_reply_suggestions, convo)
-                suggestion_state["items"] = list(result.items[:3])
+                suggestion_state["items"] = list(result.items)
                 if result.buyer_language:
                     suggestion_state["buyer_language"] = result.buyer_language
             except Exception as exc:

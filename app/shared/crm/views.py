@@ -5,6 +5,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 
+from app.shared.crm.identities import self_sender_id
+
+
 @dataclass(frozen=True)
 class CrmMessage:
     table_name: str
@@ -29,7 +32,7 @@ class CrmConversation:
 
 class CrmResolver:
     def __init__(self, self_ali_id: str = "") -> None:
-        self._self_sender_id = f"{self_ali_id}@icbu" if self_ali_id else ""
+        self._self_sender_id = self_sender_id(self_ali_id) if self_ali_id else ""
 
     def is_self(self, sender_id: str | None) -> bool:
         return bool(self._self_sender_id and sender_id == self._self_sender_id)

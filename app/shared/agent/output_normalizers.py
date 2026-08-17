@@ -43,7 +43,7 @@ def _normalize_text_list(value: Any, field_name: str) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
-def _normalize_translation(raw_text: str) -> str:
+def parse_translation_payload(raw_text: str) -> dict[str, str | None]:
     payload = _load_json_object(raw_text)
     translations = payload.get("translations")
     if not isinstance(translations, dict):
@@ -55,7 +55,11 @@ def _normalize_translation(raw_text: str) -> str:
             normalized[str(key)] = None
         else:
             normalized[str(key)] = str(value).strip()
-    return json.dumps({"translations": normalized}, ensure_ascii=False)
+    return normalized
+
+
+def _normalize_translation(raw_text: str) -> str:
+    return json.dumps({"translations": parse_translation_payload(raw_text)}, ensure_ascii=False)
 
 
 def _normalize_suggestion(raw_text: str) -> str:
@@ -132,4 +136,4 @@ def register_system_output_normalizers() -> None:
     register_output_normalizer(CHAT_CUSTOMER_STAGE_AGENT_APID, _normalize_stage)
 
 
-__all__ = ["register_system_output_normalizers"]
+__all__ = ["register_system_output_normalizers", "parse_translation_payload"]

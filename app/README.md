@@ -5,7 +5,7 @@
 ## 代码结构
 
 - `shared` — 主后端，`app` 与 agent 共享。含以下子包：
-  - `backend/` — 业务逻辑：邮件（`email.py`）、IM 访问（`im_chat_db.py` / `im_db_middleware.py`）、系统状态（`status.py`）；`chat_ai.py` 仅 re-export agent 层回复建议 API。
+  - `backend/` — 业务逻辑：邮件（`email.py`）、IM 访问（`im_chat_db.py` / `im_db_middleware.py`）、系统状态（`status.py`）。
   - `agent/` — Chat/Agent 工具层：统一跑 AgentPreset（`chat_tools.py`）、翻译写入 CRM（`translation.py`）、回复建议（`suggestions.py`）。
   - `crm/` — 应用侧 CRM 适配层。`__init__.py` 是 UI/业务稳定入口；`queries.py` 查询；`ingest.py` 刷新 IM→CRM；`sync.py` 写入 SDK；`translations.py` 翻译表读写。
   - `utils/` — 环境变量、运行时 KV、IM 解密、日志等。

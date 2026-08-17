@@ -4,9 +4,11 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.shared.crm.identities import self_sender_id
+from app.shared.crm.views import coerce_epoch, format_created_at
 
 
 @dataclass(frozen=True)
@@ -88,49 +90,6 @@ def list_msg_tables(conn: sqlite3.Connection) -> list[str]:
     return [str(row["name"]) for row in rows]
 
 
-def coerce_epoch(value: Any) -> float:
-    if value is None:
-        return 0.0
-    if isinstance(value, bool):
-        return float(int(value))
-    if isinstance(value, (int, float)):
-        return float(value) / 1000.0 if value > 10**12 else float(value)
-    if isinstance(value, (bytes, bytearray)):
-        value = value.decode("utf-8", errors="ignore")
-    if isinstance(value, str):
-        value = value.strip()
-        if not value:
-            return 0.0
-        try:
-            return datetime.fromisoformat(value).timestamp()
-        except ValueError:
-            try:
-                number = int(value)
-            except ValueError:
-                return 0.0
-            return float(number) / 1000.0 if number > 10**12 else float(number)
-    return 0.0
-
-
-def format_created_at(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, (bytes, bytearray)):
-        value = value.decode("utf-8", errors="ignore")
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped:
-            return ""
-        try:
-            return datetime.fromisoformat(stripped).strftime("%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            return stripped
-    epoch = coerce_epoch(value)
-    if epoch <= 0:
-        return str(value)
-    return datetime.fromtimestamp(epoch, tz=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
-
-
 def _contact_ali_id_from_cid(cid: str, self_ali_id: str) -> str:
     main = cid.split("#")[0]
     parts = main.split("-")
@@ -183,7 +142,7 @@ def build_conversations(conn: sqlite3.Connection, self_ali_id: str) -> list[Cont
 
 class MsgTableResolver:
     def __init__(self, self_ali_id: str = ""):
-        self._self_sender_id = f"{self_ali_id}@icbu" if self_ali_id else ""
+        self._self_sender_id = self_sender_id(self_ali_id) if self_ali_id else ""
 
     def is_self(self, sender_id: str | None) -> bool:
         return bool(self._self_sender_id and sender_id == self._self_sender_id)

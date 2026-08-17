@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 
 from loguru import logger
 from nicegui import ui
@@ -19,11 +18,13 @@ from app.shared.crm import (
     request_translations,
     translation_cached,
 )
+from app.shared.crm.identities import strip_icbu_suffix
 from app.shared.crm.views import format_created_at
 from app.task_queue import TaskStatus, get_task_queue
 from app.web.chat_presenter import (
     contact_display_name,
     conversation_for_translation,
+    format_register_date,
     generic_card_from_message,
     message_datetime,
     message_text,
@@ -41,11 +42,14 @@ def _avatar_url(name: str, color: str) -> str:
 
 
 def _is_all_cached(messages, resolver) -> bool:
+    from app.shared.crm.sdk import load_sdk
+
+    manager = load_sdk()["TranslateManager"]()
     for m in messages:
         if resolver.is_self(m.sender_id) or m.is_system:
             continue
         text = message_text(m)
-        if text and not translation_cached(text):
+        if text and not translation_cached(text, manager=manager):
             return False
     return True
 
@@ -54,7 +58,7 @@ def _login_id_for_contact(contact_ali_id: str) -> str:
     info = get_crm_user_info(contact_ali_id)
     if info and info.login_id:
         return info.login_id
-    return contact_ali_id.removesuffix("@icbu")
+    return strip_icbu_suffix(contact_ali_id)
 
 
 def render(ctx: dict) -> None:
@@ -101,8 +105,9 @@ def render(ctx: dict) -> None:
                         if info.country_code:
                             parts.append(info.country_code)
                         if info.register_date:
-                            reg = datetime.fromtimestamp(info.register_date, tz=timezone.utc).strftime("%Y-%m-%d")
-                            parts.append(f"注册于 {reg}")
+                            reg = format_register_date(info.register_date)
+                            if reg:
+                                parts.append(f"注册于 {reg}")
                         if parts:
                             ui.label(" · ".join(parts)).classes("text-sm text-gray-500")
 
@@ -132,7 +137,7 @@ def render(ctx: dict) -> None:
                 if is_sent:
                     name = "我"
                 else:
-                    sid = (msg.sender_id or "").removesuffix("@icbu")
+                    sid = strip_icbu_suffix(msg.sender_id)
                     name = contact_display_name(sid) if sid else "unknown"
 
                 text = message_text(msg)
@@ -459,15 +464,11 @@ def render(ctx: dict) -> None:
                 break
             send_status_section.refresh()
 
+        send_state["task_id"] = None
         if snap and snap.result:
             ok, msg = snap.result
             ui.notify(msg, type="positive" if ok else "negative")
         send_status_section.refresh()
-
-    def _refresh_send_status() -> None:
-        task_id = send_state.get("task_id")
-        if isinstance(task_id, str):
-            send_status_section.refresh()
 
     # ------------------------------------------------------------------
     # Render sections
@@ -505,5 +506,3 @@ def render(ctx: dict) -> None:
     ctx["refresh_send_status"] = send_status_section.refresh
 
     send_btn.on("click", _send_current_message)
-    send_status_timer = ui.timer(1.0, _refresh_send_status)
-    ui.context.client.on_disconnect(lambda _client: send_status_timer.cancel())

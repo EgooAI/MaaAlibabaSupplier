@@ -97,9 +97,8 @@ def ensure_system_agents_seeded() -> None:
     每次启动调用，幂等覆盖：预设数据始终与程序内置版本保持一致。
     """
     sdk = load_sdk()
-    from core import AgentPresetManager
 
-    manager = AgentPresetManager()
+    manager = sdk["AgentPresetManager"]()
     for payload in system_agent_presets():
         manager.upsert_agent_preset(sdk["AgentPreset"](**payload))
     logger.info("Seeded {} system agent presets into {}", len(_SYSTEM_AGENT_PROMPTS), manager.database_path)

@@ -24,6 +24,7 @@ from app.shared.backend.im_chat_db import (
     open_readonly,
 )
 from app.shared.crm import sync_im_database
+from app.shared.crm.identities import self_sender_id
 
 _CACHE_TTL = 5.0  # seconds
 
@@ -65,7 +66,7 @@ class IMDBMiddleware:
         info = get_self_info_pool().get()
         return info.ali_id if info and info.ali_id else ""
 
-    def _resolve_encrypted_db_path(self, ali_id: str) -> Path | None:
+    def resolve_encrypted_db_path(self, ali_id: str) -> Path | None:
         if self._data_dir is None:
             logger.warning("ALIBABA_DATA_DIR not set")
             return None
@@ -73,7 +74,7 @@ class IMDBMiddleware:
             logger.warning("SelfInfoPool has no ali_id yet")
             return None
 
-        db_path = self._data_dir / "IMServiceDir" / "MessageSDK" / f"{ali_id}@icbu" / "database" / "im.sqlite"
+        db_path = self._data_dir / "IMServiceDir" / "MessageSDK" / self_sender_id(ali_id) / "database" / "im.sqlite"
         if not db_path.exists():
             logger.warning("Encrypted DB not found: {}", db_path)
             return None
@@ -133,7 +134,9 @@ class IMDBMiddleware:
                 block = encrypted[offset : offset + 16]
                 decrypted[offset : offset + 16] = cipher.decrypt(block)
 
-            dst.write_bytes(decrypted)
+            tmp = dst.with_name(dst.name + ".tmp")
+            tmp.write_bytes(decrypted)
+            tmp.replace(dst)
             return True
         except Exception as exc:
             logger.error("DB decryption failed: {}", exc)
@@ -174,7 +177,7 @@ class IMDBMiddleware:
                 return True
 
             ali_id = self._get_self_ali_id()
-            db_path = self._resolve_encrypted_db_path(ali_id)
+            db_path = self.resolve_encrypted_db_path(ali_id)
             if db_path is None:
                 return False
 

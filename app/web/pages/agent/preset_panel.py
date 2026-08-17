@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from nicegui import ui
 
 from app.shared.agent.chat_tools import SYSTEM_AGENT_DEFINITIONS
@@ -10,6 +12,7 @@ from app.web.pages.agent.common import (
     form_to_payload,
     is_system_apid,
     new_agent_apid,
+    open_chat_action,
     set_status,
 )
 
@@ -57,10 +60,10 @@ def render_agent_management_panel() -> None:
                     ):
                         fields = agent_form_fields()
 
-                        def _create() -> None:
+                        async def _create() -> None:
                             try:
                                 preset = AgentPreset(apid=new_agent_apid(), **form_to_payload(fields))
-                                manager.upsert_agent_preset(preset)
+                                await asyncio.to_thread(manager.upsert_agent_preset, preset)
                             except Exception as exc:
                                 ui.notify(f"新增失败：{exc}", type="negative")
                                 return
@@ -92,42 +95,33 @@ def render_agent_management_panel() -> None:
                                 tools=preset.tools,
                             )
 
-                            def _save(
+                            async def _save(
                                 preset_apid: str = preset.apid,
                                 form=fields,
                             ) -> None:
                                 try:
-                                    manager.upsert_agent_preset(
-                                        AgentPreset(apid=preset_apid, **form_to_payload(form))
-                                    )
+                                    preset = AgentPreset(apid=preset_apid, **form_to_payload(form))
+                                    await asyncio.to_thread(manager.upsert_agent_preset, preset)
                                 except Exception as exc:
                                     ui.notify(f"保存失败：{exc}", type="negative")
                                     return
                                 ui.notify("Agent 已保存", type="positive")
                                 _render()
 
-                            def _delete(preset_apid: str = preset.apid) -> None:
+                            async def _delete(preset_apid: str = preset.apid) -> None:
                                 if is_system_apid(preset_apid):
                                     ui.notify("系统 Agent 不可删除", type="warning")
                                     return
                                 try:
-                                    manager.delete_agent_preset(preset_apid)
+                                    await asyncio.to_thread(manager.delete_agent_preset, preset_apid)
                                 except Exception as exc:
                                     ui.notify(f"删除失败：{exc}", type="negative")
                                     return
                                 ui.notify("Agent 已删除", type="positive")
                                 _render()
 
-                            def _open_chat(
-                                preset_apid: str = preset.apid, preset_name: str = preset.name
-                            ):
-                                async def _run() -> None:
-                                    await open_agent_chat_dialog(preset_apid, preset_name)
-
-                                return _run
-
                             _action_row(
-                                on_chat=_open_chat(),
+                                on_chat=open_chat_action(preset.apid, preset.name),
                                 on_save=_save,
                                 on_delete=_delete,
                             )
@@ -183,15 +177,7 @@ def render_system_agent_management_panel() -> None:
                                     ui.label("描述").classes("w-16 text-xs text-gray-500")
                                     ui.label(preset.description).classes("text-sm text-gray-700")
 
-                            def _open_chat(
-                                preset_apid: str = preset.apid, preset_name: str = preset.name
-                            ):
-                                async def _run() -> None:
-                                    await open_agent_chat_dialog(preset_apid, preset_name)
-
-                                return _run
-
-                            _action_row(on_chat=_open_chat())
+                            _action_row(on_chat=open_chat_action(preset.apid, preset.name))
 
         refresh_btn.on("click", _render)
         _render()

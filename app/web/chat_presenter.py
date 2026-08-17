@@ -90,6 +90,17 @@ def message_datetime(message: CrmMessage) -> datetime:
     return datetime.fromtimestamp(coerce_epoch(message.created_at), tz=timezone.utc).astimezone()
 
 
+def format_register_date(register_date) -> str:
+    if not register_date:
+        return ""
+    return datetime.fromtimestamp(coerce_epoch(register_date), tz=timezone.utc).strftime("%Y-%m-%d")
+
+
+def short_ts(value) -> str:
+    ts = format_created_at(value)
+    return ts[:16] if len(ts) >= 16 else ts
+
+
 def message_speaker(message: CrmMessage, *, is_self: bool) -> str:
     if message.is_system:
         return "系统"

@@ -42,4 +42,5 @@ def load_sdk() -> dict[str, Any]:
         "Translate": models.Translate,
         "TranslateManager": core.TranslateManager,
         "AgentPreset": models.AgentPreset,
+        "AgentPresetManager": core.AgentPresetManager,
     }
