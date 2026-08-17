@@ -7,7 +7,7 @@ from typing import Any
 from nicegui import ui
 
 from app.shared.agent.chat_tools import run_chat_tool_agent
-from app.web.pages.agent.common import message_test_manager_and_model
+from app.web.pages.agent.common import chat_history_manager_and_model
 
 
 def _now_iso() -> str:
@@ -93,8 +93,8 @@ async def _confirm_delete(history_name: str) -> bool:
 
 
 async def open_agent_chat_dialog(apid: str, agent_name: str, history_id: int | None = None) -> None:
-    message_test_manager, MessageTest = message_test_manager_and_model()
-    history_record = message_test_manager.get_message_test(history_id) if history_id is not None else None
+    chat_history_manager, ChatHistory = chat_history_manager_and_model()
+    history_record = chat_history_manager.get_chat_history(history_id) if history_id is not None else None
     history_content = _history_content(history_record) if history_record is not None else {}
 
     if history_id is not None and history_record is None:
@@ -129,7 +129,7 @@ async def open_agent_chat_dialog(apid: str, agent_name: str, history_id: int | N
         def _load_histories() -> list[Any]:
             histories = [
                 history
-                for history in message_test_manager.list_message_test()
+                for history in chat_history_manager.list_chat_history()
                 if _history_content(history).get("apid") == apid
             ]
             histories.sort(
@@ -163,7 +163,7 @@ async def open_agent_chat_dialog(apid: str, agent_name: str, history_id: int | N
                         ui.label(message["content"]).style("white-space: pre-wrap;")
 
         def _load_sidebar_history(selected_history_id: int) -> None:
-            selected_history = message_test_manager.get_message_test(selected_history_id)
+            selected_history = chat_history_manager.get_chat_history(selected_history_id)
             if selected_history is None:
                 ui.notify("历史对话不存在", type="negative")
                 _render_sidebar()
@@ -186,7 +186,7 @@ async def open_agent_chat_dialog(apid: str, agent_name: str, history_id: int | N
             if not await _confirm_delete(selected_history_name):
                 return
             try:
-                message_test_manager.delete_message_test(selected_history_id)
+                chat_history_manager.delete_chat_history(selected_history_id)
             except Exception as exc:
                 ui.notify(f"删除历史失败：{exc}", type="negative")
                 return
@@ -245,13 +245,13 @@ async def open_agent_chat_dialog(apid: str, agent_name: str, history_id: int | N
             title = state.get("history_name") or _history_title(agent_name, messages)
             current_history_id = state.get("history_id")
             if current_history_id is None:
-                record = MessageTest(name=title, content=content)
-                message_test_manager.add_message_test(record)
+                record = ChatHistory(name=title, content=content)
+                chat_history_manager.add_chat_history(record)
                 state["history_id"] = record.id
                 state["history_name"] = record.name
             else:
-                record = MessageTest(id=current_history_id, name=title, content=content)
-                message_test_manager.edit_message_test(current_history_id, record)
+                record = ChatHistory(id=current_history_id, name=title, content=content)
+                chat_history_manager.edit_chat_history(current_history_id, record)
             state["created_content"] = content
 
         with ui.row().classes("w-full gap-4 items-start"):

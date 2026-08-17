@@ -47,7 +47,7 @@ APP -> 127.0.0.1:8084 Yak/Yakit MITM -> 127.0.0.1:8085 Python receiver -> parser
 - **ProductCardPool / GenericCardPool / InquiryCardPool** — `fetchcard` 卡片；
 - **InputPendingPool** — 未发送输入草稿（不持久化）。
 
-买家消息翻译结果写入 CRM `Translate` 表（经 `shared/agent` + `crm.translations`），不再以进程内 `TranslationCache` 作为业务主存。
+买家消息翻译结果写入 CRM `Translate` 表（经 `shared/agent` + `crm.translations`），以 SDK 持久化表作为业务主存。
 
 ## 聊天数据库
 

@@ -19,11 +19,11 @@ def agent_manager_and_model():
     return AgentPresetManager(), sdk["AgentPreset"]
 
 
-def message_test_manager_and_model():
+def chat_history_manager_and_model():
     sdk = load_sdk()
-    from core import MessageTestManager
+    from core import ChatHistoryManager
 
-    return MessageTestManager(), sdk["MessageTest"]
+    return ChatHistoryManager(), sdk["ChatHistory"]
 
 
 def selected_tools(value: Any) -> list[str]:

@@ -4,6 +4,7 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import Future
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -164,11 +165,12 @@ class CRMAdapter:
         return account_payload.aid
 
     def _upsert_session(self, self_ali_id: str, contact_ali_id: str, participants: list[int]) -> Any:
-        session_name = _session_name(self_ali_id, contact_ali_id)
-        existing = self._session_by_name(session_name)
+        session_key = _session_key(self_ali_id, contact_ali_id)
+        existing = self._session_by_key(session_key)
         session_meta = self.SessionMeta(
             sid=existing.sid if existing is not None else None,
-            name=session_name,
+            key=session_key,
+            name=session_key,
             participants=participants,
         )
         self.sessions.upsert_session_meta(session_meta)
@@ -177,6 +179,7 @@ class CRMAdapter:
     def _upsert_message(self, row: MessageRow, sid: int, sender_aid: int) -> None:
         external_mid = f"{row.table_name}:{row.mid}"
         content = _message_content(row)
+        epoch = coerce_epoch(row.created_at)
         message = self.Message(
             external_mid=external_mid,
             sid=sid,
@@ -184,6 +187,7 @@ class CRMAdapter:
             read=None,
             content=content,
             type=_message_type(row),
+            created_at=datetime.fromtimestamp(epoch) if epoch > 0 else None,
         )
         self.messages.upsert_message(message)
 
@@ -198,9 +202,9 @@ class CRMAdapter:
                 return None
             return session.get(self.Account, mapping.aid)
 
-    def _session_by_name(self, name: str) -> Any | None:
+    def _session_by_key(self, key: str) -> Any | None:
         with Session(self.engine) as session:
-            statement = select(self.SessionMeta).where(self.SessionMeta.name == name)
+            statement = select(self.SessionMeta).where(self.SessionMeta.key == key)
             return session.exec(statement).first()
 
     def _upsert_mapping(self, aid: int, mapping_type: str, key: str) -> None:
@@ -259,17 +263,19 @@ class CRMAdapter:
         prefix = f"{PID_ALIBABA}:{self_ali_id}:"
         conversations: list[CrmConversation] = []
         with Session(self.engine) as session:
-            session_statement = select(self.SessionMeta).where(self.SessionMeta.name.startswith(prefix))
+            session_statement = select(self.SessionMeta).where(self.SessionMeta.key.startswith(prefix))
             sessions = list(session.exec(session_statement).all())
             for session_meta in sessions:
                 if session_meta.sid is None:
                     continue
                 message_statement = select(self.Message).where(self.Message.sid == session_meta.sid)
                 messages = [_crm_message_from_sdk(message) for message in session.exec(message_statement).all()]
-                messages.sort(key=lambda message: coerce_epoch(message.created_at))
+                messages.sort(
+                    key=lambda message: message.created_at.timestamp() if message.created_at else 0.0
+                )
                 if not messages:
                     continue
-                contact_ali_id = str(session_meta.name or "").removeprefix(prefix)
+                contact_ali_id = str(session_meta.key or "").removeprefix(prefix)
                 conversations.append(CrmConversation(
                     contact_ali_id=contact_ali_id,
                     messages=messages,
@@ -348,7 +354,7 @@ def _default_database_path() -> Path:
     return Path(os.environ.get("MAA_CRM_DB_PATH", "data/crm.sqlite"))
 
 
-def _session_name(self_ali_id: str, contact_ali_id: str) -> str:
+def _session_key(self_ali_id: str, contact_ali_id: str) -> str:
     return f"{PID_ALIBABA}:{self_ali_id}:{contact_ali_id}"
 
 
@@ -422,7 +428,7 @@ def _crm_message_from_sdk(message: Any) -> CrmMessage:
         cid=str(content.get("cid") or ""),
         mid=str(content.get("mid") or message.external_mid),
         sender_id=content.get("sender_id"),
-        created_at=content.get("created_at"),
+        created_at=message.created_at,
         user_content_type=content.get("user_content_type"),
         content_label=content.get("content_label"),
         content=_content_bytes(content),

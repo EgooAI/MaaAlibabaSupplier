@@ -40,6 +40,8 @@ def coerce_epoch(value: Any) -> float:
         return 0.0
     if isinstance(value, bool):
         return float(int(value))
+    if isinstance(value, datetime):
+        return value.timestamp()
     if isinstance(value, (int, float)):
         return float(value) / 1000.0 if value > 10**12 else float(value)
     if isinstance(value, (bytes, bytearray)):
@@ -62,6 +64,8 @@ def coerce_epoch(value: Any) -> float:
 def format_created_at(value: Any) -> str:
     if value is None:
         return ""
+    if isinstance(value, datetime):
+        return value.astimezone().strftime("%Y-%m-%d %H:%M:%S")
     if isinstance(value, (bytes, bytearray)):
         value = value.decode("utf-8", errors="ignore")
     if isinstance(value, str):
