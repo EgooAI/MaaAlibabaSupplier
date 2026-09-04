@@ -16,7 +16,7 @@ from app.shared.agent.system_agents import (
     CHAT_TRANSLATION_AGENT_APID,
     SYSTEM_AGENT_DEFINITIONS,
 )
-from app.shared.crm.sdk import load_sdk
+from app.shared.crm.sdk import AgentPreset, AgentPresetManager
 
 _SYSTEM_AGENT_PROMPTS: dict[str, str] = {
     CHAT_TRANSLATION_AGENT_APID: (
@@ -96,11 +96,9 @@ def ensure_system_agents_seeded() -> None:
 
     每次启动调用，幂等覆盖：预设数据始终与程序内置版本保持一致。
     """
-    sdk = load_sdk()
-
-    manager = sdk["AgentPresetManager"]()
+    manager = AgentPresetManager()
     for payload in system_agent_presets():
-        manager.upsert_agent_preset(sdk["AgentPreset"](**payload))
+        manager.upsert_agent_preset(AgentPreset(**payload))
     logger.info("Seeded {} system agent presets into {}", len(_SYSTEM_AGENT_PROMPTS), manager.database_path)
 
 

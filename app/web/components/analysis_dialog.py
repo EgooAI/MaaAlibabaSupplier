@@ -9,7 +9,7 @@ from nicegui import ui
 
 from app.shared.agent.inputs import build_analysis_input
 from app.shared.agent.runner import run_chat_tool_agent
-from app.web.chat_presenter import conversation_for_suggestions
+from app.web.chat_presenter import conversation_rows
 
 
 def _markdown_list(title: str, items: list[str]) -> str:
@@ -73,7 +73,7 @@ async def open_analysis_dialog(*, title: str, apid: str, task: str, conv, resolv
 
         async def _run() -> None:
             try:
-                convo = conversation_for_suggestions(conv.messages, resolver)
+                convo = conversation_rows(conv.messages, resolver)
                 result = await asyncio.to_thread(
                     run_chat_tool_agent,
                     apid,

@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 """Alibaba IM 身份与会话键约定。
 
 `sender_id` 的格式为 ``{ali_id}@icbu``，会话键格式为
 ``{platform}:{self_ali_id}:{contact_ali_id}``。这些约定在多个模块中重复出现，
 统一在此维护。
 """
+
+from __future__ import annotations
 
 PLATFORM_PID = "alibaba_icbu"
 ICBU_SUFFIX = "@icbu"

@@ -21,9 +21,6 @@ class ChatHistoryContent(BaseModel):
     created_at: float = 0.0
     updated_at: float = 0.0
 
-    def to_dict(self) -> dict[str, Any]:
-        return self.model_dump()
-
 
 def build_history_content(
     *,
@@ -46,7 +43,7 @@ def build_history_content(
         created_at=created_at,
         updated_at=now,
     )
-    return content.to_dict()
+    return content.model_dump()
 
 
 def load_history_content(raw: Any) -> ChatHistoryContent:

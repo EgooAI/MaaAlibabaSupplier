@@ -6,7 +6,7 @@ from app.shared.agent.inputs import build_translation_input
 from app.shared.agent.runner import run_chat_tool_agent
 from app.shared.agent.system_agents import CHAT_TRANSLATION_AGENT_APID
 from app.shared.agent.output_normalizers import parse_translation_payload
-from app.shared.crm.sdk import load_sdk
+from app.shared.crm.sdk import Translate, TranslateManager
 from app.shared.crm.translation_cache import text_hash, translation_cached
 
 
@@ -34,11 +34,10 @@ def translate_texts_to_crm(
     if not user_input:
         return 0
 
-    sdk = load_sdk()
     translations = parse_translation_payload(
         run_chat_tool_agent(CHAT_TRANSLATION_AGENT_APID, user_input)
     )
-    manager = sdk["TranslateManager"]()
+    manager = TranslateManager()
     saved = 0
     for item in items:
         key = item["text_hash"]
@@ -46,7 +45,7 @@ def translate_texts_to_crm(
             logger.warning("Translation agent omitted text_hash={}", key)
             continue
         manager.upsert_translate(
-            sdk["Translate"](text_hash=key, translation=translations[key] or "")
+            Translate(text_hash=key, translation=translations[key] or "")
         )
         saved += 1
     return saved

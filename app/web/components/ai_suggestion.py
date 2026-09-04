@@ -8,7 +8,7 @@ from collections.abc import Callable
 from nicegui import ui
 
 from app.shared.agent.suggestions import generate_reply_suggestions
-from app.web.chat_presenter import conversation_for_suggestions
+from app.web.chat_presenter import conversation_rows
 
 
 async def open_suggestion_dialog(
@@ -40,7 +40,7 @@ async def open_suggestion_dialog(
             loading_ele.visible = True
             error_ele.visible = False
             try:
-                convo = conversation_for_suggestions(conv.messages, resolver)
+                convo = conversation_rows(conv.messages, resolver)
                 result = await asyncio.to_thread(generate_reply_suggestions, convo)
                 suggestion_state["items"] = list(result.items)
                 if result.buyer_language:

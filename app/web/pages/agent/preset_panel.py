@@ -5,10 +5,10 @@ import asyncio
 from nicegui import ui
 
 from app.shared.agent.system_agents import SYSTEM_AGENT_DEFINITIONS
+from app.shared.crm.sdk import AgentPreset, AgentPresetManager
 from app.web.pages.agent.chat_dialog import open_agent_chat_dialog
 from app.web.pages.agent.common import (
     agent_form_fields,
-    agent_manager_and_model,
     form_to_payload,
     is_system_apid,
     new_agent_apid,
@@ -42,7 +42,7 @@ def render_agent_management_panel() -> None:
         def _render() -> None:
             container.clear()
             try:
-                manager, AgentPreset = agent_manager_and_model()
+                manager = AgentPresetManager()
                 presets = [
                     preset
                     for preset in manager.list_agent_preset()
@@ -146,7 +146,7 @@ def render_system_agent_management_panel() -> None:
         def _render() -> None:
             container.clear()
             try:
-                manager, _ = agent_manager_and_model()
+                manager = AgentPresetManager()
             except Exception as exc:
                 set_status(status_label, f"加载失败：{exc}", ok=False)
                 return

@@ -126,10 +126,10 @@ def _normalize_stage(raw_text: str) -> str:
 
 def register_system_output_normalizers() -> None:
     """Register the four system-agent output normalizers (idempotent)."""
-    from app.shared.crm.sdk import load_sdk
+    from app.shared.crm.sdk import ensure_sdk_path
     from agent_pipeline.registry import register_output_normalizer
 
-    load_sdk()
+    ensure_sdk_path()
     register_output_normalizer(CHAT_TRANSLATION_AGENT_APID, _normalize_translation)
     register_output_normalizer(CHAT_REPLY_SUGGESTION_AGENT_APID, _normalize_suggestion)
     register_output_normalizer(CHAT_CUSTOMER_INTENT_AGENT_APID, _normalize_intent)

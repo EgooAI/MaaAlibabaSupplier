@@ -4,7 +4,7 @@ from typing import Any
 
 from nicegui import ui
 
-from app.shared.crm.sdk import load_sdk
+from app.shared.crm.sdk import LLMApiConfig, LLMApiConfigManager
 from app.web.pages.agent.common import LEVELS, set_status
 
 
@@ -20,7 +20,7 @@ def _default_level_config() -> dict[str, Any]:
 
 
 def _load_llm_config() -> dict[str, Any]:
-    payload = load_sdk()["LLMApiConfigManager"]().to_payload()
+    payload = LLMApiConfigManager().to_payload()
     if payload is None:
         return {"levels": {level: _default_level_config() for level in LEVELS}}
     if not isinstance(payload, dict):
@@ -79,13 +79,12 @@ def _validate(config: dict[str, Any]) -> None:
 
 def _save(config: dict[str, Any]) -> None:
     _validate(config)
-    sdk = load_sdk()
     levels = config.get("levels") or {}
     rows = []
     for level in LEVELS:
         data = levels.get(level, levels.get(str(level), {})) or {}
         rows.append(
-            sdk["LLMApiConfig"](
+            LLMApiConfig(
                 level=level,
                 base_url=data["base_url"],
                 api_key=data["api_key"],
@@ -95,7 +94,7 @@ def _save(config: dict[str, Any]) -> None:
                 max_tool_rounds=data.get("max_tool_rounds"),
             )
         )
-    sdk["LLMApiConfigManager"]().replace_configs(rows)
+    LLMApiConfigManager().replace_configs(rows)
 
 
 def render_llm_config_panel() -> None:

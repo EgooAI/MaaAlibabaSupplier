@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.shared.crm.sdk import load_sdk
+from app.shared.crm.sdk import AgentPresetManager
 
 
 class AgentRunError(RuntimeError):
@@ -23,8 +23,7 @@ def run_chat_tool_agent(apid: str, user_input: str, *, timeout_seconds: float = 
     from agent_pipeline.llm import OpenAICompatibleLLMClient
     from agent_pipeline.resolver import require_agent_preset_by_apid
 
-    sdk = load_sdk()
-    manager = sdk["AgentPresetManager"]()
+    manager = AgentPresetManager()
     runtime = require_agent_preset_by_apid(manager, apid)
     result = AgentPipeline(
         llm_client=OpenAICompatibleLLMClient(runtime.llm, timeout_seconds=timeout_seconds),

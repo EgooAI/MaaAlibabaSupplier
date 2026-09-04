@@ -7,15 +7,16 @@ from typing import Any
 from nicegui import ui
 
 from app.shared.agent.chat_history_content import (
+    ChatHistoryContent,
     build_history_content,
     history_messages,
     load_history_content,
 )
 from app.shared.agent.inputs import build_chat_dialog_input
 from app.shared.agent.runner import run_chat_tool_agent
+from app.shared.crm.sdk import ChatHistory, ChatHistoryManager
 from app.shared.crm.views import format_created_at
 from app.web.components.ui_helpers import confirm_dialog
-from app.web.pages.agent.common import chat_history_manager_and_model
 
 
 def _history_title(agent_name: str, messages: list[dict[str, str]]) -> str:
@@ -33,17 +34,8 @@ def _message_preview(messages: list[dict[str, str]]) -> str:
     return "暂无消息"
 
 
-async def _confirm_delete(history_name: str) -> bool:
-    return bool(await confirm_dialog(
-        "删除历史对话？",
-        f"删除后将无法继续该历史对话。\n\n{history_name}",
-        confirm_text="确认删除",
-        confirm_color="negative",
-    ))
-
-
 async def open_agent_chat_dialog(apid: str, agent_name: str) -> None:
-    chat_history_manager, ChatHistory = chat_history_manager_and_model()
+    chat_history_manager = ChatHistoryManager()
 
     messages: list[dict[str, str]] = []
     state: dict[str, Any] = {
@@ -65,17 +57,14 @@ async def open_agent_chat_dialog(apid: str, agent_name: str) -> None:
 
         status_label = ui.label("").classes("text-xs text-gray-500")
 
-        def _load_histories() -> list[Any]:
-            histories = [
-                history
-                for history in chat_history_manager.list_chat_history()
-                if load_history_content(history.content).apid == apid
-            ]
-            histories.sort(
-                key=lambda history: load_history_content(history.content).updated_at,
-                reverse=True,
-            )
-            return histories
+        def _load_histories() -> list[tuple[Any, ChatHistoryContent]]:
+            entries: list[tuple[Any, ChatHistoryContent]] = []
+            for history in chat_history_manager.list_chat_history():
+                content = load_history_content(history.content)
+                if content.apid == apid:
+                    entries.append((history, content))
+            entries.sort(key=lambda entry: entry[1].updated_at, reverse=True)
+            return entries
 
         def _reset_conversation(status: str) -> None:
             messages.clear()
@@ -115,14 +104,20 @@ async def open_agent_chat_dialog(apid: str, agent_name: str) -> None:
             messages.extend(history_messages(selected_content))
             state["history_id"] = selected_history.id
             state["history_name"] = selected_history.name
-            state["existing_content"] = selected_content.to_dict()
+            state["existing_content"] = selected_content.model_dump()
             status_label.text = "已加载历史对话"
             status_label.classes(replace="text-xs text-gray-500")
             _render_messages()
             _render_sidebar()
 
         async def _delete_sidebar_history(selected_history_id: int, selected_history_name: str) -> None:
-            if not await _confirm_delete(selected_history_name):
+            confirmed = await confirm_dialog(
+                "删除历史对话？",
+                f"删除后将无法继续该历史对话。\n\n{selected_history_name}",
+                confirm_text="确认删除",
+                confirm_color="negative",
+            )
+            if not confirmed:
                 return
             try:
                 chat_history_manager.delete_chat_history(selected_history_id)
@@ -137,15 +132,14 @@ async def open_agent_chat_dialog(apid: str, agent_name: str) -> None:
 
         def _render_sidebar() -> None:
             sidebar_container.clear()
-            histories = _load_histories()
+            entries = _load_histories()
             current_history_id = state.get("history_id")
             with sidebar_container:
                 ui.label("历史对话").classes("font-semibold")
-                if not histories:
+                if not entries:
                     ui.label("暂无历史。成功完成一次回复后会保存。").classes("text-xs text-gray-500")
                     return
-                for history in histories:
-                    content = load_history_content(history.content)
+                for history, content in entries:
                     history_messages_ = history_messages(content)
                     updated_at = format_created_at(content.updated_at) if content.updated_at else "未知时间"
                     selected = history.id == current_history_id

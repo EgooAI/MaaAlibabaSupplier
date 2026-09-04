@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 
-from app.shared.crm.sdk import load_sdk
+from app.shared.crm.sdk import TranslateManager
 
 
 def text_hash(text: str) -> str:
@@ -12,7 +12,7 @@ def text_hash(text: str) -> str:
 
 
 def _manager():
-    return load_sdk()["TranslateManager"]()
+    return TranslateManager()
 
 
 def translation_cached(text: str, manager=None) -> bool:

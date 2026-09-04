@@ -6,21 +6,36 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import Future
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from sqlmodel import Session, select
 
-from app.shared.backend.im_chat_db import ContactConv, MessageRow, coerce_epoch
 from app.shared.crm.identities import (
     PLATFORM_PID,
     self_sender_id,
     session_key,
     session_key_prefix,
 )
-from app.shared.crm.sdk import load_sdk
-from app.shared.crm.views import CrmConversation, CrmMessage
+from app.shared.crm.sdk import (
+    Account,
+    AccountManager,
+    AccountMapping,
+    AccountMappingManager,
+    Customer,
+    CustomerManager,
+    Message,
+    MessageManager,
+    Platform,
+    PlatformManager,
+    SessionMeta,
+    SessionMetaManager,
+)
+from app.shared.crm.views import CrmConversation, CrmMessage, coerce_epoch
 from app.shared.mitm.pool import SelfInfo, UserInfo, get_user_info_pool
+
+if TYPE_CHECKING:
+    from app.shared.backend.im_chat_db import ContactConv, MessageRow
 
 MAPPING_ALI_ID = "ali_id"
 MAPPING_LOGIN_ID = "login_id"
@@ -32,30 +47,16 @@ _SYNC_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="crm-sync"
 class CRMAdapter:
     def __init__(self, database_path: Path | str | None = None) -> None:
         database_path = database_path or _default_database_path()
-        sdk = load_sdk()
-        self.Account = sdk["Account"]
-        self.AccountManager = sdk["AccountManager"]
-        self.AccountMapping = sdk["AccountMapping"]
-        self.AccountMappingManager = sdk["AccountMappingManager"]
-        self.Customer = sdk["Customer"]
-        self.CustomerManager = sdk["CustomerManager"]
-        self.Message = sdk["Message"]
-        self.MessageManager = sdk["MessageManager"]
-        self.Platform = sdk["Platform"]
-        self.PlatformManager = sdk["PlatformManager"]
-        self.SessionMeta = sdk["SessionMeta"]
-        self.SessionMetaManager = sdk["SessionMetaManager"]
-
-        self.platforms = self.PlatformManager(database_path=database_path)
-        self.customers = self.CustomerManager(database_path=database_path)
-        self.accounts = self.AccountManager(database_path=database_path)
-        self.mappings = self.AccountMappingManager(database_path=database_path)
-        self.sessions = self.SessionMetaManager(database_path=database_path)
-        self.messages = self.MessageManager(database_path=database_path)
+        self.platforms = PlatformManager(database_path=database_path)
+        self.customers = CustomerManager(database_path=database_path)
+        self.accounts = AccountManager(database_path=database_path)
+        self.mappings = AccountMappingManager(database_path=database_path)
+        self.sessions = SessionMetaManager(database_path=database_path)
+        self.messages = MessageManager(database_path=database_path)
         self.engine = self.accounts.engine
 
     def ensure_platform(self) -> None:
-        platform = self.Platform(pid=PLATFORM_PID, name="Alibaba", extra={"source": "app_adapter"})
+        platform = Platform(pid=PLATFORM_PID, name="Alibaba", extra={"source": "app_adapter"})
         self.platforms.upsert_platform(platform)
 
     def upsert_user_info(self, info: UserInfo) -> int | None:
@@ -63,7 +64,7 @@ class CRMAdapter:
             ali_id=info.ali_id,
             login_id=info.login_id,
             encrypt_account_id=info.encrypt_account_id,
-            display_name=_user_display_name(info),
+            display_name=_display_name(info),
             avatar="",
             is_self=False,
             extra=info.model_dump(),
@@ -74,7 +75,7 @@ class CRMAdapter:
             ali_id=info.ali_id,
             login_id=info.login_id,
             encrypt_account_id=info.encrypt_account_id,
-            display_name=_self_display_name(info),
+            display_name=_display_name(info),
             avatar=info.avatar_url,
             is_self=True,
             extra=info.model_dump(),
@@ -124,7 +125,6 @@ class CRMAdapter:
         if not identity_key:
             return None
 
-        self.ensure_platform()
         account = None
         for mapping_type, key in (
             (MAPPING_ALI_ID, ali_id),
@@ -148,7 +148,7 @@ class CRMAdapter:
         if customer.cid is None:
             return None
 
-        account_payload = self.Account(
+        account_payload = Account(
             aid=account.aid if account is not None else None,
             cid=customer.cid,
             pid=PLATFORM_PID,
@@ -189,7 +189,7 @@ class CRMAdapter:
         region = str(extra.get("country_code") or extra.get("country") or "")
         current = self.customers.get_customer(account.cid) if account is not None else None
         if current is None:
-            return self.Customer(
+            return Customer(
                 cid=account.cid if account is not None else None,
                 name=name,
                 region=region,
@@ -198,7 +198,7 @@ class CRMAdapter:
         merged_extra = dict(current.extra) if isinstance(current.extra, dict) else {}
         merged_extra["source"] = "mitm"
         merged_extra["is_self"] = is_self
-        return self.Customer(
+        return Customer(
             cid=current.cid,
             name=current.name or name,
             sex=current.sex,
@@ -211,7 +211,7 @@ class CRMAdapter:
     def _upsert_session(self, self_ali_id: str, contact_ali_id: str, participants: list[int]) -> Any:
         session_key = session_key(self_ali_id, contact_ali_id)
         existing = self._session_by_key(session_key)
-        session_meta = self.SessionMeta(
+        session_meta = SessionMeta(
             sid=existing.sid if existing is not None else None,
             key=session_key,
             name=session_key,
@@ -224,7 +224,7 @@ class CRMAdapter:
         external_mid = f"{row.table_name}:{row.mid}"
         content = _message_content(row)
         epoch = coerce_epoch(row.created_at)
-        message = self.Message(
+        message = Message(
             external_mid=external_mid,
             sid=sid,
             sender=sender_aid,
@@ -237,18 +237,18 @@ class CRMAdapter:
 
     def _account_by_mapping(self, mapping_type: str, key: str) -> Any | None:
         with Session(self.engine) as session:
-            statement = select(self.AccountMapping).where(
-                self.AccountMapping.type == mapping_type,
-                self.AccountMapping.key == key,
+            statement = select(AccountMapping).where(
+                AccountMapping.type == mapping_type,
+                AccountMapping.key == key,
             )
             mapping = session.exec(statement).first()
             if mapping is None:
                 return None
-            return session.get(self.Account, mapping.aid)
+            return session.get(Account, mapping.aid)
 
     def _session_by_key(self, key: str) -> Any | None:
         with Session(self.engine) as session:
-            statement = select(self.SessionMeta).where(self.SessionMeta.key == key)
+            statement = select(SessionMeta).where(SessionMeta.key == key)
             return session.exec(statement).first()
 
     def _upsert_mapping(self, aid: int, mapping_type: str, key: str) -> None:
@@ -265,23 +265,23 @@ class CRMAdapter:
                     aid,
                 )
                 self.mappings.upsert_account_mapping(
-                    self.AccountMapping(amid=existing.amid, aid=aid, type=mapping_type, key=key)
+                    AccountMapping(amid=existing.amid, aid=aid, type=mapping_type, key=key)
                 )
             return
-        mapping = self.AccountMapping(aid=aid, type=mapping_type, key=key)
+        mapping = AccountMapping(aid=aid, type=mapping_type, key=key)
         self.mappings.upsert_account_mapping(mapping)
 
     def _mapping_by_key(self, mapping_type: str, key: str) -> Any | None:
         with Session(self.engine) as session:
-            statement = select(self.AccountMapping).where(
-                self.AccountMapping.type == mapping_type,
-                self.AccountMapping.key == key,
+            statement = select(AccountMapping).where(
+                AccountMapping.type == mapping_type,
+                AccountMapping.key == key,
             )
             return session.exec(statement).first()
 
     def get_self_info(self) -> SelfInfo | None:
         with Session(self.engine) as session:
-            statement = select(self.Account)
+            statement = select(Account)
             for account in session.exec(statement).all():
                 if not isinstance(account.extra, dict):
                     continue
@@ -310,12 +310,12 @@ class CRMAdapter:
         prefix = session_key_prefix(self_ali_id)
         conversations: list[CrmConversation] = []
         with Session(self.engine) as session:
-            session_statement = select(self.SessionMeta).where(self.SessionMeta.key.startswith(prefix))
+            session_statement = select(SessionMeta).where(SessionMeta.key.startswith(prefix))
             sessions = list(session.exec(session_statement).all())
             for session_meta in sessions:
                 if session_meta.sid is None:
                     continue
-                message_statement = select(self.Message).where(self.Message.sid == session_meta.sid)
+                message_statement = select(Message).where(Message.sid == session_meta.sid)
                 messages = [_crm_message_from_sdk(message) for message in session.exec(message_statement).all()]
                 messages.sort(
                     key=lambda message: message.created_at.timestamp() if message.created_at else 0.0
@@ -359,11 +359,15 @@ def _log_sync_failure(future) -> None:
 
 
 def _sync_user_info_now(info: UserInfo) -> None:
-    CRMAdapter().upsert_user_info(info)
+    adapter = CRMAdapter()
+    adapter.ensure_platform()
+    adapter.upsert_user_info(info)
 
 
 def _sync_self_info_now(info: SelfInfo) -> None:
-    CRMAdapter().upsert_self_info(info)
+    adapter = CRMAdapter()
+    adapter.ensure_platform()
+    adapter.upsert_self_info(info)
 
 
 def _sync_im_database_now(db_path: Path, self_ali_id: str, self_info: SelfInfo | None) -> None:
@@ -380,7 +384,7 @@ def _default_database_path() -> Path:
     return Path(os.environ.get("MAA_CRM_DB_PATH", "data/crm.sqlite"))
 
 
-def _user_display_name(info: UserInfo) -> str:
+def _display_name(info: UserInfo | SelfInfo) -> str:
     full_name = " ".join(part for part in [info.first_name, info.last_name] if part).strip()
     return full_name or info.company_name or info.login_id or info.ali_id
 
@@ -398,11 +402,6 @@ def _is_empty(value: Any) -> bool:
     if isinstance(value, bool):
         return False
     return value is None or value == "" or value == 0 or value == []
-
-
-def _self_display_name(info: SelfInfo) -> str:
-    full_name = " ".join(part for part in [info.first_name, info.last_name] if part).strip()
-    return full_name or info.company_name or info.login_id or info.ali_id
 
 
 def _message_from_self(row: MessageRow, self_info: SelfInfo | None) -> bool:

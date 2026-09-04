@@ -19,10 +19,7 @@ from Crypto.Cipher import AES
 from app.shared.mitm.pool import get_self_info_pool
 from app.shared.utils.env import get_env_str, load_workdir_env
 from app.shared.utils.im_db_decryptor import retrieve_db_key
-from app.shared.backend.im_chat_db import (
-    MsgTableResolver,
-    open_readonly,
-)
+from app.shared.backend.im_chat_db import open_readonly
 from app.shared.crm import sync_im_database
 from app.shared.crm.identities import self_sender_id
 
@@ -47,7 +44,6 @@ class IMDBMiddleware:
                 instance._cached_db_path: Path | None = None
                 instance._cache_time: float = 0.0
                 instance._conn: sqlite3.Connection | None = None
-                instance._resolver: MsgTableResolver | None = None
                 instance._init_data_dir()
                 cls._instance = instance
             return cls._instance
@@ -154,7 +150,6 @@ class IMDBMiddleware:
     def _replace_connection(self, cached: Path, ali_id: str) -> None:
         old_conn = self._conn
         conn = open_readonly(cached)
-        resolver = MsgTableResolver(ali_id)
 
         if old_conn is not None:
             try:
@@ -163,7 +158,6 @@ class IMDBMiddleware:
                 pass
 
         self._conn = conn
-        self._resolver = resolver
         self._cached_db_path = cached
         self._cache_time = time.time()
 
@@ -194,12 +188,9 @@ class IMDBMiddleware:
             except sqlite3.Error as exc:
                 logger.error("Failed to open cached IM database: {}", exc)
                 return False
-            self._sync_cached_db(cached, ali_id)
+            self.sync_to_crm()
             logger.info("IM database refreshed (cached at {})", cached)
             return True
-
-    def _sync_cached_db(self, cached: Path, ali_id: str) -> None:
-        sync_im_database(cached, ali_id, get_self_info_pool().get())
 
     def sync_to_crm(self, wait: bool = False) -> None:
         cached = self._cached_db_path
@@ -223,10 +214,6 @@ class IMDBMiddleware:
     def get_connection(self) -> sqlite3.Connection | None:
         self._refresh()
         return self._conn
-
-    def get_resolver(self) -> MsgTableResolver | None:
-        self._refresh()
-        return self._resolver
 
 
 def get_im_db_middleware() -> IMDBMiddleware:

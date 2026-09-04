@@ -7,19 +7,9 @@ from typing import Any
 from nicegui import ui
 
 from app.shared.agent.system_agents import SYSTEM_AGENT_APIDS
-from app.shared.crm.sdk import load_sdk
+from app.shared.crm.sdk import AgentPreset, AgentPresetManager
 
 LEVELS = range(5)
-
-
-def agent_manager_and_model():
-    sdk = load_sdk()
-    return sdk["AgentPresetManager"](), sdk["AgentPreset"]
-
-
-def chat_history_manager_and_model():
-    sdk = load_sdk()
-    return sdk["ChatHistoryManager"](), sdk["ChatHistory"]
 
 
 def open_chat_action(apid: str, name: str):
@@ -41,7 +31,6 @@ def selected_tools(value: Any) -> list[str]:
 
 
 def available_agent_tools() -> list[str]:
-    load_sdk()
     import agent_tools
 
     return sorted(

@@ -23,7 +23,7 @@ from app.shared.crm.views import format_created_at
 from app.task_queue import TaskStatus, get_task_queue
 from app.web.chat_presenter import (
     contact_display_name,
-    conversation_for_translation,
+    conversation_rows,
     format_register_date,
     generic_card_from_message,
     message_datetime,
@@ -42,9 +42,9 @@ def _avatar_url(name: str, color: str) -> str:
 
 
 def _is_all_cached(messages, resolver) -> bool:
-    from app.shared.crm.sdk import load_sdk
+    from app.shared.crm.sdk import TranslateManager
 
-    manager = load_sdk()["TranslateManager"]()
+    manager = TranslateManager()
     for m in messages:
         if resolver.is_self(m.sender_id) or m.is_system:
             continue
@@ -238,7 +238,7 @@ def render(ctx: dict) -> None:
                         continue
                     texts.append(text)
 
-                conversation = conversation_for_translation(conv.messages, resolver)
+                conversation = conversation_rows(conv.messages, resolver, limit=None)
                 saved = await asyncio.to_thread(
                     request_translations,
                     texts,

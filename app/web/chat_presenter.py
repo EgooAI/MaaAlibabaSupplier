@@ -126,19 +126,6 @@ def conversation_rows(
     ]
 
 
-def conversation_for_suggestions(
-    messages: Iterable[CrmMessage], resolver, limit: int = 30
-) -> list[tuple[str, str, str]]:
-    return conversation_rows(messages, resolver, limit=limit)
-
-
-def conversation_for_translation(
-    messages: Iterable[CrmMessage], resolver
-) -> list[tuple[str, str, str]]:
-    """Full dialog context for translation (seller lines included for disambiguation)."""
-    return conversation_rows(messages, resolver, limit=None)
-
-
 def group_conversations(conversations: list[CrmConversation], now: float | None = None) -> list[ConversationGroup]:
     current = time.time() if now is None else now
     cutoffs = [current - 86400, current - 7 * 86400, current - 30 * 86400]

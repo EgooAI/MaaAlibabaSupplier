@@ -7,8 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.shared.crm.identities import self_sender_id
-from app.shared.crm.views import coerce_epoch, format_created_at
+from app.shared.crm.views import coerce_epoch
 
 
 @dataclass(frozen=True)
@@ -138,11 +137,3 @@ def build_conversations(conn: sqlite3.Connection, self_ali_id: str) -> list[Cont
     ]
     conversations.sort(key=lambda conv: coerce_epoch(conv.last_created_at), reverse=True)
     return conversations
-
-
-class MsgTableResolver:
-    def __init__(self, self_ali_id: str = ""):
-        self._self_sender_id = self_sender_id(self_ali_id) if self_ali_id else ""
-
-    def is_self(self, sender_id: str | None) -> bool:
-        return bool(self._self_sender_id and sender_id == self._self_sender_id)
