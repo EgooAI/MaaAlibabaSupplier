@@ -7,7 +7,8 @@ import json
 
 from nicegui import ui
 
-from app.shared.agent.chat_tools import build_analysis_input, run_chat_tool_agent
+from app.shared.agent.inputs import build_analysis_input
+from app.shared.agent.runner import run_chat_tool_agent
 from app.web.chat_presenter import conversation_for_suggestions
 
 

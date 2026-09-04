@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from loguru import logger
 
-from app.shared.agent.chat_tools import (
+from app.shared.agent.system_agents import (
     CHAT_CUSTOMER_INTENT_AGENT_APID,
     CHAT_CUSTOMER_STAGE_AGENT_APID,
     CHAT_REPLY_SUGGESTION_AGENT_APID,

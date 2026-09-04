@@ -135,11 +135,14 @@ class CRMAdapter:
                 account = self._account_by_mapping(mapping_type, key)
                 if account is not None:
                     break
-        customer = self.Customer(
-            cid=account.cid if account is not None else None,
-            name=display_name or login_id or ali_id or encrypt_account_id,
-            region=str(extra.get("country_code") or extra.get("country") or ""),
-            extra={"source": "mitm", "is_self": is_self},
+        customer = self._build_customer_payload(
+            account=account,
+            display_name=display_name,
+            login_id=login_id,
+            ali_id=ali_id,
+            encrypt_account_id=encrypt_account_id,
+            extra=extra,
+            is_self=is_self,
         )
         self.customers.upsert_customer(customer)
         if customer.cid is None:
@@ -165,6 +168,45 @@ class CRMAdapter:
         if encrypt_account_id:
             self._upsert_mapping(account_payload.aid, MAPPING_ENCRYPT_ACCOUNT_ID, encrypt_account_id)
         return account_payload.aid
+
+    def _build_customer_payload(
+        self,
+        *,
+        account: Any | None,
+        display_name: str,
+        login_id: str,
+        ali_id: str,
+        encrypt_account_id: str,
+        extra: dict[str, Any],
+        is_self: bool,
+    ) -> Any:
+        """Build the Customer upsert payload without clobbering user-editable fields.
+
+        已有 Customer 只在现值为空时补齐 name/region，其余字段原样保留；
+        extra 与现值合并。仅首次建档时写入完整展示数据。
+        """
+        name = display_name or login_id or ali_id or encrypt_account_id
+        region = str(extra.get("country_code") or extra.get("country") or "")
+        current = self.customers.get_customer(account.cid) if account is not None else None
+        if current is None:
+            return self.Customer(
+                cid=account.cid if account is not None else None,
+                name=name,
+                region=region,
+                extra={"source": "mitm", "is_self": is_self},
+            )
+        merged_extra = dict(current.extra) if isinstance(current.extra, dict) else {}
+        merged_extra["source"] = "mitm"
+        merged_extra["is_self"] = is_self
+        return self.Customer(
+            cid=current.cid,
+            name=current.name or name,
+            sex=current.sex,
+            birthdate=current.birthdate,
+            region=current.region or region,
+            extra=merged_extra,
+            image=current.image,
+        )
 
     def _upsert_session(self, self_ali_id: str, contact_ali_id: str, participants: list[int]) -> Any:
         session_key = session_key(self_ali_id, contact_ali_id)
@@ -216,11 +258,14 @@ class CRMAdapter:
         if existing is not None:
             if existing.aid != aid:
                 logger.warning(
-                    "CRM mapping conflict: type={} key={} existing_aid={} new_aid={}",
+                    "CRM mapping redirect: type={} key={} from_aid={} to_aid={}",
                     mapping_type,
                     key,
                     existing.aid,
                     aid,
+                )
+                self.mappings.upsert_account_mapping(
+                    self.AccountMapping(amid=existing.amid, aid=aid, type=mapping_type, key=key)
                 )
             return
         mapping = self.AccountMapping(aid=aid, type=mapping_type, key=key)

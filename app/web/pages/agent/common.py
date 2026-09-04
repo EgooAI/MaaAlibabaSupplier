@@ -6,7 +6,7 @@ from typing import Any
 
 from nicegui import ui
 
-from app.shared.agent.chat_tools import SYSTEM_AGENT_APIDS
+from app.shared.agent.system_agents import SYSTEM_AGENT_APIDS
 from app.shared.crm.sdk import load_sdk
 
 LEVELS = range(5)

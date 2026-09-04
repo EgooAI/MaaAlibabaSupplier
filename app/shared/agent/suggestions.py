@@ -4,11 +4,9 @@ import json
 
 from pydantic import BaseModel, Field
 
-from app.shared.agent.chat_tools import (
-    CHAT_REPLY_SUGGESTION_AGENT_APID,
-    build_reply_suggestion_input,
-    run_chat_tool_agent,
-)
+from app.shared.agent.inputs import build_reply_suggestion_input
+from app.shared.agent.runner import run_chat_tool_agent
+from app.shared.agent.system_agents import CHAT_REPLY_SUGGESTION_AGENT_APID
 
 
 class SuggestionItem(BaseModel):

@@ -4,7 +4,7 @@ import asyncio
 
 from nicegui import ui
 
-from app.shared.agent.chat_tools import SYSTEM_AGENT_DEFINITIONS
+from app.shared.agent.system_agents import SYSTEM_AGENT_DEFINITIONS
 from app.web.pages.agent.chat_dialog import open_agent_chat_dialog
 from app.web.pages.agent.common import (
     agent_form_fields,

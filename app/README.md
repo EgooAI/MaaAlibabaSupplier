@@ -6,11 +6,11 @@
 
 - `shared` — 主后端，`app` 与 agent 共享。含以下子包：
   - `backend/` — 业务逻辑：邮件（`email.py`）、IM 访问（`im_chat_db.py` / `im_db_middleware.py`）、系统状态（`status.py`）。
-  - `agent/` — Chat/Agent 工具层：统一跑 AgentPreset（`chat_tools.py`）、翻译写入 CRM（`translation.py`）、回复建议（`suggestions.py`）。
+  - `agent/` — Chat/Agent 工具层：系统 Agent 身份常量（`system_agents.py`）、输入构造（`inputs.py`）、统一执行（`runner.py`，超限抛 `AgentRunError`）、翻译写入 CRM（`translation.py`）、回复建议（`suggestions.py`）、系统预设补种（`system_presets.py`）、输出归一化（`output_normalizers.py`）。
   - `crm/` — 应用侧 CRM 适配层。`__init__.py` 是 UI/业务稳定入口；`queries.py` 查询；`ingest.py` 刷新 IM→CRM；`sync.py` 写入 SDK；`translations.py` 翻译表读写。
   - `utils/` — 环境变量、运行时 KV、IM 解密、日志等。
   - `mitm/` — MITM 解析器与数据池。
-- `crm_sdk` — 通用 CRM SDK（可独立发布）；应用专属逻辑放 `shared/crm/` 与 `shared/agent/`，不要写入 SDK。
+- `crm_sdk` — 通用 CRM SDK（仓库内直接引用，包化改造待做）；应用专属逻辑放 `shared/crm/` 与 `shared/agent/`，不要写入 SDK。
 - `agent` — Maa Custom Recognition/Action 入口。
 - `web` — NiceGUI：`server.py` 入口；`pages/` 含 chat / card / status / agent 等；`components/` 共享组件。
 - `mitm` — Yak MITM receiver（`proxy.py`）。
@@ -71,7 +71,7 @@ UI/业务以 `app.shared.crm` 为稳定入口：
 - 业务上 `Customer` : `Account` 为 1:1（SDK 允许多 Account，本业务不拆）；`Customer` 是实体，`Account` 是其聊天账号；原始数据多在 Account 侧采集再归并到 Customer。
 - 唯一平台：`Platform.pid = alibaba_icbu`。
 - CRM SQLite 与 MITM/`pools.db` 分离；不要在应用侧再持久化 `user_info` / 进程内翻译缓存——资料进 `Account.extra`，译文进 SDK `Translate`。
-- `AccountMapping` 用多种 ID（`ali_id` / `login_id` / `encrypt_account_id` / `ali_member_id` / `sender_id`）解析到同一 Account；先匹配再新建，后出现的 `ali_id` 应合并而非重复建号。
+- `AccountMapping` 用多种 ID（`ali_id` / `login_id` / `encrypt_account_id` / `ali_member_id` / `sender_id`）解析到同一 Account；先匹配再新建，后出现的 `ali_id` 应合并而非重复建号。同一 key 指向不同 aid 时，重定向到先匹配的 aid 并记录 redirect 日志。
 - 卖家自身也要有 Customer/Account/Mapping，`Account.extra.is_self = true`。
 - 消息统一 upsert 到 SDK `Message`；`external_mid = {table_name}:{mid}`（仅 `mid` 跨表不唯一）；`content` 保留足够原始字段。
 

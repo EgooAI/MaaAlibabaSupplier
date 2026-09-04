@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from loguru import logger
 
-from app.shared.agent.chat_tools import (
-    CHAT_TRANSLATION_AGENT_APID,
-    build_translation_input,
-    run_chat_tool_agent,
-)
+from app.shared.agent.inputs import build_translation_input
+from app.shared.agent.runner import run_chat_tool_agent
+from app.shared.agent.system_agents import CHAT_TRANSLATION_AGENT_APID
 from app.shared.agent.output_normalizers import parse_translation_payload
 from app.shared.crm.sdk import load_sdk
 from app.shared.crm.translation_cache import text_hash, translation_cached

@@ -11,7 +11,8 @@ from app.shared.agent.chat_history_content import (
     history_messages,
     load_history_content,
 )
-from app.shared.agent.chat_tools import build_chat_dialog_input, run_chat_tool_agent
+from app.shared.agent.inputs import build_chat_dialog_input
+from app.shared.agent.runner import run_chat_tool_agent
 from app.shared.crm.views import format_created_at
 from app.web.components.ui_helpers import confirm_dialog
 from app.web.pages.agent.common import chat_history_manager_and_model
