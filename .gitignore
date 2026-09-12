@@ -36,9 +36,6 @@ Release
 
 # Build
 deps/*
-!deps/tools/
-deps/tools/*
-!deps/tools/*.schema.json
 backend/deps/*
 !backend/deps/tools/
 backend/deps/tools/*

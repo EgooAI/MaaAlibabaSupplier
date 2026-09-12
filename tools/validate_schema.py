@@ -214,29 +214,29 @@ def main():
     parser.add_argument(
         "--schema-dir",
         type=str,
-        default="tools/schema",
-        help="Directory containing schema files (default: tools/schema)",
+        default="backend/deps/tools",
+        help="Directory containing schema files (default: backend/deps/tools)",
     )
     parser.add_argument(
         "--resource-dirs",
         type=str,
         nargs="+",
-        default=["assets/resource"],
-        help="Directories containing resource files to validate (default: assets/resource)",
+        default=["backend/assets/resource"],
+        help="Directories containing resource files to validate (default: backend/assets/resource)",
     )
     parser.add_argument(
         "--exclude-dirs",
         type=str,
         nargs="*",
-        default=[],
-        help="Directories to exclude from pipeline validation (default: none)",
+        default=["announcement"],
+        help="Directories to exclude from pipeline validation (default: announcement)",
     )
     parser.add_argument(
         "--interface-files",
         type=str,
         nargs="+",
-        default=["assets/interface.json"],
-        help="Path to interface.json files (default: assets/interface.json)",
+        default=["backend/assets/interface.json"],
+        help="Path to interface.json files (default: backend/assets/interface.json)",
     )
     parser.add_argument(
         "--task-dirs",
