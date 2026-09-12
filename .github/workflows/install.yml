@@ -14,21 +14,19 @@ on:
       - "**"
     paths:
       - ".github/workflows/install.yml"
-      - "agent/**"
+      - "app/**"
       - "assets/**"
       - "tools/**"
       - "README.md"
-      - "LICENSE"
   pull_request:
     branches:
       - "**"
     paths:
       - ".github/workflows/install.yml"
-      - "agent/**"
+      - "app/**"
       - "assets/**"
       - "tools/**"
       - "README.md"
-      - "LICENSE"
   workflow_dispatch:
 
 jobs:
@@ -39,7 +37,7 @@ jobs:
       is_release: ${{ steps.set_tag.outputs.is_release }}
       is_prerelease: ${{ steps.set_tag.outputs.is_prerelease }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -78,12 +76,12 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: true
 
       - name: Set up build Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.BUILD_PYTHON_VERSION }}
 
@@ -163,7 +161,7 @@ jobs:
         run: |
           python tools/install.py ${{ needs.meta.outputs.tag }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: ${{ env.PROJECT_NAME }}-win-x86_64
           path: install
@@ -178,7 +176,7 @@ jobs:
     outputs:
       release_body: ${{ steps.git-cliff.outputs.content }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
