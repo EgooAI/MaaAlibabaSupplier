@@ -1,6 +1,6 @@
 "use client";
 
-import { Avatar, Badge, Button, Checkbox, Listy, Radio, Space, Typography } from "antd";
+import { Avatar, Badge, Button, Checkbox, Empty, Listy, Radio, Space, Typography } from "antd";
 import { useMemo } from "react";
 import { StatusTag } from "@/components/StatusTag";
 import { conversationAvatarUrl } from "@/domain/chat/avatarModel";
@@ -40,13 +40,13 @@ export function ConversationList({
         options={[{ label: "按时间", value: "time" }, { label: "按状态", value: "status" }, { label: "按对话数", value: "count" }]}
         optionType="button"
       />
-      {groups.map((group) => {
+      {groups.length ? groups.map((group) => {
         const groupIds = group.items.map((item) => item.id);
         const groupSelected = groupIds.filter((id) => selectedIds.includes(id)).length;
         return (
           <div key={group.label}>
             <div className="flex items-center justify-between gap-2 px-1">
-              <Typography.Text className="text-xs">{group.label} · 已选 {groupSelected} / {group.items.length}</Typography.Text>
+              <Typography.Text className="text-xs">{selectable ? `${group.label} · 已选 ${groupSelected} / ${group.items.length}` : group.label}</Typography.Text>
               {selectable ? (
                 <Space size={4}>
                   <Button type="link" size="small" onClick={() => onSelectGroup?.(groupIds, true)}>选中本组</Button>
@@ -86,7 +86,7 @@ export function ConversationList({
             />
           </div>
         );
-      })}
+      }) : <Empty description="暂无会话" />}
     </Space>
   );
 }

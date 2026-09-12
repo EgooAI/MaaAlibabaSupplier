@@ -1,6 +1,6 @@
 "use client";
 
-import { Card, Space, Typography } from "antd";
+import { Card, Space } from "antd";
 import { BatchManagement } from "./batch/BatchManagement";
 import { ConversationList } from "./conversation/ConversationList";
 import { useBatchManagement } from "./hooks/useBatchManagement";
@@ -10,7 +10,6 @@ export function BatchPage() {
 
   return (
     <Space orientation="vertical" size="large" className="w-full">
-      <Typography.Title level={2} className="!mb-1">批量管理</Typography.Title>
       <BatchManagement
         selectedCount={workbench.selectedCount}
         exporting={workbench.exporting}
@@ -19,7 +18,7 @@ export function BatchPage() {
         onClear={workbench.clearSelection}
         onExport={workbench.exportSelected}
       />
-      <Card title="选择会话" loading={workbench.loading} className="min-h-[720px]">
+      <Card title="选择会话" loading={workbench.loading}>
         <ConversationList
           conversations={workbench.conversations}
           selectedIds={workbench.selectedIds}

@@ -37,7 +37,7 @@ export function MessageComposer({
 
   return (
     <Space.Compact className="w-full" orientation="vertical">
-      <Input.TextArea rows={4} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} disabled={disabled} />
+      <Input.TextArea autoSize={{ minRows: 3, maxRows: 8 }} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} disabled={disabled} />
       <div className="flex justify-between rounded-b-lg border border-t-0 border-slate-200 bg-slate-50 p-3">
         <Dropdown menu={{ items: menuItems, onClick: ({ key }) => onToolClick?.(key) }} trigger={["click"]} disabled={!tools.length}>
           <Button icon={<ToolOutlined />}>工具栏</Button>

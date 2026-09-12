@@ -1,6 +1,6 @@
 import type { BusinessCard } from "@/types/cards";
-import type { TaskSnapshot } from "@/types/status";
-import type { ConversationAnalysis, ConversationDetail, Conversation, ChatMessage, CustomerProfile, MessageRole } from "@/types/chatCanonical";
+import { formatDateTime } from "@/domain/time";
+import type { ConversationAnalysis, ConversationDetail, Conversation, ChatMessage, CustomerProfile } from "@/types/chatCanonical";
 import type { ConversationAggregateDto, ConversationAnalysisDto, ConversationMessageDto, ConversationSendResultDto, CustomerViewDto } from "@/types/chatTransport";
 
 interface ChatAdapterOptions {
@@ -13,7 +13,7 @@ export function adaptConversationSummary(aggregate: ConversationAggregateDto): C
     id: String(aggregate.sid),
     customer,
     latestMessage: aggregate.latest?.content ?? "",
-    updatedAt: formatAggregateTime(aggregate.latest?.updated_at ?? null),
+    updatedAt: formatDateTime(aggregate.latest?.updated_at ?? null),
     unreadCount: aggregate.unread_count ?? 0,
     status: aggregate.status ?? "following",
     priority: aggregate.priority ?? "medium",
@@ -37,7 +37,7 @@ export function adaptSendMessageResult(input: ConversationSendResultDto, options
   const conversation = adaptConversationDetail(input.conversation, options);
   const cards = input.conversation.business_cards ?? options.cards ?? [];
   const message = input.message ? adaptMessage(input.message, cards) : undefined;
-  return { message, conversation, execution: adaptExecution(input.execution) };
+  return { message, conversation, execution: input.execution };
 }
 
 function adaptCustomer(aggregate: ConversationAggregateDto): CustomerProfile {
@@ -108,12 +108,11 @@ function adaptMessage(item: ConversationMessageDto, cards: BusinessCard[]): Chat
   const message = item.message;
   const cardId = contentCardId(message.content);
   const card = cardId ? cards.find((candidate) => candidate.id === cardId) : undefined;
-  const role = messageRole(item.role, message.type, card);
   return {
     id: message.external_mid,
-    role,
+    role: item.role ?? "unknown",
     content: displayContent(message.content, card),
-    createdAt: formatAggregateTime(item.created_at),
+    createdAt: formatDateTime(item.created_at),
     sid: message.sid,
     externalMid: message.external_mid,
     senderAid: message.sender,
@@ -138,27 +137,6 @@ function adaptAnalysis(input: ConversationAnalysisDto | undefined): Conversation
   };
 }
 
-function adaptExecution(input: ConversationSendResultDto["execution"]): { success: boolean; message: string; task_snapshot: TaskSnapshot | null } {
-  return {
-    success: input.success,
-    message: input.message,
-    task_snapshot: input.task_snapshot ? {
-      ...input.task_snapshot,
-      status: input.task_snapshot.status === "queued" ? "pending" : input.task_snapshot.status,
-      result: Array.isArray(input.task_snapshot.result) && input.task_snapshot.result.length === 2
-        ? [Boolean(input.task_snapshot.result[0]), String(input.task_snapshot.result[1])]
-        : null,
-    } : null,
-  };
-}
-
-function messageRole(role: ConversationMessageDto["role"], type: string, card?: BusinessCard): MessageRole {
-  if (role) return role;
-  if (card || type === "card") return "card";
-  if (type === "system") return "system";
-  return "unknown";
-}
-
 function contentCardId(content: unknown) {
   if (!content || typeof content !== "object" || !("card_id" in content)) return undefined;
   return typeof content.card_id === "string" ? content.card_id : undefined;
@@ -176,15 +154,6 @@ function displayContent(content: unknown, card?: BusinessCard) {
   } catch {
     return card ? "系统推荐卡片" : "";
   }
-}
-
-function formatAggregateTime(value: string | number | null) {
-  if (typeof value === "string") return value;
-  if (typeof value === "number") {
-    const timestamp = value > 10_000_000_000 ? value : value * 1000;
-    return new Date(timestamp).toLocaleString("zh-CN", { hour12: false }).replaceAll("/", "-");
-  }
-  return "未知时间";
 }
 
 function stringValue(value: unknown) {

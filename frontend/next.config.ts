@@ -8,6 +8,7 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: projectRoot,
   },
+  allowedDevOrigins: ["115.25.46.*"],
   async rewrites() {
     return [
       { source: "/api/:path*", destination: "http://127.0.0.1:8000/api/:path*" },

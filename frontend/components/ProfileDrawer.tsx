@@ -20,7 +20,7 @@ export function ProfileDrawer({ selfInfo, loading, error, open, onClose, onRetry
       {!loading && !error && !selfInfo ? <Empty description="暂无个人信息"><Button onClick={onRetry}>重试</Button></Empty> : null}
       {!loading && !error && selfInfo ? (
         <Space orientation="vertical" className="w-full" size="middle">
-          <Card title="个人信息">
+          <Card>
             <Descriptions size="small" column={1} items={[
               { key: "name", label: "姓名", children: [selfInfo.first_name, selfInfo.last_name].filter(Boolean).join(" ") || selfInfo.login_id },
               { key: "loginId", label: "登录账号", children: selfInfo.login_id },

@@ -1,8 +1,8 @@
 "use client";
 
 import { EditOutlined } from "@ant-design/icons";
-import { Button, Card, Form, Input, InputNumber, Modal, Space, Table, Tag, Typography } from "antd";
-import { useEffect, useMemo, useState } from "react";
+import { Button, Card, Form, Input, InputNumber, Modal, Space, Table, Tag } from "antd";
+import { useMemo, useState } from "react";
 import { isValidToolRoundLimit } from "@/domain/agent/agentModel";
 import type { LlmLevelConfig } from "@/types/agent";
 import { HydrationSafeTable } from "@/components/HydrationSafeTable";
@@ -18,13 +18,8 @@ export function LlmPage() {
 
   const levels = useMemo(() => workbench.state?.llmLevels ?? [], [workbench.state?.llmLevels]);
 
-  useEffect(() => {
-    if (editingLevel) form.setFieldsValue(editingLevel);
-  }, [editingLevel, form]);
-
   function closeEditor() {
     setEditingLevel(undefined);
-    form.resetFields();
   }
 
   async function save(values: LlmLevelFormValues) {
@@ -40,9 +35,6 @@ export function LlmPage() {
 
   return (
     <Space orientation="vertical" size="large" className="w-full">
-      <div>
-        <Typography.Title level={2} className="!mb-1">LLM</Typography.Title>
-      </div>
       <Card title={<span>LLM Level 配置 <Tag color="blue">{levels.length} 个层级</Tag></span>} loading={workbench.loading}>
         <Table
           rowKey="level"
@@ -67,7 +59,7 @@ export function LlmPage() {
               render: (value: number) => `${value.toLocaleString()} tokens`,
             },
             { title: "最大工具轮数", dataIndex: "maxToolRounds", width: 150, align: "right" as const, render: (value: number | null) => value ?? "不限" },
-            { title: "操作", width: 110, fixed: "right" as const, render: (_: unknown, record: LlmLevelConfig) => <Button icon={<EditOutlined />} onClick={() => setEditingLevel(record)}>编辑</Button> },
+            { title: "操作", width: 110, fixed: "right" as const, render: (_: unknown, record: LlmLevelConfig) => <Button size="small" icon={<EditOutlined />} onClick={() => setEditingLevel(record)}>编辑</Button> },
           ]}
           locale={{ emptyText: "暂无 LLM 配置" }}
         />
@@ -81,7 +73,7 @@ export function LlmPage() {
         confirmLoading={saving}
         destroyOnHidden
       >
-        <Form form={form} layout="vertical" onFinish={save}>
+        <Form key={editingLevel?.level} initialValues={editingLevel} form={form} layout="vertical" onFinish={save}>
           <Form.Item name="modelName" label="模型" rules={[{ required: true, message: "请输入模型名称" }]}>
             <Input />
           </Form.Item>

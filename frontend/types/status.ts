@@ -37,12 +37,14 @@ export interface TaskSnapshot {
 }
 
 export interface HealthModule {
-  id: ID;
+  id: HealthModuleId;
   name: string;
   status: HealthStatus;
   latency: number | null;
   description: string;
 }
+
+export type HealthModuleId = "health-identity" | "health-proxy" | "health-receiver" | "health-node";
 
 export interface TaskItem {
   id: ID;
@@ -60,11 +62,11 @@ export interface SystemStatusSnapshot {
   updatedAt: string;
   modules: HealthModule[];
   tasks: TaskItem[];
-  userStatus?: KeyStatus;
-  proxyStatus?: NetworkStatus;
-  receiverStatus?: NetworkStatus;
-  nodeResult?: NodeTestResult;
-  taskSnapshots?: TaskSnapshot[];
+  userStatus: KeyStatus;
+  proxyStatus: NetworkStatus;
+  receiverStatus: NetworkStatus;
+  nodeResult: NodeTestResult | null;
+  taskSnapshots: TaskSnapshot[];
 }
 
 export interface CreateTestTaskInput {

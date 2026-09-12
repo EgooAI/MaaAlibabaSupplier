@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { SYSTEM_AGENT_APIDS, agentPresetToDbPreset } from "@/domain/agent/agentModel";
-import { mockBackend } from "@/services/mockAdapter";
+import { mockBackend } from "@/test/support/mockAdapter";
 
 beforeEach(async () => {
   await mockBackend.resetCache();

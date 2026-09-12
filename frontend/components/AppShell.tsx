@@ -24,7 +24,7 @@ const navItems = [
       { key: "/chat/agent-sessions", icon: <RobotOutlined />, label: <Link href="/chat/agent-sessions">Agent 会话</Link> },
     ],
   },
-  { key: "/batch", icon: <SelectOutlined />, label: <Link href="/batch">会话管理</Link> },
+  { key: "/batch", icon: <SelectOutlined />, label: <Link href="/batch">批量管理</Link> },
   {
     key: "/agent",
     icon: <RobotOutlined />,
@@ -46,8 +46,19 @@ const navItems = [
   },
 ];
 
-function NavigationMenu({ selectedKey, routeOpenKeys }: { selectedKey: string; routeOpenKeys: string[] }) {
-  const [openKeys, setOpenKeys] = useState(routeOpenKeys);
+const pageTitles: Record<string, string> = {
+  "/": "首页",
+  "/chat/customer-sessions": "聊天工作台",
+  "/chat/agent-sessions": "Agent 会话",
+  "/batch": "批量管理",
+  "/agent/llm": "LLM",
+  "/agent/system-prompt": "Level SYSTEM_PROMPT",
+  "/agent/system-agents": "系统 Agent",
+  "/agent/regular-agents": "普通 Agent",
+  "/status": "系统状态",
+};
+
+function NavigationMenu({ selectedKey, routeOpenKeys }: { selectedKey: string; routeOpenKeys: string[] }) {  const [openKeys, setOpenKeys] = useState(routeOpenKeys);
 
   return (
     <Menu
@@ -161,7 +172,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Layout className="min-h-0">
         <Header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b border-slate-100 px-6 shadow-sm">
           <Typography.Title level={4} className="!mb-0 truncate">
-            阿里国际站运营助手
+            {pageTitles[selectedKey] ?? "阿里国际站运营助手"}
           </Typography.Title>
           <Button type="text" className="flex items-center gap-2" aria-label="打开个人信息" onClick={() => setProfileOpen(true)}>
             <Avatar
@@ -173,7 +184,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 return true;
               }}
             />
-            <span className="hidden max-w-40 truncate md:inline">{selfInfo ? [selfInfo.first_name, selfInfo.last_name].filter(Boolean).join(" ") || selfInfo.login_id : "个人信息"}</span>
+            <span className="max-w-40 truncate">{selfInfo ? [selfInfo.first_name, selfInfo.last_name].filter(Boolean).join(" ") || selfInfo.login_id : "个人信息"}</span>
           </Button>
         </Header>
         <Content className="min-h-0 overflow-y-auto p-6">

@@ -12,6 +12,7 @@ import sqlite3
 from loguru import logger
 import threading
 import time
+import zlib
 from pathlib import Path
 
 from Crypto.Cipher import AES
@@ -43,6 +44,8 @@ class IMDBMiddleware:
                 instance._cache_dir: Path | None = None
                 instance._cached_db_path: Path | None = None
                 instance._cache_time: float = 0.0
+                instance._source_fingerprint: tuple[int, int] | None = None
+                instance._source_crc32: int | None = None
                 instance._conn: sqlite3.Connection | None = None
                 instance._init_data_dir()
                 cls._instance = instance
@@ -117,12 +120,13 @@ class IMDBMiddleware:
 
     # -- Decryption ------------------------------------------------------------
 
-    def _decrypt_db(self, src: Path, dst: Path) -> bool:
+    def _decrypt_db(self, src: Path, dst: Path) -> int | None:
+        """Decrypt src to dst; return CRC32 of the encrypted source, or None on failure."""
         try:
             encrypted = src.read_bytes()
             if len(encrypted) == 0 or len(encrypted) % 16 != 0:
                 logger.error("Encrypted DB size is not a multiple of 16 bytes")
-                return False
+                return None
 
             cipher = AES.new(self._key, AES.MODE_ECB)
             decrypted = bytearray(len(encrypted))
@@ -131,10 +135,10 @@ class IMDBMiddleware:
                 decrypted[offset : offset + 16] = cipher.decrypt(block)
 
             dst.write_bytes(decrypted)
-            return True
+            return zlib.crc32(encrypted) & 0xFFFFFFFF
         except Exception as exc:
             logger.error("DB decryption failed: {}", exc)
-            return False
+            return None
 
     # -- Cache refresh ---------------------------------------------------------
 
@@ -155,6 +159,38 @@ class IMDBMiddleware:
             except OSError:
                 pass
 
+    def _source_fingerprint_of(self, db_path: Path) -> tuple[int, int] | None:
+        try:
+            stat = db_path.stat()
+        except OSError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
+
+    def _crc32_of(self, db_path: Path) -> int | None:
+        try:
+            crc = 0
+            with db_path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1 << 20), b""):
+                    crc = zlib.crc32(chunk, crc)
+            return crc & 0xFFFFFFFF
+        except OSError:
+            return None
+
+    def _is_source_fresh(self, db_path: Path, now: float) -> bool:
+        """Two-level freshness: fingerprint only within TTL, fingerprint + CRC32 beyond TTL."""
+        if self._cached_db_path is None or self._source_fingerprint is None:
+            return False
+        fingerprint = self._source_fingerprint_of(db_path)
+        if fingerprint is None or fingerprint != self._source_fingerprint:
+            return False
+        if (now - self._cache_time) < _CACHE_TTL:
+            return True
+        crc = self._crc32_of(db_path)
+        if crc is None or crc != self._source_crc32:
+            return False
+        self._cache_time = now
+        return True
+
     def _replace_connection(self, cached: Path, ali_id: str) -> None:
         old_conn = self._conn
         conn = open_readonly(cached)
@@ -170,25 +206,22 @@ class IMDBMiddleware:
         self._cache_time = time.time()
 
     def _refresh(self) -> bool:
-        now = time.time()
-        if self._has_fresh_cache(now):
-            return True
-
         with self._lock:
-            if self._has_fresh_cache(time.time()):
-                return True
-
             ali_id = self._get_self_ali_id()
             db_path = self.resolve_encrypted_db_path(ali_id)
             if db_path is None:
-                return False
+                return self._has_fresh_cache(time.time())
+
+            if self._is_source_fresh(db_path, time.time()):
+                return True
 
             if not self._ensure_key(db_path):
                 return False
 
             cached = self._cache_path_for(ali_id)
             logger.info("Decrypting IM database...")
-            if not self._decrypt_db(db_path, cached):
+            crc = self._decrypt_db(db_path, cached)
+            if crc is None:
                 return False
 
             try:
@@ -196,6 +229,10 @@ class IMDBMiddleware:
             except sqlite3.Error as exc:
                 logger.error("Failed to open cached IM database: {}", exc)
                 return False
+            fingerprint = self._source_fingerprint_of(db_path)
+            if fingerprint is not None:
+                self._source_fingerprint = fingerprint
+            self._source_crc32 = crc
             self._cleanup_stale_caches(cached)
             self.sync_to_crm()
             logger.info("IM database refreshed (cached at {})", cached)

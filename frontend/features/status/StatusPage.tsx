@@ -4,25 +4,32 @@ import { ExperimentOutlined, ReloadOutlined } from "@ant-design/icons";
 import { Button, Card, Col, Empty, Row, Space, Table, Typography } from "antd";
 import { HydrationSafeTable } from "@/components/HydrationSafeTable";
 import { StatusTag } from "@/components/StatusTag";
-import type { HealthModule, TaskItem } from "@/types/status";
+import { HEALTH_MODULE_TITLES } from "@/domain/status/statusModel";
+import type { HealthModule, HealthModuleId, TaskItem } from "@/types/status";
 import { useStatusWorkbench } from "./hooks/useStatusWorkbench";
 
-const healthModuleIds = ["health-identity", "health-proxy", "health-receiver", "health-node"] as const;
+const healthModuleIds: HealthModuleId[] = ["health-identity", "health-proxy", "health-receiver", "health-node"];
 
 export function StatusPage() {
   const { snapshot, loading, refreshing, creatingTask, testingNode, refresh, createTestTask, runNodeTest } = useStatusWorkbench();
-  const modules = healthModuleIds.map((id) => snapshot?.modules.find((module) => module.id === id)).filter((module): module is HealthModule => Boolean(module));
+
+  if (!snapshot) {
+    return (
+      <Space orientation="vertical" size="large" className="w-full">
+        <Card loading={loading}>
+          {!loading ? <Empty description="暂无状态数据" /> : null}
+        </Card>
+      </Space>
+    );
+  }
+
+  const modules = healthModuleIds.map((id) => snapshot.modules.find((module) => module.id === id)).filter((module): module is HealthModule => Boolean(module));
 
   return (
     <Space orientation="vertical" size="large" className="w-full">
-      <div>
-        <Typography.Title level={2} className="!mb-1">系统状态</Typography.Title>
-      </div>
-
-      <Card title="系统状态" loading={loading}>
+      <Card loading={loading}>
         <Row gutter={[16, 16]}>
           {modules.map((module) => <Col xs={24} md={8} key={module.id}><HealthModulePanel module={module} /></Col>)}
-          {!loading && !modules.length ? <Col span={24}><Empty description="暂无状态数据" /></Col> : null}
         </Row>
       </Card>
 
@@ -38,7 +45,7 @@ export function StatusPage() {
       <Card title="任务队列">
         <Table
           rowKey="id"
-          dataSource={snapshot?.tasks ?? []}
+          dataSource={snapshot.tasks}
           loading={loading}
           scroll={{ x: 900 }}
           components={{ table: HydrationSafeTable }}
@@ -59,7 +66,7 @@ export function StatusPage() {
 }
 
 function HealthModulePanel({ module }: { module: HealthModule }) {
-  const title = module.id === "health-identity" ? "用户状态" : module.id === "health-proxy" ? "MITM 代理" : "MITM Receiver";
+  const title = HEALTH_MODULE_TITLES[module.id];
   const statusText = module.status === "healthy" ? "在线" : module.status === "warning" ? "注意" : "离线";
 
   return (
@@ -68,7 +75,7 @@ function HealthModulePanel({ module }: { module: HealthModule }) {
         <Typography.Text strong>{title}</Typography.Text>
         <StatusTag status={module.status} />
       </div>
-      <Typography.Title level={4} className="!mb-2">{statusText}</Typography.Title>
+      <div className="mb-2"><Typography.Text strong className="text-lg">{statusText}</Typography.Text></div>
       <Space orientation="vertical" size={4}>
         <Typography.Text>{module.description}</Typography.Text>
         <Typography.Text>延迟：{module.latency === null ? "未知" : `${module.latency}ms`}</Typography.Text>

@@ -1,7 +1,6 @@
 "use client";
 
 import { Button, Form, Input, InputNumber, Modal, Select, Space } from "antd";
-import { useEffect } from "react";
 import { AGENT_TOOL_OPTIONS, isAgentLevel } from "@/domain/agent/agentModel";
 import type { AgentConfig, AgentEditValues } from "@/types/agent";
 
@@ -20,21 +19,14 @@ type AgentEditModalProps = {
 };
 
 export function AgentEditModal({ agent, category, title, open, saving, onClose, onSave }: AgentEditModalProps) {
-  const [form] = Form.useForm<AgentEditValues>();
-
-  useEffect(() => {
-    if (!agent) {
-      form.setFieldsValue({ name: "", description: "", prompt: "", level: 0, capabilities: [] });
-      return;
-    }
-    form.setFieldsValue({
-      name: agent.name,
-      description: agent.description,
-      prompt: agent.prompt ?? "",
-      level: agent.level ?? 0,
-      capabilities: agent.capabilities,
-    });
-  }, [agent, form]);
+  // destroyOnHidden 会在每次打开时重挂 Form，initialValues + key 保证初值正确，无需 effect 同步。
+  const initialValues: AgentEditValues = {
+    name: agent?.name ?? "",
+    description: agent?.description ?? "",
+    prompt: agent?.prompt ?? "",
+    level: agent?.level ?? 0,
+    capabilities: agent?.capabilities ?? [],
+  };
 
   return (
     <Modal
@@ -44,7 +36,7 @@ export function AgentEditModal({ agent, category, title, open, saving, onClose, 
       footer={null}
       destroyOnHidden
     >
-      <Form form={form} layout="vertical" onFinish={onSave}>
+      <Form key={agent?.id ?? "new"} initialValues={initialValues} layout="vertical" onFinish={onSave}>
         <Form.Item name="name" label="名称" rules={[nonEmptyTextRule("请输入名称")]}>
           <Input />
         </Form.Item>

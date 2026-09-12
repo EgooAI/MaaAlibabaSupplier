@@ -1,4 +1,12 @@
-import type { HealthStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskItem, TaskSnapshot, TaskStatus } from "@/types/status";
+import { formatDateTime, nowText } from "@/domain/time";
+import type { HealthModuleId, HealthStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskItem, TaskSnapshot, TaskStatus } from "@/types/status";
+
+export const HEALTH_MODULE_TITLES: Record<HealthModuleId, string> = {
+  "health-identity": "用户状态",
+  "health-proxy": "MITM 代理",
+  "health-receiver": "MITM Receiver",
+  "health-node": "MaaFW 节点",
+};
 
 export function taskSnapshotToTaskItem(snapshot: TaskSnapshot): TaskItem {
   const result = snapshot.result ?? undefined;
@@ -6,7 +14,7 @@ export function taskSnapshotToTaskItem(snapshot: TaskSnapshot): TaskItem {
     id: snapshot.task_id,
     type: snapshot.description,
     status: documentTaskStatusToUi(snapshot.status),
-    createdAt: formatStatusTime(snapshot.created_at),
+    createdAt: formatDateTime(snapshot.created_at),
     duration: formatDuration(snapshot.started_at, snapshot.completed_at),
     target: snapshot.target,
     message: snapshot.message,
@@ -25,7 +33,7 @@ export function buildSystemStatusSnapshot({
   receiverStatus,
   nodeResult,
   taskSnapshots,
-  updatedAt = new Date().toLocaleString("zh-CN", { hour12: false }).replaceAll("/", "-"),
+  updatedAt = nowText(),
 }: {
   userStatus: KeyStatus;
   proxyStatus: NetworkStatus;
@@ -79,10 +87,6 @@ function networkToHealth(status: NetworkStatus): HealthStatus {
   if (!status.reachable) return "offline";
   if (status.latency_ms !== null && status.latency_ms > 180) return "warning";
   return "healthy";
-}
-
-function formatStatusTime(value: number) {
-  return new Date(value * 1000).toLocaleString("zh-CN", { hour12: false }).replaceAll("/", "-");
 }
 
 function formatDuration(startedAt: number | null, completedAt: number | null) {

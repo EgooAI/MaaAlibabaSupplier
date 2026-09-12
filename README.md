@@ -17,7 +17,10 @@
 
 ## 开始开发
 
-项目细节参见[AGENTS.md](./AGENTS.md)。
+项目细节参见[AGENTS.md](./AGENTS.md)与[backend/app/README.md](./backend/app/README.md)。
+
+- 后端：工作目录 `backend/`，运行 `python -m backend.app.main`（或直接运行 `backend/app/main.py`），默认监听 `127.0.0.1:8000`。
+- 前端：工作目录 `frontend/`，运行 `pnpm install && pnpm dev`，Next.js 会将 `/api/*` 反代到后端。
 
 ## 参考资料
 

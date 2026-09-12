@@ -1,7 +1,7 @@
 "use client";
 
 import { SaveOutlined } from "@ant-design/icons";
-import { Button, Card, Form, Input, Select, Space, Typography } from "antd";
+import { Button, Card, Form, Input, Select, Space } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import type { LlmLevelConfig } from "@/types/agent";
 import { useAgentWorkbench } from "./hooks/useAgentWorkbench";
@@ -46,11 +46,8 @@ export function SystemPromptPage() {
   }
 
   return (
-    <Space orientation="vertical" size="large" className="w-full">
-      <div>
-        <Typography.Title level={2} className="!mb-1">Level SYSTEM_PROMPT</Typography.Title>
-      </div>
-      <Card title="Level SYSTEM_PROMPT" loading={workbench.loading}>
+      <Space orientation="vertical" size="large" className="w-full">
+      <Card loading={workbench.loading}>
         <Form form={form} layout="vertical" onFinish={save}>
           <Form.Item name="level" label="Level" rules={[{ required: true, message: "请选择 Level" }]}>
             <Select options={levels.map((level) => ({ label: `Level ${level.level}`, value: level.level }))} onChange={selectLevel} />

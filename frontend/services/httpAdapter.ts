@@ -1,5 +1,4 @@
 import type { DbAgentPreset, DocumentLlmConfig } from "@/types/agent";
-import type { ApiResponse } from "@/types/common";
 import { adaptConversationDetail, adaptConversationSummary, adaptSendMessageResult } from "@/services/chatAdapter";
 import type { ConversationAggregateDto, ConversationSendResultDto } from "@/types/chatTransport";
 import type { OperationsBackend } from "./interfaces";
@@ -8,18 +7,12 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function hasEnvelopeShape(value: unknown): value is Record<string, unknown> {
-  return isPlainObject(value) && ("code" in value || "msg" in value || "message" in value || "data" in value);
-}
-
-function parseApiResponse<T>(payload: unknown, path: string): ApiResponse<T> {
-  if (!hasEnvelopeShape(payload)) throw new Error(`API protocol error: ${path}`);
-  const message = "msg" in payload ? payload.msg : payload.message;
-  if (typeof payload.code !== "number" || typeof message !== "string") {
+function parseApiResponse<T>(payload: unknown, path: string): T {
+  if (!isPlainObject(payload) || typeof payload.code !== "number" || typeof payload.msg !== "string") {
     throw new Error(`API protocol error: ${path}`);
   }
-  if (payload.code !== 0) throw new Error(message);
-  return { code: payload.code, msg: message, data: payload.data as T };
+  if (payload.code !== 0) throw new Error(payload.msg);
+  return payload.data as T;
 }
 
 function parseJsonPayload(text: string, path: string): unknown {
@@ -39,9 +32,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
   const text = await response.text();
   if (!text.trim()) throw new Error(`API response body is empty: ${path}`);
-  const payload = parseJsonPayload(text, path);
-  if (hasEnvelopeShape(payload)) return parseApiResponse<T>(payload, path).data;
-  return payload as T;
+  return parseApiResponse<T>(parseJsonPayload(text, path), path);
 }
 
 async function requestVoid(path: string, init?: RequestInit): Promise<void> {
@@ -51,8 +42,7 @@ async function requestVoid(path: string, init?: RequestInit): Promise<void> {
   }
   const text = await response.text();
   if (!text.trim()) return;
-  const payload = parseJsonPayload(text, path);
-  if (hasEnvelopeShape(payload)) parseApiResponse<unknown>(payload, path);
+  parseApiResponse<unknown>(parseJsonPayload(text, path), path);
 }
 
 export function requestInit(init?: RequestInit): RequestInit {
