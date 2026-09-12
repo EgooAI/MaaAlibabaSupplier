@@ -328,9 +328,38 @@ class CRMAdapter:
                     messages=messages,
                     last_created_at=messages[-1].created_at,
                     last_content_label=messages[-1].content_label,
+                    sid=session_meta.sid or 0,
+                    key=str(session_meta.key or ""),
+                    participants=tuple(session_meta.participants or []),
                 ))
         conversations.sort(key=lambda conversation: coerce_epoch(conversation.last_created_at), reverse=True)
         return conversations
+
+    def get_conversation_detail(self, self_ali_id: str, sid: int) -> CrmConversation | None:
+        prefix = session_key_prefix(self_ali_id)
+        with Session(self.engine) as session:
+            session_meta = session.get(SessionMeta, sid)
+            if session_meta is None or session_meta.sid is None:
+                return None
+            if not str(session_meta.key or "").startswith(prefix):
+                return None
+            message_statement = select(Message).where(Message.sid == session_meta.sid)
+            messages = [_crm_message_from_sdk(message) for message in session.exec(message_statement).all()]
+            messages.sort(
+                key=lambda message: message.created_at.timestamp() if message.created_at else 0.0
+            )
+            if not messages:
+                return None
+            contact_ali_id = str(session_meta.key or "").removeprefix(prefix)
+            return CrmConversation(
+                contact_ali_id=contact_ali_id,
+                messages=messages,
+                last_created_at=messages[-1].created_at,
+                last_content_label=messages[-1].content_label,
+                sid=session_meta.sid,
+                key=str(session_meta.key or ""),
+                participants=tuple(session_meta.participants or []),
+            )
 
 
 def sync_user_info(info: UserInfo) -> Future:

@@ -35,7 +35,7 @@ export function BatchManagement({ selectedCount, exporting, onSelectAll, onInver
           <Button size="small" icon={<CheckOutlined />} onClick={onSelectAll}>全选</Button>
           <Button size="small" icon={<SwapOutlined />} onClick={onInvert}>反选</Button>
           <Button size="small" icon={<ClearOutlined />} onClick={onClear}>清空</Button>
-          <Button size="small" icon={<ExportOutlined />} loading={exporting} disabled={exporting} onClick={onExport}>导出 TXT</Button>
+          <Button size="small" icon={<ExportOutlined />} loading={exporting} disabled={exporting} onClick={onExport}>导出聊天</Button>
           <Button size="small" icon={<MessageOutlined />} disabled>群发</Button>
         </Space>
       </div>

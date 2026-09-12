@@ -27,6 +27,12 @@ class CrmConversation:
     messages: list[CrmMessage]
     last_created_at: Any
     last_content_label: str | None
+    sid: int = 0
+    key: str = ""
+    participants: tuple[int, ...] = ()
+
+
+CARD_CONTENT_TYPE = 10010
 
 
 class CrmResolver:
@@ -84,4 +90,41 @@ def format_created_at(value: Any) -> str:
     return datetime.fromtimestamp(epoch, tz=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
 
 
-__all__ = ["CrmConversation", "CrmMessage", "CrmResolver", "coerce_epoch", "format_created_at"]
+def is_card_message(message: CrmMessage) -> bool:
+    return message.user_content_type == CARD_CONTENT_TYPE
+
+
+def resolve_role(message: CrmMessage, resolver: CrmResolver) -> str:
+    if message.is_system or message.is_auto_reply:
+        return "system"
+    if is_card_message(message):
+        return "card"
+    return "seller" if resolver.is_self(message.sender_id) else "buyer"
+
+
+def normalize_message_type(message: CrmMessage) -> str:
+    if message.is_system or message.is_auto_reply:
+        return "system"
+    if is_card_message(message):
+        return "card"
+    return "text"
+
+
+def message_display_text(message: CrmMessage) -> str:
+    if is_card_message(message):
+        return message.content_label or "[卡片]"
+    return message.content_label or ""
+
+
+__all__ = [
+    "CARD_CONTENT_TYPE",
+    "CrmConversation",
+    "CrmMessage",
+    "CrmResolver",
+    "coerce_epoch",
+    "format_created_at",
+    "is_card_message",
+    "message_display_text",
+    "normalize_message_type",
+    "resolve_role",
+]

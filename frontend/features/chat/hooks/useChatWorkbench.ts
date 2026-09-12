@@ -3,6 +3,7 @@
 import { App } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { mergeConversationDetail, mergeMessageTranslations, messageExecutionState } from "@/domain/chat/chatModel";
+import type { ConversationGroupMode } from "@/domain/chat/chatModel";
 import { backend } from "@/services/client";
 import type { AssistantSuggestion, ChatMessage, ConversationDetail } from "@/types/chatCanonical";
 import { useConversationSummaries } from "./useConversationSummaries";
@@ -25,7 +26,7 @@ export function useChatWorkbench() {
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [analysisState, setAnalysisState] = useState<AnalysisState>({ loading: false });
   const [translationVisible, setTranslationVisible] = useState(true);
-  const [groupMode, setGroupMode] = useState<"time" | "status">("time");
+  const [groupMode, setGroupMode] = useState<ConversationGroupMode>("time");
   const [activeCardId, setActiveCardId] = useState<string>();
   const activeIdRef = useRef<string | undefined>(undefined);
   const detailRequestRef = useRef(0);

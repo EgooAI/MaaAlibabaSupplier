@@ -137,6 +137,7 @@ export interface ConversationAggregateDto extends SessionMeta {
   unread_count: number;
   status: TransportConversationStatus;
   priority: "high" | "medium" | "low";
+  dialogue_count?: number;
   analysis?: ConversationAnalysisDto;
   business_cards?: BusinessCard[];
 }

@@ -37,4 +37,14 @@ def list_conversations(self_ali_id: str) -> list[CrmConversation]:
         return []
 
 
-__all__ = ["get_self_info", "get_user_info", "list_conversations"]
+def get_conversation_detail(self_ali_id: str, sid: int) -> CrmConversation | None:
+    if not self_ali_id or not sid:
+        return None
+    try:
+        return CRMAdapter().get_conversation_detail(self_ali_id, sid)
+    except Exception:
+        logger.exception("Failed to load conversation detail from CRM SDK")
+        return None
+
+
+__all__ = ["get_conversation_detail", "get_self_info", "get_user_info", "list_conversations"]

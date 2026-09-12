@@ -26,6 +26,7 @@ export function BatchPage() {
           groupMode={workbench.groupMode}
           onGroupModeChange={workbench.setGroupMode}
           onToggleSelected={workbench.toggleSelected}
+          onSelectGroup={workbench.setGroupSelected}
           selectable
         />
       </Card>
