@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import sqlite3
@@ -25,8 +24,6 @@ def _get_connection() -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("DROP TABLE IF EXISTS user_info")
-    conn.execute("DROP TABLE IF EXISTS translation_cache")
     conn.commit()
     return conn
 
@@ -484,54 +481,6 @@ class InquiryCardPool(_DictPool[InquiryCard]):
 
 def get_inquiry_card_pool() -> InquiryCardPool:
     return InquiryCardPool()
-
-
-# ---------------------------------------------------------------------------
-# TranslationCache
-# ---------------------------------------------------------------------------
-
-class TranslationCache:
-    """Thread-safe in-memory translation cache keyed by message text hash."""
-
-    _instance: TranslationCache | None = None
-    _instance_lock = threading.Lock()
-
-    def __new__(cls) -> TranslationCache:
-        with cls._instance_lock:
-            if cls._instance is None:
-                instance = super().__new__(cls)
-                instance._lock = threading.Lock()
-                instance._cache: dict[str, str | None] = {}
-                cls._instance = instance
-            return cls._instance
-
-    @staticmethod
-    def _hash(text: str) -> str:
-        return hashlib.md5(text.encode("utf-8")).hexdigest()
-
-    def is_cached(self, text: str) -> bool:
-        h = self._hash(text)
-        with self._lock:
-            return h in self._cache
-
-    def get(self, text: str) -> str | None:
-        """Return translated text or None (already Chinese). Must check is_cached first."""
-        h = self._hash(text)
-        with self._lock:
-            return self._cache.get(h)
-
-    def put(self, text: str, translated: str | None) -> None:
-        h = self._hash(text)
-        with self._lock:
-            self._cache[h] = translated
-
-    def clear(self) -> None:
-        with self._lock:
-            self._cache.clear()
-
-
-def get_translation_cache() -> TranslationCache:
-    return TranslationCache()
 
 
 # ---------------------------------------------------------------------------

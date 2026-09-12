@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 from typing import Callable
 
 from nicegui import ui
@@ -11,6 +10,7 @@ from nicegui import ui
 from app.shared.backend.maafw_runner import goto_contact
 from app.shared.crm import get_user_info as get_crm_user_info
 from app.task_queue import TaskStatus, get_task_queue
+from app.web.chat_presenter import format_register_date
 from app.web.components.ui_helpers import empty_state, info_row, section_card
 
 
@@ -76,9 +76,7 @@ def render(ctx: dict) -> Callable[[], None]:
                     info_row("person", "姓名", f"{info.first_name} {info.last_name}".strip())
                     info_row("public", "国家", info.country_code)
                     info_row("business", "公司", info.company_name)
-                    reg = ""
-                    if info.register_date:
-                        reg = datetime.fromtimestamp(info.register_date, tz=timezone.utc).strftime("%Y-%m-%d")
+                    reg = format_register_date(info.register_date)
                     info_row("calendar_today", "注册时间", reg)
 
                 # Contact

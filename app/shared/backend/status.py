@@ -10,7 +10,7 @@ from pathlib import Path
 
 from app.shared.backend.im_db_middleware import get_im_db_middleware
 from app.shared.mitm.pool import get_self_info_pool
-from app.shared.utils.env import get_env_str
+from app.shared.utils.env import load_workdir_env
 
 
 @dataclass(frozen=True)
@@ -31,6 +31,7 @@ class NetworkStatus:
 
 
 def check_user_status() -> KeyStatus:
+    load_workdir_env()
     info = get_self_info_pool().get()
     ali_id = info.ali_id if info and info.ali_id else ""
 
@@ -39,17 +40,7 @@ def check_user_status() -> KeyStatus:
 
     db_exists = False
     if ali_id:
-        data_dir = get_env_str("ALIBABA_DATA_DIR")
-        if data_dir:
-            db_path = (
-                Path(data_dir)
-                / "IMServiceDir"
-                / "MessageSDK"
-                / f"{ali_id}@icbu"
-                / "database"
-                / "im.sqlite"
-            )
-            db_exists = db_path.exists()
+        db_exists = mw.resolve_encrypted_db_path(ali_id) is not None
 
     return KeyStatus(has_key=has_key, source=source, ali_id=ali_id, db_exists=db_exists)
 

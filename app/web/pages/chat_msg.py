@@ -3,26 +3,35 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 
 from loguru import logger
-
 from nicegui import ui
 
-from app.shared.backend.chat_ai import translate_buyer_messages
+from app.shared.agent.system_agents import (
+    CHAT_CUSTOMER_INTENT_AGENT_APID,
+    CHAT_CUSTOMER_STAGE_AGENT_APID,
+)
 from app.shared.backend.maafw_runner import chat_input, chat_send, goto_contact
-from app.shared.crm import get_user_info as get_crm_user_info
-from app.task_queue import TaskStatus, get_task_queue
+from app.shared.crm import (
+    get_translation,
+    get_user_info as get_crm_user_info,
+    request_translations,
+    translation_cached,
+)
+from app.shared.crm.identities import strip_icbu_suffix
 from app.shared.crm.views import format_created_at
+from app.task_queue import TaskStatus, get_task_queue
 from app.web.chat_presenter import (
     contact_display_name,
-    conversation_for_translation,
+    conversation_rows,
+    format_register_date,
     generic_card_from_message,
     message_datetime,
     message_text,
     product_card_from_message,
 )
 from app.web.components.ai_suggestion import open_suggestion_dialog
+from app.web.components.analysis_dialog import open_analysis_dialog
 from app.web.components.card import generic_card, product_card
 
 _AVATAR_API = "https://ui-avatars.com/api/"
@@ -32,26 +41,24 @@ def _avatar_url(name: str, color: str) -> str:
     return f"{_AVATAR_API}?name={name}&background={color}&color=fff&size=32"
 
 
-def _is_all_cached(messages, resolver, cache) -> bool:
-    """Return True when every buyer message in the conversation is already cached."""
+def _is_all_cached(messages, resolver) -> bool:
+    from app.shared.crm.sdk import TranslateManager
+
+    manager = TranslateManager()
     for m in messages:
         if resolver.is_self(m.sender_id) or m.is_system:
             continue
         text = message_text(m)
-        if text and not cache.is_cached(text):
+        if text and not translation_cached(text, manager=manager):
             return False
     return True
 
 
 def _login_id_for_contact(contact_ali_id: str) -> str:
-    info = _user_info_for_contact(contact_ali_id)
+    info = get_crm_user_info(contact_ali_id)
     if info and info.login_id:
         return info.login_id
-    return contact_ali_id.removesuffix("@icbu")
-
-
-def _user_info_for_contact(contact_ali_id: str):
-    return get_crm_user_info(contact_ali_id)
+    return strip_icbu_suffix(contact_ali_id)
 
 
 def render(ctx: dict) -> None:
@@ -62,7 +69,6 @@ def render(ctx: dict) -> None:
     selected = ctx["selected"]
     conv_map = ctx["conv_map"]
     resolver = ctx["resolver"]
-    cache = ctx["cache"]
     pending_pool = ctx["pending_pool"]
     suggestion_state = ctx["suggestion_state"]
     translation_state = ctx["translation_state"]
@@ -88,7 +94,7 @@ def render(ctx: dict) -> None:
         scroll = ui.scroll_area().classes("w-full flex-grow")
         with scroll:
             # Quick customer overview card
-            info = _user_info_for_contact(contact)
+            info = get_crm_user_info(contact)
             if info:
                 with ui.card().classes("w-full max-w-sm mx-auto my-4").props("flat bordered"):
                     with ui.column().classes("items-center gap-1 w-full py-2"):
@@ -99,8 +105,9 @@ def render(ctx: dict) -> None:
                         if info.country_code:
                             parts.append(info.country_code)
                         if info.register_date:
-                            reg = datetime.fromtimestamp(info.register_date, tz=timezone.utc).strftime("%Y-%m-%d")
-                            parts.append(f"注册于 {reg}")
+                            reg = format_register_date(info.register_date)
+                            if reg:
+                                parts.append(f"注册于 {reg}")
                         if parts:
                             ui.label(" · ".join(parts)).classes("text-sm text-gray-500")
 
@@ -130,7 +137,7 @@ def render(ctx: dict) -> None:
                 if is_sent:
                     name = "我"
                 else:
-                    sid = (msg.sender_id or "").removesuffix("@icbu")
+                    sid = strip_icbu_suffix(msg.sender_id)
                     name = contact_display_name(sid) if sid else "unknown"
 
                 text = message_text(msg)
@@ -158,9 +165,14 @@ def render(ctx: dict) -> None:
                         continue
 
                 # Normal text message
-                if not is_sent and text and cache.is_cached(text):
-                    translated = cache.get(text)
-                    if translated is not None:
+                if (
+                    translation_state.get("show_results", True)
+                    and not is_sent
+                    and text
+                    and translation_cached(text)
+                ):
+                    translated = get_translation(text)
+                    if translated:
                         display_text = [text, f"[译] {translated}"]
                     else:
                         display_text = text
@@ -195,31 +207,116 @@ def render(ctx: dict) -> None:
         scroll.scroll_to(percent=1)
 
     # ------------------------------------------------------------------
-    # Translate section
+    # Agent toolbar
     # ------------------------------------------------------------------
 
     @ui.refreshable
-    def translate_section() -> None:
+    def tool_bar_section() -> None:
         contact = selected.get("contact")
         if not contact or contact not in conv_map:
             return
 
         conv = conv_map[contact]
-        all_cached = _is_all_cached(conv.messages, resolver, cache)
+        all_cached = _is_all_cached(conv.messages, resolver)
 
-        with ui.card().classes("w-full"):
+        async def _translate(force: bool = False) -> None:
+            if translation_state.get("loading"):
+                return
+            translation_state["loading"] = True
+            translation_state["error"] = None
+            translation_state["done"] = False
+            tool_bar_section.refresh()
+
+            try:
+                texts: list[str] = []
+                for m in conv.messages:
+                    is_me = resolver.is_self(m.sender_id)
+                    text = message_text(m)
+                    if is_me or not text or m.is_system:
+                        continue
+                    if not force and translation_cached(text):
+                        continue
+                    texts.append(text)
+
+                conversation = conversation_rows(conv.messages, resolver, limit=None)
+                saved = await asyncio.to_thread(
+                    request_translations,
+                    texts,
+                    force=force,
+                    conversation=conversation,
+                )
+                logger.info("Translation agent saved {} rows", saved)
+                translation_state["done"] = True
+                messages.refresh()
+            except Exception as exc:
+                translation_state["error"] = f"翻译失败：{exc}"
+                logger.error("Translation failed: {}", exc)
+            finally:
+                translation_state["loading"] = False
+                tool_bar_section.refresh()
+
+        def _toggle_translation_results() -> None:
+            translation_state["show_results"] = not bool(
+                translation_state.get("show_results", True)
+            )
+            messages.refresh()
+            tool_bar_section.refresh()
+
+        async def _handle_stage_analysis() -> None:
+            await _run_analysis(
+                title="客户所处阶段分析",
+                apid=CHAT_CUSTOMER_STAGE_AGENT_APID,
+                task="分析客户当前所处成交阶段，并给出下一步推进建议。",
+            )
+
+        async def _handle_intent_analysis() -> None:
+            await _run_analysis(
+                title="客户意图分析",
+                apid=CHAT_CUSTOMER_INTENT_AGENT_APID,
+                task="分析客户真实意图、关注点、潜在异议和建议动作。",
+            )
+
+        with ui.card().props("flat bordered").classes("w-full bg-slate-50"):
             with ui.row().classes("items-center justify-between w-full"):
                 with ui.row().classes("items-center gap-2"):
-                    ui.icon("translate").classes("text-blue-500")
-                    ui.label("翻译").classes("text-sm font-medium")
+                    ui.icon("auto_awesome").classes("text-amber-500")
+                    ui.label("Agent 工具栏").classes("text-sm font-medium")
+                with ui.row().classes("items-center gap-1"):
+                    ui.button(
+                        "AI建议",
+                        icon="tips_and_updates",
+                        on_click=_open_suggestions,
+                    ).props("size=sm flat color=amber")
+                    ui.button(
+                        "客户阶段",
+                        icon="timeline",
+                        on_click=_handle_stage_analysis,
+                    ).props("size=sm flat color=primary")
+                    ui.button(
+                        "客户意图",
+                        icon="psychology",
+                        on_click=_handle_intent_analysis,
+                    ).props("size=sm flat color=primary")
                 if all_cached:
-                    trans_btn = ui.button("重新全部翻译", icon="refresh").props(
-                        "size=sm flat color=secondary"
-                    )
+                    ui.button(
+                        "重新翻译",
+                        icon="refresh",
+                        on_click=lambda: _translate(force=True),
+                    ).props("size=sm flat color=secondary")
                 else:
-                    trans_btn = ui.button("翻译买家消息", icon="translate").props(
-                        "size=sm flat"
-                    )
+                    ui.button(
+                        "翻译",
+                        icon="translate",
+                        on_click=lambda: _translate(force=False),
+                    ).props("size=sm flat")
+                show_results = bool(translation_state.get("show_results", True))
+                toggle_text = "隐藏译文" if show_results else "显示译文"
+                toggle_icon = "visibility_off" if show_results else "visibility"
+                ui.button(
+                    toggle_text,
+                    icon=toggle_icon,
+                    on_click=_toggle_translation_results,
+                ).props("size=sm flat color=grey")
 
             if translation_state.get("loading"):
                 with ui.row().classes("items-center gap-2 py-2"):
@@ -236,54 +333,6 @@ def render(ctx: dict) -> None:
                 ui.label("翻译完成，消息已更新").classes(
                     "text-xs text-green-600"
                 )
-
-            async def _translate(force: bool = False) -> None:
-                if translation_state.get("loading"):
-                    return
-                translation_state["loading"] = True
-                translation_state["error"] = None
-                translation_state["done"] = False
-                translate_section.refresh()
-
-                try:
-                    convo_for_llm = conversation_for_translation(conv.messages, resolver, cache, force=force)
-                    result = await asyncio.to_thread(translate_buyer_messages, convo_for_llm)
-                    if result is None:
-                        translation_state["done"] = True
-                        translation_state["loading"] = False
-                        translate_section.refresh()
-                        return
-
-                    # Map msg IDs back to original texts and cache
-                    counter = 0
-                    for m in conv.messages:
-                        is_me = resolver.is_self(m.sender_id)
-                        text = message_text(m)
-                        if is_me or not text or m.is_system:
-                            continue
-                        if not force and cache.is_cached(text):
-                            continue
-                        counter += 1
-                        msg_id = f"msg{counter}"
-                        translated = result.translations.get(msg_id)
-                        cache.put(text, translated)
-                        logger.info(
-                            "Translated {}: {} -> {}",
-                            msg_id,
-                            text[:40],
-                            (translated or "[已是中文]")[:40],
-                        )
-
-                    translation_state["done"] = True
-                    messages.refresh()
-                except Exception as exc:
-                    translation_state["error"] = f"翻译失败：{exc}"
-                    logger.error("Translation failed: {}", exc)
-                finally:
-                    translation_state["loading"] = False
-                    translate_section.refresh()
-
-            trans_btn.on("click", lambda: asyncio.create_task(_translate(force=all_cached)))
 
     # ------------------------------------------------------------------
     # Send status
@@ -324,44 +373,6 @@ def render(ctx: dict) -> None:
                         ui.label(snapshot.message).classes("text-xs text-gray-600")
 
     # ------------------------------------------------------------------
-    # Render sections
-    # ------------------------------------------------------------------
-
-    messages()
-    translate_section()
-    send_status_section()
-
-    # ------------------------------------------------------------------
-    # Input card
-    # ------------------------------------------------------------------
-
-    with ui.card().classes("w-full"):
-        with ui.row().classes("items-end w-full gap-2"):
-            msg_input = ui.textarea(placeholder="输入消息…").props(
-                "outlined autogrow rows=1 dense"
-            ).classes("flex-grow max-h-[120px]")
-            msg_input.on("blur", lambda: pending_pool.put(
-                selected.get("contact") or "", msg_input.value or ""
-            ))
-            suggest_btn = ui.button(icon="auto_awesome").props(
-                "round flat color=amber"
-            ).tooltip("AI 建议")
-            send_btn = ui.button(icon="send").props(
-                "round color=primary"
-            )
-
-    # Restore initial contact's pending input
-    initial = selected.get("contact")
-    if initial:
-        msg_input.value = pending_pool.get(initial)
-
-    # Store handles back into ctx
-    ctx["msg_input"] = msg_input
-    ctx["refresh_messages"] = messages.refresh
-    ctx["refresh_translate"] = translate_section.refresh
-    ctx["refresh_send_status"] = send_status_section.refresh
-
-    # ------------------------------------------------------------------
     # Event handlers
     # ------------------------------------------------------------------
 
@@ -378,6 +389,19 @@ def render(ctx: dict) -> None:
                 pending_pool.put(contact_id, text)
 
         await open_suggestion_dialog(conv, resolver, suggestion_state, _on_fill)
+
+    async def _run_analysis(*, title: str, apid: str, task: str) -> None:
+        contact = selected.get("contact")
+        if not contact or contact not in conv_map:
+            ui.notify("请选择一个会话", type="warning")
+            return
+        await open_analysis_dialog(
+            title=title,
+            apid=apid,
+            task=task,
+            conv=conv_map[contact],
+            resolver=resolver,
+        )
 
     async def _confirm_send(contact: str, login_id: str, text: str) -> str:
         with ui.dialog() as dialog, ui.card().classes("w-[520px] max-w-[90vw]"):
@@ -440,16 +464,45 @@ def render(ctx: dict) -> None:
                 break
             send_status_section.refresh()
 
+        send_state["task_id"] = None
         if snap and snap.result:
             ok, msg = snap.result
             ui.notify(msg, type="positive" if ok else "negative")
         send_status_section.refresh()
 
-    def _refresh_send_status() -> None:
-        task_id = send_state.get("task_id")
-        if isinstance(task_id, str):
-            send_status_section.refresh()
+    # ------------------------------------------------------------------
+    # Render sections
+    # ------------------------------------------------------------------
 
-    suggest_btn.on("click", _open_suggestions)
+    messages()
+    send_status_section()
+
+    # ------------------------------------------------------------------
+    # Input card
+    # ------------------------------------------------------------------
+
+    with ui.card().classes("w-full"):
+        tool_bar_section()
+        with ui.row().classes("items-end w-full gap-2"):
+            msg_input = ui.textarea(placeholder="输入消息…").props(
+                "outlined autogrow rows=1 dense"
+            ).classes("flex-grow max-h-[120px]")
+            msg_input.on("blur", lambda: pending_pool.put(
+                selected.get("contact") or "", msg_input.value or ""
+            ))
+            send_btn = ui.button(icon="send").props(
+                "round color=primary"
+            )
+
+    # Restore initial contact's pending input
+    initial = selected.get("contact")
+    if initial:
+        msg_input.value = pending_pool.get(initial)
+
+    # Store handles back into ctx
+    ctx["msg_input"] = msg_input
+    ctx["refresh_messages"] = messages.refresh
+    ctx["refresh_translate"] = tool_bar_section.refresh
+    ctx["refresh_send_status"] = send_status_section.refresh
+
     send_btn.on("click", _send_current_message)
-    ui.timer(1.0, _refresh_send_status)

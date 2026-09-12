@@ -90,14 +90,32 @@ def message_datetime(message: CrmMessage) -> datetime:
     return datetime.fromtimestamp(coerce_epoch(message.created_at), tz=timezone.utc).astimezone()
 
 
+def format_register_date(register_date) -> str:
+    if not register_date:
+        return ""
+    return datetime.fromtimestamp(coerce_epoch(register_date), tz=timezone.utc).strftime("%Y-%m-%d")
+
+
+def short_ts(value) -> str:
+    ts = format_created_at(value)
+    return ts[:16] if len(ts) >= 16 else ts
+
+
 def message_speaker(message: CrmMessage, *, is_self: bool) -> str:
     if message.is_system:
         return "系统"
     return "商家(我)" if is_self else "买家"
 
 
-def conversation_for_suggestions(messages: Iterable[CrmMessage], resolver, limit: int = 30) -> list[tuple[str, str, str]]:
-    rows = list(messages)[-limit:]
+def conversation_rows(
+    messages: Iterable[CrmMessage],
+    resolver,
+    *,
+    limit: int | None = 30,
+) -> list[tuple[str, str, str]]:
+    rows = list(messages)
+    if limit is not None:
+        rows = rows[-limit:]
     return [
         (
             format_created_at(message.created_at),
@@ -106,21 +124,6 @@ def conversation_for_suggestions(messages: Iterable[CrmMessage], resolver, limit
         )
         for message in rows
     ]
-
-
-def conversation_for_translation(messages: Iterable[CrmMessage], resolver, cache, *, force: bool = False) -> list[tuple[str, str, str | None]]:
-    conversation: list[tuple[str, str, str | None]] = []
-    for message in messages:
-        text = message_text(message)
-        is_self = resolver.is_self(message.sender_id)
-        speaker = "商家(我)" if is_self else "买家"
-        if is_self or not text or message.is_system:
-            conversation.append((format_created_at(message.created_at), speaker, text))
-        elif not force and cache.is_cached(text):
-            conversation.append((format_created_at(message.created_at), speaker, None))
-        else:
-            conversation.append((format_created_at(message.created_at), speaker, text))
-    return conversation
 
 
 def group_conversations(conversations: list[CrmConversation], now: float | None = None) -> list[ConversationGroup]:

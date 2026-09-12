@@ -48,7 +48,11 @@ tools/ImageCropper/**/*.png
 
 # Python
 __pycache__/
+.venv/
 *.py[cod]
+
+# NodeJS
+node_modules/
 
 # Data
 config

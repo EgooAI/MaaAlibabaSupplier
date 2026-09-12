@@ -5,35 +5,26 @@ from __future__ import annotations
 import io
 import re
 import zipfile
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 
 from nicegui import ui
 
 from app.shared.crm import get_user_info as get_crm_user_info
 from app.shared.crm.views import CrmConversation
-from app.shared.crm.views import format_created_at
 from app.web.chat_presenter import ConversationGroup
 from app.web.chat_presenter import contact_display_name
-from app.web.chat_presenter import message_datetime, message_text
+from app.web.chat_presenter import format_register_date, message_datetime, message_text, short_ts
 from app.web.components.ui_helpers import empty_state
 
 
 _INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
-@dataclass(frozen=True)
-class BatchGroup:
-    label: str
-    conversations: list[CrmConversation]
-    expanded: bool
-
-
 def _dialogue_count(conv: CrmConversation) -> int:
     return sum(1 for message in conv.messages if not message.is_system)
 
 
-def _group_by_dialogue_count(conversations: list[CrmConversation]) -> list[BatchGroup]:
+def _group_by_dialogue_count(conversations: list[CrmConversation]) -> list[ConversationGroup]:
     long_convs: list[CrmConversation] = []
     medium_convs: list[CrmConversation] = []
     short_convs: list[CrmConversation] = []
@@ -48,9 +39,9 @@ def _group_by_dialogue_count(conversations: list[CrmConversation]) -> list[Batch
             short_convs.append(conv)
 
     return [
-        BatchGroup("长会话：16条及以上", long_convs, True),
-        BatchGroup("中等长度会话：4-15条", medium_convs, True),
-        BatchGroup("短会话：1-3条", short_convs, False),
+        ConversationGroup("长会话：16条及以上", long_convs, True),
+        ConversationGroup("中等长度会话：4-15条", medium_convs, True),
+        ConversationGroup("短会话：1-3条", short_convs, False),
     ]
 
 
@@ -73,9 +64,7 @@ def _customer_info_lines(contact: str) -> list[str]:
         return [f"客户ID: {_front_matter_value(contact)}"]
 
     name = f"{info.first_name} {info.last_name}".strip()
-    register_date = ""
-    if info.register_date:
-        register_date = datetime.fromtimestamp(info.register_date, tz=timezone.utc).strftime("%Y-%m-%d")
+    register_date = format_register_date(info.register_date)
 
     fields: list[tuple[str, object]] = [
         ("显示名", contact_display_name(contact)),
@@ -159,7 +148,7 @@ def render(ctx: dict) -> None:
     group_count_labels: list[tuple[ui.label, list[str]]] = []
     total = len(conversations)
 
-    def _groups() -> list[ConversationGroup] | list[BatchGroup]:
+    def _groups() -> list[ConversationGroup]:
         if group_state["mode"] == "dialogue_count":
             return _group_by_dialogue_count(conversations)
         return time_groups
@@ -209,9 +198,6 @@ def render(ctx: dict) -> None:
         group_state["mode"] = value
         customer_list.refresh()
 
-    def _placeholder_action(name: str) -> None:
-        ui.notify(f"{name}功能待接入", type="info")
-
     def _export_selected_chats() -> None:
         selected_convs = [conv for conv in conversations if conv.contact_ali_id in selected_contacts]
         if not selected_convs:
@@ -246,13 +232,6 @@ def render(ctx: dict) -> None:
                 ui.icon("task_alt").classes("text-primary")
                 action_count_label = ui.label().classes("font-medium")
             with ui.row().classes("gap-2"):
-                action_buttons.append(
-                    ui.button(
-                        "群发消息",
-                        icon="outgoing_mail",
-                        on_click=lambda: _placeholder_action("群发消息"),
-                    ).props("unelevated dense color=primary")
-                )
                 action_buttons.append(
                     ui.button(
                         "导出聊天",
@@ -298,8 +277,7 @@ def render(ctx: dict) -> None:
                             for conv in group.conversations:
                                 contact = conv.contact_ali_id
                                 title = contact_display_name(contact)
-                                ts = format_created_at(conv.last_created_at)
-                                subtitle = ts[:16] if len(ts) >= 16 else ts
+                                subtitle = short_ts(conv.last_created_at)
                                 count = _dialogue_count(conv)
                                 with ui.item().classes("w-full"):
                                     with ui.item_section().props("avatar"):

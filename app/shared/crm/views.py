@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from app.shared.crm.identities import self_sender_id
+
 
 @dataclass(frozen=True)
 class CrmMessage:
@@ -29,7 +31,7 @@ class CrmConversation:
 
 class CrmResolver:
     def __init__(self, self_ali_id: str = "") -> None:
-        self._self_sender_id = f"{self_ali_id}@icbu" if self_ali_id else ""
+        self._self_sender_id = self_sender_id(self_ali_id) if self_ali_id else ""
 
     def is_self(self, sender_id: str | None) -> bool:
         return bool(self._self_sender_id and sender_id == self._self_sender_id)
@@ -40,6 +42,8 @@ def coerce_epoch(value: Any) -> float:
         return 0.0
     if isinstance(value, bool):
         return float(int(value))
+    if isinstance(value, datetime):
+        return value.timestamp()
     if isinstance(value, (int, float)):
         return float(value) / 1000.0 if value > 10**12 else float(value)
     if isinstance(value, (bytes, bytearray)):
@@ -62,6 +66,8 @@ def coerce_epoch(value: Any) -> float:
 def format_created_at(value: Any) -> str:
     if value is None:
         return ""
+    if isinstance(value, datetime):
+        return value.astimezone().strftime("%Y-%m-%d %H:%M:%S")
     if isinstance(value, (bytes, bytearray)):
         value = value.decode("utf-8", errors="ignore")
     if isinstance(value, str):
