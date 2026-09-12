@@ -85,16 +85,16 @@ export const httpBackend: OperationsBackend = {
     return adaptSendMessageResult(result);
   },
   exportConversations: (input) => requestJson("/api/conversations/export", { method: "POST", body: JSON.stringify(input) }),
+  gotoContact: (conversationId, loginId) => requestJson(`/api/conversations/${encodeURIComponent(conversationId)}/goto-contact`, { method: "POST", body: JSON.stringify({ login_id: loginId }) }),
 
   checkUserStatus: () => requestJson("/api/status/user"),
   checkMitmProxy: () => requestJson("/api/status/mitm-proxy"),
   checkMitmReceiver: () => requestJson("/api/status/mitm-receiver"),
-  runNodeTest: () => requestJson("/api/status/node-test", { method: "POST" }),
+  runNodeTest: (entry) => requestJson("/api/status/node-test", { method: "POST", body: JSON.stringify({ entry: entry ?? "ChatInput" }) }),
   listTaskSnapshots: () => requestJson("/api/status/tasks"),
   getSystemStatus: () => requestJson("/api/status"),
   refreshSystemStatus: () => requestJson("/api/status/refresh", { method: "POST" }),
   createTestTask: (input) => requestJson("/api/status/test-tasks", { method: "POST", body: JSON.stringify(input) }),
-  deleteTask: (id) => requestVoid(`/api/status/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   getAgentConsole: () => requestJson("/api/agent/console"),
   saveLlmConfig: (input: DocumentLlmConfig) => requestJson("/api/agent/llm-config", { method: "PUT", body: JSON.stringify(input) }),

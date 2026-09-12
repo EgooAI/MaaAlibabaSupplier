@@ -5,13 +5,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { backend } from "@/services/client";
 import type { SystemStatusSnapshot } from "@/types/status";
 
+const POLL_INTERVAL_MS = 2000;
+
 export function useStatusWorkbench() {
   const { message } = App.useApp();
   const [snapshot, setSnapshot] = useState<SystemStatusSnapshot>();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
-  const [deletingTaskId, setDeletingTaskId] = useState<string>();
+  const [testingNode, setTestingNode] = useState<string>();
   const snapshotRequestRef = useRef(0);
 
   const loadSnapshot = useCallback(async (initial = false) => {
@@ -34,6 +36,16 @@ export function useStatusWorkbench() {
   useEffect(() => {
     queueMicrotask(() => loadSnapshot(true));
   }, [loadSnapshot]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      void backend.getSystemStatus().then(
+        (nextSnapshot) => setSnapshot(nextSnapshot),
+        () => undefined,
+      );
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, []);
 
   async function refresh() {
     if (refreshing) return;
@@ -67,22 +79,19 @@ export function useStatusWorkbench() {
     }
   }
 
-  async function deleteTask(id: string) {
-    if (deletingTaskId) return false;
-    setDeletingTaskId(id);
+  async function runNodeTest(entry: string) {
+    if (testingNode) return;
+    setTestingNode(entry);
     try {
-      await backend.deleteTask(id);
-      const synced = await loadSnapshot();
-      if (synced) message.success("任务已删除");
-      else message.warning("任务已删除，状态未同步");
-      return true;
+      const result = await backend.runNodeTest(entry);
+      if (result.success) message.success(result.message || "节点测试通过");
+      else message.error(result.message || "节点测试失败");
     } catch (error: unknown) {
-      message.error(error instanceof Error ? error.message : "任务删除失败");
-      return false;
+      message.error(error instanceof Error ? error.message : "节点测试失败");
     } finally {
-      setDeletingTaskId(undefined);
+      setTestingNode(undefined);
     }
   }
 
-  return { snapshot, loading, refreshing, creatingTask, refresh, createTestTask, deleteTask, deletingTaskId };
+  return { snapshot, loading, refreshing, creatingTask, testingNode, refresh, createTestTask, runNodeTest };
 }

@@ -24,7 +24,7 @@ export function useChatWorkbench() {
   const [suggestionOpen, setSuggestionOpen] = useState(false);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [analysisState, setAnalysisState] = useState<AnalysisState>({ loading: false });
-  const [translationVisible, setTranslationVisible] = useState(false);
+  const [translationVisible, setTranslationVisible] = useState(true);
   const [groupMode, setGroupMode] = useState<"time" | "status">("time");
   const [activeCardId, setActiveCardId] = useState<string>();
   const activeIdRef = useRef<string | undefined>(undefined);
@@ -33,7 +33,7 @@ export function useChatWorkbench() {
   const translateRequestRef = useRef(0);
   const suggestionRequestRef = useRef(0);
   const analysisRequestRef = useRef(0);
-  const translationVisibleRef = useRef(false);
+  const translationVisibleRef = useRef(true);
 
   const draft = activeConversationId ? drafts[activeConversationId] ?? "" : "";
 
@@ -50,8 +50,6 @@ export function useChatWorkbench() {
     setActiveConversationId(id);
     setActiveConversation(undefined);
     setActiveCardId(undefined);
-    translationVisibleRef.current = false;
-    setTranslationVisible(false);
     setAnalysisState({ loading: false });
     setDetailLoading(true);
 
@@ -130,6 +128,38 @@ export function useChatWorkbench() {
     }
   }
 
+  async function retranslateConversation() {
+    const conversationId = activeConversation?.id;
+    const messages = activeConversation?.messages ?? [];
+    if (!conversationId) return;
+    const requestId = translateRequestRef.current + 1;
+    translateRequestRef.current = requestId;
+    translationVisibleRef.current = true;
+
+    const buyerMessages = messages.filter((item) => item.role === "buyer");
+    if (!buyerMessages.length) {
+      setTranslationVisible(true);
+      return;
+    }
+
+    try {
+      const texts = buyerMessages.map((item) => item.content).filter((text) => text.trim());
+      if (texts.length) await backend.requestTranslations({ texts, force: true });
+      const translatedMessages = await Promise.all(
+        buyerMessages.map((item) => backend.regenerateTranslation({ conversationId, messageId: item.id, targetLanguage: "zh-CN" })),
+      );
+      if (translateRequestRef.current !== requestId || activeIdRef.current !== conversationId) return;
+      setActiveConversation((current) => {
+        if (!current || current.id !== conversationId) return current;
+        return { ...current, messages: mergeMessageTranslations(current.messages, translatedMessages) };
+      });
+      if (translationVisibleRef.current) setTranslationVisible(true);
+      message.success("已重新翻译当前会话");
+    } catch {
+      if (translateRequestRef.current === requestId && activeIdRef.current === conversationId) message.error("重新翻译失败");
+    }
+  }
+
   function toggleTranslation() {
     if (translationVisible) {
       translationVisibleRef.current = false;
@@ -161,7 +191,7 @@ export function useChatWorkbench() {
     message.success("已插入到回复框");
   }
 
-  async function sendMessage() {
+  async function sendMessage(action: "send" | "test" = "send") {
     const conversationId = activeConversation?.id;
     const submittedDraft = draft.trim();
     if (!conversationId || !submittedDraft || sendingConversationId === conversationId) return;
@@ -170,7 +200,7 @@ export function useChatWorkbench() {
 
     setSendingConversationId(conversationId);
     try {
-      const result = await backend.sendMessage({ conversationId, content: submittedDraft, action: "send" });
+      const result = await backend.sendMessage({ conversationId, content: submittedDraft, action });
       if (sendRequestRef.current !== requestId || activeIdRef.current !== conversationId) return;
       const executionState = messageExecutionState(result.execution);
       if (executionState === "failed") {
@@ -179,6 +209,11 @@ export function useChatWorkbench() {
       }
       if (executionState === "pending") {
         message.info(result.execution.message || "回复任务已提交");
+        return;
+      }
+
+      if (action === "test") {
+        message.success("已填入客户端输入框（测试，未发送）");
         return;
       }
 
@@ -198,6 +233,21 @@ export function useChatWorkbench() {
       if (sendRequestRef.current === requestId && activeIdRef.current === conversationId) message.error("回复发送失败");
     } finally {
       setSendingConversationId((current) => current === conversationId ? undefined : current);
+    }
+  }
+
+  async function gotoContact() {
+    const conversation = activeConversation;
+    const loginId = conversation?.customer.loginId || conversation?.customer.name;
+    if (!conversation || !loginId) {
+      message.warning("缺少登录 ID，无法跳转");
+      return;
+    }
+    try {
+      await backend.gotoContact(conversation.id, loginId);
+      message.success("已提交跳转任务");
+    } catch {
+      message.error("跳转任务提交失败");
     }
   }
 
@@ -233,8 +283,11 @@ export function useChatWorkbench() {
     sending: activeConversationId !== undefined && sendingConversationId === activeConversationId,
     selectConversation,
     translate,
+    translateConversation,
+    retranslateConversation,
     translationVisible,
     toggleTranslation,
+    gotoContact,
     suggestions,
     suggestionOpen,
     setSuggestionOpen,

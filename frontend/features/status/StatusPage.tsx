@@ -1,9 +1,7 @@
 "use client";
 
-import { DeleteOutlined, ExperimentOutlined, ReloadOutlined } from "@ant-design/icons";
+import { ExperimentOutlined, ReloadOutlined } from "@ant-design/icons";
 import { Button, Card, Col, Empty, Row, Space, Table, Typography } from "antd";
-import { useState } from "react";
-import { ActionConfirmModal } from "@/components/ActionConfirmModal";
 import { HydrationSafeTable } from "@/components/HydrationSafeTable";
 import { StatusTag } from "@/components/StatusTag";
 import type { HealthModule, TaskItem } from "@/types/status";
@@ -12,15 +10,8 @@ import { useStatusWorkbench } from "./hooks/useStatusWorkbench";
 const healthModuleIds = ["health-identity", "health-proxy", "health-receiver", "health-node"] as const;
 
 export function StatusPage() {
-  const { snapshot, loading, refreshing, creatingTask, refresh, createTestTask, deleteTask, deletingTaskId } = useStatusWorkbench();
-  const [pendingDeleteTask, setPendingDeleteTask] = useState<TaskItem>();
+  const { snapshot, loading, refreshing, creatingTask, testingNode, refresh, createTestTask, runNodeTest } = useStatusWorkbench();
   const modules = healthModuleIds.map((id) => snapshot?.modules.find((module) => module.id === id)).filter((module): module is HealthModule => Boolean(module));
-
-  async function handleDeleteConfirm() {
-    if (!pendingDeleteTask) return;
-    const deleted = await deleteTask(pendingDeleteTask.id);
-    if (deleted) setPendingDeleteTask(undefined);
-  }
 
   return (
     <Space orientation="vertical" size="large" className="w-full">
@@ -39,6 +30,8 @@ export function StatusPage() {
         <Space wrap>
           <Button icon={<ReloadOutlined />} loading={refreshing} onClick={refresh}>刷新运行状态</Button>
           <Button type="primary" icon={<ExperimentOutlined />} loading={creatingTask} onClick={createTestTask}>创建测试任务</Button>
+          <Button loading={testingNode === "ChatInput_GoToInput"} onClick={() => void runNodeTest("ChatInput_GoToInput")}>测试 ChatInput 操作</Button>
+          <Button loading={testingNode === "ContactSearch_GoToSearch"} onClick={() => void runNodeTest("ContactSearch_GoToSearch")}>测试 ContactSearch 操作</Button>
         </Space>
       </Card>
 
@@ -57,38 +50,10 @@ export function StatusPage() {
             { title: "状态", dataIndex: "status", width: 120, render: (value: TaskItem["status"]) => <StatusTag status={value} /> },
             { title: "任务消息", dataIndex: "message", minWidth: 220 },
             { title: "结果", dataIndex: "result", minWidth: 220, render: (value: string | undefined, task: TaskItem) => value ?? (task.status === "succeeded" || task.status === "failed" ? "—" : "未完成") },
-            {
-              title: "操作",
-              key: "action",
-              width: 100,
-              render: (_: unknown, task: TaskItem) => (
-                <Button danger type="link" icon={<DeleteOutlined />} onClick={() => setPendingDeleteTask(task)}>
-                  删除
-                </Button>
-              ),
-            },
           ]}
           locale={{ emptyText: "暂无任务" }}
         />
       </Card>
-
-      <ActionConfirmModal
-        title="删除任务"
-        open={Boolean(pendingDeleteTask)}
-        warning="确认删除以下任务？删除后无法恢复。"
-        okText="删除"
-        loading={Boolean(pendingDeleteTask && deletingTaskId === pendingDeleteTask.id)}
-        onCancel={() => setPendingDeleteTask(undefined)}
-        onConfirm={handleDeleteConfirm}
-        details={pendingDeleteTask ? [
-          { label: "任务 ID", value: pendingDeleteTask.id },
-          { label: "操作类型", value: pendingDeleteTask.type },
-          { label: "状态", value: pendingDeleteTask.status },
-          { label: "创建时间", value: pendingDeleteTask.createdAt },
-          { label: "任务消息", value: pendingDeleteTask.message, span: 2 },
-          { label: "结果", value: pendingDeleteTask.result ?? "—", span: 2 },
-        ] : undefined}
-      />
     </Space>
   );
 }

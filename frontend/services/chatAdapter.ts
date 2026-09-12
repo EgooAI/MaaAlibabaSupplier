@@ -1,7 +1,7 @@
 import type { BusinessCard } from "@/types/cards";
 import type { TaskSnapshot } from "@/types/status";
 import type { ConversationAnalysis, ConversationDetail, Conversation, ChatMessage, CustomerProfile, MessageRole } from "@/types/chatCanonical";
-import type { ConversationAggregateDto, ConversationAnalysisDto, ConversationMessageDto, ConversationSendResultDto } from "@/types/chatTransport";
+import type { ConversationAggregateDto, ConversationAnalysisDto, ConversationMessageDto, ConversationSendResultDto, CustomerViewDto } from "@/types/chatTransport";
 
 interface ChatAdapterOptions {
   cards?: BusinessCard[];
@@ -44,19 +44,42 @@ function adaptCustomer(aggregate: ConversationAggregateDto): CustomerProfile {
   return {
     id: view.id,
     aliId: view.ali_id ?? undefined,
+    loginId: view.login_id ?? undefined,
+    encryptAccountId: view.encrypt_account_id ?? undefined,
+    memberId: view.member_id ?? undefined,
     name: view.name,
+    firstName: view.first_name ?? undefined,
+    lastName: view.last_name ?? undefined,
     company: view.company,
     country: view.country,
+    registerDate: view.register_date ?? undefined,
     email: view.email,
+    mobile: view.mobile ?? undefined,
     phone: view.phone,
     stage: view.stage,
     tags: view.tags,
+    qualityTag: view.quality_tag ?? undefined,
+    growthLevel: view.growth_level ?? undefined,
+    industries: view.industries,
     availability: view.availability,
+    joiningYears: view.joining_years ?? undefined,
+    potentialScore: view.potential_score ?? undefined,
+    recentContact: view.recent_contact ?? undefined,
+    emailValidated: view.email_validated ?? undefined,
     behavior: view.behavior,
+    d90: view.d90 ? {
+      productViews: view.d90.product_views,
+      validInquiries: view.d90.valid_inquiries,
+      repliedInquiries: view.d90.replied_inquiries,
+      validRfqs: view.d90.valid_rfqs,
+      loginDays: view.d90.login_days,
+      spamInquiries: view.d90.spam_inquiries,
+      blacklisted: view.d90.blacklisted,
+    } : undefined,
   };
 }
 
-function deriveCustomerView(aggregate: ConversationAggregateDto) {
+function deriveCustomerView(aggregate: ConversationAggregateDto): CustomerViewDto {
   const accounts = aggregate.accounts ?? [];
   const customers = aggregate.customers ?? [];
   const participantIds = new Set(aggregate.participants ?? []);
