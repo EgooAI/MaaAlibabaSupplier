@@ -23,15 +23,12 @@ afterEach(() => {
 describe("http adapter contract", () => {
   it("accepts void responses without attempting to parse JSON", async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(new Response("", { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, msg: "ok", data: null }), { status: 200 }));
     globalThis.fetch = fetchMock;
 
-    await expect(httpBackend.deleteTask("task/with space")).resolves.toBeUndefined();
     await expect(httpBackend.deleteAgentTestSession("session-1")).resolves.toBeUndefined();
     await expect(httpBackend.resetCache()).resolves.toBeUndefined();
-    expect(fetchMock).toHaveBeenCalledWith("/api/status/tasks/task%2Fwith%20space", expect.objectContaining({ method: "DELETE" }));
   });
 
   it("rejects empty bodies for JSON requests", async () => {
@@ -79,7 +76,7 @@ describe("http adapter contract", () => {
   it("rejects error envelopes on void requests", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 7, msg: "拒绝删除" }), { status: 200 }));
 
-    await expect(httpBackend.deleteTask("task-1")).rejects.toThrow("拒绝删除");
+    await expect(httpBackend.deleteAgentTestSession("session-1")).rejects.toThrow("拒绝删除");
   });
 
   it("rejects invalid JSON response bodies", async () => {

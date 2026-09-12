@@ -80,6 +80,7 @@ export function ChatPage() {
               onChange={workbench.setDraft}
               translationVisible={workbench.translationVisible}
               onToggleTranslation={workbench.toggleTranslation}
+              onRetranslate={() => void workbench.retranslateConversation()}
               onOpenSuggestions={workbench.openSuggestions}
               onOpenIntentAnalysis={() => void openAnalysis("intent")}
               onOpenStageAnalysis={() => void openAnalysis("stage")}
@@ -116,7 +117,7 @@ export function ChatPage() {
 
       <AssistantSuggestionModal open={workbench.suggestionOpen} suggestions={workbench.suggestions} onClose={() => workbench.setSuggestionOpen(false)} onInsert={workbench.insertSuggestion} />
       <ChatAnalysisModal open={workbench.analysisOpen} analysis={active?.analysis} focus={analysisFocus} loading={workbench.analysisLoading} error={workbench.analysisError} onClose={() => workbench.setAnalysisOpen(false)} />
-      <CustomerInfo conversation={active} open={customerInfoOpen} onClose={() => setCustomerInfoOpen(false)} />
+      <CustomerInfo conversation={active} open={customerInfoOpen} onClose={() => setCustomerInfoOpen(false)} onGotoContact={() => void workbench.gotoContact()} />
       <CardDetailDrawer card={workbench.activeCard} open={Boolean(workbench.activeCard)} onClose={() => workbench.setActiveCardId(undefined)} />
     </Space>
   );

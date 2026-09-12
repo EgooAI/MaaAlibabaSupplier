@@ -3,7 +3,7 @@ import type { ID } from "@/types/common";
 
 export type TransportMessageRole = "buyer" | "seller" | "system" | "card";
 export type TransportConversationStatus = "unread" | "following" | "waiting" | "closed";
-export type TransportCustomerStage = "new" | "interested" | "negotiating" | "risk" | "done";
+export type TransportCustomerStage = "unknown" | "new" | "interested" | "negotiating" | "risk" | "done";
 
 /** MaaAlibabaSupplier crm_sdk.models.session_meta.SessionMeta 的序列化形状。 */
 export interface SessionMeta {
@@ -75,15 +75,38 @@ export interface ConversationMessageDto {
 export interface CustomerViewDto {
   id: ID;
   ali_id: string | null;
+  login_id?: string | null;
+  encrypt_account_id?: string | null;
+  member_id?: string | null;
   name: string;
+  first_name?: string | null;
+  last_name?: string | null;
   company: string;
   country: string;
+  register_date?: string | null;
   email: string;
+  mobile?: string | null;
   phone: string;
   stage: TransportCustomerStage;
   tags: string[];
+  quality_tag?: string | null;
+  growth_level?: string | null;
+  industries?: string[];
   availability: string;
+  joining_years?: number | null;
+  potential_score?: number | null;
+  recent_contact?: boolean | null;
+  email_validated?: boolean | null;
   behavior: string[];
+  d90?: {
+    product_views?: number;
+    valid_inquiries?: number;
+    replied_inquiries?: number;
+    valid_rfqs?: number;
+    login_days?: number;
+    spam_inquiries?: number;
+    blacklisted?: number;
+  } | null;
 }
 
 export interface ConversationLatestDto {

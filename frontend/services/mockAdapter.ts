@@ -131,6 +131,8 @@ export const mockBackend: OperationsBackend = {
     return delay(buildConversationExport(selected));
   },
 
+  gotoContact: async () => delay({ status: "queued" }),
+
   checkUserStatus: () => delay(structuredClone(keyStatusStore)),
 
   checkMitmProxy: () => delay(structuredClone(proxyStatusStore)),
@@ -166,12 +168,6 @@ export const mockBackend: OperationsBackend = {
     taskSnapshotStore = [snapshot, ...taskSnapshotStore];
     statusStore = buildStatusSnapshot();
     return delay(taskSnapshotToTaskItem(snapshot));
-  },
-
-  deleteTask: async (id) => {
-    taskSnapshotStore = taskSnapshotStore.filter((task) => task.task_id !== id);
-    statusStore = buildStatusSnapshot();
-    return delay(undefined);
   },
 
   getAgentConsole: () => delay(structuredClone(consoleStore)),

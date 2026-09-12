@@ -5,18 +5,43 @@ export type ConversationStatus = "unread" | "following" | "waiting" | "closed";
 export type CustomerStage = "unknown" | "new" | "interested" | "negotiating" | "risk" | "done";
 export type MessageRole = "unknown" | "buyer" | "seller" | "system" | "card";
 
+export interface CustomerD90Behavior {
+  productViews?: number;
+  validInquiries?: number;
+  repliedInquiries?: number;
+  validRfqs?: number;
+  loginDays?: number;
+  spamInquiries?: number;
+  blacklisted?: number;
+}
+
 export interface CustomerProfile {
   id: ID;
   aliId?: string;
+  loginId?: string;
+  encryptAccountId?: string;
+  memberId?: string;
   name: string;
+  firstName?: string;
+  lastName?: string;
   company: string;
   country: string;
+  registerDate?: string;
   email: string;
+  mobile?: string;
   phone: string;
   stage: CustomerStage;
   tags: string[];
+  qualityTag?: string;
+  growthLevel?: string;
+  industries?: string[];
   availability: string;
+  joiningYears?: number;
+  potentialScore?: number;
+  recentContact?: boolean;
+  emailValidated?: boolean;
   behavior: string[];
+  d90?: CustomerD90Behavior;
 }
 
 export interface ChatMessage {

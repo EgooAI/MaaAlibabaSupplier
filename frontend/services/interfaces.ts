@@ -19,16 +19,16 @@ export interface OperationsBackend {
   analyzeConversation(conversationId: string): Promise<ConversationAnalysis>;
   sendMessage(input: SendMessageInput): Promise<SendMessageResult>;
   exportConversations(input: ExportConversationsInput): Promise<ExportConversationsResult>;
+  gotoContact(conversationId: string, loginId: string): Promise<{ status: string }>;
 
   checkUserStatus(): Promise<KeyStatus>;
   checkMitmProxy(): Promise<NetworkStatus>;
   checkMitmReceiver(): Promise<NetworkStatus>;
-  runNodeTest(): Promise<NodeTestResult>;
+  runNodeTest(entry?: string): Promise<NodeTestResult>;
   listTaskSnapshots(): Promise<TaskSnapshot[]>;
   getSystemStatus(): Promise<SystemStatusSnapshot>;
   refreshSystemStatus(): Promise<SystemStatusSnapshot>;
   createTestTask(input: CreateTestTaskInput): Promise<TaskItem>;
-  deleteTask(id: string): Promise<void>;
 
   getAgentConsole(): Promise<AgentConsoleState>;
   saveLlmConfig(input: DocumentLlmConfig): Promise<DocumentLlmConfig>;
