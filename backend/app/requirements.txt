@@ -1,6 +1,5 @@
 # Core libs
 maafw==5.10.5
-nicegui==3.12.1
 openai==2.41.0
 fastapi>=0.115,<1
 uvicorn>=0.30,<1

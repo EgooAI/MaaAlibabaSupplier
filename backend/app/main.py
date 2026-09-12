@@ -15,7 +15,7 @@ if __package__ in {None, ""}:
 from backend.app.maafw_process import MaaFWProcess, MaaFWProcessError
 from backend.app.mitm.proxy import run_receiver
 from backend.app.shared.agent.system_presets import ensure_system_agents_seeded
-from backend.app.web.server import run as run_web
+from backend.app.api.server import run as run_api
 from backend.app.shared.utils.env import load_workdir_env
 from backend.app.shared.utils.logging import configure_logging
 
@@ -97,7 +97,7 @@ def main() -> None:
         logger.info("MaaFW process started")
         _start_mitm_receiver()
         yak_proc = _start_yak_mitm(repo_root)
-        run_web()
+        run_api()
     except MaaFWProcessError:
         logger.exception("Failed to start MaaFW")
         raise

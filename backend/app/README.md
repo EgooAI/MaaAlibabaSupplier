@@ -7,24 +7,25 @@
 - `shared` — 主后端，`app` 与 agent 共享。含以下子包：
   - `backend/` — 业务逻辑：邮件（`email.py`）、IM 访问（`im_chat_db.py` / `im_db_middleware.py`）、系统状态（`status.py`）。
   - `agent/` — Chat/Agent 工具层：系统 Agent 身份常量（`system_agents.py`）、输入构造（`inputs.py`）、统一执行（`runner.py`，超限抛 `AgentRunError`）、翻译写入 CRM（`translation.py`）、回复建议（`suggestions.py`）、系统预设补种（`system_presets.py`）、输出归一化（`output_normalizers.py`）。
-  - `crm/` — 应用侧 CRM 适配层。`__init__.py` 是 UI/业务稳定入口；`queries.py` 查询；`ingest.py` 刷新 IM→CRM；`sync.py` 写入 SDK；`translations.py` 翻译表读写。
+  - `crm/` — 应用侧 CRM 适配层。`__init__.py` 是 API/业务稳定入口；`queries.py` 查询；`ingest.py` 刷新 IM→CRM；`sync.py` 写入 SDK；`translations.py` 翻译表读写。
   - `utils/` — 环境变量、运行时 KV、IM 解密、日志等。
   - `mitm/` — MITM 解析器与数据池。
 - `crm_sdk` — 通用 CRM SDK（仓库内直接引用，包化改造待做）；应用专属逻辑放 `shared/crm/` 与 `shared/agent/`，不要写入 SDK。
 - `agent` — Maa Custom Recognition/Action 入口。
 - `web` — NiceGUI：`server.py` 入口；`pages/` 含 chat / card / status / agent 等；`components/` 共享组件。
+- `api` — FastAPI：`main.py:create_app()` + `server.py:run()`；`routers/` 含 conversations / messages / status / agent / self。
 - `mitm` — Yak MITM receiver（`proxy.py`）。
 
 ## 启动流程
 
-用户启动 `app/main.py`，启动时依次：
+用户启动 `app/main.py`（或 `python -m backend.app.main`，工作目录 `backend/`），启动时依次：
 
 1. 加载 `.env`（`load_workdir_env()`）；
 2. 配置日志（`configure_logging()`）；
 3. 启动 MaaFW 子进程（`maafw.start()`）；
 4. 启动 MITM Python receiver 线程（默认 `127.0.0.1:8085`）；
 5. 启动 Yak MITM 代理（`yak yak_mitm.yak`，默认 `127.0.0.1:8084`）；
-6. 启动 Web（主线程阻塞，NiceGUI，默认 `127.0.0.1:8787`）。
+6. 启动 HTTP API（主线程阻塞，uvicorn，默认 `127.0.0.1:8000`，供 `frontend/` Next.js 反代 `/api/*`）。
 
 ## MITM 模块设计
 
