@@ -14,6 +14,7 @@ except ModuleNotFoundError as e:
     ) from e
 
 working_dir = (Path(__file__).parent.parent / "backend").resolve()
+repo_root = working_dir.parent
 install_path = working_dir / Path("install")
 assets_dir = working_dir / "assets"
 version = len(sys.argv) > 1 and sys.argv[1] or "v0.0.1"
@@ -144,11 +145,11 @@ def install_resource():
 
 def install_chores():
     shutil.copy2(
-        working_dir / "README.md",
+        repo_root / "README.md",
         install_path,
     )
     shutil.copy2(
-        working_dir / "LICENSE",
+        repo_root / "LICENSE",
         install_path,
     )
 
