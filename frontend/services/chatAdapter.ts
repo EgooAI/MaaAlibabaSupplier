@@ -17,6 +17,7 @@ export function adaptConversationSummary(aggregate: ConversationAggregateDto): C
     unreadCount: aggregate.unread_count ?? 0,
     status: aggregate.status ?? "following",
     priority: aggregate.priority ?? "medium",
+    dialogueCount: aggregate.dialogue_count ?? undefined,
   };
 }
 

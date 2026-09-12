@@ -67,6 +67,7 @@ export interface Conversation {
   unreadCount: number;
   status: ConversationStatus;
   priority: "high" | "medium" | "low";
+  dialogueCount?: number;
 }
 
 export interface ConversationAnalysis {

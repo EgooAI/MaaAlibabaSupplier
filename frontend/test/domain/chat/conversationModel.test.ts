@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildConversationExport, conversationTimeLabel, dateGroup, groupConversations, mergeConversationDetail, mergeMessageTranslations, messageExecutionState, sortConversations, stageLabel, statusLabel } from "@/domain/chat/chatModel";
+import { buildConversationExport, conversationTimeLabel, dateGroup, dialogueCountGroup, dialogueCountOf, groupConversations, mergeConversationDetail, mergeMessageTranslations, messageExecutionState, sortConversations, stageLabel, statusLabel } from "@/domain/chat/chatModel";
 import type { ChatMessage, Conversation, ConversationDetail } from "@/types/chatCanonical";
 
 const summary = (id: string, updatedAt: string, status: Conversation["status"] = "following"): Conversation => ({
@@ -48,6 +48,22 @@ describe("conversation domain model", () => {
     expect(sortConversations(conversations).map((item) => item.id)).toEqual(["new", "old"]);
     expect(groupConversations(conversations, "status").map((group) => group.label)).toEqual(["跟进中", "未读待回"]);
     expect(statusLabel("closed")).toBe("已关闭");
+  });
+
+  it("groups by dialogue count with fixed order", () => {
+    const conversations = [
+      { ...summary("short", "2026-09-08 10:00"), dialogueCount: 2 },
+      { ...summary("long", "2026-09-08 10:00"), dialogueCount: 20 },
+      { ...summary("mid", "2026-09-08 10:00"), dialogueCount: 5 },
+      summary("unknown", "2026-09-08 10:00"),
+    ];
+    expect(dialogueCountOf(conversations[0])).toBe(2);
+    expect(dialogueCountGroup(conversations[1])).toBe("长会话：16条及以上");
+    expect(groupConversations(conversations, "count").map((group) => group.label)).toEqual([
+      "长会话：16条及以上",
+      "中等长度会话：4-15条",
+      "短会话：1-3条",
+    ]);
   });
 
   it("groups dates relative to the provided current date", () => {

@@ -1,17 +1,30 @@
 import type { ChatMessage, Conversation, ConversationDetail } from "@/types/chatCanonical";
 import type { MessageExecution } from "@/types/chatOperations";
 
-export type ConversationGroupMode = "time" | "status";
+export type ConversationGroupMode = "time" | "status" | "count";
 
 export function sortConversations(conversations: Conversation[]) {
   return [...conversations].sort((a, b) => timestampOf(b.updatedAt) - timestampOf(a.updatedAt));
+}
+
+export function dialogueCountOf(conversation: Conversation) {
+  return conversation.dialogueCount ?? 0;
+}
+
+const countGroupOrder = ["长会话：16条及以上", "中等长度会话：4-15条", "短会话：1-3条"];
+
+export function dialogueCountGroup(conversation: Conversation) {
+  const count = dialogueCountOf(conversation);
+  if (count >= 16) return countGroupOrder[0];
+  if (count >= 4) return countGroupOrder[1];
+  return countGroupOrder[2];
 }
 
 export function groupConversations(conversations: Conversation[], mode: ConversationGroupMode, now = new Date()) {
   const groups = new Map<string, Conversation[]>();
 
   for (const conversation of conversations) {
-    const key = mode === "status" ? statusLabel(conversation.status) : dateGroup(conversation.updatedAt, now);
+    const key = mode === "status" ? statusLabel(conversation.status) : mode === "count" ? dialogueCountGroup(conversation) : dateGroup(conversation.updatedAt, now);
     const items = groups.get(key);
     if (items) {
       items.push(conversation);
@@ -20,7 +33,11 @@ export function groupConversations(conversations: Conversation[], mode: Conversa
     }
   }
 
-  return Array.from(groups.entries()).map(([label, items]) => ({ label, items }));
+  const entries = Array.from(groups.entries());
+  if (mode === "count") {
+    entries.sort(([a], [b]) => countGroupOrder.indexOf(a) - countGroupOrder.indexOf(b));
+  }
+  return entries.map(([label, items]) => ({ label, items }));
 }
 
 export function statusLabel(status: Conversation["status"]) {
