@@ -13,7 +13,7 @@ except ModuleNotFoundError as e:
         "Or add it to your project's requirements."
     ) from e
 
-working_dir = Path(__file__).parent.parent.resolve()
+working_dir = (Path(__file__).parent.parent / "backend").resolve()
 install_path = working_dir / Path("install")
 assets_dir = working_dir / "assets"
 version = len(sys.argv) > 1 and sys.argv[1] or "v0.0.1"

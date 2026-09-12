@@ -39,7 +39,13 @@ deps/*
 !deps/tools/
 deps/tools/*
 !deps/tools/*.schema.json
+backend/deps/*
+!backend/deps/tools/
+backend/deps/tools/*
+!backend/deps/tools/*.schema.json
 build
+backend/install
+backend/build
 install
 gui
 
@@ -48,17 +54,38 @@ tools/ImageCropper/**/*.png
 
 # Python
 __pycache__/
+backend/__pycache__/
+backend/**/__pycache__/
 .venv/
+backend/.venv/
+.pytest_cache/
+backend/.pytest_cache/
+backend/**/.pytest_cache/
 *.py[cod]
+*.db-shm
+*.db-wal
+*.log
 
 # NodeJS
 node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/coverage/
+frontend/tsconfig.tsbuildinfo
+frontend/next-env.d.ts
+frontend/*.log
 
 # Data
 config
+backend/config
 debug
+backend/debug
 data
+backend/data
 .env
+backend/.env
 
 # Agent
 .opencode/

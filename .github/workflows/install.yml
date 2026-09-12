@@ -14,8 +14,8 @@ on:
       - "**"
     paths:
       - ".github/workflows/install.yml"
-      - "app/**"
-      - "assets/**"
+      - "backend/app/**"
+      - "backend/assets/**"
       - "tools/**"
       - "README.md"
   pull_request:
@@ -23,8 +23,8 @@ on:
       - "**"
     paths:
       - ".github/workflows/install.yml"
-      - "app/**"
-      - "assets/**"
+      - "backend/app/**"
+      - "backend/assets/**"
       - "tools/**"
       - "README.md"
   workflow_dispatch:
@@ -136,7 +136,7 @@ jobs:
             "$python_exe" -m ensurepip --upgrade
           fi
           "$python_exe" -m pip install --upgrade pip
-          "$python_exe" -m pip install --upgrade --no-cache-dir --pre -r app/requirements.txt
+          "$python_exe" -m pip install --upgrade --no-cache-dir --pre -r backend/app/requirements.txt
 
       - name: Install build dependencies
         shell: bash
