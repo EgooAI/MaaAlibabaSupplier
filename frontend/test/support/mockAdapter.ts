@@ -4,6 +4,7 @@ import { assistantSuggestions, conversationAggregates } from "@/mock/conversatio
 import { mockSelfInfo } from "@/mock/selfData";
 import { keyStatus, nodeResult, proxyStatus, receiverStatus, systemStatus, taskSnapshots } from "@/mock/statusData";
 import { buildConversationExport } from "@/domain/chat/chatModel";
+import { nowText } from "@/domain/time";
 import { adaptConversationDetail, adaptConversationSummary } from "@/services/chatAdapter";
 import { buildSystemStatusSnapshot, taskSnapshotToTaskItem } from "@/domain/status/statusModel";
 import { SYSTEM_AGENT_APIDS, agentPresetToConfig, agentPresetToDbPreset, canRunAgentExecution, dbPresetToAgentPreset, documentToLlmLevelConfig, getLatestAgentTestTurn, removeLatestAgentTestTurn, replaceLatestAgentTestReply, upsertLlmLevel } from "@/domain/agent/agentModel";
@@ -14,7 +15,7 @@ import type { ConversationAggregateDto, Message } from "@/types/chatTransport";
 import type { SendMessageInput } from "@/types/chatOperations";
 import type { SelfInfo } from "@/types/home";
 import type { KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskSnapshot } from "@/types/status";
-import type { OperationsBackend } from "./interfaces";
+import type { OperationsBackend } from "@/services/interfaces";
 
 const delay = <T,>(value: T, ms = 280) => new Promise<T>((resolve) => setTimeout(() => resolve(value), ms));
 
@@ -378,8 +379,4 @@ function syncConsoleAgents() {
 function mockTranslate(text: string) {
   if (!text) return "";
   return `这是 mock 译文：${text}`;
-}
-
-function nowText() {
-  return new Date().toLocaleString("zh-CN", { hour12: false }).replaceAll("/", "-");
 }

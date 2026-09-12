@@ -1,9 +1,9 @@
 import type { BusinessCard } from "@/types/cards";
+import type { ConversationStatus, CustomerStage } from "@/types/chatCanonical";
 import type { ID } from "@/types/common";
+import type { TaskSnapshot } from "@/types/status";
 
 export type TransportMessageRole = "buyer" | "seller" | "system" | "card";
-export type TransportConversationStatus = "unread" | "following" | "waiting" | "closed";
-export type TransportCustomerStage = "unknown" | "new" | "interested" | "negotiating" | "risk" | "done";
 
 /** MaaAlibabaSupplier crm_sdk.models.session_meta.SessionMeta 的序列化形状。 */
 export interface SessionMeta {
@@ -87,7 +87,7 @@ export interface CustomerViewDto {
   email: string;
   mobile?: string | null;
   phone: string;
-  stage: TransportCustomerStage;
+  stage: CustomerStage;
   tags: string[];
   quality_tag?: string | null;
   growth_level?: string | null;
@@ -116,7 +116,7 @@ export interface ConversationLatestDto {
 
 export interface ConversationAnalysisDto {
   intent: string;
-  stage: TransportCustomerStage;
+  stage: CustomerStage;
   score: number;
   risks: string[];
   next_actions: string[];
@@ -135,7 +135,7 @@ export interface ConversationAggregateDto extends SessionMeta {
   customer_view?: CustomerViewDto;
   latest: ConversationLatestDto;
   unread_count: number;
-  status: TransportConversationStatus;
+  status: ConversationStatus;
   priority: "high" | "medium" | "low";
   dialogue_count?: number;
   analysis?: ConversationAnalysisDto;
@@ -148,15 +148,6 @@ export interface ConversationSendResultDto {
   execution: {
     success: boolean;
     message: string;
-    task_snapshot: {
-      task_id: string;
-      description: string;
-      status: "queued" | "running" | "succeeded" | "failed";
-      message: string;
-      result: unknown;
-      created_at: number;
-      started_at: number | null;
-      completed_at: number | null;
-    } | null;
+    task_snapshot: TaskSnapshot | null;
   };
 }

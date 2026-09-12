@@ -7,11 +7,10 @@ type SessionListPanelProps = {
   title: ReactNode;
   loading?: boolean;
   children: ReactNode;
-  minHeightClassName: string;
   extra?: ReactNode;
 };
 
-export function SessionListPanel({ title, loading, children, minHeightClassName, extra }: SessionListPanelProps) {
+export function SessionListPanel({ title, loading, children, extra }: SessionListPanelProps) {
   const cardTitle = (
     <div className="flex items-center justify-between gap-2">
       <span>{title}</span>
@@ -20,7 +19,12 @@ export function SessionListPanel({ title, loading, children, minHeightClassName,
   );
 
   return (
-    <Card title={cardTitle} loading={loading} className={minHeightClassName}>
+    <Card
+      title={cardTitle}
+      loading={loading}
+      className="flex h-full min-h-0 w-full flex-col"
+      classNames={{ body: "flex min-h-0 flex-1 flex-col overflow-y-auto" }}
+    >
       {children}
     </Card>
   );

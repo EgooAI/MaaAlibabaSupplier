@@ -42,9 +42,9 @@ describe("http adapter contract", () => {
 
   it("encodes conversation and agent path parameters", async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify(aggregate), { status: 200, headers: { "Content-Type": "application/json" } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ apid: "agent-1", name: "Agent", description: "", prompt: "", intelevel: 0, tools: [], enabled: true, updated_at: "2026-09-11", category: "system" }), { status: 200, headers: { "Content-Type": "application/json" } }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, msg: "ok", data: aggregate }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, msg: "ok", data: [] }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, msg: "ok", data: { apid: "agent-1", name: "Agent", description: "", prompt: "", intelevel: 0, tools: [], enabled: true, updated_at: "2026-09-11", category: "system" } }), { status: 200, headers: { "Content-Type": "application/json" } }));
     globalThis.fetch = fetchMock;
 
     await httpBackend.getConversation("sid/42 with space");
@@ -65,6 +65,12 @@ describe("http adapter contract", () => {
 
     await expect(httpBackend.getSelfInfo()).resolves.toEqual({ ready: true });
     await expect(httpBackend.getSelfInfo()).rejects.toThrow("业务失败");
+  });
+
+  it("rejects bare payloads without an envelope", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(aggregate), { status: 200 }));
+
+    await expect(httpBackend.getConversation("42")).rejects.toThrow("API protocol error: /api/conversations/42");
   });
 
   it("rejects malformed API envelopes", async () => {

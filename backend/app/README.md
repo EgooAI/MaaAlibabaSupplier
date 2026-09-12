@@ -1,6 +1,6 @@
 # App Codebase Overview
 
-当前文件夹 `app/` 中，存放着本项目的主 Python 应用。它负责拉起和调度若干独立的服务，并在不同服务间进行数据协调，以实现复杂的功能逻辑。
+当前文件夹 `app/`（即仓库内 `backend/app/`）中，存放着本项目的主 Python 应用。它负责拉起和调度若干独立的服务，并在不同服务间进行数据协调，以实现复杂的功能逻辑。
 
 ## 代码结构
 
@@ -12,8 +12,7 @@
   - `mitm/` — MITM 解析器与数据池。
 - `crm_sdk` — 通用 CRM SDK（仓库内直接引用，包化改造待做）；应用专属逻辑放 `shared/crm/` 与 `shared/agent/`，不要写入 SDK。
 - `agent` — Maa Custom Recognition/Action 入口。
-- `web` — NiceGUI：`server.py` 入口；`pages/` 含 chat / card / status / agent 等；`components/` 共享组件。
-- `api` — FastAPI：`main.py:create_app()` + `server.py:run()`；`routers/` 含 conversations / messages / status / agent / self。
+- `api` — FastAPI：`main.py:create_app()` + `server.py:run()`；`routers/` 含 conversations / messages / status / agent / self。Web UI 见仓库根 `frontend/`（Next.js，`pnpm dev`，将 `/api/*` 反代到本服务）。
 - `mitm` — Yak MITM receiver（`proxy.py`）。
 
 ## 启动流程

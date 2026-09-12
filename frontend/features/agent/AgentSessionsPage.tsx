@@ -1,12 +1,13 @@
 "use client";
 
-import { ArrowLeftOutlined, CopyOutlined, DeleteOutlined, MoreOutlined, PlusOutlined, ReloadOutlined, RobotOutlined, UserOutlined } from "@ant-design/icons";
+import { ArrowDownOutlined, ArrowLeftOutlined, CopyOutlined, DeleteOutlined, MoreOutlined, PlusOutlined, ReloadOutlined, RobotOutlined, UserOutlined } from "@ant-design/icons";
 import { Avatar, Button, Card, Col, Dropdown, Empty, Form, Grid, Listy, Modal, Row, Select, Space, Tag, Typography } from "antd";
 import type { MenuProps } from "antd";
 import { useState } from "react";
 import { ActionConfirmModal } from "@/components/ActionConfirmModal";
 import { SessionListPanel } from "@/components/SessionListPanel";
 import { MessageComposer } from "@/components/MessageComposer";
+import { useStickToBottom } from "@/components/useStickToBottom";
 import { canRunAgentExecution, formatAgentSessionDate } from "@/domain/agent/agentModel";
 import { fallbackAvatarUrl, sellerAvatarUrl } from "@/domain/chat/avatarModel";
 import type { AgentTestSession } from "@/types/agent";
@@ -28,6 +29,10 @@ export function AgentSessionsPage() {
   const agentNames = new Map(workbench.agents.map((agent) => [agent.id, agent.name]));
   const canRunActiveAgent = canRunAgentExecution(workbench.activeAgent);
   const sessionActionBusy = Boolean(workbench.action);
+  const timeline = useStickToBottom({
+    sessionKey: workbench.activeSessionId ?? "",
+    followKey: workbench.activeSession?.messages.length ?? 0,
+  });
 
   function handleSelectSession(id: string) {
     workbench.selectSession(id);
@@ -47,7 +52,7 @@ export function AgentSessionsPage() {
   }
 
   const sessionList = (
-    <SessionListPanel title="会话列表" loading={workbench.loading} minHeightClassName="min-h-[720px]">
+    <SessionListPanel title="会话列表" loading={workbench.loading}>
       {workbench.sessions.length ? (
         <Listy
           items={workbench.sessions}
@@ -74,26 +79,42 @@ export function AgentSessionsPage() {
   const sessionDetail = (
     <Card
       title={workbench.activeSession ? `${agentNames.get(workbench.activeSession.agentId) ?? workbench.activeSession.agentId} · ${workbench.activeSession.title}` : "会话详情"}
-      extra={isMobile ? <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => setMobileView("list")}>返回列表</Button> : null}
-      className="flex min-h-[720px] w-full flex-col"
+      extra={
+        <Space>
+          {isMobile ? <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => setMobileView("list")}>返回列表</Button> : null}
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)} disabled={workbench.busy}>新建会话</Button>
+        </Space>
+      }
+      className="flex h-full min-h-0 w-full flex-col"
       classNames={{ body: "flex min-h-0 flex-1 flex-col" }}
     >
       {workbench.activeSession ? (
         <div className="flex min-h-0 flex-1 flex-col gap-6">
-          <div className="min-h-0 flex-1 overflow-y-auto pr-2">
-            <SessionMessages session={workbench.activeSession} />
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <div ref={timeline.scrollRef} onScroll={timeline.handleScroll} className="min-h-0 flex-1 overflow-y-auto pr-2">
+              <SessionMessages session={workbench.activeSession} />
+            </div>
+            {timeline.showJumpButton ? (
+              <Button
+                size="small"
+                shape="round"
+                icon={<ArrowDownOutlined />}
+                className="absolute bottom-2 left-1/2 -translate-x-1/2 shadow"
+                onClick={() => timeline.scrollToBottom(true)}
+              >
+                回到底部
+              </Button>
+            ) : null}
           </div>
           <div className="shrink-0">
             <MessageComposer
               value={workbench.draft}
               onChange={workbench.setDraft}
               tools={[
-                { key: "new-session", label: "新建会话", disabled: workbench.busy },
                 { key: "undo-turn", label: "撤销一轮", disabled: workbench.busy || !workbench.canUndoTurn },
                 { key: "regenerate-reply", label: "重新回复", disabled: workbench.busy || !canRunActiveAgent || !workbench.canRegenerateReply },
               ]}
               onToolClick={(key) => {
-                if (key === "new-session") setCreateOpen(true);
                 if (key === "undo-turn") void workbench.undoTurn();
                 if (key === "regenerate-reply") void workbench.regenerateReply();
               }}
@@ -111,19 +132,14 @@ export function AgentSessionsPage() {
   );
 
   return (
-    <Space orientation="vertical" size="large" className="w-full">
-      <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-        <Typography.Title level={2} className="!mb-1">Agent 会话</Typography.Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)} disabled={workbench.busy}>新建会话</Button>
-      </div>
-
-      <Row gutter={[16, 16]}>
+    <div className="flex h-[calc(100vh-7rem)] min-h-[480px] flex-col">
+      <Row gutter={[16, 16]} className="min-h-0 flex-1">
         {isMobile ? (
-          <Col xs={24} className="flex">{mobileView === "list" ? sessionList : sessionDetail}</Col>
+          <Col xs={24} className="flex h-full min-h-0">{mobileView === "list" ? sessionList : sessionDetail}</Col>
         ) : (
           <>
-            <Col xs={24} xl={6}>{sessionList}</Col>
-            <Col xs={24} xl={18} className="flex">{sessionDetail}</Col>
+            <Col xs={24} xl={6} className="flex h-full min-h-0">{sessionList}</Col>
+            <Col xs={24} xl={18} className="flex h-full min-h-0">{sessionDetail}</Col>
           </>
         )}
       </Row>
@@ -161,7 +177,7 @@ export function AgentSessionsPage() {
           { label: "消息数", value: pendingDeleteSession.messages.length },
         ] : undefined}
       />
-    </Space>
+    </div>
   );
 }
 

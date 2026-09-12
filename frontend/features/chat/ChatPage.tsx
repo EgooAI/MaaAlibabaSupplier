@@ -1,12 +1,13 @@
 "use client";
 
-import { ArrowLeftOutlined, SettingOutlined } from "@ant-design/icons";
+import { ArrowDownOutlined, ArrowLeftOutlined, SettingOutlined } from "@ant-design/icons";
 import { Grid } from "antd";
 import { useState } from "react";
 import { Button, Card, Col, Row, Space, Spin, Typography } from "antd";
 import { useRouter } from "next/navigation";
 import { CardDetailDrawer } from "@/components/CardDetailDrawer";
 import { SessionListPanel } from "@/components/SessionListPanel";
+import { useStickToBottom } from "@/components/useStickToBottom";
 import { ConversationList } from "./conversation/ConversationList";
 import { CustomerInfo } from "./conversation/CustomerInfo";
 import { MessageTimeline } from "./conversation/MessageTimeline";
@@ -27,6 +28,7 @@ export function ChatPage() {
   const [analysisFocus, setAnalysisFocus] = useState<AnalysisFocus>("intent");
   const [mobileView, setMobileView] = useState<MobileSessionView>("list");
   const isMobile = screens.xl === false;
+  const timeline = useStickToBottom({ sessionKey: active?.id ?? "", followKey: active?.messages.length ?? 0 });
 
   function handleSelectConversation(id: string) {
     if (isMobile) setMobileView("detail");
@@ -43,7 +45,7 @@ export function ChatPage() {
     <SessionListPanel
       title="会话列表"
       loading={workbench.loading}
-      minHeightClassName="min-h-[720px]"      extra={<Button type="link" size="small" icon={<SettingOutlined />} onClick={() => router.push("/batch")}>管理会话</Button>}
+      extra={<Button type="link" size="small" icon={<SettingOutlined />} onClick={() => router.push("/batch")}>管理会话</Button>}
     >
       <ConversationList
         conversations={workbench.conversations}
@@ -57,22 +59,42 @@ export function ChatPage() {
   const sessionDetail = (
     <Card
       title={active ? `${active.customer.name} · ${active.customer.company}` : "消息时间线"}
-      extra={isMobile ? <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => setMobileView("list")}>返回列表</Button> : null}
-      className="flex min-h-[720px] w-full flex-col"
+      extra={
+        <Space>
+          {isMobile ? <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => setMobileView("list")}>返回列表</Button> : null}
+          <Button type="primary" onClick={() => setCustomerInfoOpen(true)} disabled={!active}>客户信息</Button>
+        </Space>
+      }
+      className="flex h-full min-h-0 w-full flex-col"
       classNames={{ body: "flex min-h-0 flex-1 flex-col" }}
     >
-      {workbench.detailLoading ? (
-        <div className="flex flex-1 items-center justify-center"><Spin /></div>
-      ) : active ? (
+      {active ? (
         <div className="flex min-h-0 flex-1 flex-col gap-6">
-          <div className="min-h-0 flex-1 overflow-y-auto pr-2">
-            <MessageTimeline
-              messages={active.messages}
-              buyerId={active.customer.id}
-              showTranslations={workbench.translationVisible}
-              onRegenerate={(item) => workbench.translate(item, true)}
-              onOpenCard={workbench.setActiveCardId}
-            />
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            {workbench.detailLoading ? (
+              <div className="flex flex-1 items-center justify-center"><Spin /></div>
+            ) : (
+              <div ref={timeline.scrollRef} onScroll={timeline.handleScroll} className="min-h-0 flex-1 overflow-y-auto pr-2">
+                <MessageTimeline
+                  messages={active.messages}
+                  buyerId={active.customer.id}
+                  showTranslations={workbench.translationVisible}
+                  onRegenerate={(item) => workbench.translate(item, true)}
+                  onOpenCard={workbench.setActiveCardId}
+                />
+              </div>
+            )}
+            {timeline.showJumpButton ? (
+              <Button
+                size="small"
+                shape="round"
+                icon={<ArrowDownOutlined />}
+                className="absolute bottom-2 left-1/2 -translate-x-1/2 shadow"
+                onClick={() => timeline.scrollToBottom(true)}
+              >
+                回到底部
+              </Button>
+            ) : null}
           </div>
           <div className="shrink-0">
             <ChatComposer
@@ -96,21 +118,14 @@ export function ChatPage() {
   );
 
   return (
-    <Space orientation="vertical" size="large" className="w-full">
-      <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-        <div>
-          <Typography.Title level={2} className="!mb-1">聊天工作台</Typography.Title>
-        </div>
-        <Button type="primary" onClick={() => setCustomerInfoOpen(true)} disabled={!active}>客户信息</Button>
-      </div>
-
-      <Row gutter={[16, 16]}>
+    <div className="flex h-[calc(100vh-7rem)] min-h-[480px] flex-col">
+      <Row gutter={[16, 16]} className="min-h-0 flex-1">
         {isMobile ? (
-          <Col xs={24} className="flex">{mobileView === "list" ? sessionList : sessionDetail}</Col>
+          <Col xs={24} className="flex h-full min-h-0">{mobileView === "list" ? sessionList : sessionDetail}</Col>
         ) : (
           <>
-            <Col xs={24} xl={6}>{sessionList}</Col>
-            <Col xs={24} xl={18} className="flex">{sessionDetail}</Col>
+            <Col xs={24} xl={6} className="flex h-full min-h-0">{sessionList}</Col>
+            <Col xs={24} xl={18} className="flex h-full min-h-0">{sessionDetail}</Col>
           </>
         )}
       </Row>
@@ -119,6 +134,6 @@ export function ChatPage() {
       <ChatAnalysisModal open={workbench.analysisOpen} analysis={active?.analysis} focus={analysisFocus} loading={workbench.analysisLoading} error={workbench.analysisError} onClose={() => workbench.setAnalysisOpen(false)} />
       <CustomerInfo conversation={active} open={customerInfoOpen} onClose={() => setCustomerInfoOpen(false)} onGotoContact={() => void workbench.gotoContact()} />
       <CardDetailDrawer card={workbench.activeCard} open={Boolean(workbench.activeCard)} onClose={() => workbench.setActiveCardId(undefined)} />
-    </Space>
+    </div>
   );
 }

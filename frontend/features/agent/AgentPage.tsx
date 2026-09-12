@@ -1,13 +1,13 @@
 "use client";
 
 import { DeleteOutlined, EditOutlined, MessageOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
-import { Button, Card, Space, Switch, Table, Tag, Typography } from "antd";
+import { Button, Card, Space, Switch, Table, Tag } from "antd";
 import Link from "next/link";
 import { useState } from "react";
 import { ActionConfirmModal } from "@/components/ActionConfirmModal";
 import { HydrationSafeTable } from "@/components/HydrationSafeTable";
 import { StatusTag } from "@/components/StatusTag";
-import { agentCategoryLabel, displayAgentTools, filterAgentsByCategory } from "@/domain/agent/agentModel";
+import { displayAgentTools, filterAgentsByCategory } from "@/domain/agent/agentModel";
 import type { AgentConfig, AgentEditValues } from "@/types/agent";
 import { AgentEditModal } from "./AgentEditModal";
 import { useAgentWorkbench } from "./hooks/useAgentWorkbench";
@@ -30,7 +30,6 @@ export function AgentPage({ category }: AgentPageProps) {
   const [editingAgent, setEditingAgent] = useState<AgentConfig>();
   const [createOpen, setCreateOpen] = useState(false);
   const [pendingAgentAction, setPendingAgentAction] = useState<PendingAgentAction>();
-  const title = agentCategoryLabel(category);
 
   async function handleAgentAction() {
     if (!pendingAgentAction) return;
@@ -54,10 +53,7 @@ export function AgentPage({ category }: AgentPageProps) {
 
   return (
     <Space orientation="vertical" size="large" className="w-full">
-      <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-        <Typography.Title level={2} className="!mb-1">{title}</Typography.Title>
-      </div>
-      <AgentGroupTable title={title} category={category} agents={visibleAgents} loading={workbench.loading} mutationId={workbench.agentMutationId} onToggle={workbench.toggleAgent} onEdit={setEditingAgent} onCreate={category === "regular" ? () => setCreateOpen(true) : undefined} onDelete={(agent) => setPendingAgentAction({ agent, type: "delete" })} onReset={(agent) => setPendingAgentAction({ agent, type: "reset" })} />
+      <AgentGroupTable category={category} agents={visibleAgents} loading={workbench.loading} mutationId={workbench.agentMutationId} onToggle={workbench.toggleAgent} onEdit={setEditingAgent} onCreate={category === "regular" ? () => setCreateOpen(true) : undefined} onDelete={(agent) => setPendingAgentAction({ agent, type: "delete" })} onReset={(agent) => setPendingAgentAction({ agent, type: "reset" })} />
 
       <AgentEditModal agent={editingAgent} category={category} title={createOpen ? "新增普通 Agent" : undefined} open={Boolean(editingAgent) || createOpen} saving={Boolean(workbench.agentMutationId)} onClose={() => { setEditingAgent(undefined); setCreateOpen(false); }} onSave={handleSave} />
       <ActionConfirmModal
@@ -78,7 +74,7 @@ export function AgentPage({ category }: AgentPageProps) {
   );
 }
 
-function AgentGroupTable({ title, category, agents, loading, mutationId, onToggle, onEdit, onCreate, onDelete, onReset }: { title: string; category: AgentCategory; agents: AgentConfig[]; loading: boolean; mutationId?: string; onToggle: (agent: AgentConfig, enabled: boolean) => void; onEdit: (agent: AgentConfig) => void; onCreate?: () => void; onDelete: (agent: AgentConfig) => void; onReset: (agent: AgentConfig) => void }) {
+function AgentGroupTable({ category, agents, loading, mutationId, onToggle, onEdit, onCreate, onDelete, onReset }: { category: AgentCategory; agents: AgentConfig[]; loading: boolean; mutationId?: string; onToggle: (agent: AgentConfig, enabled: boolean) => void; onEdit: (agent: AgentConfig) => void; onCreate?: () => void; onDelete: (agent: AgentConfig) => void; onReset: (agent: AgentConfig) => void }) {
   const extra = category === "regular" ? (
     <Space size="small">
       {onCreate ? <Button size="small" type="primary" icon={<PlusOutlined />} onClick={onCreate}>新增 Agent</Button> : null}
@@ -89,7 +85,7 @@ function AgentGroupTable({ title, category, agents, loading, mutationId, onToggl
   ) : undefined;
 
   return (
-    <Card title={title} extra={extra}>
+    <Card extra={extra}>
       <Table
         rowKey="id"
         dataSource={agents}

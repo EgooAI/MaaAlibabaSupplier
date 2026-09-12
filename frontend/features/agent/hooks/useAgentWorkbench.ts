@@ -3,12 +3,9 @@
 import { App } from "antd";
 import { createContext, createElement, useContext, useEffect, useState, type ReactNode } from "react";
 import { agentConfigToPreset, agentPresetToConfig, agentPresetToDbPreset, createRegularAgentPreset, dbPresetToAgentPreset, documentToLlmLevelConfig, llmLevelToDocumentConfig, upsertLlmLevel } from "@/domain/agent/agentModel";
+import { nowText } from "@/domain/time";
 import { backend } from "@/services/client";
 import type { AgentConfig, AgentConsoleState, AgentEditValues, DbAgentPreset, LlmLevelConfig } from "@/types/agent";
-
-function nowText() {
-  return new Date().toLocaleString("zh-CN", { hour12: false }).replaceAll("/", "-");
-}
 
 function useAgentWorkbenchController() {
   const { message } = App.useApp();
