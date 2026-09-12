@@ -209,12 +209,12 @@ class CRMAdapter:
         )
 
     def _upsert_session(self, self_ali_id: str, contact_ali_id: str, participants: list[int]) -> Any:
-        session_key = session_key(self_ali_id, contact_ali_id)
-        existing = self._session_by_key(session_key)
+        key = session_key(self_ali_id, contact_ali_id)
+        existing = self._session_by_key(key)
         session_meta = SessionMeta(
             sid=existing.sid if existing is not None else None,
-            key=session_key,
-            name=session_key,
+            key=key,
+            name=key,
             participants=participants,
         )
         self.sessions.upsert_session_meta(session_meta)

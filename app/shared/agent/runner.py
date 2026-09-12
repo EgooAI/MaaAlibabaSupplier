@@ -24,7 +24,7 @@ def run_chat_tool_agent(apid: str, user_input: str, *, timeout_seconds: float = 
     from agent_pipeline.resolver import require_agent_preset_by_apid
 
     manager = AgentPresetManager()
-    runtime = require_agent_preset_by_apid(manager, apid)
+    runtime = _require_runtime_with_llm_registered(manager, apid)
     result = AgentPipeline(
         llm_client=OpenAICompatibleLLMClient(runtime.llm, timeout_seconds=timeout_seconds),
         manager=manager,
@@ -34,6 +34,25 @@ def run_chat_tool_agent(apid: str, user_input: str, *, timeout_seconds: float = 
     if result.status is AgentPipelineResultStatus.TOOL_ROUNDS_LIMITED:
         raise AgentRunError("调用超过次数限制")
     return result.output_text
+
+
+def _require_runtime_with_llm_registered(manager: AgentPresetManager, apid: str):
+    """Resolve the preset, lazily registering default LLM levels when missing.
+
+    ``llm_registry`` 是进程内存注册表，只有 ``app/main.py`` 启动路径会调用
+    ``register_default_llms``。其他入口（如直接运行 web server 或脚本）下，
+    数据库里即使已有 level 配置也会报 "LLM level N is not registered"，
+    这里兜底从数据库补注册一次。
+    """
+    from agent_pipeline.llm_api import register_default_llms
+    from agent_pipeline.registry import llm_registry
+    from agent_pipeline.resolver import require_agent_preset_by_apid
+
+    runtime = require_agent_preset_by_apid(manager, apid)
+    if llm_registry.get(runtime.preset.llm_level) is not None:
+        return runtime
+    register_default_llms()
+    return require_agent_preset_by_apid(manager, apid)
 
 
 __all__ = ["AgentRunError", "run_chat_tool_agent"]

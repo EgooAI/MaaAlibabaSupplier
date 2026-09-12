@@ -100,7 +100,7 @@ def run_node(entry: str, pipeline_override: dict | None = None) -> tuple[bool, s
         return False, f"初始化失败: {err}"
 
     try:
-        detail = tasker.post_task(entry, pipeline_override).wait().get()
+        detail = tasker.post_task(entry, pipeline_override or {}).wait().get()
         if detail and detail.status.succeeded:
             logger.info("MaaFW node '{}' succeeded", entry)
             return True, "执行成功"

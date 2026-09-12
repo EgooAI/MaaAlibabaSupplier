@@ -95,6 +95,9 @@ def _save(config: dict[str, Any]) -> None:
             )
         )
     LLMApiConfigManager().replace_configs(rows)
+    from agent_pipeline.llm_api import register_default_llms
+
+    register_default_llms()
 
 
 def render_llm_config_panel() -> None:

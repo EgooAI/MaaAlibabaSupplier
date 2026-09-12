@@ -58,7 +58,7 @@ def create() -> None:
             解密整库是阻塞操作，不能在事件循环线程执行；轮询就绪后取消定时器，
             避免每 2 秒空转、每 5 秒重复解密。
             """
-            state = await asyncio.to_thread(refresh_chat_data, False)
+            state = await asyncio.to_thread(refresh_chat_data, wait=False)
             if state.ready and retry_timer is not None:
                 retry_timer.cancel()
             content.refresh()

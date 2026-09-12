@@ -130,9 +130,7 @@ class IMDBMiddleware:
                 block = encrypted[offset : offset + 16]
                 decrypted[offset : offset + 16] = cipher.decrypt(block)
 
-            tmp = dst.with_name(dst.name + ".tmp")
-            tmp.write_bytes(decrypted)
-            tmp.replace(dst)
+            dst.write_bytes(decrypted)
             return True
         except Exception as exc:
             logger.error("DB decryption failed: {}", exc)
@@ -145,7 +143,17 @@ class IMDBMiddleware:
 
     def _cache_path_for(self, ali_id: str) -> Path:
         assert self._cache_dir is not None
-        return self._cache_dir / f"im_{ali_id}.sqlite"
+        return self._cache_dir / f"im_{ali_id}_{int(time.time() * 1000)}.sqlite"
+
+    def _cleanup_stale_caches(self, keep: Path) -> None:
+        assert self._cache_dir is not None
+        for path in self._cache_dir.glob("im_*.sqlite"):
+            if path == keep or path == self._cached_db_path:
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                pass
 
     def _replace_connection(self, cached: Path, ali_id: str) -> None:
         old_conn = self._conn
@@ -188,6 +196,7 @@ class IMDBMiddleware:
             except sqlite3.Error as exc:
                 logger.error("Failed to open cached IM database: {}", exc)
                 return False
+            self._cleanup_stale_caches(cached)
             self.sync_to_crm()
             logger.info("IM database refreshed (cached at {})", cached)
             return True
