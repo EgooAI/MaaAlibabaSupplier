@@ -1,6 +1,6 @@
 "use client";
 
-import { AppstoreOutlined, CommentOutlined, DashboardOutlined, FileTextOutlined, MenuFoldOutlined, MenuUnfoldOutlined, RobotOutlined, SelectOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
+import { AppstoreOutlined, CommentOutlined, DashboardOutlined, FileTextOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PoweroffOutlined, RobotOutlined, SelectOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
 import { Avatar, Button, Layout, Menu, Tooltip, Typography } from "antd";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -42,6 +42,7 @@ const navItems = [
     label: "设置",
     children: [
       { key: "/status", icon: <AppstoreOutlined />, label: <Link href="/status">系统状态</Link> },
+      { key: "/settings", icon: <PoweroffOutlined />, label: <Link href="/settings">系统设置</Link> },
     ],
   },
 ];
@@ -56,6 +57,7 @@ const pageTitles: Record<string, string> = {
   "/agent/system-agents": "系统 Agent",
   "/agent/regular-agents": "普通 Agent",
   "/status": "系统状态",
+  "/settings": "系统设置",
 };
 
 function NavigationMenu({ selectedKey, routeOpenKeys }: { selectedKey: string; routeOpenKeys: string[] }) {  const [openKeys, setOpenKeys] = useState(routeOpenKeys);
@@ -112,6 +114,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       ? "/agent/regular-agents"
       : pathname.startsWith("/agent/llm")
         ? "/agent/llm"
+        : pathname.startsWith("/settings")
+        ? "/settings"
         : pathname === "/chat" || pathname.startsWith("/chat/customer-sessions")
         ? "/chat/customer-sessions"
         : pathname.startsWith("/status")
@@ -121,11 +125,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             : `/${pathname.split("/")[1]}`;
   const openKeys = pathname === "/chat" || pathname.startsWith("/chat/")
     ? ["/chat"]
-    : pathname.startsWith("/agent/")
-      ? ["/agent"]
-      : pathname.startsWith("/status")
-        ? ["/settings"]
-        : [];
+      : pathname.startsWith("/agent/")
+        ? ["/agent"]
+        : pathname.startsWith("/status") || pathname.startsWith("/settings")
+          ? ["/settings"]
+          : [];
   return (
     <Layout className="fixed inset-0 min-h-0 items-stretch overflow-hidden">
       <Sider

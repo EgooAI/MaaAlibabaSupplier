@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
+
+# Console-subsystem children (MaaPiCli.exe) pop their own console window when
+# the parent is pythonw (no console); hide it on Windows.
+CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 class MaaFWProcessError(Exception):
@@ -34,6 +39,7 @@ class MaaFWProcess:
             stdin=subprocess.DEVNULL,
             stdout=log_file,
             stderr=subprocess.STDOUT,
+            creationflags=CREATE_NO_WINDOW,
         )
         log_file.close()
 

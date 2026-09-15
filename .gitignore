@@ -41,7 +41,6 @@ backend/deps/*
 backend/deps/tools/*
 !backend/deps/tools/*.schema.json
 build
-backend/install
 backend/build
 install
 gui

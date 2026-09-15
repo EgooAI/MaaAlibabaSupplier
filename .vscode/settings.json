@@ -7,22 +7,23 @@
         {
             "fileMatch": [
                 "/backend/assets/resource/**/*.json",
-                "/backend/install/resource/**/*.json",
+                "/install/backend/assets/resource/**/*.json",
                 "/backend/assets/resource/**/*.jsonc",
-                "/backend/install/resource/**/*.jsonc"
+                "/install/backend/assets/resource/**/*.jsonc"
             ],
             "url": "/backend/deps/tools/pipeline.schema.json"
         },
         {
             "fileMatch": [
                 "/backend/assets/interface.json",
-                "/backend/install/interface.json"
+                "/install/backend/assets/interface.json"
             ],
             "url": "/backend/deps/tools/interface.schema.json"
         },
         {
             "fileMatch": [
-                "/backend/install/config/maa_pi_config.json"
+                "/backend/assets/config/maa_pi_config.json",
+                "/install/backend/assets/config/maa_pi_config.json"
             ],
             "url": "/backend/deps/tools/interface_config.schema.json"
         }

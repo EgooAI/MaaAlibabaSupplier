@@ -54,6 +54,7 @@ export function requestInit(init?: RequestInit): RequestInit {
 export const httpBackend: OperationsBackend = {
   getSelfInfo: () => requestJson("/api/self-info"),
   resetCache: () => requestVoid("/api/cache/reset", { method: "POST" }),
+  shutdownApp: () => requestVoid("/api/app/shutdown", { method: "POST" }),
 
   requestTranslations: (input) => requestJson("/api/messages/translations", { method: "POST", body: JSON.stringify(input) }),
   getTranslation: (text) => requestJson(`/api/messages/translations/${encodeURIComponent(text)}`),
