@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
 
 from loguru import logger
-
-if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend.app.maafw_process import MaaFWProcess, MaaFWProcessError
 from backend.app.mitm.proxy import run_receiver
@@ -47,9 +44,20 @@ def _start_mitm_receiver() -> threading.Thread:
     return thread
 
 
+def _resolve_yak_executable(repo_root: Path) -> str:
+    """Yak discovery order: YAK_EXECUTABLE -> PATH -> portable runtime installed by tools/install_4_yak.py."""
+    configured = os.environ.get("YAK_EXECUTABLE", "").strip()
+    if configured:
+        return configured
+    on_path = shutil.which("yak")
+    if on_path:
+        return on_path
+    return str(repo_root / ".portable" / "yak" / "yak.exe")
+
+
 def _start_yak_mitm(repo_root: Path) -> subprocess.Popen | None:
     """Start the Yak MITM proxy via ``yak yak_mitm.yak`` in a subprocess."""
-    yak_exe = os.environ.get("YAK_EXECUTABLE", "yak")
+    yak_exe = _resolve_yak_executable(repo_root)
     yak_script = repo_root / "yak_mitm.yak"
     log_dir = repo_root / "data" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)

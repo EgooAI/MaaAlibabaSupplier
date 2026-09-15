@@ -17,14 +17,15 @@
 
 ## 启动流程
 
-用户启动 `app/main.py`（或 `python -m backend.app.main`，工作目录 `backend/`），启动时依次：
+后端唯一启动方式：仓库根运行 `python -m backend.app.main`。启动时依次：
 
-1. 加载 `.env`（`load_workdir_env()`）；
+1. 加载 `.env`（`load_workdir_env()`，从 cwd 向上查找，兜底仓库根）；
 2. 配置日志（`configure_logging()`）；
-3. 启动 MaaFW 子进程（`maafw.start()`）；
-4. 启动 MITM Python receiver 线程（默认 `127.0.0.1:8085`）；
-5. 启动 Yak MITM 代理（`yak yak_mitm.yak`，默认 `127.0.0.1:8084`）；
-6. 启动 HTTP API（主线程阻塞，uvicorn，默认 `127.0.0.1:8000`，供 `frontend/` Next.js 反代 `/api/*`）。
+3. 播种系统 Agent（`ensure_system_agents_seeded()`）并注册 LLM/工具/输出归一化（幂等，仅启动时一次）；
+4. 启动 MaaFW 子进程：可执行文件固定为 `backend/deps/bin/MaaPiCli.exe`（由 `tools/install_3_maafw.py` 安装），workdir 固定为 `backend/assets`（约定目录，无环境变量）；
+5. 启动 MITM Python receiver 线程（`MITM_RECEIVER_HOST/PORT`，默认 `127.0.0.1:8085`）；
+6. 启动 Yak MITM 代理（脚本 `backend/yak_mitm.yak`，默认 `127.0.0.1:8084`）。Yak 发现顺序：`YAK_EXECUTABLE` → PATH 上的 `yak` → `backend/.portable/yak/yak.exe`（`tools/install_4_yak.py` 的产物）；
+7. 启动 HTTP API（主线程阻塞，uvicorn，`MAA_API_HOST/PORT` 默认 `127.0.0.1:8000`，供 `frontend/` Next.js 反代 `/api/*`）。
 
 ## MITM 模块设计
 

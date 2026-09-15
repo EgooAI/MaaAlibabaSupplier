@@ -41,7 +41,7 @@
     "agent": {
         "child_exec": "python",
         "child_args": [
-            "./../agent/main.py"
+            "./../app/agent/main.py"
         ]
     },
     "task": [],
