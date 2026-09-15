@@ -4,12 +4,12 @@ import { AppstoreOutlined, CommentOutlined, DashboardOutlined, FileTextOutlined,
 import { Avatar, Button, Layout, Menu, Tooltip, Typography } from "antd";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { fallbackAvatarUrl } from "@/domain/chat/avatarModel";
-import { backend } from "@/services/client";
 import { ProfileDrawer } from "./ProfileDrawer";
-import type { SelfInfo } from "@/types/home";
+import { PAGE_TITLES, resolveOpenKeys, resolveSelectedKey } from "./routes.config";
+import { useSelfInfo } from "./useSelfInfo";
 
 const { Header, Sider, Content } = Layout;
 
@@ -47,20 +47,28 @@ const navItems = [
   },
 ];
 
-const pageTitles: Record<string, string> = {
-  "/": "首页",
-  "/chat/customer-sessions": "聊天工作台",
-  "/chat/agent-sessions": "Agent 会话",
-  "/batch": "批量管理",
-  "/agent/llm": "LLM",
-  "/agent/system-prompt": "Level SYSTEM_PROMPT",
-  "/agent/system-agents": "系统 Agent",
-  "/agent/regular-agents": "普通 Agent",
-  "/status": "系统状态",
-  "/settings": "系统设置",
-};
+const pageTitles = PAGE_TITLES;
 
-function NavigationMenu({ selectedKey, routeOpenKeys }: { selectedKey: string; routeOpenKeys: string[] }) {  const [openKeys, setOpenKeys] = useState(routeOpenKeys);
+function NavigationMenu({ selectedKey, routeOpenKeys }: { selectedKey: string; routeOpenKeys: string[] }) {
+  const [openKeys, setOpenKeys] = useState(routeOpenKeys);
+
+  // Intentional route -> menu sync: follow route group while preserving user toggles.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOpenKeys((current) => {
+      // Keep user toggles, but ensure route parent is open.
+      const next = new Set(current);
+      for (const key of routeOpenKeys) next.add(key);
+      // Drop stale route groups that are no longer relevant (keep max 1 route group + user extras is overkill; sync to route).
+      // Simple policy: if route group changed, follow route; otherwise keep user state.
+      const routeGroup = routeOpenKeys[0];
+      const hasRouteGroup = routeGroup ? next.has(routeGroup) : true;
+      if (!hasRouteGroup) return routeOpenKeys;
+      // If current already contains route group, preserve user toggles.
+      if (routeGroup && current.includes(routeGroup)) return current;
+      return routeOpenKeys.length ? routeOpenKeys : current;
+    });
+  }, [routeOpenKeys]);
 
   return (
     <Menu
@@ -78,58 +86,11 @@ function NavigationMenu({ selectedKey, routeOpenKeys }: { selectedKey: string; r
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
-  const [selfInfo, setSelfInfo] = useState<SelfInfo | null>();
-  const [profileLoading, setProfileLoading] = useState(true);
-  const [profileError, setProfileError] = useState<string>();
   const [profileOpen, setProfileOpen] = useState(false);
-  const [avatarSource, setAvatarSource] = useState(fallbackAvatarUrl);
+  const { selfInfo, loading: profileLoading, error: profileError, avatarSource, setAvatarSource, reload: loadSelfInfo } = useSelfInfo();
 
-  const loadSelfInfo = useCallback(async () => {
-    setProfileLoading(true);
-    setProfileError(undefined);
-    try {
-      const info = await backend.getSelfInfo();
-      setSelfInfo(info);
-      setAvatarSource(info?.avatar_url || fallbackAvatarUrl);
-    } catch (error: unknown) {
-      setSelfInfo(null);
-      setAvatarSource(fallbackAvatarUrl);
-      setProfileError(error instanceof Error ? error.message : "个人信息加载失败");
-    } finally {
-      setProfileLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    queueMicrotask(() => void loadSelfInfo());
-  }, [loadSelfInfo]);
-
-  const selectedKey = pathname.startsWith("/chat/agent-sessions")
-    ? "/chat/agent-sessions"
-    : pathname.startsWith("/agent/system-agents")
-    ? "/agent/system-agents"
-    : pathname.startsWith("/agent/system-prompt")
-    ? "/agent/system-prompt"
-    : pathname.startsWith("/agent/regular-agents")
-      ? "/agent/regular-agents"
-      : pathname.startsWith("/agent/llm")
-        ? "/agent/llm"
-        : pathname.startsWith("/settings")
-        ? "/settings"
-        : pathname === "/chat" || pathname.startsWith("/chat/customer-sessions")
-        ? "/chat/customer-sessions"
-        : pathname.startsWith("/status")
-          ? "/status"
-          : pathname === "/"
-            ? "/"
-            : `/${pathname.split("/")[1]}`;
-  const openKeys = pathname === "/chat" || pathname.startsWith("/chat/")
-    ? ["/chat"]
-      : pathname.startsWith("/agent/")
-        ? ["/agent"]
-        : pathname.startsWith("/status") || pathname.startsWith("/settings")
-          ? ["/settings"]
-          : [];
+  const selectedKey = resolveSelectedKey(pathname);
+  const openKeys = resolveOpenKeys(pathname);
   return (
     <Layout className="fixed inset-0 min-h-0 items-stretch overflow-hidden">
       <Sider
@@ -170,7 +131,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </>
             )}
           </div>
-          <NavigationMenu key={openKeys.join("|") || "root"} selectedKey={selectedKey} routeOpenKeys={openKeys} />
+          <NavigationMenu selectedKey={selectedKey} routeOpenKeys={openKeys} />
         </div>
       </Sider>
       <Layout className="min-h-0">

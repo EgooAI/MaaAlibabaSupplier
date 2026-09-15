@@ -90,8 +90,7 @@ describe("backend conversation DTO", () => {
   });
 
   it("falls back when customer_view is missing", () => {
-    const { customer_view: _dropped, ...rest } = aggregate;
-    const detail = adaptConversationDetail({ ...rest, accounts: [], customers: [], participants: [] });
+    const detail = adaptConversationDetail({ ...aggregate, customer_view: undefined, accounts: [], customers: [], participants: [] });
     expect(detail.customer.name).toBe("未知客户");
   });
 });

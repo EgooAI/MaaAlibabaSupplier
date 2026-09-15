@@ -1,35 +1,33 @@
 "use client";
 
-import { ArrowDownOutlined, ArrowLeftOutlined, CopyOutlined, DeleteOutlined, MoreOutlined, PlusOutlined, ReloadOutlined, RobotOutlined, UserOutlined } from "@ant-design/icons";
-import { Avatar, Button, Card, Col, Dropdown, Empty, Form, Grid, Listy, Modal, Row, Select, Space, Tag, Typography } from "antd";
-import type { MenuProps } from "antd";
+import { ArrowDownOutlined, ArrowLeftOutlined, PlusOutlined } from "@ant-design/icons";
+import { Button, Card, Empty, Form, Listy, Modal, Select, Space } from "antd";
 import { useState } from "react";
 import { ActionConfirmModal } from "@/components/ActionConfirmModal";
 import { SessionListPanel } from "@/components/SessionListPanel";
 import { MessageComposer } from "@/components/MessageComposer";
+import { SplitSessionLayout, useSplitSessionMobile } from "@/components/SplitSessionLayout";
 import { useStickToBottom } from "@/components/useStickToBottom";
 import { canRunAgentExecution, formatAgentSessionDate } from "@/domain/agent/agentModel";
-import { fallbackAvatarUrl, sellerAvatarUrl } from "@/domain/chat/avatarModel";
 import type { AgentTestSession } from "@/types/agent";
+import { SessionListItem } from "./components/SessionListItem";
+import { SessionMessages } from "./components/SessionMessages";
 import { useAgentSessionWorkbench } from "./hooks/useAgentSessionWorkbench";
 
 type CreateSessionValues = {
   agentId: string;
 };
-type MobileSessionView = "list" | "detail";
 
 export function AgentSessionsPage() {
-  const screens = Grid.useBreakpoint();
+  const { isMobile, mobileView, setMobileView } = useSplitSessionMobile();
   const workbench = useAgentSessionWorkbench();
   const [createOpen, setCreateOpen] = useState(false);
-  const [mobileView, setMobileView] = useState<MobileSessionView>("list");
-  const isMobile = screens.xl === false;
   const [pendingDeleteSession, setPendingDeleteSession] = useState<AgentTestSession>();
   const [form] = Form.useForm<CreateSessionValues>();
   const agentNames = new Map(workbench.agents.map((agent) => [agent.id, agent.name]));
   const canRunActiveAgent = canRunAgentExecution(workbench.activeAgent);
   const sessionActionBusy = Boolean(workbench.action);
-  const timeline = useStickToBottom({
+  const { scrollRef, showJumpButton, handleScroll, scrollToBottom } = useStickToBottom({
     sessionKey: workbench.activeSessionId ?? "",
     followKey: workbench.activeSession?.messages.length ?? 0,
   });
@@ -91,16 +89,16 @@ export function AgentSessionsPage() {
       {workbench.activeSession ? (
         <div className="flex min-h-0 flex-1 flex-col gap-6">
           <div className="relative flex min-h-0 flex-1 flex-col">
-            <div ref={timeline.scrollRef} onScroll={timeline.handleScroll} className="min-h-0 flex-1 overflow-y-auto pr-2">
+            <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto pr-2">
               <SessionMessages session={workbench.activeSession} />
             </div>
-            {timeline.showJumpButton ? (
+            {showJumpButton ? (
               <Button
                 size="small"
                 shape="round"
                 icon={<ArrowDownOutlined />}
                 className="absolute bottom-2 left-1/2 -translate-x-1/2 shadow"
-                onClick={() => timeline.scrollToBottom(true)}
+                onClick={() => scrollToBottom(true)}
               >
                 回到底部
               </Button>
@@ -132,17 +130,8 @@ export function AgentSessionsPage() {
   );
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] min-h-[480px] flex-col">
-      <Row gutter={[16, 16]} className="min-h-0 flex-1">
-        {isMobile ? (
-          <Col xs={24} className="flex h-full min-h-0">{mobileView === "list" ? sessionList : sessionDetail}</Col>
-        ) : (
-          <>
-            <Col xs={24} xl={6} className="flex h-full min-h-0">{sessionList}</Col>
-            <Col xs={24} xl={18} className="flex h-full min-h-0">{sessionDetail}</Col>
-          </>
-        )}
-      </Row>
+    <>
+      <SplitSessionLayout list={sessionList} detail={sessionDetail} mobileView={mobileView} />
 
       <Modal
         title="新建 Agent 会话"
@@ -177,87 +166,6 @@ export function AgentSessionsPage() {
           { label: "消息数", value: pendingDeleteSession.messages.length },
         ] : undefined}
       />
-    </div>
-  );
-}
-
-type SessionListItemProps = {
-  session: AgentTestSession;
-  agentName: string;
-  active: boolean;
-  disabled: boolean;
-  deleting: boolean;
-  onClick: () => void;
-  onCopy: () => void;
-  onDelete: () => void;
-};
-
-function SessionListItem({ session, agentName, active, disabled, deleting, onClick, onCopy, onDelete }: SessionListItemProps) {
-  const menuItems: MenuProps["items"] = [
-    { key: "copy", icon: <CopyOutlined />, label: "复制", disabled: deleting },
-    { key: "delete", icon: <DeleteOutlined />, label: "删除", danger: true, disabled: deleting },
-  ];
-
-  function handleMenuClick(info: Parameters<NonNullable<MenuProps["onClick"]>>[0]) {
-    info.domEvent.stopPropagation();
-    if (info.key === "copy") void onCopy();
-    if (info.key === "delete") onDelete();
-  }
-
-  return (
-    <div className={`rounded-lg px-3 py-3 ${disabled ? "cursor-default" : "cursor-pointer"} ${active ? "bg-blue-50" : "hover:bg-slate-50"}`} onClick={onClick}>
-      <div className="flex items-center gap-2">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-2">
-            <Typography.Text strong ellipsis>{session.title}</Typography.Text>
-            <Typography.Text className="shrink-0 text-xs">{formatAgentSessionDate(session.createdAt)}</Typography.Text>
-          </div>
-          <div className="mt-1">
-            <Tag color="blue">{agentName}</Tag>
-          </div>
-        </div>
-        <Dropdown menu={{ items: menuItems, onClick: handleMenuClick }} trigger={["click"]} disabled={disabled}>
-          <Button
-            type="text"
-            size="small"
-            icon={deleting ? <ReloadOutlined spin /> : <MoreOutlined />}
-            aria-label={`操作会话：${session.title}`}
-            onClick={(event) => event.stopPropagation()}
-          />
-        </Dropdown>
-      </div>
-    </div>
-  );
-}
-
-function SessionMessages({ session }: { session: AgentTestSession }) {
-  const [userAvatar, setUserAvatar] = useState(sellerAvatarUrl);
-
-  return (
-    <Space orientation="vertical" size="middle" className="w-full">
-      {session.messages.map((item) => {
-        const isAssistant = item.role === "assistant";
-        return (
-          <div key={item.id} className={`flex ${isAssistant ? "justify-start" : "justify-end"}`}>
-            <div className={`flex max-w-[78%] gap-3 ${isAssistant ? "" : "flex-row-reverse"}`}>
-              <Avatar
-                className="shrink-0"
-                src={isAssistant ? undefined : userAvatar}
-                icon={isAssistant ? <RobotOutlined /> : <UserOutlined />}
-                style={{ backgroundColor: isAssistant ? "#64748b" : "#e2e8f0" }}
-                onError={isAssistant ? undefined : () => {
-                  setUserAvatar(fallbackAvatarUrl);
-                  return true;
-                }}
-              />
-              <Card size="small" className={isAssistant ? "bg-slate-50" : "bg-blue-50"}>
-                <Typography.Text className="text-xs">{item.createdAt}</Typography.Text>
-                <Typography.Paragraph className="!mb-0 mt-2 whitespace-pre-wrap">{item.content}</Typography.Paragraph>
-              </Card>
-            </div>
-          </div>
-        );
-      })}
-    </Space>
+    </>
   );
 }

@@ -61,7 +61,10 @@ export function ConversationList({
               itemRender={(item: Conversation) => (
                 <div
                   className={`cursor-pointer rounded-lg px-2 ${activeId === item.id ? "bg-blue-50" : "hover:bg-slate-50"}`}
-                  onClick={() => onSelect?.(item.id)}
+                  onClick={() => {
+                    if (selectable) onToggleSelected?.(item.id);
+                    else onSelect?.(item.id);
+                  }}
                 >
                   <div className="flex w-full gap-2">
                     {selectable ? <Checkbox checked={selectedIds.includes(item.id)} onClick={(event) => event.stopPropagation()} onChange={() => onToggleSelected?.(item.id)} /> : null}

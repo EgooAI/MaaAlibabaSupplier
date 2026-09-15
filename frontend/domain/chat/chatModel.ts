@@ -1,5 +1,6 @@
 import type { ChatMessage, Conversation, ConversationDetail } from "@/types/chatCanonical";
 import type { MessageExecution } from "@/types/chatOperations";
+import { formatMonthDay } from "@/domain/time";
 
 export type ConversationGroupMode = "time" | "status" | "count";
 
@@ -40,30 +41,28 @@ export function groupConversations(conversations: Conversation[], mode: Conversa
   return entries.map(([label, items]) => ({ label, items }));
 }
 
-export function statusLabel(status: Conversation["status"]) {
-  return {
+export function statusLabel(status: Conversation["status"] | (string & {})) {
+  return ({
     unread: "未读待回",
     following: "跟进中",
     waiting: "等待客户",
     closed: "已关闭",
-  }[status];
+  } as Record<string, string>)[status] ?? String(status);
 }
 
-export function stageLabel(stage: ConversationDetail["customer"]["stage"]) {
-  return {
+export function stageLabel(stage: ConversationDetail["customer"]["stage"] | (string & {})) {
+  return ({
     unknown: "未知阶段",
     new: "新线索",
     interested: "高意向",
     negotiating: "谈判中",
     risk: "风险客户",
     done: "已成交",
-  }[stage];
+  } as Record<string, string>)[stage] ?? String(stage);
 }
 
 export function conversationTimeLabel(value: string) {
-  const date = parseConversationDate(value);
-  if (!date) return value;
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return formatMonthDay(value);
 }
 
 export function mergeMessageTranslations(messages: ChatMessage[], translations: Array<{ messageId: string; translatedContent: string }>) {
@@ -90,6 +89,7 @@ export function mergeConversationDetail(current: ConversationDetail, incoming: C
   };
 }
 
+// TODO: move MessageExecution to chatCanonical to keep domain free of transport/ops DTOs.
 export function messageExecutionState(execution: MessageExecution) {
   const status = execution.task_snapshot?.status;
   if (!execution.success || status === "failed") return "failed";
@@ -97,8 +97,8 @@ export function messageExecutionState(execution: MessageExecution) {
   return "succeeded";
 }
 
-export function buildConversationExport(details: ConversationDetail[]) {
-  const timestamp = Date.now();
+export function buildConversationExport(details: ConversationDetail[], now = Date.now()) {
+  const timestamp = now;
   const content = details
     .map((conversation) => {
       const header = [
@@ -142,8 +142,4 @@ function parseConversationDate(value: string) {
 
 function startOfLocalDay(value: Date) {
   return new Date(value.getFullYear(), value.getMonth(), value.getDate());
-}
-
-function pad(value: number) {
-  return String(value).padStart(2, "0");
 }

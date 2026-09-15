@@ -12,10 +12,6 @@
   --font-mono: var(--font-geist-mono);
 }
 
-* {
-  box-sizing: border-box;
-}
-
 html,
 body {
   min-height: 100%;
@@ -25,24 +21,19 @@ body {
   margin: 0;
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", Arial, Helvetica, sans-serif;
 }
 
-a {
-  color: inherit;
-  text-decoration: none;
-}
-
-::-webkit-scrollbar {
+.app-scroll::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
-::-webkit-scrollbar-thumb {
+.app-scroll::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: #cbd5e1;
 }
 
-::-webkit-scrollbar-track {
+.app-scroll::-webkit-scrollbar-track {
   background: transparent;
 }

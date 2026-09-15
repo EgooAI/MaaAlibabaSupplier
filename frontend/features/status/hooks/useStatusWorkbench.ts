@@ -39,13 +39,11 @@ export function useStatusWorkbench() {
 
   useEffect(() => {
     const timer = setInterval(() => {
-      void backend.getSystemStatus().then(
-        (nextSnapshot) => setSnapshot(nextSnapshot),
-        () => undefined,
-      );
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void loadSnapshot();
     }, POLL_INTERVAL_MS);
     return () => clearInterval(timer);
-  }, []);
+  }, [loadSnapshot]);
 
   async function refresh() {
     if (refreshing) return;

@@ -1,7 +1,7 @@
 "use client";
 
 import { App } from "antd";
-import { createContext, createElement, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, createElement, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { agentConfigToPreset, agentPresetToConfig, agentPresetToDbPreset, createRegularAgentPreset, dbPresetToAgentPreset, documentToLlmLevelConfig, llmLevelToDocumentConfig, upsertLlmLevel } from "@/domain/agent/agentModel";
 import { nowText } from "@/domain/time";
 import { backend } from "@/services/client";
@@ -11,7 +11,22 @@ function useAgentWorkbenchController() {
   const { message } = App.useApp();
   const [state, setState] = useState<AgentConsoleState>();
   const [loading, setLoading] = useState(true);
-  const [agentMutationId, setAgentMutationId] = useState<string>();
+  const [mutatingIds, setMutatingIds] = useState<Set<string>>(new Set());
+  const mutatingRef = useRef<Set<string>>(new Set());
+  // Keep single-id compat for existing callers (first mutating id).
+  const agentMutationId = mutatingIds.size ? [...mutatingIds][0] : undefined;
+
+  const beginMutation = (id: string) => {
+    if (mutatingRef.current.has(id)) return false;
+    mutatingRef.current.add(id);
+    setMutatingIds(new Set(mutatingRef.current));
+    return true;
+  };
+
+  const endMutation = (id: string) => {
+    mutatingRef.current.delete(id);
+    setMutatingIds(new Set(mutatingRef.current));
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -49,8 +64,7 @@ function useAgentWorkbenchController() {
   }
 
   async function toggleAgent(agent: AgentConfig, enabled: boolean) {
-    if (agentMutationId) return false;
-    setAgentMutationId(agent.id);
+    if (!beginMutation(agent.id)) return false;
     try {
       const updatedAt = nowText();
       const preset = agentConfigToPreset({ ...agent, enabled }, {
@@ -68,13 +82,12 @@ function useAgentWorkbenchController() {
       message.error(error instanceof Error ? error.message : "Agent 状态保存失败");
       return false;
     } finally {
-      setAgentMutationId(undefined);
+      endMutation(agent.id);
     }
   }
 
   async function saveAgent(agent: AgentConfig, values: AgentEditValues) {
-    if (agentMutationId) return false;
-    setAgentMutationId(agent.id);
+    if (!beginMutation(agent.id)) return false;
     try {
       const preset = agentConfigToPreset(agent, values, nowText());
       const saved = await backend.saveAgentPreset(agentPresetToDbPreset(preset));
@@ -85,13 +98,12 @@ function useAgentWorkbenchController() {
       message.error(error instanceof Error ? error.message : "Agent 保存失败");
       return false;
     } finally {
-      setAgentMutationId(undefined);
+      endMutation(agent.id);
     }
   }
 
   async function createAgent(values: AgentEditValues) {
-    if (agentMutationId) return false;
-    setAgentMutationId("new-agent");
+    if (!beginMutation("new-agent")) return false;
     try {
       const preset = createRegularAgentPreset(values, nowText());
       const saved = await backend.saveAgentPreset(agentPresetToDbPreset(preset));
@@ -102,13 +114,12 @@ function useAgentWorkbenchController() {
       message.error(error instanceof Error ? error.message : "Agent 创建失败");
       return false;
     } finally {
-      setAgentMutationId(undefined);
+      endMutation("new-agent");
     }
   }
 
   async function deleteAgent(agent: AgentConfig) {
-    if (agent.category !== "regular" || agentMutationId) return false;
-    setAgentMutationId(agent.id);
+    if (agent.category !== "regular" || !beginMutation(agent.id)) return false;
     try {
       const deleted = await backend.deleteAgentPreset(agent.id);
       if (!deleted) {
@@ -126,13 +137,12 @@ function useAgentWorkbenchController() {
       message.error(error instanceof Error ? error.message : "Agent 删除失败");
       return false;
     } finally {
-      setAgentMutationId(undefined);
+      endMutation(agent.id);
     }
   }
 
   async function resetSystemAgent(agent: AgentConfig) {
-    if (agent.category !== "system" || !agent.apid || agentMutationId) return false;
-    setAgentMutationId(agent.id);
+    if (agent.category !== "system" || !agent.apid || !beginMutation(agent.id)) return false;
     try {
       const restored = await backend.restoreSystemAgentDefault(agent.apid);
       syncAgentState(restored);
@@ -142,7 +152,7 @@ function useAgentWorkbenchController() {
       message.error(error instanceof Error ? error.message : "系统 Agent 重置失败");
       return false;
     } finally {
-      setAgentMutationId(undefined);
+      endMutation(agent.id);
     }
   }
 
@@ -165,7 +175,7 @@ function useAgentWorkbenchController() {
     });
   }
 
-  return { state, loading, saveLlmLevel, toggleAgent, saveAgent, createAgent, deleteAgent, resetSystemAgent, agentMutationId };
+  return { state, loading, saveLlmLevel, toggleAgent, saveAgent, createAgent, deleteAgent, resetSystemAgent, agentMutationId, mutatingIds, isAgentMutating: (id: string) => mutatingIds.has(id) };
 }
 
 type AgentWorkbench = ReturnType<typeof useAgentWorkbenchController>;

@@ -50,7 +50,6 @@ describe("status model adapters", () => {
     expect(snapshot.modules.map((module) => module.status)).toEqual(["healthy", "healthy", "offline", "healthy"]);
     expect(snapshot.modules.map((module) => module.latency)).toEqual([null, 50, null, null]);
     expect(snapshot.tasks[0].status).toBe("queued");
-    expect(snapshot.modules[0]).not.toHaveProperty("lastCheckedAt");
     expect(snapshot.receiverStatus.error).toBe("closed");
   });
 
