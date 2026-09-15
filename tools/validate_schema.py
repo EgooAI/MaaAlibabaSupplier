@@ -6,18 +6,9 @@ import argparse
 from pathlib import Path
 from jsonschema import Draft7Validator, Draft202012Validator
 from jsonschema.exceptions import ValidationError
-
-try:
-    from referencing import Registry, Resource
-    from referencing.jsonschema import DRAFT202012, DRAFT7
-    import referencing.retrieval
-
-    HAS_REFERENCING = True
-except ImportError:
-    # 如果没有 referencing 库，回退到旧的 RefResolver
-    from jsonschema import RefResolver
-
-    HAS_REFERENCING = False
+from referencing import Registry, Resource
+from referencing.jsonschema import DRAFT202012, DRAFT7
+import referencing.retrieval
 
 
 def strip_jsonc_comments(text):
@@ -173,38 +164,22 @@ def validate_file(file_path, validator):
 
 
 def create_validator(schema, schema_store):
-    """创建 validator，使用新的 referencing API 或回退到 RefResolver"""
+    """创建 validator，使用新的 referencing API"""
     ValidatorClass = get_validator_class(schema)
 
-    if HAS_REFERENCING:
-        # 使用新的 referencing API
-        registry = Registry()
+    registry = Registry()
 
-        # 根据 schema 类型选择规范
-        spec = DRAFT202012 if ValidatorClass == Draft202012Validator else DRAFT7
+    # 根据 schema 类型选择规范
+    spec = DRAFT202012 if ValidatorClass == Draft202012Validator else DRAFT7
 
-        # 添加所有 schema 到 registry
-        for uri, schema_content in schema_store.items():
-            resource = Resource.from_contents(
-                schema_content, default_specification=spec
-            )
-            registry = registry.with_resource(uri, resource)
+    # 添加所有 schema 到 registry
+    for uri, schema_content in schema_store.items():
+        resource = Resource.from_contents(
+            schema_content, default_specification=spec
+        )
+        registry = registry.with_resource(uri, resource)
 
-        return ValidatorClass(schema, registry=registry)
-    else:
-        # 回退到旧的 RefResolver
-        # 从 schema_store 中找到主 schema 的 URI
-        schema_uri = None
-        for uri, content in schema_store.items():
-            if content == schema:
-                schema_uri = uri
-                break
-
-        if schema_uri is None:
-            schema_uri = "file:///schema.json"
-
-        resolver = RefResolver(base_uri=schema_uri, referrer=schema, store=schema_store)
-        return ValidatorClass(schema, resolver=resolver)
+    return ValidatorClass(schema, registry=registry)
 
 
 def main():
@@ -237,13 +212,6 @@ def main():
         nargs="+",
         default=["backend/assets/interface.json"],
         help="Path to interface.json files (default: backend/assets/interface.json)",
-    )
-    parser.add_argument(
-        "--task-dirs",
-        type=str,
-        nargs="*",
-        default=[],
-        help="Directories containing task files to validate against interface_import.schema.json (default: none)",
     )
 
     args = parser.parse_args()
@@ -332,37 +300,6 @@ def main():
                 print(
                     f"Warning: Interface file {interface_file} does not exist, skipping..."
                 )
-
-    # 验证 task 文件
-    if args.task_dirs:
-        print("\nValidating task files...")
-        task_schema_path = schema_dir / "interface_import.schema.json"
-        if task_schema_path.exists():
-            task_schema = load_jsonc(task_schema_path)
-            task_schema_uri = task_schema_path.as_uri()
-            schema_store[task_schema_uri] = task_schema
-
-            task_validator = create_validator(task_schema, schema_store)
-
-            for task_dir in args.task_dirs:
-                task_path = Path(task_dir)
-                if not task_path.exists():
-                    print(
-                        f"Warning: Task directory {task_dir} does not exist, skipping..."
-                    )
-                    continue
-
-                for file_path in task_path.rglob("*.json"):
-                    if not validate_file(file_path, task_validator):
-                        all_valid = False
-
-                for file_path in task_path.rglob("*.jsonc"):
-                    if not validate_file(file_path, task_validator):
-                        all_valid = False
-        else:
-            print(
-                f"Warning: Task schema {task_schema_path} does not exist, skipping task validation..."
-            )
 
     if all_valid:
         print("\n✅ All validations passed!")

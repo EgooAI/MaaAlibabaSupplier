@@ -4,7 +4,9 @@
 
 #define MyAppName "MaaAlibabaSupplier"
 #ifndef MyAppVersion
-#define MyAppVersion "0.0.0"
+; Fallback when compiled without /DMyAppVersion; mirrors the tools default
+; (v0.0.0-local) minus the "v" prefix used by AppVersion.
+#define MyAppVersion "0.0.0-local"
 #endif
 #define MyAppPublisher "EgooAI"
 #define MyAppURL "https://github.com/EgooAI/MaaAlibabaSupplier"
@@ -34,8 +36,7 @@ WizardStyle          =modern
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "..\..\install\*"; DestDir: "{app}"; Excludes: "vc_redist.x64.exe"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\..\install\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
+Source: "..\..\install\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -48,8 +49,6 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\backend\python\pythonw.exe"; Parameters: "-m backend.app.main"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-; MaaFramework binaries require the VC++ 2015-2022 x64 runtime.
-Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; Flags: waituntilterminated runhidden; Check: not VCRedistInstalled
 Filename: "{app}\backend\python\pythonw.exe"; Parameters: "-m backend.app.main"; WorkingDir: "{app}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall
 
 [UninstallDelete]
@@ -57,9 +56,3 @@ Filename: "{app}\backend\python\pythonw.exe"; Parameters: "-m backend.app.main";
 Type: filesandordirs; Name: "{app}\data"
 Type: filesandordirs; Name: "{app}\backend\data"
 Type: filesandordirs; Name: "{app}\backend\debug"
-
-[Code]
-function VCRedistInstalled: Boolean;
-begin
-  Result := RegKeyExists(HKLM, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64');
-end;
