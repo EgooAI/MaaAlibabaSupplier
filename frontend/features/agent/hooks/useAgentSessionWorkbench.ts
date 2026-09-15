@@ -55,7 +55,7 @@ export function useAgentSessionWorkbench() {
   const busy = Boolean(action || creating);
 
   function selectSession(id: string) {
-    if (!busy) setActiveSessionId(id);
+    setActiveSessionId(id);
   }
 
   async function createSession(agentId: string) {

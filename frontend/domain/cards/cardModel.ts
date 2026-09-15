@@ -69,20 +69,20 @@ export function documentCardsToBusinessCards({
   ];
 }
 
-export function getCardTypeLabel(type: BusinessCard["type"]) {
-  return {
+export function getCardTypeLabel(type: BusinessCard["type"] | (string & {})) {
+  return ({
     product: "产品卡",
     inquiry: "询盘卡",
     generic: "通用卡",
-  }[type];
+  } as Record<string, string>)[type] ?? String(type);
 }
 
-export function getCardStatusLabel(status: NonNullable<BusinessCard["status"]>) {
-  return {
+export function getCardStatusLabel(status: NonNullable<BusinessCard["status"]> | (string & {})) {
+  return ({
     published: "已发布",
     draft: "草稿",
     reviewing: "待审核",
-  }[status];
+  } as Record<string, string>)[status] ?? String(status);
 }
 
 function parseGenericPayload(rawJson: string): { title?: string; summary?: string; owner?: string; scenario?: string; tags: string[] } {

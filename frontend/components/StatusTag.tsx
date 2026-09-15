@@ -30,8 +30,8 @@ const statusMap: Record<StatusValue, { label: string; color: string; badge?: "su
   low: { label: "低", color: "green" },
 };
 
-export function StatusTag({ status, badge = false }: { status: StatusValue; badge?: boolean }) {
-  const item = statusMap[status];
+export function StatusTag({ status, badge = false }: { status: StatusValue | (string & {}); badge?: boolean }) {
+  const item = (statusMap as Record<string, { label: string; color: string; badge?: "success" | "processing" | "warning" | "error" | "default" }>)[status] ?? { label: String(status), color: "default" as const, badge: "default" as const };
   if (badge) {
     return <Badge status={item.badge ?? "default"} text={item.label} />;
   }

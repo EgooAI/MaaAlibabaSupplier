@@ -1,11 +1,11 @@
 "use client";
 
 import { EditOutlined } from "@ant-design/icons";
-import { Button, Card, Form, Input, InputNumber, Modal, Space, Table, Tag } from "antd";
+import { Button, Card, Form, Input, InputNumber, Modal, Space, Tag } from "antd";
 import { useMemo, useState } from "react";
 import { isValidToolRoundLimit } from "@/domain/agent/agentModel";
 import type { LlmLevelConfig } from "@/types/agent";
-import { HydrationSafeTable } from "@/components/HydrationSafeTable";
+import { AppTable } from "@/components/AppTable";
 import { useAgentWorkbench } from "./hooks/useAgentWorkbench";
 
 type LlmLevelFormValues = Omit<LlmLevelConfig, "level">;
@@ -36,11 +36,10 @@ export function LlmPage() {
   return (
     <Space orientation="vertical" size="large" className="w-full">
       <Card title={<span>LLM Level 配置 <Tag color="blue">{levels.length} 个层级</Tag></span>} loading={workbench.loading}>
-        <Table
+        <AppTable
           rowKey="level"
           dataSource={levels}
           scroll={{ x: 1340 }}
-          components={{ table: HydrationSafeTable }}
           columns={[
             {
               title: "Level",

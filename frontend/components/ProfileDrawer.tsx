@@ -1,6 +1,7 @@
 "use client";
 
-import { Button, Card, Descriptions, Drawer, Empty, Space, Spin, Tag } from "antd";
+import { Button, Card, Descriptions, Empty, Space, Spin, Tag } from "antd";
+import { BaseDrawer } from "@/components/BaseDrawer";
 import type { SelfInfo } from "@/types/home";
 
 type ProfileDrawerProps = {
@@ -14,7 +15,7 @@ type ProfileDrawerProps = {
 
 export function ProfileDrawer({ selfInfo, loading, error, open, onClose, onRetry }: ProfileDrawerProps) {
   return (
-    <Drawer title="个人信息" size={520} open={open} onClose={onClose} destroyOnHidden>
+    <BaseDrawer title="个人信息" open={open} onClose={onClose}>
       {loading ? <div className="flex min-h-40 items-center justify-center"><Spin /></div> : null}
       {!loading && error ? <Empty description={error}><Button onClick={onRetry}>重试</Button></Empty> : null}
       {!loading && !error && !selfInfo ? <Empty description="暂无个人信息"><Button onClick={onRetry}>重试</Button></Empty> : null}
@@ -35,6 +36,6 @@ export function ProfileDrawer({ selfInfo, loading, error, open, onClose, onRetry
           </Card>
         </Space>
       ) : null}
-    </Drawer>
+    </BaseDrawer>
   );
 }

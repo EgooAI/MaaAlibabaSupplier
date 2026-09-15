@@ -1,14 +1,12 @@
 "use client";
 
 import { ExperimentOutlined, ReloadOutlined } from "@ant-design/icons";
-import { Button, Card, Col, Empty, Row, Space, Table, Typography } from "antd";
-import { HydrationSafeTable } from "@/components/HydrationSafeTable";
+import { Button, Card, Col, Empty, Row, Space, Typography } from "antd";
+import { AppTable } from "@/components/AppTable";
 import { StatusTag } from "@/components/StatusTag";
-import { HEALTH_MODULE_TITLES } from "@/domain/status/statusModel";
-import type { HealthModule, HealthModuleId, TaskItem } from "@/types/status";
+import { HEALTH_MODULE_IDS, HEALTH_MODULE_TITLES } from "@/domain/status/statusModel";
+import type { HealthModule, TaskItem } from "@/types/status";
 import { useStatusWorkbench } from "./hooks/useStatusWorkbench";
-
-const healthModuleIds: HealthModuleId[] = ["health-identity", "health-proxy", "health-receiver", "health-node"];
 
 export function StatusPage() {
   const { snapshot, loading, refreshing, creatingTask, testingNode, refresh, createTestTask, runNodeTest } = useStatusWorkbench();
@@ -23,7 +21,7 @@ export function StatusPage() {
     );
   }
 
-  const modules = healthModuleIds.map((id) => snapshot.modules.find((module) => module.id === id)).filter((module): module is HealthModule => Boolean(module));
+  const modules = HEALTH_MODULE_IDS.map((id) => snapshot.modules.find((module) => module.id === id)).filter((module): module is HealthModule => Boolean(module));
 
   return (
     <Space orientation="vertical" size="large" className="w-full">
@@ -43,12 +41,11 @@ export function StatusPage() {
       </Card>
 
       <Card title="任务队列">
-        <Table
+        <AppTable
           rowKey="id"
           dataSource={snapshot.tasks}
           loading={loading}
           scroll={{ x: 900 }}
-          components={{ table: HydrationSafeTable }}
           columns={[
             { title: "任务 ID", dataIndex: "id", width: 150 },
             { title: "操作类型", dataIndex: "type", width: 180 },

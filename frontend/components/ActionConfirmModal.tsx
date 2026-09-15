@@ -9,6 +9,8 @@ type ActionConfirmDetail = {
   span?: number;
 };
 
+export type { ActionConfirmDetail };
+
 type ActionConfirmModalProps = {
   open: boolean;
   title: string;
@@ -49,8 +51,8 @@ export function ActionConfirmModal({
       <Typography.Paragraph type="warning">{warning}</Typography.Paragraph>
       {details.length ? (
         <Descriptions bordered column={2} size="middle">
-          {details.map((detail) => (
-            <Descriptions.Item key={detail.label} label={detail.label} span={detail.span}>
+          {details.map((detail, index) => (
+            <Descriptions.Item key={`${detail.label}-${index}`} label={detail.label} span={detail.span}>
               {detail.value}
             </Descriptions.Item>
           ))}

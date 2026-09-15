@@ -1,12 +1,13 @@
 "use client";
 
-import { Drawer, Typography } from "antd";
+import { Typography } from "antd";
+import { BaseDrawer } from "@/components/BaseDrawer";
 import { BusinessCardView } from "@/components/BusinessCardView";
 import type { BusinessCard } from "@/types/cards";
 
 export function CardDetailDrawer({ card, open, onClose }: { card?: BusinessCard; open: boolean; onClose: () => void }) {
   return (
-    <Drawer title="业务卡片详情" size={520} open={open} onClose={onClose} destroyOnHidden>
+    <BaseDrawer title="业务卡片详情" open={open} onClose={onClose}>
       {card ? (
         <div className="space-y-4">
           <BusinessCardView card={card} />
@@ -18,6 +19,6 @@ export function CardDetailDrawer({ card, open, onClose }: { card?: BusinessCard;
           ) : null}
         </div>
       ) : null}
-    </Drawer>
+    </BaseDrawer>
   );
 }

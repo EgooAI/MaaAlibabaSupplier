@@ -28,6 +28,7 @@ export function useChatWorkbench() {
   const [translationVisible, setTranslationVisible] = useState(true);
   const [groupMode, setGroupMode] = useState<ConversationGroupMode>("time");
   const [activeCardId, setActiveCardId] = useState<string>();
+  // 并发守卫：快速切换会话时丢弃旧请求回包，各请求域独立计数。
   const activeIdRef = useRef<string | undefined>(undefined);
   const detailRequestRef = useRef(0);
   const sendRequestRef = useRef(0);
@@ -75,7 +76,7 @@ export function useChatWorkbench() {
     }
   }, [activeConversationId, conversations, selectConversation]);
 
-  async function translate(messageItem: ChatMessage, regenerate = false) {
+  const translate = useCallback(async (messageItem: ChatMessage, regenerate = false) => {
     const conversationId = activeConversation?.id;
     if (!conversationId) return;
     const requestId = translateRequestRef.current + 1;
@@ -97,9 +98,10 @@ export function useChatWorkbench() {
     } catch {
       if (translateRequestRef.current === requestId && activeIdRef.current === conversationId) message.error(regenerate ? "重新翻译失败" : "消息翻译失败");
     }
-  }
+  }, [activeConversation?.id, message]);
 
-  async function translateConversation() {
+  const translateConversation = useCallback(async (options?: { force?: boolean }) => {
+    const force = options?.force ?? false;
     const conversationId = activeConversation?.id;
     const messages = activeConversation?.messages ?? [];
     if (!conversationId) return;
@@ -107,15 +109,23 @@ export function useChatWorkbench() {
     translateRequestRef.current = requestId;
     translationVisibleRef.current = true;
 
-    const buyerMessages = messages.filter((item) => item.role === "buyer" && !item.translatedContent);
+    const buyerMessages = force
+      ? messages.filter((item) => item.role === "buyer")
+      : messages.filter((item) => item.role === "buyer" && !item.translatedContent);
     if (!buyerMessages.length) {
       setTranslationVisible(true);
       return;
     }
 
     try {
+      if (force) {
+        const texts = buyerMessages.map((item) => item.content).filter((text) => text.trim());
+        if (texts.length) await backend.requestTranslations({ texts, force: true });
+      }
       const translatedMessages = await Promise.all(
-        buyerMessages.map((item) => backend.translateMessage({ conversationId, messageId: item.id, targetLanguage: "zh-CN" })),
+        buyerMessages.map((item) => force
+          ? backend.regenerateTranslation({ conversationId, messageId: item.id, targetLanguage: "zh-CN" })
+          : backend.translateMessage({ conversationId, messageId: item.id, targetLanguage: "zh-CN" })),
       );
       if (translateRequestRef.current !== requestId || activeIdRef.current !== conversationId) return;
       setActiveConversation((current) => {
@@ -123,54 +133,24 @@ export function useChatWorkbench() {
         return { ...current, messages: mergeMessageTranslations(current.messages, translatedMessages) };
       });
       if (translationVisibleRef.current) setTranslationVisible(true);
-      message.success("已翻译当前会话");
+      message.success(force ? "已重新翻译当前会话" : "已翻译当前会话");
     } catch {
-      if (translateRequestRef.current === requestId && activeIdRef.current === conversationId) message.error("会话翻译失败");
+      if (translateRequestRef.current === requestId && activeIdRef.current === conversationId) message.error(force ? "重新翻译失败" : "会话翻译失败");
     }
-  }
+  }, [activeConversation?.id, activeConversation?.messages, message]);
 
-  async function retranslateConversation() {
-    const conversationId = activeConversation?.id;
-    const messages = activeConversation?.messages ?? [];
-    if (!conversationId) return;
-    const requestId = translateRequestRef.current + 1;
-    translateRequestRef.current = requestId;
-    translationVisibleRef.current = true;
+  const retranslateConversation = useCallback(() => translateConversation({ force: true }), [translateConversation]);
 
-    const buyerMessages = messages.filter((item) => item.role === "buyer");
-    if (!buyerMessages.length) {
-      setTranslationVisible(true);
-      return;
-    }
-
-    try {
-      const texts = buyerMessages.map((item) => item.content).filter((text) => text.trim());
-      if (texts.length) await backend.requestTranslations({ texts, force: true });
-      const translatedMessages = await Promise.all(
-        buyerMessages.map((item) => backend.regenerateTranslation({ conversationId, messageId: item.id, targetLanguage: "zh-CN" })),
-      );
-      if (translateRequestRef.current !== requestId || activeIdRef.current !== conversationId) return;
-      setActiveConversation((current) => {
-        if (!current || current.id !== conversationId) return current;
-        return { ...current, messages: mergeMessageTranslations(current.messages, translatedMessages) };
-      });
-      if (translationVisibleRef.current) setTranslationVisible(true);
-      message.success("已重新翻译当前会话");
-    } catch {
-      if (translateRequestRef.current === requestId && activeIdRef.current === conversationId) message.error("重新翻译失败");
-    }
-  }
-
-  function toggleTranslation() {
+  const toggleTranslation = useCallback(() => {
     if (translationVisible) {
       translationVisibleRef.current = false;
       setTranslationVisible(false);
       return;
     }
     void translateConversation();
-  }
+  }, [translationVisible, translateConversation]);
 
-  async function openSuggestions() {
+  const openSuggestions = useCallback(async () => {
     const conversationId = activeConversation?.id;
     if (!conversationId) return;
     const requestId = suggestionRequestRef.current + 1;
@@ -184,15 +164,15 @@ export function useChatWorkbench() {
     } catch {
       if (suggestionRequestRef.current === requestId && activeIdRef.current === conversationId) message.error("回复建议加载失败");
     }
-  }
+  }, [activeConversation?.id, message]);
 
-  function insertSuggestion(content: string) {
+  const insertSuggestion = useCallback((content: string) => {
     setDraft(content);
     setSuggestionOpen(false);
     message.success("已插入到回复框");
-  }
+  }, [message, setDraft]);
 
-  async function sendMessage(action: "send" | "test" = "send") {
+  const sendMessage = useCallback(async (action: "send" | "test" = "send") => {
     const conversationId = activeConversation?.id;
     const submittedDraft = draft.trim();
     if (!conversationId || !submittedDraft || sendingConversationId === conversationId) return;
@@ -235,9 +215,9 @@ export function useChatWorkbench() {
     } finally {
       setSendingConversationId((current) => current === conversationId ? undefined : current);
     }
-  }
+  }, [activeConversation?.id, draft, sendingConversationId, message, reload]);
 
-  async function gotoContact() {
+  const gotoContact = useCallback(async () => {
     const conversation = activeConversation;
     const loginId = conversation?.customer.loginId || conversation?.customer.name;
     if (!conversation || !loginId) {
@@ -250,9 +230,9 @@ export function useChatWorkbench() {
     } catch {
       message.error("跳转任务提交失败");
     }
-  }
+  }, [activeConversation, message]);
 
-  async function analyzeConversation() {
+  const analyzeConversation = useCallback(async () => {
     const conversationId = activeConversation?.id;
     if (!conversationId) return;
     const requestId = analysisRequestRef.current + 1;
@@ -270,7 +250,7 @@ export function useChatWorkbench() {
         message.error("会话分析失败");
       }
     }
-  }
+  }, [activeConversation?.id, message]);
 
   const activeCard = useMemo(() => activeConversation?.messages.find((item) => item.card?.id === activeCardId)?.card, [activeCardId, activeConversation]);
 

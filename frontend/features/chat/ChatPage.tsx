@@ -1,12 +1,12 @@
 "use client";
 
 import { ArrowDownOutlined, ArrowLeftOutlined, SettingOutlined } from "@ant-design/icons";
-import { Grid } from "antd";
 import { useState } from "react";
-import { Button, Card, Col, Row, Space, Spin, Typography } from "antd";
+import { Button, Card, Space, Spin, Typography } from "antd";
 import { useRouter } from "next/navigation";
 import { CardDetailDrawer } from "@/components/CardDetailDrawer";
 import { SessionListPanel } from "@/components/SessionListPanel";
+import { SplitSessionLayout, useSplitSessionMobile } from "@/components/SplitSessionLayout";
 import { useStickToBottom } from "@/components/useStickToBottom";
 import { ConversationList } from "./conversation/ConversationList";
 import { CustomerInfo } from "./conversation/CustomerInfo";
@@ -17,18 +17,15 @@ import { ChatAnalysisModal } from "./modals/ChatAnalysisModal";
 import { ChatComposer } from "./workspace/ChatComposer";
 
 type AnalysisFocus = "intent" | "stage";
-type MobileSessionView = "list" | "detail";
 
 export function ChatPage() {
   const router = useRouter();
-  const screens = Grid.useBreakpoint();
+  const { isMobile, mobileView, setMobileView } = useSplitSessionMobile();
   const workbench = useChatWorkbench();
   const active = workbench.activeConversation;
   const [customerInfoOpen, setCustomerInfoOpen] = useState(false);
   const [analysisFocus, setAnalysisFocus] = useState<AnalysisFocus>("intent");
-  const [mobileView, setMobileView] = useState<MobileSessionView>("list");
-  const isMobile = screens.xl === false;
-  const timeline = useStickToBottom({ sessionKey: active?.id ?? "", followKey: active?.messages.length ?? 0 });
+  const { scrollRef, showJumpButton, handleScroll, scrollToBottom } = useStickToBottom({ sessionKey: active?.id ?? "", followKey: active?.messages.length ?? 0 });
 
   function handleSelectConversation(id: string) {
     if (isMobile) setMobileView("detail");
@@ -74,7 +71,7 @@ export function ChatPage() {
             {workbench.detailLoading ? (
               <div className="flex flex-1 items-center justify-center"><Spin /></div>
             ) : (
-              <div ref={timeline.scrollRef} onScroll={timeline.handleScroll} className="min-h-0 flex-1 overflow-y-auto pr-2">
+              <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto pr-2">
                 <MessageTimeline
                   messages={active.messages}
                   buyerId={active.customer.id}
@@ -84,13 +81,13 @@ export function ChatPage() {
                 />
               </div>
             )}
-            {timeline.showJumpButton ? (
+            {showJumpButton ? (
               <Button
                 size="small"
                 shape="round"
                 icon={<ArrowDownOutlined />}
                 className="absolute bottom-2 left-1/2 -translate-x-1/2 shadow"
-                onClick={() => timeline.scrollToBottom(true)}
+                onClick={() => scrollToBottom(true)}
               >
                 回到底部
               </Button>
@@ -118,22 +115,13 @@ export function ChatPage() {
   );
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] min-h-[480px] flex-col">
-      <Row gutter={[16, 16]} className="min-h-0 flex-1">
-        {isMobile ? (
-          <Col xs={24} className="flex h-full min-h-0">{mobileView === "list" ? sessionList : sessionDetail}</Col>
-        ) : (
-          <>
-            <Col xs={24} xl={6} className="flex h-full min-h-0">{sessionList}</Col>
-            <Col xs={24} xl={18} className="flex h-full min-h-0">{sessionDetail}</Col>
-          </>
-        )}
-      </Row>
+    <>
+      <SplitSessionLayout list={sessionList} detail={sessionDetail} mobileView={mobileView} />
 
       <AssistantSuggestionModal open={workbench.suggestionOpen} suggestions={workbench.suggestions} onClose={() => workbench.setSuggestionOpen(false)} onInsert={workbench.insertSuggestion} />
       <ChatAnalysisModal open={workbench.analysisOpen} analysis={active?.analysis} focus={analysisFocus} loading={workbench.analysisLoading} error={workbench.analysisError} onClose={() => workbench.setAnalysisOpen(false)} />
       <CustomerInfo conversation={active} open={customerInfoOpen} onClose={() => setCustomerInfoOpen(false)} onGotoContact={() => void workbench.gotoContact()} />
       <CardDetailDrawer card={workbench.activeCard} open={Boolean(workbench.activeCard)} onClose={() => workbench.setActiveCardId(undefined)} />
-    </div>
+    </>
   );
 }

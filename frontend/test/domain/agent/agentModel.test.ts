@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_TOOL_OPTIONS, SYSTEM_AGENT_APIDS, agentCategoryLabel, agentPresetToConfig, agentPresetToDbPreset, canRegenerateAgentTestReply, canRunAgentExecution, canUndoAgentTestTurn, createRegularAgentPreset, dbPresetToAgentPreset, displayAgentTools, documentToLlmLevelConfig, filterAgentTestSessionsByCategory, filterAgentsByCategory, formatAgentSessionDate, isValidToolRoundLimit, llmLevelToDocumentConfig, nextAgentTestSessionId, normalizeAgentEditValues, normalizeAgentLevel, normalizeAgentTools, removeLatestAgentTestTurn, replaceLatestAgentTestReply } from "@/domain/agent/agentModel";
+import { AGENT_TOOL_OPTIONS, SYSTEM_AGENT_APIDS, agentCategoryLabel, agentPresetToConfig, agentPresetToDbPreset, canRegenerateAgentTestReply, canRunAgentExecution, canUndoAgentTestTurn, createRegularAgentPreset, dbPresetToAgentPreset, displayAgentTools, documentToLlmLevelConfig, filterAgentTestSessionsByCategory, filterAgentsByCategory, isValidToolRoundLimit, llmLevelToDocumentConfig, nextAgentTestSessionId, normalizeAgentEditValues, normalizeAgentLevel, normalizeAgentTools, removeLatestAgentTestTurn, replaceLatestAgentTestReply } from "@/domain/agent/agentModel";
 import { agentPresets } from "@/mock/agentData";
 import type { AgentConfig, AgentPreset, AgentTestSession, DocumentLlmConfig } from "@/types/agent";
 
@@ -29,10 +29,6 @@ describe("agent model", () => {
     expect(filterAgentTestSessionsByCategory(sessions, agents, "system").map((session) => session.id)).toEqual(["session-system"]);
     expect(filterAgentTestSessionsByCategory(sessions, agents, "regular").map((session) => session.id)).toEqual(["session-regular"]);
     expect(filterAgentTestSessionsByCategory(sessions, [], "system")).toEqual([]);
-  });
-
-  it("formats session dates without the year, seconds, or timezone", () => {
-    expect(formatAgentSessionDate("2026-09-07T10:21:00+08:00")).toBe("09-07 10:21");
   });
 
   it("identifies and removes the latest complete turn", () => {

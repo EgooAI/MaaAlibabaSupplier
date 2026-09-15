@@ -2,29 +2,13 @@
 
 import { PoweroffOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Result, Space, Typography } from "antd";
-import { useState } from "react";
 import { ActionConfirmModal } from "@/components/ActionConfirmModal";
-import { backend } from "@/services/client";
+import { useShutdownApp } from "./hooks/useShutdownApp";
 
 export function SettingsPage() {
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [terminating, setTerminating] = useState(false);
-  const [terminated, setTerminated] = useState(false);
+  const { confirmOpen, setConfirmOpen, terminating, terminated, confirmShutdown } = useShutdownApp();
 
-  const handleConfirm = async () => {
-    setTerminating(true);
-    try {
-      // The backend responds before shutting down; if the connection drops
-      // first (response lost to shutdown), the program is still exiting.
-      await backend.shutdownApp();
-    } catch {
-      // ignore — treat as shutdown in progress
-    }
-    setTerminated(true);
-    setConfirmOpen(false);
-    setTerminating(false);
-    window.setTimeout(() => window.close(), 3000);
-  };
+  const handleConfirm = () => void confirmShutdown();
 
   if (terminated) {
     return (

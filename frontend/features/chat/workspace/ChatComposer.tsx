@@ -4,6 +4,8 @@ import { Button, Modal, Typography } from "antd";
 import { useState } from "react";
 import { MessageComposer } from "@/components/MessageComposer";
 
+type ChatToolKey = "translation" | "retranslate" | "suggestions" | "intent-analysis" | "stage-analysis";
+
 type ChatComposerProps = {
   value: string;
   onChange: (value: string) => void;
@@ -30,7 +32,7 @@ export function ChatComposer({
   onSend,
 }: ChatComposerProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const tools = [
+  const tools: Array<{ key: ChatToolKey; label: string }> = [
     { key: "translation", label: translationVisible ? "关闭翻译" : "翻译" },
     { key: "retranslate", label: "重新翻译" },
     { key: "suggestions", label: "AI 回复建议" },
@@ -39,11 +41,12 @@ export function ChatComposer({
   ];
 
   function handleToolClick(key: string) {
-    if (key === "translation") onToggleTranslation();
-    if (key === "retranslate") onRetranslate();
-    if (key === "suggestions") onOpenSuggestions();
-    if (key === "intent-analysis") onOpenIntentAnalysis();
-    if (key === "stage-analysis") onOpenStageAnalysis();
+    const toolKey = key as ChatToolKey;
+    if (toolKey === "translation") onToggleTranslation();
+    if (toolKey === "retranslate") onRetranslate();
+    if (toolKey === "suggestions") onOpenSuggestions();
+    if (toolKey === "intent-analysis") onOpenIntentAnalysis();
+    if (toolKey === "stage-analysis") onOpenStageAnalysis();
   }
 
   function handleConfirm(action: "send" | "test") {

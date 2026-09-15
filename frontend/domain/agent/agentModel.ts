@@ -1,4 +1,5 @@
 import type { AgentConfig, AgentEditValues, AgentPreset, AgentTestMessage, AgentTestSession, DbAgentPreset, DocumentLlmConfig, LlmLevelConfig } from "@/types/agent";
+import { formatMonthDay } from "@/domain/time";
 
 export type AgentTestTurn = {
   user: AgentTestMessage;
@@ -76,7 +77,7 @@ export function canRunAgentExecution(agent: AgentConfig | undefined): agent is A
 }
 
 export function formatAgentSessionDate(createdAt: string) {
-  return createdAt.slice(5, 16).replace("T", " ");
+  return formatMonthDay(createdAt);
 }
 
 export function isAgentLevel(value: number) {

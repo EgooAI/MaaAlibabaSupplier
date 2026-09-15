@@ -8,6 +8,8 @@ export const HEALTH_MODULE_TITLES: Record<HealthModuleId, string> = {
   "health-node": "MaaFW 节点",
 };
 
+export const HEALTH_MODULE_IDS: HealthModuleId[] = ["health-identity", "health-proxy", "health-receiver", "health-node"];
+
 export function taskSnapshotToTaskItem(snapshot: TaskSnapshot): TaskItem {
   const result = snapshot.result ?? undefined;
   return {
