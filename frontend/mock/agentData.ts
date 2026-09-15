@@ -101,11 +101,16 @@ const defaultUpdatedAt = "2026-09-09T00:00:00+08:00";
 
 export const llmLevels: LlmLevelConfig[] = Array.from({ length: 5 }, (_, level) => ({
   level,
+  base_url: "https://api.mock-llm.example/v1",
+  api_key: `sk-mock-level-${level}-placeholder`,
+  model_name: level >= 3 ? "claude-sonnet-5" : "claude-haiku-4-5-20251001",
+  system_prompt: `Level ${level} agent prompt for Alibaba seller workflow.`,
+  context: 12000 + level * 4000,
+  max_tool_rounds: 3 + level,
   baseUrl: "https://api.mock-llm.example/v1",
   apiKey: `sk-mock-level-${level}-placeholder`,
   modelName: level >= 3 ? "claude-sonnet-5" : "claude-haiku-4-5-20251001",
   systemPrompt: `Level ${level} agent prompt for Alibaba seller workflow.`,
-  context: 12000 + level * 4000,
   maxToolRounds: 3 + level,
 }));
 
@@ -113,12 +118,12 @@ const llmLevel = llmLevels[3];
 
 export const documentLlmConfig: DocumentLlmConfig = {
   level: llmLevel.level,
-  base_url: llmLevel.baseUrl,
-  api_key: llmLevel.apiKey,
-  model_name: llmLevel.modelName,
-  system_prompt: llmLevel.systemPrompt,
+  base_url: llmLevel.base_url,
+  api_key: llmLevel.api_key,
+  model_name: llmLevel.model_name,
+  system_prompt: llmLevel.system_prompt,
   context: llmLevel.context,
-  max_tool_rounds: llmLevel.maxToolRounds,
+  max_tool_rounds: llmLevel.max_tool_rounds ?? null,
 };
 
 export const systemAgents: SystemAgentDefinition[] = systemAgentSources.map((agent) => ({

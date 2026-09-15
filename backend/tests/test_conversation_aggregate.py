@@ -60,6 +60,9 @@ class ConversationAggregateTestCase(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.adapter.engine.dispose()
+        from backend.app.shared.mitm.pool import UserInfoPool
+
+        UserInfoPool.reset_for_tests()
         self.temp_dir.cleanup()
         os.environ.pop("MAA_POOLS_DB_PATH", None)
 

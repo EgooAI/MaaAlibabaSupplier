@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import logging
 import sys
-from pathlib import Path
+import threading
 
 from loguru import logger
 
+from backend.app.shared.utils.settings import LOG_ROTATION, resolve_backend_root
+
 _CONFIGURED = False
+_CONFIGURE_LOCK = threading.Lock()
 
 
 class _InterceptHandler(logging.Handler):
@@ -22,8 +25,10 @@ class _InterceptHandler(logging.Handler):
 
 def configure_logging() -> None:
     global _CONFIGURED
-    if _CONFIGURED:
-        return
+    with _CONFIGURE_LOCK:
+        if _CONFIGURED:
+            return
+        _CONFIGURED = True
     logger.remove()
     # sys.stderr is None when started via pythonw (no console); skip the console sink.
     if sys.stderr is not None:
@@ -33,7 +38,7 @@ def configure_logging() -> None:
             format="<green>{time:HH:mm:ss}</green> <level>{level: <3}</level> <cyan>{name}</cyan> - <level>{message}</level>",
         )
     # File sink keeps uvicorn/access logs visible when started via pythonw (no console).
-    log_dir = Path(__file__).resolve().parents[3] / "data" / "logs"
-    logger.add(log_dir / "api.log", rotation="10 MB", level="INFO")
+    log_dir = resolve_backend_root() / "data" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logger.add(log_dir / "api.log", rotation=LOG_ROTATION, level="INFO", enqueue=True)
     logging.basicConfig(handlers=[_InterceptHandler()], level=logging.INFO, force=True)
-    _CONFIGURED = True

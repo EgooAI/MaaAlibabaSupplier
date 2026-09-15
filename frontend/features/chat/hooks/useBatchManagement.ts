@@ -48,15 +48,15 @@ export function useBatchManagement() {
     setExporting(true);
     try {
       const result = await backend.exportConversations({ conversationIds: visibleSelectedIds });
-      // mock 后端返回 TXT 文本；真实后端返回 zip 的 base64（archiveName 存在时）。
-      const isZip = Boolean(result.archiveName);
+      const archiveName = result.archive_name ?? result.archiveName;
+      const isZip = Boolean(archiveName);
       const blob = isZip
         ? new Blob([Uint8Array.from(atob(result.content), (char) => char.charCodeAt(0))], { type: "application/zip" })
         : new Blob([result.content], { type: "text/plain;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = result.archiveName ?? result.fileName;
+      link.download = archiveName ?? result.file_name ?? result.fileName;
       link.click();
       URL.revokeObjectURL(url);
       message.success(isZip ? "已导出 ZIP 文件" : "已导出 TXT 文件");

@@ -1,10 +1,17 @@
 from __future__ import annotations
 
-from pathlib import Path
+import uuid
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from loguru import logger
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import JSONResponse
+
+from backend.app.api.envelope import AppError, err
+from backend.app.shared.utils.settings import FRONTEND_DEV_ORIGINS, resolve_repo_root
 
 from backend.app.api.routers import agent, app as app_router, conversations, messages, self, status
 
@@ -13,21 +20,53 @@ def create_app() -> FastAPI:
     app = FastAPI(title="MaaAlibabaSupplier API")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://127.0.0.1:3000", "http://localhost:3000"],
+        allow_origins=FRONTEND_DEV_ORIGINS,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.include_router(self.router)
-    app.include_router(status.router)
-    app.include_router(conversations.router)
-    app.include_router(messages.router)
-    app.include_router(agent.router)
-    app.include_router(app_router.router)
+
+    @app.middleware("http")
+    async def add_request_id(request: Request, call_next):  # type: ignore[no-untyped-def]
+        request_id = uuid.uuid4().hex[:12]
+        request.state.request_id = request_id
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+    @app.exception_handler(AppError)
+    async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+        logger.warning("API error {} {}: {}", request.url.path, exc.status_code, exc.message)
+        return JSONResponse(status_code=exc.status_code, content=err(exc.message, exc.code))
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        return JSONResponse(status_code=422, content=err(f"请求参数错误: {exc.errors()}", 1))
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        return JSONResponse(status_code=exc.status_code, content=err(str(exc.detail), 1))
+
+    @app.exception_handler(OverflowError)
+    async def overflow_error_handler(request: Request, exc: OverflowError) -> JSONResponse:
+        return JSONResponse(status_code=429, content=err(str(exc) or "任务队列已满", 1))
+
+    @app.exception_handler(Exception)
+    async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+        request_id = getattr(request.state, "request_id", "-")
+        logger.exception("Unhandled API error [{}] {}:", request_id, request.url.path)
+        return JSONResponse(status_code=500, content=err("服务器内部错误", 1))
+
+    app.include_router(self.router, tags=["self"])
+    app.include_router(status.router, tags=["status"])
+    app.include_router(conversations.router, tags=["conversations"])
+    app.include_router(messages.router, tags=["messages"])
+    app.include_router(agent.router, tags=["agent"])
+    app.include_router(app_router.router, tags=["app"])
 
     # Serve the exported frontend (frontend/out) from the same origin when it
     # has been built with NEXT_EXPORT=1; dev uses the Next.js server instead.
-    frontend_out = Path(__file__).resolve().parents[3] / "frontend" / "out"
+    frontend_out = resolve_repo_root() / "frontend" / "out"
     if frontend_out.is_dir():
         app.mount("/", StaticFiles(directory=frontend_out, html=True), name="frontend")
     return app

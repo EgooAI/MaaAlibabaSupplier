@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import os
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -9,6 +9,17 @@ import time
 from pathlib import Path
 
 from loguru import logger
+
+from backend.app.shared.utils.env import get_env_int, get_env_str
+from backend.app.shared.utils.settings import (
+    MAA_API_HOST_DEFAULT,
+    MITM_PROXY_PORT_DEFAULT,
+    MITM_RECEIVER_HOST_DEFAULT,
+    MITM_RECEIVER_PORT_DEFAULT,
+    YAK_STARTUP_GRACE_S,
+    resolve_backend_root,
+    resolve_repo_root,
+)
 
 # Console-subsystem children (yak.exe) pop their own console window when the
 # parent is pythonw (no console); hide it on Windows.
@@ -37,8 +48,8 @@ def _register_agent_runtime() -> None:
 
 
 def _start_mitm_receiver() -> threading.Thread:
-    host = os.environ.get("MITM_RECEIVER_HOST", "127.0.0.1")
-    port = int(os.environ.get("MITM_RECEIVER_PORT", "8085"))
+    host = get_env_str("MITM_RECEIVER_HOST", MITM_RECEIVER_HOST_DEFAULT)
+    port = get_env_int("MITM_RECEIVER_PORT", MITM_RECEIVER_PORT_DEFAULT)
 
     def _run() -> None:
         run_receiver(host=host, port=port)
@@ -49,22 +60,33 @@ def _start_mitm_receiver() -> threading.Thread:
     return thread
 
 
-def _resolve_yak_executable(repo_root: Path) -> str:
+def _resolve_yak_executable(backend_root: Path) -> str:
     """Yak discovery order: YAK_EXECUTABLE -> PATH -> portable runtime installed by tools/install_4_yak.py."""
-    configured = os.environ.get("YAK_EXECUTABLE", "").strip()
+    configured = get_env_str("YAK_EXECUTABLE", "")
     if configured:
         return configured
     on_path = shutil.which("yak")
     if on_path:
         return on_path
-    return str(repo_root / ".portable" / "yak" / "yak.exe")
+    return str(backend_root / ".portable" / "yak" / "yak.exe")
 
 
-def _start_yak_mitm(repo_root: Path) -> subprocess.Popen | None:
+def _wait_for_port(host: str, port: int, *, timeout_s: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                return True
+        except OSError:
+            time.sleep(0.2)
+    return False
+
+
+def _start_yak_mitm(backend_root: Path) -> subprocess.Popen | None:
     """Start the Yak MITM proxy via ``yak yak_mitm.yak`` in a subprocess."""
-    yak_exe = _resolve_yak_executable(repo_root)
-    yak_script = repo_root / "yak_mitm.yak"
-    log_dir = repo_root / "data" / "logs"
+    yak_exe = _resolve_yak_executable(backend_root)
+    yak_script = backend_root / "yak_mitm.yak"
+    log_dir = backend_root / "data" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "yak_mitm.log"
 
@@ -73,13 +95,13 @@ def _start_yak_mitm(repo_root: Path) -> subprocess.Popen | None:
         return None
 
     try:
-        log_file = log_path.open("ab")
-        proc = subprocess.Popen(
-            [yak_exe, str(yak_script)],
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            creationflags=CREATE_NO_WINDOW,
-        )
+        with log_path.open("ab") as log_file:
+            proc = subprocess.Popen(
+                [yak_exe, str(yak_script)],
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                creationflags=CREATE_NO_WINDOW,
+            )
     except FileNotFoundError:
         logger.error("'{}' not found — is Yak installed?", yak_exe)
         return None
@@ -87,11 +109,13 @@ def _start_yak_mitm(repo_root: Path) -> subprocess.Popen | None:
         logger.error("Failed to start Yak MITM proxy: {}", exc)
         return None
 
-    # Give the MITM server a moment to bind the port.
-    time.sleep(1.5)
-    if proc.poll() is not None:
-        logger.error("Yak MITM proxy exited early with code {}. See {}", proc.returncode, log_path)
-        return None
+    proxy_host = get_env_str("MITM_PROXY_HOST", MAA_API_HOST_DEFAULT)
+    proxy_port = get_env_int("MITM_PROXY_PORT", MITM_PROXY_PORT_DEFAULT)
+    if not _wait_for_port(proxy_host, proxy_port, timeout_s=YAK_STARTUP_GRACE_S + 3.5):
+        if proc.poll() is not None:
+            logger.error("Yak MITM proxy exited early with code {}. See {}", proc.returncode, log_path)
+            return None
+        logger.warning("Yak MITM proxy port {}:{} not ready yet, continuing", proxy_host, proxy_port)
     logger.info("Yak MITM proxy started (pid={})", proc.pid)
     return proc
 
@@ -100,17 +124,17 @@ def main() -> None:
     load_workdir_env()
     configure_logging()
 
-    repo_root = Path(__file__).resolve().parents[1]
+    backend_root = resolve_backend_root()
     ensure_system_agents_seeded()
     _register_agent_runtime()
-    maafw = MaaFWProcess(repo_root)
+    maafw = MaaFWProcess(backend_root)
     yak_proc: subprocess.Popen | None = None
 
     try:
         maafw.start()
         logger.info("MaaFW process started")
         _start_mitm_receiver()
-        yak_proc = _start_yak_mitm(repo_root)
+        yak_proc = _start_yak_mitm(backend_root)
         run_api()
     except MaaFWProcessError:
         logger.exception("Failed to start MaaFW")
@@ -119,6 +143,10 @@ def main() -> None:
         maafw.stop()
         if yak_proc and yak_proc.poll() is None:
             yak_proc.terminate()
+            try:
+                yak_proc.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                yak_proc.kill()
             logger.info("Yak MITM proxy terminated")
 
 

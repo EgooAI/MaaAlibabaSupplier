@@ -14,10 +14,12 @@ class MaaFWProcessError(Exception):
 
 
 class MaaFWProcess:
-    def __init__(self, repo_root: Path | None = None) -> None:
-        self.repo_root = repo_root or Path(__file__).resolve().parents[1]
-        self.executable = self.repo_root / "deps" / "bin" / "MaaPiCli.exe"
-        self.workdir = self.repo_root / "assets"
+    def __init__(self, backend_root: Path | None = None) -> None:
+        from backend.app.shared.utils.settings import resolve_backend_root
+
+        self.backend_root = backend_root or resolve_backend_root()
+        self.executable = self.backend_root / "deps" / "bin" / "MaaPiCli.exe"
+        self.workdir = self.backend_root / "assets"
         self.process: subprocess.Popen | None = None
 
     def start(self) -> None:
@@ -28,20 +30,21 @@ class MaaFWProcess:
             raise MaaFWProcessError(
                 f"MaaPiCli not found at {self.executable}; run `python tools/install_3_maafw.py` first."
             )
+        if not self.workdir.is_dir():
+            raise MaaFWProcessError(f"MaaFW workdir not found at {self.workdir}.")
 
         command = [str(self.executable)]
-        log_path = self.repo_root / "debug" / "maafw.log"
+        log_path = self.backend_root / "debug" / "maafw.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_file = log_path.open("ab")
-        self.process = subprocess.Popen(
-            command,
-            cwd=str(self.workdir),
-            stdin=subprocess.DEVNULL,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            creationflags=CREATE_NO_WINDOW,
-        )
-        log_file.close()
+        with log_path.open("ab") as log_file:
+            self.process = subprocess.Popen(
+                command,
+                cwd=str(self.workdir),
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                creationflags=CREATE_NO_WINDOW,
+            )
 
     def stop(self) -> None:
         process = self.process
@@ -54,7 +57,10 @@ class MaaFWProcess:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             process.kill()
-            process.wait(timeout=5)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
 
     def __enter__(self) -> MaaFWProcess:
         self.start()

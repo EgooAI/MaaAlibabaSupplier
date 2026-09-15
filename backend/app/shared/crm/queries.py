@@ -13,38 +13,26 @@ def get_self_info() -> SelfInfo | None:
         if info is not None:
             return info
     except Exception:
-        logger.exception("Failed to load SelfInfo from CRM SDK")
+        logger.exception("Failed to load SelfInfo from CRM SDK, falling back to pool")
     return get_self_info_pool().get()
 
 
 def get_user_info(identifier: str) -> UserInfo | None:
     if not identifier:
         return None
-    try:
-        return CRMAdapter().get_user_info(identifier)
-    except Exception:
-        logger.exception("Failed to load UserInfo from CRM SDK")
-        return None
+    return CRMAdapter().get_user_info(identifier)
 
 
 def list_conversations(self_ali_id: str) -> list[CrmConversation]:
     if not self_ali_id:
         return []
-    try:
-        return CRMAdapter().list_conversations(self_ali_id)
-    except Exception:
-        logger.exception("Failed to load conversations from CRM SDK")
-        return []
+    return CRMAdapter().list_conversations(self_ali_id)
 
 
 def get_conversation_detail(self_ali_id: str, sid: int) -> CrmConversation | None:
     if not self_ali_id or not sid:
         return None
-    try:
-        return CRMAdapter().get_conversation_detail(self_ali_id, sid)
-    except Exception:
-        logger.exception("Failed to load conversation detail from CRM SDK")
-        return None
+    return CRMAdapter().get_conversation_detail(self_ali_id, sid)
 
 
 __all__ = ["get_conversation_detail", "get_self_info", "get_user_info", "list_conversations"]

@@ -6,10 +6,12 @@ from base64 import b64encode
 from typing import Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from loguru import logger
+from pydantic import BaseModel, Field
+from typing import Literal
 from sqlmodel import Session, select
 
-from backend.app.api.envelope import err, ok
+from backend.app.api.envelope import AppError, api_error, ok
 from backend.app.shared.agent.inputs import build_analysis_input
 from backend.app.shared.agent.runner import run_chat_tool_agent
 from backend.app.shared.agent.suggestions import generate_reply_suggestions
@@ -47,12 +49,16 @@ _SCORE_RE = re.compile(r"(\d+(?:\.\d+)?)")
 
 
 class GotoContactInput(BaseModel):
-    login_id: str = ""
+    login_id: str = Field(min_length=1)
 
 
 class SendMessageInput(BaseModel):
-    content: str = ""
-    action: str = "send"
+    content: str = Field(min_length=1)
+    action: Literal["send", "test"] = "send"
+
+
+class ExportConversationsInput(BaseModel):
+    conversationIds: list[int] = Field(min_length=1, max_length=200)
 
 
 def _snap_to_dict(s) -> dict:
@@ -68,11 +74,11 @@ def _snap_to_dict(s) -> dict:
     }
 
 
-def _ready() -> tuple[str, dict | None]:
+def _ready() -> str:
     state = refresh_chat_data(wait=False)
     if not state.ready or not state.self_ali_id:
-        return "", err(f"chat data not ready: {state.reason or 'unknown'}")
-    return state.self_ali_id, None
+        raise AppError(f"chat data not ready: {state.reason or 'unknown'}", status_code=503)
+    return state.self_ali_id
 
 
 def _dump(model: Any) -> dict:
@@ -286,56 +292,43 @@ def _as_list(value: Any) -> list[str]:
 
 @router.get("/api/conversations")
 def list_conversations() -> dict:
-    self_ali_id, error = _ready()
-    if error is not None:
-        return error
+    self_ali_id = _ready()
     adapter = CRMAdapter()
     try:
         convs = crm_list_conversations(self_ali_id)
         return ok([_build_aggregate(adapter, self_ali_id, conv) for conv in convs])
-    except Exception as exc:
-        return err(str(exc))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
 
 
 @router.get("/api/conversations/{conversation_id}")
-def get_conversation(conversation_id: str) -> dict:
+def get_conversation(conversation_id: int) -> dict:
+    self_ali_id = _ready()
     try:
-        sid = int(conversation_id)
-    except ValueError:
-        return err("会话不存在")
-    self_ali_id, error = _ready()
-    if error is not None:
-        return error
-    try:
-        conv = crm_get_conversation_detail(self_ali_id, sid)
-    except Exception as exc:
-        return err(str(exc))
+        conv = crm_get_conversation_detail(self_ali_id, conversation_id)
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
     if conv is None:
-        return err("会话不存在")
+        raise AppError("会话不存在", status_code=404)
     try:
         return ok(_build_aggregate(CRMAdapter(), self_ali_id, conv))
-    except Exception as exc:
-        return err(str(exc))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
 
 
 @router.post("/api/conversations/{conversation_id}/messages")
-def send_message(conversation_id: str, body: SendMessageInput) -> dict:
-    content = (body.content or "").strip()
+def send_message(conversation_id: int, body: SendMessageInput) -> dict:
+    content = body.content.strip()
     if not content:
-        return err("content is required")
-    action = (body.action or "send").strip() or "send"
-    if action not in ("send", "test"):
-        return err("action must be send or test")
-    try:
-        sid = int(conversation_id)
-    except ValueError:
-        return err("会话不存在")
-    self_ali_id, error = _ready()
-    if error is not None:
-        return error
-    conv = crm_get_conversation_detail(self_ali_id, sid)
+        raise AppError("content is required", status_code=422)
+    action = body.action
+    self_ali_id = _ready()
+    conv = crm_get_conversation_detail(self_ali_id, conversation_id)
     if conv is None:
-        return err("会话不存在")
+        raise AppError("会话不存在", status_code=404)
     user = crm_get_user_info(conv.contact_ali_id)
     login_id = (user.login_id if user and user.login_id else conv.contact_ali_id).strip()
 
@@ -351,36 +344,33 @@ def send_message(conversation_id: str, body: SendMessageInput) -> dict:
     current = get_task_queue().get(snap.task_id)
     try:
         aggregate = _build_aggregate(CRMAdapter(), self_ali_id, conv)
-    except Exception as exc:
-        return err(str(exc))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
+    queued = current is None or str(current.status) == "pending"
     return ok({
         "message": None,
         "conversation": aggregate,
         "execution": {
-            "success": True,
-            "message": current.message if current else "任务已提交",
+            "success": not queued and bool(current and current.result and current.result[0]),
+            "message": current.message if current else "任务已提交，等待执行",
             "task_snapshot": _snap_to_dict(current) if current else None,
         },
     })
 
 
 @router.get("/api/conversations/{conversation_id}/suggestions")
-def suggestions(conversation_id: str) -> dict:
-    try:
-        sid = int(conversation_id)
-    except ValueError:
-        return err("会话不存在")
-    self_ali_id, error = _ready()
-    if error is not None:
-        return error
-    conv = crm_get_conversation_detail(self_ali_id, sid)
+def suggestions(conversation_id: int) -> dict:
+    self_ali_id = _ready()
+    conv = crm_get_conversation_detail(self_ali_id, conversation_id)
     if conv is None:
-        return err("会话不存在")
+        raise AppError("会话不存在", status_code=404)
     try:
         rows = conversation_transcript(conv.messages, CrmResolver(self_ali_id))
         result = generate_reply_suggestions(rows)
-    except Exception as exc:
-        return err(str(exc))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
     items = [
         {
             "id": f"sug-{index}",
@@ -395,25 +385,24 @@ def suggestions(conversation_id: str) -> dict:
 
 
 @router.get("/api/conversations/{conversation_id}/analysis")
-def analysis(conversation_id: str) -> dict:
-    try:
-        sid = int(conversation_id)
-    except ValueError:
-        return err("会话不存在")
-    self_ali_id, error = _ready()
-    if error is not None:
-        return error
-    conv = crm_get_conversation_detail(self_ali_id, sid)
+def analysis(conversation_id: int) -> dict:
+    self_ali_id = _ready()
+    conv = crm_get_conversation_detail(self_ali_id, conversation_id)
     if conv is None:
-        return err("会话不存在")
+        raise AppError("会话不存在", status_code=404)
     try:
         rows = conversation_transcript(conv.messages, CrmResolver(self_ali_id))
         raw = run_chat_tool_agent(CHAT_CUSTOMER_STAGE_AGENT_APID, build_analysis_input(task=_STAGE_TASK, conversation=rows))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
+    try:
         payload = json.loads(raw)
-    except Exception as exc:
-        return err(str(exc))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        logger.warning("分析结果格式错误")
+        raise AppError("分析结果格式错误", status_code=502)
     if not isinstance(payload, dict):
-        return err("分析结果格式错误")
+        raise AppError("分析结果格式错误", status_code=502)
     stage = _map_stage(payload.get("stage"))
     evidence = _as_list(payload.get("evidence"))
     concerns = _as_list(payload.get("concerns"))
@@ -424,50 +413,56 @@ def analysis(conversation_id: str) -> dict:
         "stage": stage,
         "score": _map_score(payload.get("confidence")),
         "risks": concerns,
-        "nextActions": next_actions,
+        "next_actions": next_actions,
         "summary": summary,
+        "raw_text": raw,
+        "json_payload": payload,
+        # 兼容旧前端 camel 键，新代码请用 snake。
+        "nextActions": next_actions,
         "rawText": raw,
         "jsonPayload": payload,
     })
 
 
 @router.post("/api/conversations/export")
-def export_conversations(body: dict) -> dict:
-    raw_ids = body.get("conversationIds") if isinstance(body, dict) else None
-    if not isinstance(raw_ids, list) or not raw_ids:
-        return err("conversationIds is required")
-    try:
-        sids = [int(item) for item in raw_ids]
-    except (TypeError, ValueError):
-        return err("conversationIds must be session ids")
-    self_ali_id, error = _ready()
-    if error is not None:
-        return error
+def export_conversations(body: ExportConversationsInput) -> dict:
+    sids = body.conversationIds
+    self_ali_id = _ready()
     convs: list[CrmConversation] = []
+    missing: list[int] = []
     for sid in sids:
         try:
             conv = crm_get_conversation_detail(self_ali_id, sid)
-        except Exception as exc:
-            return err(str(exc))
+        except Exception:
+            logger.exception("request failed")
+            return api_error("服务器内部错误", status_code=500)
         if conv is None:
-            return err(f"会话不存在: {sid}")
+            missing.append(sid)
+            continue
         convs.append(conv)
+    if not convs:
+        raise AppError(f"会话不存在: {missing[0] if missing else ''}", status_code=404)
     try:
         payload, archive_name = build_export_zip(convs, CrmResolver(self_ali_id))
-    except Exception as exc:
-        return err(str(exc))
-    return ok({
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
+    data: dict = {
+        "archive_name": archive_name,
+        "file_name": archive_name,
+        "content": b64encode(payload).decode("ascii"),
+        # 兼容旧前端 camel 键。
         "archiveName": archive_name,
         "fileName": archive_name,
-        "content": b64encode(payload).decode("ascii"),
-    })
+    }
+    if missing:
+        data["missing"] = missing
+    return ok(data)
 
 
 @router.post("/api/conversations/{conversation_id}/goto-contact")
-def goto_contact_api(conversation_id: str, body: GotoContactInput) -> dict:
-    login_id = (body.login_id or "").strip()
-    if not login_id:
-        return err("login_id is required")
+def goto_contact_api(conversation_id: int, body: GotoContactInput) -> dict:
+    login_id = body.login_id.strip()
     snap = get_task_queue().enqueue(
         lambda: goto_contact(login_id), description=f"goto-contact {login_id}"
     )
