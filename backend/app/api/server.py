@@ -1,20 +1,18 @@
 from __future__ import annotations
 
-import os
-from typing import cast
-
 import uvicorn
 from loguru import logger
 
-from backend.app.shared.utils.env import load_workdir_env
+from backend.app.shared.utils.env import get_env_int, get_env_str, load_workdir_env
+from backend.app.shared.utils.settings import MAA_API_HOST_DEFAULT, MAA_API_PORT_DEFAULT
 
 server: uvicorn.Server | None = None
 
 
 def run() -> None:
     load_workdir_env()
-    host = os.environ.get("MAA_API_HOST", "127.0.0.1")
-    port = int(os.environ.get("MAA_API_PORT", "8000"))
+    host = get_env_str("MAA_API_HOST", MAA_API_HOST_DEFAULT)
+    port = get_env_int("MAA_API_PORT", MAA_API_PORT_DEFAULT)
     # log_config=None keeps uvicorn off the console; std logging propagates to
     # the root InterceptHandler and lands in data/logs/api.log (pythonw-safe).
     global server

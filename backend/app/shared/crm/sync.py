@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import Future
 from datetime import datetime
@@ -294,11 +293,7 @@ class CRMAdapter:
         return None
 
     def get_user_info(self, identifier: str) -> UserInfo | None:
-        account = None
-        for mapping_type in (MAPPING_ALI_ID, MAPPING_LOGIN_ID, MAPPING_ENCRYPT_ACCOUNT_ID):
-            account = self._account_by_mapping(mapping_type, identifier)
-            if account is not None:
-                break
+        account = self._account_by_any_mapping(identifier)
         if account is None or not isinstance(account.extra, dict):
             return None
         try:
@@ -306,17 +301,35 @@ class CRMAdapter:
         except ValueError:
             return None
 
+    def _account_by_any_mapping(self, key: str) -> Any | None:
+        with Session(self.engine) as session:
+            statement = select(AccountMapping).where(
+                AccountMapping.key == key,
+                AccountMapping.type.in_([MAPPING_ALI_ID, MAPPING_LOGIN_ID, MAPPING_ENCRYPT_ACCOUNT_ID]),
+            )
+            rows = list(session.exec(statement).all())
+            if not rows:
+                return None
+            priority = {MAPPING_ALI_ID: 0, MAPPING_LOGIN_ID: 1, MAPPING_ENCRYPT_ACCOUNT_ID: 2}
+            rows.sort(key=lambda row: priority.get(row.type, 99))
+            return session.get(Account, rows[0].aid)
+
     def list_conversations(self, self_ali_id: str) -> list[CrmConversation]:
         prefix = session_key_prefix(self_ali_id)
         conversations: list[CrmConversation] = []
         with Session(self.engine) as session:
             session_statement = select(SessionMeta).where(SessionMeta.key.startswith(prefix))
-            sessions = list(session.exec(session_statement).all())
+            sessions = [meta for meta in session.exec(session_statement).all() if meta.sid is not None]
+            if not sessions:
+                return []
+            sids = [meta.sid for meta in sessions if meta.sid is not None]
+            message_statement = select(Message).where(Message.sid.in_(sids))
+            grouped: dict[int, list] = {sid: [] for sid in sids}
+            for message in session.exec(message_statement).all():
+                if message.sid in grouped:
+                    grouped[message.sid].append(_crm_message_from_sdk(message))
             for session_meta in sessions:
-                if session_meta.sid is None:
-                    continue
-                message_statement = select(Message).where(Message.sid == session_meta.sid)
-                messages = [_crm_message_from_sdk(message) for message in session.exec(message_statement).all()]
+                messages = grouped.get(session_meta.sid or 0, [])
                 messages.sort(
                     key=lambda message: message.created_at.timestamp() if message.created_at else 0.0
                 )
@@ -410,7 +423,14 @@ def _sync_im_database_now(db_path: Path, self_ali_id: str, self_info: SelfInfo |
 
 
 def _default_database_path() -> Path:
-    return Path(os.environ.get("MAA_CRM_DB_PATH", "data/crm.sqlite"))
+    from backend.app.shared.utils.env import get_env_str
+    from backend.app.shared.utils.settings import CRM_DB_RELATIVE_DEFAULT, resolve_backend_root
+
+    raw = get_env_str("MAA_CRM_DB_PATH", CRM_DB_RELATIVE_DEFAULT)
+    path = Path(raw)
+    if not path.is_absolute():
+        path = resolve_backend_root() / path
+    return path
 
 
 def _display_name(info: UserInfo | SelfInfo) -> str:
@@ -428,9 +448,9 @@ def _merge_extra(existing: Any, new: dict[str, Any]) -> dict[str, Any]:
 
 
 def _is_empty(value: Any) -> bool:
-    if isinstance(value, bool):
-        return False
-    return value is None or value == "" or value == 0 or value == []
+    from backend.app.shared.utils.empty import is_empty_value
+
+    return is_empty_value(value)
 
 
 def _message_from_self(row: MessageRow, self_info: SelfInfo | None) -> bool:

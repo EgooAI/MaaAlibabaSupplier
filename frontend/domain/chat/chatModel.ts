@@ -114,8 +114,9 @@ export function buildConversationExport(details: ConversationDetail[], now = Dat
     .join("\n\n---\n\n");
 
   return {
-    fileName: `conversation-export-${timestamp}.txt`,
+    file_name: `conversation-export-${timestamp}.txt`,
     content,
+    fileName: `conversation-export-${timestamp}.txt`,
   };
 }
 

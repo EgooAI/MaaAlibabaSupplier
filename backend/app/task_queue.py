@@ -3,11 +3,15 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
 from loguru import logger
+
+TASK_QUEUE_MAXSIZE = 500
+TASK_RETENTION_S = 3600.0
 
 
 class TaskStatus(StrEnum):
@@ -65,7 +69,7 @@ class TaskQueue:
                 instance._lock = threading.Lock()
                 instance._condition = threading.Condition(instance._lock)
                 instance._requests: dict[str, _TaskRequest] = {}
-                instance._queue: list[str] = []
+                instance._queue: deque[str] = deque()
                 instance._worker = threading.Thread(
                     target=instance._work,
                     daemon=True,
@@ -78,6 +82,9 @@ class TaskQueue:
     def enqueue(self, fn: Callable[[], tuple[bool, str]], *, description: str) -> TaskSnapshot:
         now = time.time()
         with self._condition:
+            self._evict_locked(now)
+            if len(self._queue) >= TASK_QUEUE_MAXSIZE:
+                raise OverflowError("任务队列已满，请稍后重试")
             request = _TaskRequest(
                 task_id=uuid.uuid4().hex,
                 fn=fn,
@@ -101,14 +108,23 @@ class TaskQueue:
 
     def all_snapshots(self) -> list[TaskSnapshot]:
         with self._lock:
+            self._evict_locked(time.time())
             return [r.snapshot() for r in self._requests.values()]
+
+    def _evict_locked(self, now: float) -> None:
+        expired = [
+            task_id for task_id, req in self._requests.items()
+            if req.completed_at is not None and now - req.completed_at > TASK_RETENTION_S
+        ]
+        for task_id in expired:
+            self._requests.pop(task_id, None)
 
     def _work(self) -> None:
         while True:
             with self._condition:
                 while not self._queue:
                     self._condition.wait()
-                task_id = self._queue.pop(0)
+                task_id = self._queue.popleft()
                 request = self._requests.get(task_id)
                 if request is None:
                     continue

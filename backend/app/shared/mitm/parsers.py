@@ -21,7 +21,7 @@ def _try_decode_base64(body: bytes) -> bytes:
             if b"{" in decoded:
                 return decoded
         except Exception:
-            pass
+            logger.debug("body不是base64，按原值处理")
     return body
 
 
@@ -230,14 +230,10 @@ def parse_fetch_card(body: bytes) -> ProductCard | None:
         return None
 
     # fbCardList may contain different card types (product, RFQ, etc.)
-    # Product cards have productIdTitle; some nest actual fields under a 'data' sub-key
-    if "productIdTitle" not in card_data:
-        nested = card_data.get("data")
-        if isinstance(nested, dict) and "productIdTitle" in nested:
-            card_data = nested
-        else:
-            # Not a product card (e.g. RFQ card) — skip
-            return None
+    if not is_product_card(card_data):
+        # Not a product card (e.g. RFQ card) — skip
+        return None
+    card_data = _unwrap_card_data(card_data)
 
     # Extract numeric product ID from productIdTitle ("产品 ID: 1234567890") or hsfId fallback
     raw_product_id = ""
@@ -308,6 +304,24 @@ def parse_contact_extinfo_get(body: bytes) -> list[SelfInfo]:
 # ---------------------------------------------------------------------------
 
 _CARD_ID_KEYS = ("id", "ids", "encryFeedbackId", "orderId", "encryId", "quoteProductId", "quoId")
+INQUIRY_TAG = "询盘"
+
+
+def _unwrap_card_data(card_data: dict) -> dict:
+    if "productIdTitle" not in card_data and isinstance(card_data.get("data"), dict):
+        nested = card_data["data"]
+        if isinstance(nested, dict) and "productIdTitle" in nested:
+            return nested
+    return card_data
+
+
+def is_product_card(card_data: dict) -> bool:
+    return "productIdTitle" in _unwrap_card_data(card_data)
+
+
+def is_inquiry_card(item: dict) -> bool:
+    summary = item.get("summary") or {}
+    return summary.get("tag") == INQUIRY_TAG
 
 
 # ---------------------------------------------------------------------------
@@ -327,15 +341,11 @@ def parse_inquiry_card(body: bytes) -> InquiryCard | None:
             continue
 
         # Skip product cards
-        check = card_data
-        if "productIdTitle" not in check and isinstance(check.get("data"), dict):
-            check = check["data"]
-        if "productIdTitle" in check:
+        if is_product_card(card_data):
             continue
 
         # Inquiry cards have summary.tag == "询盘"
-        summary = item.get("summary") or {}
-        if summary.get("tag") != "询盘":
+        if not is_inquiry_card(item):
             continue
 
         inner = card_data.get("data") if isinstance(card_data.get("data"), dict) else card_data
@@ -401,15 +411,11 @@ def parse_generic_card(body: bytes, source_url: str = "") -> list[GenericCard]:
             continue
 
         # Skip product cards (handled by parse_fetch_card)
-        check = card_data
-        if "productIdTitle" not in check and isinstance(check.get("data"), dict):
-            check = check["data"]
-        if "productIdTitle" in check:
+        if is_product_card(card_data):
             continue
 
         # Skip inquiry cards (handled by parse_inquiry_card)
-        summary = item.get("summary") or {}
-        if summary.get("tag") == "询盘":
+        if is_inquiry_card(item):
             continue
 
         # Determine cardType

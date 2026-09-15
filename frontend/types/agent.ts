@@ -50,12 +50,17 @@ export interface SystemAgentDefinition {
 
 export interface LlmLevelConfig {
   level: number;
-  baseUrl: string;
-  apiKey: string;
-  modelName: string;
-  systemPrompt: string;
+  base_url: string;
+  api_key: string;
+  model_name: string;
+  system_prompt: string;
   context: number;
-  maxToolRounds: number | null;
+  max_tool_rounds: number | null;
+  baseUrl?: string;
+  apiKey?: string;
+  modelName?: string;
+  systemPrompt?: string;
+  maxToolRounds?: number | null;
 }
 
 export interface AgentConfig {

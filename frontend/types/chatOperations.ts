@@ -46,7 +46,10 @@ export interface ExportConversationsInput {
 }
 
 export interface ExportConversationsResult {
-  fileName: string;
+  file_name: string;
   content: string;
+  archive_name?: string;
+  missing?: string[];
+  fileName?: string;
   archiveName?: string;
 }

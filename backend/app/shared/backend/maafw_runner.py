@@ -50,8 +50,9 @@ def _ensure_init() -> tuple[Tasker | None, str | None]:
         return None, _init_error
 
     try:
-        repo_root = Path(__file__).resolve().parents[3]
-        user_path = str(repo_root / "debug")
+        from backend.app.shared.utils.settings import resolve_backend_root
+
+        user_path = str(resolve_backend_root() / "debug")
         os.makedirs(user_path, exist_ok=True)
         Toolkit.init_option(user_path)
 

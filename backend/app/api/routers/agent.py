@@ -4,9 +4,11 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from loguru import logger
+from pydantic import BaseModel, Field
+from pydantic import AliasChoices
 
-from backend.app.api.envelope import err, ok
+from backend.app.api.envelope import AppError, api_error, ok
 from backend.app.shared.agent.chat_history_content import (
     build_history_content,
     history_messages,
@@ -61,11 +63,12 @@ def _refresh_llm_runtime() -> None:
     try:
         from agent_pipeline.llm_api import register_default_llms
     except ImportError:
+        logger.warning("agent_pipeline.llm_api不可用，跳过LLM运行时注册")
         return
     try:
         register_default_llms()
     except Exception:
-        pass
+        logger.exception("LLM运行时注册失败")
 
 
 def _db_preset_to_dict(preset: AgentPreset, *, enabled: bool = True, updated_at: str = "") -> dict:
@@ -106,18 +109,17 @@ def _session_to_dict(hist: ChatHistory) -> dict | None:
     }
 
 
-def _load_session(manager: ChatHistoryManager, session_id: str) -> tuple[ChatHistory | None, dict]:
+def _load_session(manager: ChatHistoryManager, session_id: str) -> ChatHistory:
     try:
         raw_id = int(session_id)
     except (TypeError, ValueError):
-        return None, err("会话不存在")
+        raise AppError("会话不存在", status_code=404)
     hist = manager.get_chat_history(raw_id)
     if hist is None:
-        return None, err("会话不存在")
-    session = _session_to_dict(hist)
-    if session is None:
-        return None, err("会话不存在")
-    return hist, ok(session)
+        raise AppError("会话不存在", status_code=404)
+    if _session_to_dict(hist) is None:
+        raise AppError("会话不存在", status_code=404)
+    return hist
 
 
 @router.get("/api/agent/system")
@@ -136,11 +138,17 @@ def agent_console() -> dict:
         levels = [
             {
                 "level": config.level,
+                "base_url": config.base_url,
+                "api_key": config.api_key,
+                "model_name": config.model_name,
+                "system_prompt": config.system_prompt,
+                "context": config.context,
+                "max_tool_rounds": config.max_tool_rounds,
+                # 兼容旧前端 camel 键。
                 "baseUrl": config.base_url,
                 "apiKey": config.api_key,
                 "modelName": config.model_name,
                 "systemPrompt": config.system_prompt,
-                "context": config.context,
                 "maxToolRounds": config.max_tool_rounds,
             }
             for config in LLMApiConfigManager().list_configs()
@@ -168,8 +176,9 @@ def agent_console() -> dict:
             session = _session_to_dict(hist)
             if session is not None:
                 history.append(session)
-    except Exception as exc:
-        return err(str(exc))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
     return ok({"llmLevels": levels, "agents": agents, "agentPresets": db_presets, "history": history})
 
 
@@ -187,11 +196,12 @@ def save_llm_config(body: LlmConfigInput) -> dict:
         )
         LLMApiConfigManager().upsert_config(config)
         saved = LLMApiConfigManager().get_config(config.level)
-    except Exception as exc:
-        return err(str(exc))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
     _refresh_llm_runtime()
     if saved is None:
-        return err("LLM 配置保存失败")
+        raise AppError("LLM 配置保存失败", status_code=500)
     return ok({
         "level": saved.level,
         "base_url": saved.base_url,
@@ -209,7 +219,7 @@ def save_preset(body: PresetInput) -> dict:
     try:
         level = max(0, min(4, int(body.intelevel)))
     except (TypeError, ValueError):
-        return err("intelevel must be 0-4")
+        raise AppError("intelevel must be 0-4", status_code=422)
     tools = [tool for tool in (body.tools or []) if isinstance(tool, str) and tool.strip()]
     try:
         AgentPresetManager().upsert_agent_preset(AgentPreset(
@@ -220,8 +230,9 @@ def save_preset(body: PresetInput) -> dict:
             llm_level=level,
             tools=tools,
         ))
-    except Exception as exc:
-        return err(str(exc))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
     return ok({
         "apid": apid,
         "name": body.name,
@@ -241,8 +252,9 @@ def delete_preset(preset_id: str) -> dict:
         return ok(False)
     try:
         AgentPresetManager().delete_agent_preset(preset_id)
-    except Exception as exc:
-        return err(str(exc))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
     return ok(True)
 
 
@@ -250,7 +262,7 @@ def delete_preset(preset_id: str) -> dict:
 def restore_system_agent(apid: str) -> dict:
     payload = next((item for item in system_agent_presets() if item.get("apid") == apid), None)
     if payload is None:
-        return err("系统 Agent 默认配置不存在")
+        raise AppError("系统 Agent 默认配置不存在", status_code=404)
     try:
         AgentPresetManager().upsert_agent_preset(AgentPreset(
             apid=str(payload["apid"]),
@@ -260,8 +272,9 @@ def restore_system_agent(apid: str) -> dict:
             llm_level=int(payload["llm_level"]),
             tools=list(payload["tools"] or []),
         ))
-    except Exception as exc:
-        return err(str(exc))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
     return ok({
         "apid": payload["apid"],
         "name": payload["name"],
@@ -280,36 +293,37 @@ def run_agent_test(body: AgentTestInput) -> dict:
     agent_id = (body.agentId or "").strip()
     content = (body.content or "").strip()
     if not agent_id:
-        return err("agentId is required")
+        raise AppError("agentId is required", status_code=422)
     manager = AgentPresetManager()
     try:
         preset = manager.get_agent_preset(agent_id)
-    except Exception as exc:
-        return err(str(exc))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
     if preset is None:
-        return err("Agent 不存在")
+        raise AppError("Agent 不存在", status_code=404)
     history_manager = ChatHistoryManager()
     hist: ChatHistory | None = None
     raw: dict[str, Any] = {}
     if body.sessionId:
-        hist, error = _load_session(history_manager, body.sessionId)
-        if error["code"] != 0:
-            return error
-        assert hist is not None
+        hist = _load_session(history_manager, body.sessionId)
         raw = hist.content if isinstance(hist.content, dict) else {}
         if load_history_content(raw).apid != agent_id:
-            return err("会话不属于该 Agent")
+            raise AppError("会话不属于该 Agent", status_code=400)
     if not content:
         if hist is None:
-            return err("content is required")
+            raise AppError("content is required", status_code=422)
         session = _session_to_dict(hist)
-        return ok({"session": session, "reply": None}) if session else err("会话不存在")
+        if session is None:
+            raise AppError("会话不存在", status_code=404)
+        return ok({"session": session, "reply": None})
     messages = history_messages(load_history_content(raw)) if hist else []
     messages.append({"role": "user", "content": content})
     try:
         reply_text = run_chat_tool_agent(agent_id, build_chat_dialog_input(messages))
-    except Exception as exc:
-        return err(str(exc))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
     messages.append({"role": "assistant", "content": reply_text})
     title = hist.name if hist else (content[:40] if len(content) > 40 else content) or preset.name
     try:
@@ -325,11 +339,12 @@ def run_agent_test(body: AgentTestInput) -> dict:
                     apid=agent_id, agent_name=preset.name, messages=messages, existing=raw),
             ))
             hist = history_manager.get_chat_history(hist.id)
-    except Exception as exc:
-        return err(str(exc))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
     session = _session_to_dict(hist) if hist else None
     if session is None:
-        return err("会话保存失败")
+        raise AppError("会话保存失败", status_code=500)
     reply = session["messages"][-1] if session["messages"] else None
     return ok({"session": session, "reply": reply})
 
@@ -342,23 +357,21 @@ def list_history() -> dict:
             session = _session_to_dict(hist)
             if session is not None:
                 sessions.append(session)
-    except Exception as exc:
-        return err(str(exc))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
     return ok(sessions)
 
 
 @router.post("/api/agent/test-history/{session_id}/undo")
 def undo_session(session_id: str) -> dict:
     manager = ChatHistoryManager()
-    hist, error = _load_session(manager, session_id)
-    if error["code"] != 0:
-        return error
-    assert hist is not None
+    hist = _load_session(manager, session_id)
     raw = hist.content if isinstance(hist.content, dict) else {}
     content = load_history_content(raw)
     messages = history_messages(content)
     if len(messages) < 2 or messages[-2]["role"] != "user" or messages[-1]["role"] != "assistant":
-        return err("没有可撤销的轮次")
+        raise AppError("没有可撤销的轮次", status_code=400)
     try:
         manager.edit_chat_history(hist.id, ChatHistory(
             name=hist.name,
@@ -367,31 +380,32 @@ def undo_session(session_id: str) -> dict:
                 messages=messages[:-2], existing=raw),
         ))
         updated = manager.get_chat_history(hist.id)
-    except Exception as exc:
-        return err(str(exc))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
     session = _session_to_dict(updated) if updated else None
-    return ok(session) if session else err("会话不存在")
+    if session is None:
+        raise AppError("会话不存在", status_code=404)
+    return ok(session)
 
 
 @router.post("/api/agent/test-history/{session_id}/regenerate")
 def regenerate_session(session_id: str) -> dict:
     manager = ChatHistoryManager()
-    hist, error = _load_session(manager, session_id)
-    if error["code"] != 0:
-        return error
-    assert hist is not None
+    hist = _load_session(manager, session_id)
     raw = hist.content if isinstance(hist.content, dict) else {}
     content = load_history_content(raw)
     messages = history_messages(content)
     if not messages or messages[-1]["role"] != "assistant":
-        return err("没有可重新生成的回复")
+        raise AppError("没有可重新生成的回复", status_code=400)
     base = messages[:-1]
     if not base or base[-1]["role"] != "user":
-        return err("没有可重新生成的回复")
+        raise AppError("没有可重新生成的回复", status_code=400)
     try:
         reply_text = run_chat_tool_agent(content.apid, build_chat_dialog_input(base))
-    except Exception as exc:
-        return err(str(exc))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
     try:
         manager.edit_chat_history(hist.id, ChatHistory(
             name=hist.name,
@@ -400,10 +414,13 @@ def regenerate_session(session_id: str) -> dict:
                 messages=[*base, {"role": "assistant", "content": reply_text}], existing=raw),
         ))
         updated = manager.get_chat_history(hist.id)
-    except Exception as exc:
-        return err(str(exc))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
     session = _session_to_dict(updated) if updated else None
-    return ok(session) if session else err("会话不存在")
+    if session is None:
+        raise AppError("会话不存在", status_code=404)
+    return ok(session)
 
 
 @router.delete("/api/agent/test-history/{session_id}")
@@ -411,21 +428,19 @@ def delete_session(session_id: str) -> dict:
     try:
         raw_id = int(session_id)
     except (TypeError, ValueError):
-        return err("会话不存在")
+        raise AppError("会话不存在", status_code=404)
     try:
         ChatHistoryManager().delete_chat_history(raw_id)
-    except Exception as exc:
-        return err(str(exc))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
     return ok(None)
 
 
 @router.post("/api/agent/test-history/{session_id}/branch")
 def branch_session(session_id: str) -> dict:
     manager = ChatHistoryManager()
-    hist, error = _load_session(manager, session_id)
-    if error["code"] != 0:
-        return error
-    assert hist is not None
+    hist = _load_session(manager, session_id)
     raw = hist.content if isinstance(hist.content, dict) else {}
     content = load_history_content(raw)
     try:
@@ -436,7 +451,10 @@ def branch_session(session_id: str) -> dict:
                 messages=history_messages(content)),
         )
         manager.add_chat_history(branched)
-    except Exception as exc:
-        return err(str(exc))
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
     session = _session_to_dict(branched)
-    return ok(session) if session else err("会话创建失败")
+    if session is None:
+        raise AppError("会话创建失败", status_code=500)
+    return ok(session)

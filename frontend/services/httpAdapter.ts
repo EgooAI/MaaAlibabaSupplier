@@ -57,13 +57,23 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(`API request failed: ${path}`, path, { cause: error });
   }
 
+  const text = await response.text();
   if (!response.ok) {
-    throw new ApiError(`API request failed: ${response.status} ${response.statusText}`, path, { status: response.status });
+    throw new ApiError(envelopeMessage(text, path), path, { status: response.status });
   }
 
-  const text = await response.text();
   if (!text.trim()) throw new ApiError(`API response body is empty: ${path}`, path);
   return parseApiResponse<T>(parseJsonPayload(text, path), path);
+}
+
+function envelopeMessage(text: string, path: string): string {
+  try {
+    const payload = JSON.parse(text) as Partial<ApiResponse<unknown>>;
+    if (isPlainObject(payload) && typeof payload.msg === "string" && payload.msg) return payload.msg;
+  } catch {
+    // fall through
+  }
+  return `API request failed: ${path}`;
 }
 
 async function requestVoid(path: string, init?: RequestInit): Promise<void> {
@@ -73,10 +83,10 @@ async function requestVoid(path: string, init?: RequestInit): Promise<void> {
   } catch (error) {
     throw new ApiError(`API request failed: ${path}`, path, { cause: error });
   }
-  if (!response.ok) {
-    throw new ApiError(`API request failed: ${response.status} ${response.statusText}`, path, { status: response.status });
-  }
   const text = await response.text();
+  if (!response.ok) {
+    throw new ApiError(envelopeMessage(text, path), path, { status: response.status });
+  }
   if (!text.trim()) return;
   parseApiResponse<unknown>(parseJsonPayload(text, path), path);
 }

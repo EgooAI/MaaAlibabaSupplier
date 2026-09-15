@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 import threading
 from pathlib import Path
@@ -12,24 +11,31 @@ from typing import Generic, TypeVar
 
 from pydantic import BaseModel, Field
 
-_DEFAULT_DB_PATH = Path("data/pools.db")
+from backend.app.shared.utils.env import get_env_str
+from backend.app.shared.utils.settings import POOLS_DB_RELATIVE_DEFAULT, resolve_backend_root
 
 
 def _get_db_path() -> Path:
-    return Path(os.environ.get("MAA_POOLS_DB_PATH", str(_DEFAULT_DB_PATH)))
+    raw = get_env_str("MAA_POOLS_DB_PATH", POOLS_DB_RELATIVE_DEFAULT)
+    path = Path(raw)
+    if not path.is_absolute():
+        path = resolve_backend_root() / path
+    return path
 
 
 def _get_connection() -> sqlite3.Connection:
     db_path = _get_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path), check_same_thread=False)
+    conn = sqlite3.connect(str(db_path), check_same_thread=False, timeout=10.0)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=10000")
     conn.commit()
     return conn
 
 
 def _execute_schema(conn: sqlite3.Connection, sql: str) -> None:
     conn.execute(sql)
+    conn.commit()
 
 
 def _save_model(conn: sqlite3.Connection, table: str, key_column: str, key, model: BaseModel) -> None:
@@ -161,9 +167,9 @@ class InquiryCard(BaseModel):
 
 
 def _is_empty(val) -> bool:
-    if isinstance(val, bool):
-        return False  # bool False is a valid value, not "empty"
-    return val is None or val == "" or val == 0 or val == []
+    from backend.app.shared.utils.empty import is_empty_value
+
+    return is_empty_value(val)
 
 
 def _merge_user_info(existing: UserInfo, new: UserInfo) -> UserInfo:
@@ -205,10 +211,23 @@ class _DictPool(Generic[M]):
         self._load_all(model_cls)
 
     def _load_all(self, model_cls: type[M]) -> None:
+        from loguru import logger
+
         for row in self._conn.execute(
             f"SELECT {self._key_column}, data FROM {self._table}"
         ):
-            self._data[row[0]] = model_cls.model_validate_json(row[1])
+            try:
+                self._data[row[0]] = model_cls.model_validate_json(row[1])
+            except Exception:
+                logger.warning("跳过损坏的池记录 table={} key={}", self._table, row[0])
+
+    def close(self) -> None:
+        with self._lock:
+            try:
+                self._conn.commit()
+                self._conn.close()
+            except Exception:
+                pass
 
     def _get_key(self, item: M) -> str:
         raise NotImplementedError
@@ -237,20 +256,47 @@ class _DictPool(Generic[M]):
 
 
 class UserInfoPool:
-    """Thread-safe in-memory pool keyed by ali_id with login_id index."""
+    """Thread-safe pool keyed by ali_id with login_id index, backed by SQLite."""
 
     _instance: UserInfoPool | None = None
     _instance_lock = threading.Lock()
 
     def __new__(cls) -> UserInfoPool:
         with cls._instance_lock:
+            db_path = str(_get_db_path())
+            if cls._instance is not None and getattr(cls._instance, "_db_path", "") != db_path:
+                try:
+                    cls._instance.close()
+                except Exception:
+                    pass
+                cls._instance = None
             if cls._instance is None:
                 instance = super().__new__(cls)
                 instance._lock = threading.Lock()
+                instance._db_path = db_path
+                instance._conn = _get_connection()
+                _execute_schema(
+                    instance._conn,
+                    "CREATE TABLE IF NOT EXISTS user_info (key TEXT PRIMARY KEY, data TEXT NOT NULL)",
+                )
                 instance._data: dict[str, UserInfo] = {}
                 instance._login_id_index: dict[str, str] = {}
+                instance._load_all()
                 cls._instance = instance
             return cls._instance
+
+    def _load_all(self) -> None:
+        from loguru import logger
+
+        for key, raw in self._conn.execute("SELECT key, data FROM user_info"):
+            try:
+                info = UserInfo.model_validate_json(raw)
+            except Exception:
+                logger.warning("跳过损坏的用户池记录 key={}", key)
+                continue
+            self._data[key] = info
+            if info.login_id:
+                self._login_id_index[info.login_id] = key
 
     def put(self, info: UserInfo) -> None:
         with self._lock:
@@ -295,6 +341,9 @@ class UserInfoPool:
             lid = info.login_id
             if lid:
                 self._login_id_index[lid] = info.ali_id
+            if old_key and old_key != info.ali_id:
+                self._conn.execute("DELETE FROM user_info WHERE key = ?", (old_key,))
+            _save_model(self._conn, "user_info", "key", info.ali_id, info)
 
     def get(self, ali_id: str) -> UserInfo | None:
         with self._lock:
@@ -313,8 +362,27 @@ class UserInfoPool:
 
     def clear(self) -> None:
         with self._lock:
+            _clear_table(self._conn, "user_info")
             self._data.clear()
             self._login_id_index.clear()
+
+    def close(self) -> None:
+        with self._lock:
+            try:
+                self._conn.commit()
+                self._conn.close()
+            except Exception:
+                pass
+
+    @classmethod
+    def reset_for_tests(cls) -> None:
+        with cls._instance_lock:
+            if cls._instance is not None:
+                try:
+                    cls._instance.close()
+                except Exception:
+                    pass
+                cls._instance = None
 
 
 def get_user_info_pool() -> UserInfoPool:

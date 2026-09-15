@@ -17,8 +17,9 @@ KEYEVENTF_KEYUP = 0x0002
 
 
 def _save_latest_copy_text(text: str) -> None:
-    repo_root = Path(__file__).resolve().parents[4]
-    output_path = repo_root / "debug" / "copy_text.latest.txt"
+    from backend.app.shared.utils.settings import resolve_backend_root
+
+    output_path = resolve_backend_root() / "debug" / "copy_text.latest.txt"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(text, encoding="utf-8")
 

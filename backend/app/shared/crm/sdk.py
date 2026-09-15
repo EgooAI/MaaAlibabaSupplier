@@ -16,8 +16,11 @@ def ensure_sdk_path() -> None:
 
 ensure_sdk_path()
 
-core = importlib.import_module("core")
-models = importlib.import_module("models")
+try:
+    from backend.app.crm_sdk import core, models
+except ImportError:
+    core = importlib.import_module("core")
+    models = importlib.import_module("models")
 
 Account = models.Account
 AccountManager = core.AccountManager

@@ -7,7 +7,9 @@ from loguru import logger
 
 # Ensure the `backend` package can be imported when launching with
 # `python ./../app/agent/main.py <socket_id>` from the assets directory.
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+from backend.app.shared.utils.settings import resolve_repo_root
+
+PROJECT_ROOT = resolve_repo_root()
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -22,13 +24,12 @@ from backend.app.shared.utils.env import load_workdir_env
 from backend.app.shared.utils.logging import configure_logging
 
 
-def main():
+def main() -> None:
     load_workdir_env()
     configure_logging()
 
     if len(sys.argv) < 2:
-        print("Usage: python main.py <socket_id>")
-        print("socket_id is provided by AgentIdentifier.")
+        logger.error("Usage: python main.py <socket_id>")
         sys.exit(1)
 
     socket_id = sys.argv[-1]
@@ -40,7 +41,7 @@ def main():
             if shutdown_requested.is_set():
                 return
             shutdown_requested.set()
-        print("[agent] stopping Maa AgentServer...")
+        logger.info("[agent] stopping Maa AgentServer...")
         try:
             AgentServer.shut_down()
         except Exception:
@@ -49,7 +50,7 @@ def main():
     def _request_shutdown(signum: int, _frame: object) -> None:
         if shutdown_requested.is_set():
             raise KeyboardInterrupt
-        print(f"\n[agent] received signal {signum}; shutting down...")
+        logger.info("[agent] received signal {}; shutting down...", signum)
         threading.Thread(target=_shutdown_agent_server, daemon=True, name="shutdown").start()
 
     signal.signal(signal.SIGINT, _request_shutdown)
@@ -64,13 +65,13 @@ def main():
         while join_thread.is_alive():
             join_thread.join(timeout=0.2)
     except KeyboardInterrupt:
-        print("\n[agent] interrupted; shutting down...")
+        logger.info("[agent] interrupted; shutting down...")
     finally:
         _shutdown_agent_server()
         if join_thread is not None and join_thread.is_alive():
             join_thread.join(timeout=5.0)
             if join_thread.is_alive():
-                print("[agent] AgentServer.join() still blocking after shutdown; forcing exit")
+                logger.warning("[agent] AgentServer.join() still blocking after shutdown; forcing exit")
 
 
 if __name__ == "__main__":

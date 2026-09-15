@@ -1,11 +1,15 @@
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
 
+from backend.app.shared.utils.settings import resolve_repo_root
+
 
 _ENV_LOADED_PATHS: dict[str, Path] = {}
+_ENV_LOAD_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -25,9 +29,7 @@ def _iter_env_candidates(env_filename: str) -> list[Path]:
     for parent in [cwd, *cwd.parents]:
         candidates.append(parent / env_filename)
 
-    # Fallback to repository root (h:\MaaAlibabaSupplier)
-    repo_root = Path(__file__).resolve().parents[3]
-    repo_env = repo_root / env_filename
+    repo_env = resolve_repo_root() / env_filename
     if repo_env not in candidates:
         candidates.append(repo_env)
 
@@ -39,18 +41,19 @@ def load_workdir_env(env_filename: str = ".env") -> Path:
 
     Returns the selected env path (existing one if found, otherwise cwd/.env).
     """
-    cached = _ENV_LOADED_PATHS.get(env_filename)
-    if cached is not None:
-        return cached
+    with _ENV_LOAD_LOCK:
+        cached = _ENV_LOADED_PATHS.get(env_filename)
+        if cached is not None:
+            return cached
 
-    candidates = _iter_env_candidates(env_filename)
-    existing = next((path for path in candidates if path.exists()), None)
-    env_path = existing if existing is not None else (Path.cwd().resolve() / env_filename)
+        candidates = _iter_env_candidates(env_filename)
+        existing = next((path for path in candidates if path.exists()), None)
+        env_path = existing if existing is not None else (Path.cwd().resolve() / env_filename)
 
-    resolved = env_path.resolve()
-    load_dotenv(dotenv_path=resolved, override=False)
-    _ENV_LOADED_PATHS[env_filename] = resolved
-    return resolved
+        resolved = env_path.resolve()
+        load_dotenv(dotenv_path=resolved, override=False)
+        _ENV_LOADED_PATHS[env_filename] = resolved
+        return resolved
 
 
 def get_env_str(key: str, default: str = "", *, required: bool = False) -> str:

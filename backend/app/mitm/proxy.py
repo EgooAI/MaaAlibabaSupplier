@@ -213,9 +213,16 @@ class TrafficHandler(BaseHTTPRequestHandler):
     router: TrafficRouter = TrafficRouter()
 
     def do_POST(self) -> None:
-        content_length = int(self.headers.get("Content-Length", 0))
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+        except (TypeError, ValueError):
+            self._respond(400)
+            return
         if content_length == 0:
             self._respond(204)
+            return
+        if content_length > 10 * 1024 * 1024:
+            self._respond(413)
             return
 
         raw = self.rfile.read(content_length)
@@ -231,6 +238,8 @@ class TrafficHandler(BaseHTTPRequestHandler):
                 self.router.process(data)
             except Exception:
                 logger.exception("Failed to process Yak MITM event")
+                self._respond(500, url)
+                return
         else:
             url = ""
 

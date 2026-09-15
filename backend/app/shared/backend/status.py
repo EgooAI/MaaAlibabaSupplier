@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-import os
 import socket
 import time
 from dataclasses import dataclass
-from pathlib import Path
 
 from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
 from backend.app.shared.mitm.pool import get_self_info_pool
-from backend.app.shared.utils.env import load_workdir_env
+from backend.app.shared.utils.env import get_env_int, get_env_str, load_workdir_env
+from backend.app.shared.utils.settings import (
+    MITM_PROXY_HOST_DEFAULT,
+    MITM_PROXY_PORT_DEFAULT,
+    MITM_RECEIVER_HOST_DEFAULT,
+    MITM_RECEIVER_PORT_DEFAULT,
+    MITM_CHECK_TIMEOUT_S,
+)
 
 
 @dataclass(frozen=True)
@@ -48,7 +53,7 @@ def check_user_status() -> KeyStatus:
 def _check_port(host: str, port: int) -> NetworkStatus:
     start = time.perf_counter()
     try:
-        with socket.create_connection((host, port), timeout=2.0):
+        with socket.create_connection((host, port), timeout=MITM_CHECK_TIMEOUT_S):
             latency = (time.perf_counter() - start) * 1000
             return NetworkStatus(
                 reachable=True, host=host, port=port, latency_ms=round(latency, 1), error=None
@@ -60,12 +65,12 @@ def _check_port(host: str, port: int) -> NetworkStatus:
 
 
 def check_mitm_proxy() -> NetworkStatus:
-    host = os.environ.get("MITM_PROXY_HOST", "127.0.0.1")
-    port = int(os.environ.get("MITM_PROXY_PORT", "8084"))
+    host = get_env_str("MITM_PROXY_HOST", MITM_PROXY_HOST_DEFAULT)
+    port = get_env_int("MITM_PROXY_PORT", MITM_PROXY_PORT_DEFAULT)
     return _check_port(host, port)
 
 
 def check_mitm_receiver() -> NetworkStatus:
-    host = os.environ.get("MITM_RECEIVER_HOST", "127.0.0.1")
-    port = int(os.environ.get("MITM_RECEIVER_PORT", "8085"))
+    host = get_env_str("MITM_RECEIVER_HOST", MITM_RECEIVER_HOST_DEFAULT)
+    port = get_env_int("MITM_RECEIVER_PORT", MITM_RECEIVER_PORT_DEFAULT)
     return _check_port(host, port)

@@ -199,7 +199,7 @@ class IMDBMiddleware:
             try:
                 old_conn.close()
             except Exception:
-                pass
+                logger.debug("旧IM缓存连接关闭失败，已忽略")
 
         self._conn = conn
         self._cached_db_path = cached
@@ -234,9 +234,9 @@ class IMDBMiddleware:
                 self._source_fingerprint = fingerprint
             self._source_crc32 = crc
             self._cleanup_stale_caches(cached)
-            self.sync_to_crm()
-            logger.info("IM database refreshed (cached at {})", cached)
-            return True
+        self.sync_to_crm()
+        logger.info("IM database refreshed (cached at {})", cached)
+        return True
 
     def sync_to_crm(self, wait: bool = False) -> None:
         cached = self._cached_db_path

@@ -5,14 +5,17 @@ from dataclasses import asdict
 from datetime import datetime
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from loguru import logger
+from pydantic import BaseModel, Field
 
-from backend.app.api.envelope import ok
+from backend.app.api.envelope import AppError, api_error, ok
 from backend.app.shared.backend import status as status_mod
 from backend.app.shared.backend.maafw_runner import run_node
 from backend.app.task_queue import get_task_queue
 
 router = APIRouter()
+
+ALLOWED_NODE_ENTRIES = frozenset({"ChatInput", "ChatSend", "GotoContact"})
 
 # Last manual node-test outcome shown in the aggregate snapshot.
 # None means "not tested yet" (polls must not trigger real MaaFW runs).
@@ -20,12 +23,12 @@ _last_node_result: dict | None = None
 
 
 class NodeTestInput(BaseModel):
-    entry: str = "ChatInput"
+    entry: str = Field(default="ChatInput", max_length=64)
 
 
 class CreateTestTaskInput(BaseModel):
-    type: str = "test"
-    target: str = ""
+    type: str = Field(default="test", max_length=32)
+    target: str = Field(default="", max_length=256)
 
 
 def _format_time(epoch: float | None) -> str:
@@ -162,7 +165,14 @@ def status_refresh() -> dict:
 @router.post("/api/status/node-test")
 def node_test(body: NodeTestInput) -> dict:
     global _last_node_result
-    success, message = run_node(body.entry or "ChatInput")
+    entry = (body.entry or "ChatInput").strip() or "ChatInput"
+    if entry not in ALLOWED_NODE_ENTRIES:
+        raise AppError(f"entry must be one of {sorted(ALLOWED_NODE_ENTRIES)}", status_code=422)
+    try:
+        success, message = run_node(entry)
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
     _last_node_result = {"success": success, "message": message}
     return ok(_last_node_result)
 
