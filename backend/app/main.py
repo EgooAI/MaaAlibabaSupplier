@@ -3,11 +3,16 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
 
 from loguru import logger
+
+# Console-subsystem children (yak.exe) pop their own console window when the
+# parent is pythonw (no console); hide it on Windows.
+CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 from backend.app.maafw_process import MaaFWProcess, MaaFWProcessError
 from backend.app.mitm.proxy import run_receiver
@@ -73,6 +78,7 @@ def _start_yak_mitm(repo_root: Path) -> subprocess.Popen | None:
             [yak_exe, str(yak_script)],
             stdout=log_file,
             stderr=subprocess.STDOUT,
+            creationflags=CREATE_NO_WINDOW,
         )
     except FileNotFoundError:
         logger.error("'{}' not found — is Yak installed?", yak_exe)

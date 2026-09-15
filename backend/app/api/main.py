@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from backend.app.api.routers import agent, conversations, messages, self, status
+from backend.app.api.routers import agent, app as app_router, conversations, messages, self, status
 
 
 def create_app() -> FastAPI:
@@ -23,6 +23,7 @@ def create_app() -> FastAPI:
     app.include_router(conversations.router)
     app.include_router(messages.router)
     app.include_router(agent.router)
+    app.include_router(app_router.router)
 
     # Serve the exported frontend (frontend/out) from the same origin when it
     # has been built with NEXT_EXPORT=1; dev uses the Next.js server instead.

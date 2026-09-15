@@ -65,6 +65,8 @@ export const mockBackend: OperationsBackend = {
     return delay(undefined);
   },
 
+  shutdownApp: () => delay(undefined),
+
   requestTranslations: async ({ texts, force = false }) => {
     requireSystemAgent(SYSTEM_AGENT_APIDS.translation);
     const targets = texts.map((text) => text.trim()).filter(Boolean);

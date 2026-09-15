@@ -25,11 +25,13 @@ def configure_logging() -> None:
     if _CONFIGURED:
         return
     logger.remove()
-    logger.add(
-        sys.stderr,
-        colorize=True,
-        format="<green>{time:HH:mm:ss}</green> <level>{level: <3}</level> <cyan>{name}</cyan> - <level>{message}</level>",
-    )
+    # sys.stderr is None when started via pythonw (no console); skip the console sink.
+    if sys.stderr is not None:
+        logger.add(
+            sys.stderr,
+            colorize=True,
+            format="<green>{time:HH:mm:ss}</green> <level>{level: <3}</level> <cyan>{name}</cyan> - <level>{message}</level>",
+        )
     # File sink keeps uvicorn/access logs visible when started via pythonw (no console).
     log_dir = Path(__file__).resolve().parents[3] / "data" / "logs"
     logger.add(log_dir / "api.log", rotation="10 MB", level="INFO")

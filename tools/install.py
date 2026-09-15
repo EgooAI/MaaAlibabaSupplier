@@ -1,3 +1,21 @@
+"""Assemble the distributable payload for Inno Setup packaging.
+
+Payload layout mirrors the repository so every file-relative convention in the
+backend keeps working (backend/deps/bin, backend/assets, backend/.portable/yak,
+backend/yak_mitm.yak, frontend/out):
+
+    install/
+    ├── backend/
+    │   ├── __init__.py + app/          # FastAPI backend and business agent
+    │   ├── deps/bin/ + deps/share/     # MaaFramework binaries (incl. MaaPiCli)
+    │   ├── assets/                     # MaaFW workdir: interface.json + resource
+    │   ├── yak_mitm.yak (+ .yakc)
+    │   ├── .portable/yak/yak.exe       # Yak CLI (matches main.py discovery)
+    │   └── python/                     # bundled CPython with requirements
+    ├── frontend/out/                   # exported frontend (NEXT_EXPORT=1)
+    └── .env.example + README.md + LICENSE + Start-Debug.bat
+"""
+
 from pathlib import Path
 
 import os
@@ -15,13 +33,14 @@ except ModuleNotFoundError as e:
 
 working_dir = (Path(__file__).parent.parent / "backend").resolve()
 repo_root = working_dir.parent
-install_path = working_dir / Path("install")
+install_path = repo_root / "install"
+payload_backend = install_path / "backend"
 assets_dir = working_dir / "assets"
 version = len(sys.argv) > 1 and sys.argv[1] or "v0.0.1"
 bundled_python_dir = os.getenv("BUNDLED_PYTHON_DIR")
 bundled_python_exec_relpath = os.getenv("BUNDLED_PYTHON_EXEC_RELPATH", "")
 
-DOTNET_PLATFORM_TAG = "win-x64"
+IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc")
 
 
 def configure_ocr_model():
@@ -42,33 +61,30 @@ def configure_ocr_model():
 
 
 def install_deps():
-    if not (working_dir / "deps" / "bin").exists():
-        print('Please download the MaaFramework to "deps" first.')
-        print('请先下载 MaaFramework 到 "deps"。')
+    deps_bin = working_dir / "deps" / "bin"
+    if not deps_bin.exists():
+        print('Please download the MaaFramework to "backend/deps" first (tools/install_3_maafw.py).')
         sys.exit(1)
 
     shutil.copytree(
-        working_dir / "deps" / "bin",
-        install_path / "runtimes" / DOTNET_PLATFORM_TAG / "native",
-        ignore=shutil.ignore_patterns(
-            "*MaaDbgControlUnit*",
-            "*MaaThriftControlUnit*",
-            "*MaaRpc*",
-            "*MaaHttp*",
-            "plugins",
-            "*.node",
-            "*MaaPiCli*",
-        ),
+        deps_bin,
+        payload_backend / "deps" / "bin",
+        ignore=shutil.ignore_patterns("__pycache__"),
         dirs_exist_ok=True,
     )
     shutil.copytree(
         working_dir / "deps" / "share" / "MaaAgentBinary",
-        install_path / "libs" / "MaaAgentBinary",
+        payload_backend / "deps" / "share" / "MaaAgentBinary",
         dirs_exist_ok=True,
     )
+
+
+def install_app():
+    shutil.copy2(working_dir / "__init__.py", payload_backend, follow_symlinks=True)
     shutil.copytree(
-        working_dir / "deps" / "bin" / "plugins",
-        install_path / "plugins" / DOTNET_PLATFORM_TAG,
+        working_dir / "app",
+        payload_backend / "app",
+        ignore=IGNORE,
         dirs_exist_ok=True,
     )
 
@@ -85,32 +101,27 @@ def install_python_runtime():
 
     shutil.copytree(
         python_dir,
-        install_path / "python",
+        payload_backend / "python",
         dirs_exist_ok=True,
         symlinks=True,
     )
 
 
-def get_bundled_python_exec():
-    if not bundled_python_exec_relpath:
-        return None
+def install_yak():
+    yak_script = working_dir / "yak_mitm.yak"
+    if yak_script.exists():
+        shutil.copy2(yak_script, payload_backend)
+    yak_compiled = working_dir / "yak_mitm.yakc"
+    if yak_compiled.exists():
+        shutil.copy2(yak_compiled, payload_backend)
 
-    normalized_relpath = bundled_python_exec_relpath.replace("\\", "/").lstrip("./")
-    return f"./python/{normalized_relpath}"
-
-
-def normalize_agent_args(child_args):
-    if not isinstance(child_args, list):
-        return child_args
-
-    normalized_args = []
-    for arg in child_args:
-        if isinstance(arg, str) and arg.startswith("./../agent/"):
-            normalized_args.append("./agent/" + arg.removeprefix("./../agent/"))
-        else:
-            normalized_args.append(arg)
-    return normalized_args
-
+    yak_exe = repo_root / ".portable" / "yak" / "yak.exe"
+    if yak_exe.exists():
+        yak_target = payload_backend / ".portable" / "yak" / "yak.exe"
+        yak_target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(yak_exe, yak_target)
+    else:
+        print(f"Portable Yak CLI not found at {yak_exe}; MITM will be unavailable in the payload.")
 
 
 def install_resource():
@@ -118,29 +129,39 @@ def install_resource():
 
     shutil.copytree(
         assets_dir / "resource",
-        install_path / "resource",
+        payload_backend / "assets" / "resource",
         dirs_exist_ok=True,
     )
     shutil.copy2(
         assets_dir / "interface.json",
-        install_path,
+        payload_backend / "assets",
     )
 
-    with open(install_path / "interface.json", "r", encoding="utf-8") as f:
+    with open(payload_backend / "assets" / "interface.json", "r", encoding="utf-8") as f:
         interface = jsonc.load(f)
 
     interface["version"] = version
 
     agent_config = interface.get("agent")
-    if isinstance(agent_config, dict):
-        agent_config["child_args"] = normalize_agent_args(agent_config.get("child_args"))
+    if isinstance(agent_config, dict) and bundled_python_exec_relpath:
+        normalized_relpath = bundled_python_exec_relpath.replace("\\", "/").lstrip("./")
+        # Resolved relative to the MaaFW workdir (backend/assets) inside the payload.
+        agent_config["child_exec"] = f"./../python/{normalized_relpath}"
 
-        packaged_python_exec = get_bundled_python_exec()
-        if packaged_python_exec is not None:
-            agent_config["child_exec"] = packaged_python_exec
-
-    with open(install_path / "interface.json", "w", encoding="utf-8") as f:
+    with open(payload_backend / "assets" / "interface.json", "w", encoding="utf-8") as f:
         jsonc.dump(interface, f, ensure_ascii=False, indent=4)
+
+
+def install_frontend():
+    frontend_out = repo_root / "frontend" / "out"
+    if not frontend_out.is_dir():
+        print(f"Exported frontend not found at {frontend_out}; build it with NEXT_EXPORT=1 first.")
+        sys.exit(1)
+    shutil.copytree(
+        frontend_out,
+        install_path / "frontend" / "out",
+        dirs_exist_ok=True,
+    )
 
 
 def install_chores():
@@ -152,21 +173,27 @@ def install_chores():
         repo_root / "LICENSE",
         install_path,
     )
-
-
-def install_agent():
-    shutil.copytree(
-        working_dir / "agent",
-        install_path / "agent",
-        dirs_exist_ok=True,
+    shutil.copy2(
+        repo_root / ".env.example",
+        install_path,
+    )
+    shutil.copy2(
+        repo_root / "tools" / "packaging" / "Start-Debug.bat",
+        install_path,
     )
 
 
-if __name__ == "__main__":
+def main():
+    payload_backend.mkdir(parents=True, exist_ok=True)
     install_deps()
+    install_app()
     install_python_runtime()
+    install_yak()
     install_resource()
+    install_frontend()
     install_chores()
-    install_agent()
-
     print(f"Install to {install_path} successfully.")
+
+
+if __name__ == "__main__":
+    main()

@@ -7,6 +7,7 @@ import type { CreateTestTaskInput, KeyStatus, NetworkStatus, NodeTestResult, Sys
 export interface OperationsBackend {
   getSelfInfo(): Promise<SelfInfo | null>;
   resetCache(): Promise<void>;
+  shutdownApp(): Promise<void>;
 
   requestTranslations(input: RequestTranslationsInput): Promise<RequestTranslationsResult>;
   getTranslation(text: string): Promise<string | null>;

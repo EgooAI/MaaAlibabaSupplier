@@ -1,0 +1,29 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Setup workspace",
+            "detail": "Initialize the developer workspace: portable frontend toolchain + build, portable Python runtime + backend deps, MaaFramework, Yak CLI (see tools/install_all.py).",
+            "type": "shell",
+            "command": "python tools/install_all.py --dev",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Build distributable",
+            "detail": "Assemble the install payload and compile the Setup installer locally (see tools/build_distributable.py).",
+            "type": "shell",
+            "command": "python tools/build_distributable.py",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        }
+    ]
+}

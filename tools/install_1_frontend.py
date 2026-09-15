@@ -5,13 +5,14 @@ Default: download the latest Node.js (minor-pinned, no overrides) into
 run `pnpm install` and `pnpm build` for frontend/.
 
 Usage:
-  python tools/install_1_frontend.py [--use-system] [--no-frozen]
+  python tools/install_1_frontend.py [--use-system] [--no-frozen] [--export]
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 from pathlib import Path
@@ -27,6 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--use-system", action="store_true", help="Use node/pnpm from PATH instead of the portable runtime")
     parser.add_argument("--no-frozen", action="store_true", help="Install without --frozen-lockfile")
+    parser.add_argument("--export", action="store_true", help="Build a static export into frontend/out (NEXT_EXPORT=1)")
     return parser.parse_args()
 
 
@@ -97,6 +99,8 @@ def main() -> int:
         install_cmd.append("--frozen-lockfile")
     common.run(install_cmd, cwd=common.FRONTEND_DIR)
 
+    if args.export:
+        os.environ["NEXT_EXPORT"] = "1"
     common.run(pnpm_cmd + ["build"], cwd=common.FRONTEND_DIR)
 
     common.log("Stage 1 done.")
