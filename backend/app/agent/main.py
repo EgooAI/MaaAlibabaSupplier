@@ -5,9 +5,9 @@ from pathlib import Path
 
 from loguru import logger
 
-# Ensure the `app` package can be imported when launching with
+# Ensure the `backend` package can be imported when launching with
 # `python ./../app/agent/main.py <socket_id>` from the assets directory.
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
