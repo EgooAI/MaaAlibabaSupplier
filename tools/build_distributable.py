@@ -6,7 +6,7 @@ Runs the full chain in one go:
   3. MaaFramework download        (tools/install_3_maafw.py)
   4. Yak CLI + yakc recompile     (tools/install_4_yak.py --compile)
   5. payload assembly             (tools/install.py <version>)
-  6. vc_redist download + ISCC compile -> dist/MaaAlibabaSupplier-v<version>-Setup.exe
+  6. ISCC compile                 -> dist/MaaAlibabaSupplier-v<version>-Setup.exe
 
 Usage:
   python tools/build_distributable.py [--version v0.0.0-local] [--skip-frontend]
@@ -24,8 +24,6 @@ import shutil
 import sys
 
 import _common as common
-
-VC_REDIST_URL = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,13 +66,19 @@ def main() -> int:
     common.run([sys.executable, str(common.TOOLS_DIR / "install_3_maafw.py")], cwd=common.REPO_ROOT)
     common.run([sys.executable, str(common.TOOLS_DIR / "install_4_yak.py"), "--compile"], cwd=common.REPO_ROOT)
 
-    # tools/install.py wiring; mirrors what CI passes after install_2_backend.py.
-    os.environ.setdefault("BUNDLED_PYTHON_DIR", str(common.PORTABLE_DIR / "python"))
-    os.environ.setdefault("BUNDLED_PYTHON_EXEC_RELPATH", "python.exe")
-    common.run([sys.executable, str(common.TOOLS_DIR / "install.py"), args.version], cwd=common.REPO_ROOT)
-
-    payload = common.REPO_ROOT / "install"
-    common.download(VC_REDIST_URL, payload / "vc_redist.x64.exe")
+    # Bundled-python flags mirror what CI passes after install_2_backend.py.
+    common.run(
+        [
+            sys.executable,
+            str(common.TOOLS_DIR / "install.py"),
+            args.version,
+            "--bundled-python-dir",
+            str(common.PORTABLE_DIR / "python"),
+            "--bundled-python-exec-relpath",
+            "python.exe",
+        ],
+        cwd=common.REPO_ROOT,
+    )
 
     iscc = locate_iscc()
     if iscc is None:

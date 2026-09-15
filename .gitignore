@@ -35,7 +35,6 @@ Release
 *.swp
 
 # Build
-deps/*
 backend/deps/*
 !backend/deps/tools/
 backend/deps/tools/*
@@ -85,7 +84,6 @@ backend/.env
 
 # Portable
 .portable/
-.portable-python/
 
 # Agent
 .opencode/

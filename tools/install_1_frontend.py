@@ -21,6 +21,7 @@ import _common as common
 
 PNPM_CJS = Path("node_modules") / "pnpm" / "bin" / "pnpm.cjs"
 NPM_CLI = Path("node_modules") / "npm" / "bin" / "npm-cli.js"
+NODE_RELEASE_DIR = f"latest-v{common.NODE_MAJOR}.x"
 NODE_DIST_BASE = "https://nodejs.org/dist"
 
 
@@ -41,32 +42,32 @@ def pnpm_version() -> str:
 
 
 def resolve_node_archive() -> str:
-    release_dir = f"latest-v{common.NODE_MAJOR}.x"
-    shasums = common.fetch_text(f"{NODE_DIST_BASE}/{release_dir}/SHASUMS256.txt")
+    shasums = common.fetch_text(f"{NODE_DIST_BASE}/{NODE_RELEASE_DIR}/SHASUMS256.txt")
     for line in shasums.splitlines():
         match = re.search(r"(node-v[0-9.]+-win-x64\.zip)\s*$", line)
         if match:
             return match.group(1)
-    common.fail(f"No node-v*-win-x64.zip found in {release_dir} SHASUMS.")
+    common.fail(f"No node-v*-win-x64.zip found in {NODE_RELEASE_DIR} SHASUMS.")
 
 
 def prepare_portable() -> tuple[Path, Path]:
     node_dir = common.PORTABLE_DIR / "node"
     node_exe = node_dir / "node.exe"
     if not node_exe.exists():
-        release_dir = "latest-v22.x"
         filename = resolve_node_archive()
         common.log(f"Resolved Node.js archive: {filename}")
         with common.temp_directory() as temp_dir:
-            archive = common.download(f"{NODE_DIST_BASE}/{release_dir}/{filename}", temp_dir / filename)
+            archive = common.download(f"{NODE_DIST_BASE}/{NODE_RELEASE_DIR}/{filename}", temp_dir / filename)
             common.extract_zip(archive, temp_dir / "extract")
             common.install_tree(common.find_normalized_root(temp_dir / "extract"), node_dir)
     if not node_exe.exists():
         common.fail(f"Node runtime not found after install: {node_exe}")
     pnpm_cjs = node_dir / PNPM_CJS
     if not pnpm_cjs.exists():
+        # Pin the global prefix explicitly: CI runners export npm_config_prefix,
+        # which would otherwise pull the install out of the portable runtime.
         common.run(
-            [node_exe, node_dir / NPM_CLI, "install", "-g", f"pnpm@{pnpm_version()}"],
+            [node_exe, node_dir / NPM_CLI, "install", "-g", f"--prefix={node_dir}", f"pnpm@{pnpm_version()}"],
         )
     if not pnpm_cjs.exists():
         common.fail(f"pnpm was not installed to {node_dir / PNPM_CJS}")

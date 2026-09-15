@@ -8,16 +8,16 @@ on:
       - "**"
     paths:
       - ".github/workflows/install.yml"
-      - “frontend/**"
       - "backend/**"
+      - "frontend/**"
       - "tools/**"
   pull_request:
     branches:
       - "**"
     paths:
       - ".github/workflows/install.yml"
-      - “frontend/**"
       - "backend/**"
+      - "frontend/**"
       - "tools/**"
   workflow_dispatch:
 
@@ -66,7 +66,8 @@ jobs:
   install:
     needs: meta
     runs-on: windows-latest
-
+    outputs:
+      has_dotenv: ${{ steps.dotenv.outputs.has_dotenv }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -77,16 +78,26 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Build exported frontend
+        shell: bash
+        run: python tools/install_1_frontend.py --export
+
+      - name: Prepare bundled Python and backend dependencies
+        id: bundled_python
+        shell: bash
+        run: python tools/install_2_backend.py --github-output "$GITHUB_OUTPUT"
+
       - name: Install MaaFramework and submodules
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python tools/install_3_maafw.py
 
-      - name: Prepare bundled Python and backend dependencies
-        id: bundled_python
+      - name: Prepare Yak CLI and compile MITM script
         shell: bash
-        run: python tools/install_2_backend.py --github-output "$GITHUB_OUTPUT"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python tools/install_4_yak.py --compile
 
       - name: Install build dependencies
         shell: bash
@@ -96,39 +107,70 @@ jobs:
 
       - name: Build install payload
         shell: bash
-        env:
-          BUNDLED_PYTHON_DIR: .portable/python
-          BUNDLED_PYTHON_EXEC_RELPATH: ${{ steps.bundled_python.outputs.python_exec_relpath }}
         run: |
-          python tools/install.py ${{ needs.meta.outputs.tag }}
+          python tools/install.py ${{ needs.meta.outputs.tag }} \
+            --bundled-python-dir .portable/python \
+            --bundled-python-exec-relpath "${{ steps.bundled_python.outputs.python_exec_relpath }}"
 
-      - uses: actions/upload-artifact@v6
+      - name: Check .env secret
+        id: dotenv
+        shell: bash
+        env:
+          DOTENV_CONTENT: ${{ secrets.DOTENV }}
+        run: |
+          if [ -n "$DOTENV_CONTENT" ]; then
+            echo "has_dotenv=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_dotenv=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Secret DOTENV is not configured; skipping Inno Setup packaging and release."
+          fi
+
+      - name: Write .env into payload
+        if: ${{ steps.dotenv.outputs.has_dotenv == 'true' }}
+        shell: bash
+        env:
+          DOTENV_CONTENT: ${{ secrets.DOTENV }}
+        run: printf '%s\n' "$DOTENV_CONTENT" > install/.env
+
+      - name: Setup Inno Setup
+        if: ${{ steps.dotenv.outputs.has_dotenv == 'true' }}
+        shell: bash
+        run: choco install innosetup --no-progress
+
+      - name: Compile installer
+        if: ${{ steps.dotenv.outputs.has_dotenv == 'true' }}
+        shell: bash
+        env:
+          TAG: ${{ needs.meta.outputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          [ -f "$ISCC" ] || ISCC="$(command -v ISCC.exe)"
+          "$ISCC" tools/packaging/Setup.iss "-DMyAppVersion=$VERSION"
+
+      - name: Upload installer
+        if: ${{ steps.dotenv.outputs.has_dotenv == 'true' }}
+        uses: actions/upload-artifact@v6
         with:
-          name: MaaAlibabaSupplier-win-x86_64
-          path: backend/install
+          name: MaaAlibabaSupplier-Setup
+          path: dist/*.exe
           retention-days: 1
 
   release:
-    if: ${{ needs.meta.outputs.is_release == 'true' }}
+    if: ${{ needs.meta.outputs.is_release == 'true' && needs.install.outputs.has_dotenv == 'true' }}
     needs:
       - meta
       - install
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
         with:
+          name: MaaAlibabaSupplier-Setup
           path: assets
-
-      - shell: bash
-        run: |
-          cd assets
-          for f in *; do
-            (cd "$f" && zip -r "../$f-${{ needs.meta.outputs.tag }}.zip" .)
-          done
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: assets/*.zip
+          files: assets/*.exe
           tag_name: ${{ needs.meta.outputs.tag }}
           draft: false
           prerelease: ${{ needs.meta.outputs.is_prerelease == 'true' }}

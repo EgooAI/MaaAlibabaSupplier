@@ -5,9 +5,9 @@ Env surface (intentionally minimal, read ONLY in this file):
 No other environment variables are consumed by the install scripts. Version
 selection is minor-pinned and there are deliberately no version overrides.
 
-Packaging wiring (tools/install.py) reads BUNDLED_PYTHON_DIR /
-BUNDLED_PYTHON_EXEC_RELPATH from the environment; those are written to
-GITHUB_OUTPUT by install_2_backend.py and are never read here.
+Packaging wiring: tools/install.py takes the bundled Python runtime and agent
+child_exec relpath as CLI flags (--bundled-python-dir / --bundled-python-exec-relpath);
+the CI value for the latter is written to GITHUB_OUTPUT by install_2_backend.py.
 """
 
 from __future__ import annotations

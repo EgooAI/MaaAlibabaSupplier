@@ -14,33 +14,39 @@ backend/yak_mitm.yak, frontend/out):
     │   └── python/                     # bundled CPython with requirements
     ├── frontend/out/                   # exported frontend (NEXT_EXPORT=1)
     └── .env.example + README.md + LICENSE + Start-Debug.bat
+
+Usage:
+  python tools/install.py [VERSION] [--bundled-python-dir DIR]
+                          [--bundled-python-exec-relpath RELPATH]
+
+Both bundled-python flags are optional: without them the payload simply has no
+bundled Python runtime (local dev) and no agent child_exec override.
 """
 
-from pathlib import Path
-
-import os
+import argparse
 import shutil
 import sys
+from pathlib import Path
 
-try:
-    import jsonc
-except ModuleNotFoundError as e:
-    raise ImportError(
-        "Missing dependency 'json-with-comments' (imported as 'jsonc').\n"
-        f"Install it with:\n  {sys.executable} -m pip install json-with-comments\n"
-        "Or add it to your project's requirements."
-    ) from e
+import jsonc
+
+DEFAULT_VERSION = "v0.0.0-local"
 
 working_dir = (Path(__file__).parent.parent / "backend").resolve()
 repo_root = working_dir.parent
 install_path = repo_root / "install"
 payload_backend = install_path / "backend"
 assets_dir = working_dir / "assets"
-version = len(sys.argv) > 1 and sys.argv[1] or "v0.0.1"
-bundled_python_dir = os.getenv("BUNDLED_PYTHON_DIR")
-bundled_python_exec_relpath = os.getenv("BUNDLED_PYTHON_EXEC_RELPATH", "")
 
 IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("version", nargs="?", default=DEFAULT_VERSION, help="Version embedded into payload interface.json")
+    parser.add_argument("--bundled-python-dir", type=Path, help="Bundled CPython runtime directory to copy into the payload")
+    parser.add_argument("--bundled-python-exec-relpath", help="Python executable relpath inside the bundled runtime (drives agent child_exec)")
+    return parser.parse_args()
 
 
 def configure_ocr_model():
@@ -89,12 +95,12 @@ def install_app():
     )
 
 
-def install_python_runtime():
+def install_python_runtime(bundled_python_dir: Path | None) -> None:
     if not bundled_python_dir:
         print("No bundled Python runtime configured, skipping.")
         return
 
-    python_dir = Path(bundled_python_dir).resolve()
+    python_dir = bundled_python_dir.resolve()
     if not python_dir.exists():
         print(f"Bundled Python runtime not found: {python_dir}")
         sys.exit(1)
@@ -124,7 +130,7 @@ def install_yak():
         print(f"Portable Yak CLI not found at {yak_exe}; MITM will be unavailable in the payload.")
 
 
-def install_resource():
+def install_resource(version: str, bundled_python_exec_relpath: str | None) -> None:
     configure_ocr_model()
 
     shutil.copytree(
@@ -184,12 +190,13 @@ def install_chores():
 
 
 def main():
+    args = parse_args()
     payload_backend.mkdir(parents=True, exist_ok=True)
     install_deps()
     install_app()
-    install_python_runtime()
+    install_python_runtime(args.bundled_python_dir)
     install_yak()
-    install_resource()
+    install_resource(args.version, args.bundled_python_exec_relpath)
     install_frontend()
     install_chores()
     print(f"Install to {install_path} successfully.")

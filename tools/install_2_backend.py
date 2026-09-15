@@ -7,8 +7,8 @@ backend/app/requirements.txt into it.
 Usage:
   python tools/install_2_backend.py [--into [PYTHON]] [--dev] [--github-output PATH]
 
-Outputs (when --github-output is given, consumed by tools/install.py via CI env):
-  python_dir, python_exec_path, python_exec_relpath
+Outputs (when --github-output is given; consumed by CI to wire tools/install.py):
+  python_exec_relpath
 """
 
 from __future__ import annotations
@@ -82,10 +82,7 @@ def main() -> int:
     common.run([str(python_exe), "-m", "pip", "install", "--upgrade", "--no-cache-dir", *packages])
 
     resolved = python_exe.resolve()
-    outputs = {
-        "python_dir": str(resolved.parent),
-        "python_exec_path": str(resolved),
-    }
+    outputs = {}
     portable_root = (common.PORTABLE_DIR / "python").resolve()
     if resolved.is_relative_to(portable_root):
         outputs["python_exec_relpath"] = resolved.relative_to(portable_root).as_posix()
