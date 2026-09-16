@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import re
 
 from loguru import logger
 from dataclasses import dataclass
@@ -22,11 +21,10 @@ from backend.app.shared.mitm.parsers import (
     parse_inquiry_card,
     parse_query_customer_info,
 )
-from backend.app.shared.mitm.pool import SelfInfo, UserInfo, get_generic_card_pool, get_inquiry_card_pool, get_product_card_pool, get_self_info_pool, get_user_info_pool
+from backend.app.shared.mitm.pool import UserInfo, get_generic_card_pool, get_inquiry_card_pool, get_product_card_pool, get_user_info_pool
 from backend.app.shared.crm import sync_self_info, sync_user_info
+from backend.app.shared.utils.app_config import get_configured_self_ali_id
 from backend.app.shared.utils.logging import configure_logging
-
-_COOKIE_ALI_ID_RE = re.compile(r"xman_i=.*?aid=(\d+)")
 
 @dataclass(frozen=True)
 class _TrafficEvent:
@@ -78,7 +76,6 @@ class ReusableThreadingHTTPServer(ThreadingHTTPServer):
 class TrafficRouter:
     def __init__(self, url_filters: list[str] | None = None) -> None:
         self.url_filters = url_filters or []
-        self._self_ali_id = ""
         self._routes: list[tuple[str, Callable[[_TrafficEvent], None]]] = [
             ("queryCustomerInfo", self._handle_query_customer_info),
             ("getuserinfobyparams", self._handle_get_user_info_by_params),
@@ -94,7 +91,6 @@ class TrafficRouter:
         if self.url_filters and not any(kw in event.url for kw in self.url_filters):
             return
 
-        self._update_self_ali_id(event.request_headers)
         route = self._match_route(event)
         if route is None:
             return
@@ -112,32 +108,6 @@ class TrafficRouter:
             if keyword in event.route_target:
                 return keyword, handler
         return None
-
-    @staticmethod
-    def _header_get(headers: Any, name: str) -> str:
-        if not isinstance(headers, dict):
-            return ""
-        expected = name.lower()
-        for key, value in headers.items():
-            if str(key).lower() != expected:
-                continue
-            if isinstance(value, list):
-                return str(value[0]) if value else ""
-            return str(value or "")
-        return ""
-
-    def _update_self_ali_id(self, headers: Any) -> None:
-        if self._self_ali_id:
-            return
-        cookie = self._header_get(headers, "cookie")
-        m = _COOKIE_ALI_ID_RE.search(cookie)
-        if not m:
-            return
-        self._self_ali_id = m.group(1)
-        logger.info("Self ali_id detected from Cookie: {}", self._self_ali_id)
-        info = SelfInfo(ali_id=self._self_ali_id)
-        get_self_info_pool().put(info)
-        sync_self_info(info)
 
     def _handle_query_customer_info(self, event: _TrafficEvent) -> None:
         qs = parse_qs(urlparse(event.url).query)
@@ -167,7 +137,7 @@ class TrafficRouter:
         if not accounts:
             return
 
-        self_pool = get_self_info_pool()
+        selected_ali_id = get_configured_self_ali_id()
         user_pool = get_user_info_pool()
         for account in accounts:
             user_info = UserInfo(
@@ -181,9 +151,8 @@ class TrafficRouter:
             )
             user_pool.put(user_info)
             sync_user_info(user_info)
-            if self._self_ali_id and account.ali_id == self._self_ali_id:
+            if selected_ali_id and account.ali_id == selected_ali_id:
                 logger.info("  -> SelfInfo: ali_id={} login_id={}", account.ali_id, account.login_id)
-                self_pool.put(account)
                 sync_self_info(account)
 
     @staticmethod

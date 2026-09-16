@@ -43,7 +43,6 @@ APP -> 127.0.0.1:8084 Yak/Yakit MITM -> 127.0.0.1:8085 Python receiver -> parser
 
 部分池持久化到 `data/pools.db`。客户/会话/消息主数据经 `app.shared.crm` 读取，不直接依赖 pool。
 
-- **SelfInfoPool** — 当前登录用户（Cookie `ali_id` + `contact.extinfo.get`）；
 - **UserInfoPool** — 联系人合并缓存；
 - **ProductCardPool / GenericCardPool / InquiryCardPool** — `fetchcard` 卡片；
 - **InputPendingPool** — 未发送输入草稿（不持久化）。
@@ -52,9 +51,9 @@ APP -> 127.0.0.1:8084 Yak/Yakit MITM -> 127.0.0.1:8085 Python receiver -> parser
 
 ## 聊天数据库
 
-目标软件的加密 IM 库（非本程序库）。`ALIBABA_DATA_DIR` 下 `{ali_id}@icbu/database/im.sqlite`；解密见 `shared/utils/im_db_decryptor.py`。
+目标软件的加密 IM 库（非本程序库）。设置页配置的数据目录下 `{ali_id}@icbu/database/im.sqlite`；解密见 `shared/utils/im_db_decryptor.py`。
 
-`im_db_middleware.py`：密钥懒加载 + 带时效的解密缓存。可用条件：SelfInfo 有 `ali_id`、密钥就绪、解密成功。
+`im_db_middleware.py`：密钥懒加载 + 带时效的解密缓存。可用条件：设置页已选身份、有对应 AES Key、解密成功。身份唯一来源为设置页手选（`app_config.json: self_ali_id`），MITM 只做联系人/profile 富化，不提供身份。
 
 聊天页调用 `app.shared.crm.refresh_chat_data()` 同步后，经 CRM 读会话/消息，不直连 IM middleware。
 
@@ -65,7 +64,7 @@ UI/业务以 `app.shared.crm` 为稳定入口：
 - `get_self_info()` / `get_user_info()` / `list_conversations()` / `refresh_chat_data()`；
 - 翻译：`get_translation()` / `request_translations(texts, conversation=…)` / `translation_cached()`；user 侧规则与对话上下文在 `build_translation_input`（git 可版本化），结果仍按 `text_hash` 写入 `Translate`。
 
-`get_self_info()` 在 CRM 未就绪时内部可回退 `SelfInfoPool`，页面仍只调 CRM 入口。卡片池与输入草稿仍属 UI/业务缓存，不并入 CRM core。重同步勿阻塞 MITM 或 IM 解密锁，宜后台队列。
+`get_self_info()` 只读 CRM（首次 IM 同步即写入 self 行），无回退。卡片池与输入草稿仍属 UI/业务缓存，不并入 CRM core。重同步勿阻塞 MITM 或 IM 解密锁，宜后台队列。
 
 ### CRM 领域约定
 

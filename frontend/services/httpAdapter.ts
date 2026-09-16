@@ -133,6 +133,15 @@ export const httpBackend: OperationsBackend = {
   refreshSystemStatus: () => requestJson("/api/status/refresh", { method: "POST" }),
   createTestTask: (input) => requestJson("/api/status/test-tasks", { method: "POST", body: JSON.stringify(input) }),
 
+  getDataDirStatus: () => requestJson("/api/settings/alibaba-data-dir"),
+  saveDataDirPath: (path) => requestJson("/api/settings/alibaba-data-dir", { method: "PUT", body: JSON.stringify({ path }) }),
+  listDataDirCandidates: () => requestJson("/api/settings/alibaba-data-dir/candidates"),
+
+  listAliIds: () => requestJson("/api/settings/ali-ids"),
+  saveAliId: (aliId) => requestJson("/api/settings/ali-id", { method: "PUT", body: JSON.stringify({ ali_id: aliId }) }),
+  saveAliKey: (aliId, aesKeyHex) => requestJson("/api/settings/ali-keys", { method: "PUT", body: JSON.stringify({ ali_id: aliId, aes_key_hex: aesKeyHex }) }),
+  clearAliKey: (aliId) => requestJson(`/api/settings/ali-keys/${encodeURIComponent(aliId)}`, { method: "DELETE" }),
+
   getAgentConsole: () => requestJson("/api/agent/console"),
   saveLlmConfig: (input: DocumentLlmConfig) => requestJson("/api/agent/llm-config", { method: "PUT", body: JSON.stringify(input) }),
   saveAgentPreset: (input: DbAgentPreset) => requestJson("/api/agent/presets", { method: "POST", body: JSON.stringify(input) }),

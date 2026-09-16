@@ -2,7 +2,7 @@ import { agentConsole, agentPresets, llmLevels, systemAgents } from "@/mock/agen
 import { businessCards } from "@/mock/cardData";
 import { assistantSuggestions, conversationAggregates } from "@/mock/conversationData";
 import { mockSelfInfo } from "@/mock/selfData";
-import { keyStatus, nodeResult, proxyStatus, receiverStatus, systemStatus, taskSnapshots } from "@/mock/statusData";
+import { dataDirStatus, keyStatus, nodeResult, proxyStatus, receiverStatus, systemStatus, taskSnapshots } from "@/mock/statusData";
 import { buildConversationExport } from "@/domain/chat/chatModel";
 import { nowText } from "@/domain/time";
 import { adaptConversationDetail, adaptConversationSummary } from "@/services/chatAdapter";
@@ -14,7 +14,7 @@ import type { ConversationDetail } from "@/types/chatCanonical";
 import type { ConversationAggregateDto, Message } from "@/types/chatTransport";
 import type { SendMessageInput } from "@/types/chatOperations";
 import type { SelfInfo } from "@/types/home";
-import type { KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskSnapshot } from "@/types/status";
+import type { AliIdList, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskSnapshot } from "@/types/status";
 import type { OperationsBackend } from "@/services/interfaces";
 
 const delay = <T,>(value: T, ms = 280) => new Promise<T>((resolve) => setTimeout(() => resolve(value), ms));
@@ -27,6 +27,7 @@ const initialState = {
   keyStatus,
   proxyStatus,
   receiverStatus,
+  dataDirStatus,
   nodeResult,
   taskSnapshots,
   console: agentConsole,
@@ -41,6 +42,7 @@ let keyStatusStore: KeyStatus = structuredClone(initialState.keyStatus);
 let proxyStatusStore: NetworkStatus = structuredClone(initialState.proxyStatus);
 let receiverStatusStore: NetworkStatus = structuredClone(initialState.receiverStatus);
 let nodeResultStore: NodeTestResult = structuredClone(initialState.nodeResult);
+let dataDirStatusStore: DataDirStatus = structuredClone(initialState.dataDirStatus);
 let taskSnapshotStore: TaskSnapshot[] = structuredClone(initialState.taskSnapshots);
 let consoleStore: AgentConsoleState = structuredClone(initialState.console);
 let agentPresetStore: AgentPreset[] = structuredClone(initialState.agentPresets);
@@ -57,6 +59,7 @@ export const mockBackend: OperationsBackend = {
     proxyStatusStore = structuredClone(initialState.proxyStatus);
     receiverStatusStore = structuredClone(initialState.receiverStatus);
     nodeResultStore = structuredClone(initialState.nodeResult);
+    dataDirStatusStore = structuredClone(initialState.dataDirStatus);
     taskSnapshotStore = structuredClone(initialState.taskSnapshots);
     agentPresetStore = structuredClone(initialState.agentPresets);
     consoleStore = structuredClone(initialState.console);
@@ -143,6 +146,26 @@ export const mockBackend: OperationsBackend = {
   checkMitmReceiver: () => delay(structuredClone(receiverStatusStore)),
 
   runNodeTest: () => delay(structuredClone(nodeResultStore), 360),
+
+  getDataDirStatus: () => delay(structuredClone(dataDirStatusStore)),
+
+  saveDataDirPath: async (path: string) => {
+    const trimmed = path.trim();
+    if (!trimmed) throw new Error("数据目录路径不能为空");
+    dataDirStatusStore = { state: "ok", path: trimmed, source: "file", detail: "" };
+    statusStore = buildStatusSnapshot();
+    return delay(structuredClone(dataDirStatusStore));
+  },
+
+  listDataDirCandidates: (): Promise<DataDirCandidates> => delay({ candidates: [dataDirStatusStore.path].filter(Boolean) }),
+
+  listAliIds: (): Promise<AliIdList> => delay({ accounts: [], selected: "" }),
+
+  saveAliId: async (): Promise<AliIdList> => delay({ accounts: [], selected: "" }),
+
+  saveAliKey: async (): Promise<AliIdList> => delay({ accounts: [], selected: "" }),
+
+  clearAliKey: async (): Promise<AliIdList> => delay({ accounts: [], selected: "" }),
 
   listTaskSnapshots: () => delay(structuredClone(taskSnapshotStore)),
 
@@ -364,6 +387,7 @@ function buildStatusSnapshot() {
     userStatus: keyStatusStore,
     proxyStatus: proxyStatusStore,
     receiverStatus: receiverStatusStore,
+    dataDirStatus: dataDirStatusStore,
     nodeResult: nodeResultStore,
     taskSnapshots: taskSnapshotStore,
     updatedAt: nowText(),

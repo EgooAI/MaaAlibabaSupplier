@@ -15,7 +15,7 @@ class SourceFingerprintGuardTestCase(unittest.TestCase):
         IMDBMiddleware._instance = None
         self.mw = IMDBMiddleware()
         patches = [
-            patch.object(self.mw, "_get_self_ali_id", return_value="ali-1"),
+            patch.object(self.mw, "_resolve_self_ali_id", return_value="ali-1"),
             patch.object(self.mw, "resolve_encrypted_db_path", return_value=Path("encrypted-im.sqlite")),
             patch.object(self.mw, "_source_fingerprint_of"),
             patch.object(self.mw, "_crc32_of"),

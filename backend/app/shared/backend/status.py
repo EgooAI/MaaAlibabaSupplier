@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 
 from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
-from backend.app.shared.mitm.pool import get_self_info_pool
+from backend.app.shared.utils.app_config import get_configured_self_ali_id
 from backend.app.shared.utils.env import get_env_int, get_env_str, load_workdir_env
 from backend.app.shared.utils.settings import (
     MITM_PROXY_HOST_DEFAULT,
@@ -37,17 +37,19 @@ class NetworkStatus:
 
 def check_user_status() -> KeyStatus:
     load_workdir_env()
-    info = get_self_info_pool().get()
-    ali_id = info.ali_id if info and info.ali_id else ""
+    ali_id = get_configured_self_ali_id()
 
     mw = get_im_db_middleware()
     has_key, source = mw.key_status()
 
-    db_exists = False
-    if ali_id:
-        db_exists = mw.resolve_encrypted_db_path(ali_id) is not None
+    db_exists = mw.resolve_encrypted_db_path(ali_id) is not None if ali_id else False
 
     return KeyStatus(has_key=has_key, source=source, ali_id=ali_id, db_exists=db_exists)
+
+
+def check_data_dir_status() -> dict:
+    """Return the middleware data-dir status dict for the status snapshot."""
+    return get_im_db_middleware().data_dir_status()
 
 
 def _check_port(host: str, port: int) -> NetworkStatus:

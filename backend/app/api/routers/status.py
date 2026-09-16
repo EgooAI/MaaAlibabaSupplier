@@ -87,11 +87,19 @@ def _build_system_snapshot() -> dict:
     user = asdict(status_mod.check_user_status())
     proxy = asdict(status_mod.check_mitm_proxy())
     receiver = asdict(status_mod.check_mitm_receiver())
+    data_dir = status_mod.check_data_dir_status()
     snaps = get_task_queue().all_snapshots()
     node = _last_node_result
     return {
         "updatedAt": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S"),
         "modules": [
+            {
+                "id": "health-datadir",
+                "name": "数据源目录",
+                "status": "healthy" if data_dir["state"] == "ok" else "warning",
+                "latency": None,
+                "description": data_dir["path"] or "尚未配置阿里客户端数据目录，请前往设置页配置",
+            },
             {
                 "id": "health-identity",
                 "name": "身份服务",
@@ -127,6 +135,7 @@ def _build_system_snapshot() -> dict:
         "userStatus": user,
         "proxyStatus": proxy,
         "receiverStatus": receiver,
+        "dataDirStatus": data_dir,
         "nodeResult": node,
         "taskSnapshots": [_snapshot_to_task_snapshot(s) for s in snaps],
     }

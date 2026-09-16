@@ -8,7 +8,6 @@ from backend.app.shared.mitm.pool import (
     get_generic_card_pool,
     get_inquiry_card_pool,
     get_product_card_pool,
-    get_self_info_pool,
     get_user_info_pool,
 )
 
@@ -26,7 +25,6 @@ def self_info() -> dict:
 @router.post("/api/cache/reset")
 def reset_cache() -> dict:
     get_user_info_pool().clear()
-    get_self_info_pool().clear()
     get_product_card_pool().clear()
     get_inquiry_card_pool().clear()
     get_generic_card_pool().clear()

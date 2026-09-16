@@ -1,8 +1,10 @@
 """Business adapter layer for syncing app data into the CRM SDK."""
 
 from backend.app.shared.crm.ingest import (
+    REASON_DATA_DIR_NOT_CONFIGURED,
     REASON_IM_DB_NOT_READY,
     REASON_SELF_IDENTITY_NOT_READY,
+    REASON_SELF_IDENTITY_NOT_SELECTED,
     ChatSyncState,
     refresh_chat_data,
 )
@@ -16,8 +18,10 @@ __all__ = [
     "CrmConversation",
     "CrmMessage",
     "CrmResolver",
+    "REASON_DATA_DIR_NOT_CONFIGURED",
     "REASON_IM_DB_NOT_READY",
     "REASON_SELF_IDENTITY_NOT_READY",
+    "REASON_SELF_IDENTITY_NOT_SELECTED",
     "get_conversation_detail",
     "get_self_info",
     "get_user_info",
