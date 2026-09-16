@@ -42,13 +42,14 @@ describe("status model adapters", () => {
       userStatus: { has_key: true, source: ".env", ali_id: "seller-1", db_exists: true },
       proxyStatus: { reachable: true, host: "127.0.0.1", port: 7890, latency_ms: 50, error: null },
       receiverStatus: { reachable: false, host: "127.0.0.1", port: 8788, latency_ms: null, error: "closed" },
+      dataDirStatus: { state: "ok", path: "C:/AlibabaSupplierData", source: "file", detail: "" },
       nodeResult: { success: true, message: "ok" },
       taskSnapshots: [task],
       updatedAt: "2026-09-08 10:00",
     });
 
-    expect(snapshot.modules.map((module) => module.status)).toEqual(["healthy", "healthy", "offline", "healthy"]);
-    expect(snapshot.modules.map((module) => module.latency)).toEqual([null, 50, null, null]);
+    expect(snapshot.modules.map((module) => module.status)).toEqual(["healthy", "healthy", "offline", "healthy", "healthy"]);
+    expect(snapshot.modules.map((module) => module.latency)).toEqual([null, 50, null, null, null]);
     expect(snapshot.tasks[0].status).toBe("queued");
     expect(snapshot.receiverStatus.error).toBe("closed");
   });
@@ -58,11 +59,12 @@ describe("status model adapters", () => {
       userStatus: { has_key: true, source: ".env", ali_id: "seller-1", db_exists: true },
       proxyStatus: { reachable: true, host: "127.0.0.1", port: 7890, latency_ms: null, error: null },
       receiverStatus: { reachable: true, host: "127.0.0.1", port: 8788, latency_ms: 220, error: null },
+      dataDirStatus: { state: "unconfigured", path: "", source: "none", detail: "尚未配置" },
       nodeResult: { success: false, message: "down" },
       taskSnapshots: [],
       updatedAt: "2026-09-08 10:00",
     });
 
-    expect(snapshot.modules.map((module) => module.status)).toEqual(["healthy", "healthy", "warning", "offline"]);
+    expect(snapshot.modules.map((module) => module.status)).toEqual(["healthy", "healthy", "warning", "offline", "warning"]);
   });
 });

@@ -1,5 +1,5 @@
 import { buildSystemStatusSnapshot, taskSnapshotToTaskItem } from "@/domain/status/statusModel";
-import type { KeyStatus, NetworkStatus, NodeTestResult, TaskSnapshot } from "@/types/status";
+import type { DataDirStatus, KeyStatus, NetworkStatus, NodeTestResult, TaskSnapshot } from "@/types/status";
 
 export const keyStatus: KeyStatus = {
   has_key: true,
@@ -27,6 +27,13 @@ export const receiverStatus: NetworkStatus = {
 export const nodeResult: NodeTestResult = {
   success: true,
   message: "MaaFW 节点测试通过（Mock）",
+};
+
+export const dataDirStatus: DataDirStatus = {
+  state: "ok",
+  path: "C:/AlibabaSupplierData",
+  source: "file",
+  detail: "",
 };
 
 export const taskSnapshots: TaskSnapshot[] = [
@@ -71,6 +78,7 @@ export const systemStatus = buildSystemStatusSnapshot({
   userStatus: keyStatus,
   proxyStatus,
   receiverStatus,
+  dataDirStatus,
   nodeResult,
   taskSnapshots,
   updatedAt: "2026-09-07 10:25",

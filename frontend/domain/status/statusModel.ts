@@ -1,14 +1,15 @@
 import { formatDateTime, nowText } from "@/domain/time";
-import type { HealthModuleId, HealthStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskItem, TaskSnapshot, TaskStatus } from "@/types/status";
+import type { DataDirStatus, HealthModuleId, HealthStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskItem, TaskSnapshot, TaskStatus } from "@/types/status";
 
 export const HEALTH_MODULE_TITLES: Record<HealthModuleId, string> = {
   "health-identity": "用户状态",
   "health-proxy": "MITM 代理",
   "health-receiver": "MITM Receiver",
   "health-node": "MaaFW 节点",
+  "health-datadir": "数据源目录",
 };
 
-export const HEALTH_MODULE_IDS: HealthModuleId[] = ["health-identity", "health-proxy", "health-receiver", "health-node"];
+export const HEALTH_MODULE_IDS: HealthModuleId[] = ["health-identity", "health-proxy", "health-receiver", "health-node", "health-datadir"];
 
 export function taskSnapshotToTaskItem(snapshot: TaskSnapshot): TaskItem {
   const result = snapshot.result ?? undefined;
@@ -33,6 +34,7 @@ export function buildSystemStatusSnapshot({
   userStatus,
   proxyStatus,
   receiverStatus,
+  dataDirStatus,
   nodeResult,
   taskSnapshots,
   updatedAt = nowText(),
@@ -40,6 +42,7 @@ export function buildSystemStatusSnapshot({
   userStatus: KeyStatus;
   proxyStatus: NetworkStatus;
   receiverStatus: NetworkStatus;
+  dataDirStatus: DataDirStatus;
   nodeResult: NodeTestResult;
   taskSnapshots: TaskSnapshot[];
   updatedAt?: string;
@@ -75,11 +78,19 @@ export function buildSystemStatusSnapshot({
         latency: null,
         description: nodeResult.message,
       },
+      {
+        id: "health-datadir",
+        name: "数据源目录",
+        status: dataDirStatus.state === "ok" ? "healthy" : "warning",
+        latency: null,
+        description: dataDirStatus.path || "尚未配置阿里客户端数据目录，请前往设置页配置",
+      },
     ],
     tasks: taskSnapshots.map(taskSnapshotToTaskItem),
     userStatus,
     proxyStatus,
     receiverStatus,
+    dataDirStatus,
     nodeResult,
     taskSnapshots,
   };

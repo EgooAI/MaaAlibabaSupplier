@@ -22,6 +22,8 @@ from backend.app.shared.chat_format import (
     conversation_transcript,
 )
 from backend.app.shared.crm import (
+    REASON_DATA_DIR_NOT_CONFIGURED,
+    REASON_SELF_IDENTITY_NOT_SELECTED,
     get_conversation_detail as crm_get_conversation_detail,
     get_user_info as crm_get_user_info,
     list_conversations as crm_list_conversations,
@@ -77,7 +79,11 @@ def _snap_to_dict(s) -> dict:
 def _ready() -> str:
     state = refresh_chat_data(wait=False)
     if not state.ready or not state.self_ali_id:
-        raise AppError(f"chat data not ready: {state.reason or 'unknown'}", status_code=503)
+        if state.reason == REASON_DATA_DIR_NOT_CONFIGURED:
+            raise AppError("阿里客户端数据目录尚未配置，请前往“设置”页配置后重试", status_code=503)
+        if state.reason == REASON_SELF_IDENTITY_NOT_SELECTED:
+            raise AppError("尚未选择阿里账号身份，请前往“设置”页选择后重试", status_code=503)
+        raise AppError(f"聊天数据未就绪({state.reason or 'unknown'})，请确认阿里客户端已启动且 AES Key 有效", status_code=503)
     return state.self_ali_id
 
 

@@ -4,17 +4,15 @@ from loguru import logger
 
 from backend.app.shared.crm.sync import CRMAdapter
 from backend.app.shared.crm.views import CrmConversation
-from backend.app.shared.mitm.pool import SelfInfo, UserInfo, get_self_info_pool
+from backend.app.shared.mitm.pool import SelfInfo, UserInfo
 
 
 def get_self_info() -> SelfInfo | None:
     try:
-        info = CRMAdapter().get_self_info()
-        if info is not None:
-            return info
+        return CRMAdapter().get_self_info()
     except Exception:
-        logger.exception("Failed to load SelfInfo from CRM SDK, falling back to pool")
-    return get_self_info_pool().get()
+        logger.exception("Failed to load SelfInfo from CRM SDK")
+        return None
 
 
 def get_user_info(identifier: str) -> UserInfo | None:

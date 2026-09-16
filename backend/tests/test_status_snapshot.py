@@ -13,11 +13,13 @@ class StatusSnapshotTestCase(unittest.TestCase):
         body = self.client.get("/api/status").json()
         self.assertEqual(body["code"], 0)
         snapshot = body["data"]
-        for key in ("updatedAt", "modules", "tasks", "userStatus", "proxyStatus", "receiverStatus", "nodeResult", "taskSnapshots"):
+        for key in ("updatedAt", "modules", "tasks", "userStatus", "proxyStatus", "receiverStatus", "dataDirStatus", "nodeResult", "taskSnapshots"):
             self.assertIn(key, snapshot)
+        for key in ("state", "path", "source", "detail"):
+            self.assertIn(key, snapshot["dataDirStatus"])
         module_ids = [module["id"] for module in snapshot["modules"]]
         self.assertEqual(
-            module_ids, ["health-identity", "health-proxy", "health-receiver", "health-node"]
+            module_ids, ["health-datadir", "health-identity", "health-proxy", "health-receiver", "health-node"]
         )
         for module in snapshot["modules"]:
             for key in ("id", "name", "status", "latency", "description"):

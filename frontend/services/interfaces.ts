@@ -2,7 +2,7 @@ import type { AgentConsoleState, AgentTestInput, AgentTestResult, AgentTestSessi
 import type { AssistantSuggestion, Conversation, ConversationAnalysis, ConversationDetail } from "@/types/chatCanonical";
 import type { ExportConversationsInput, ExportConversationsResult, RequestTranslationsInput, RequestTranslationsResult, SendMessageInput, SendMessageResult, TranslateMessageInput, TranslateMessageResult } from "@/types/chatOperations";
 import type { SelfInfo } from "@/types/home";
-import type { CreateTestTaskInput, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskItem, TaskSnapshot } from "@/types/status";
+import type { AliIdList, CreateTestTaskInput, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskItem, TaskSnapshot } from "@/types/status";
 
 export interface OperationsBackend {
   getSelfInfo(): Promise<SelfInfo | null>;
@@ -30,6 +30,15 @@ export interface OperationsBackend {
   getSystemStatus(): Promise<SystemStatusSnapshot>;
   refreshSystemStatus(): Promise<SystemStatusSnapshot>;
   createTestTask(input: CreateTestTaskInput): Promise<TaskItem>;
+
+  getDataDirStatus(): Promise<DataDirStatus>;
+  saveDataDirPath(path: string): Promise<DataDirStatus>;
+  listDataDirCandidates(): Promise<DataDirCandidates>;
+
+  listAliIds(): Promise<AliIdList>;
+  saveAliId(aliId: string): Promise<AliIdList>;
+  saveAliKey(aliId: string, aesKeyHex: string): Promise<AliIdList>;
+  clearAliKey(aliId: string): Promise<AliIdList>;
 
   getAgentConsole(): Promise<AgentConsoleState>;
   saveLlmConfig(input: DocumentLlmConfig): Promise<DocumentLlmConfig>;

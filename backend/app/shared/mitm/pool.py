@@ -390,66 +390,6 @@ def get_user_info_pool() -> UserInfoPool:
 
 
 # ---------------------------------------------------------------------------
-# SelfInfoPool
-# ---------------------------------------------------------------------------
-
-
-class SelfInfoPool:
-    """Thread-safe singleton pool backed by SQLite for the current user."""
-
-    _instance: SelfInfoPool | None = None
-    _instance_lock = threading.Lock()
-
-    def __new__(cls) -> SelfInfoPool:
-        with cls._instance_lock:
-            if cls._instance is None:
-                instance = super().__new__(cls)
-                instance._lock = threading.Lock()
-                instance._conn = _get_connection()
-                _execute_schema(
-                    instance._conn,
-                    "CREATE TABLE IF NOT EXISTS self_info "
-                    "(id INTEGER PRIMARY KEY CHECK(id = 1), data TEXT NOT NULL)",
-                )
-                instance._data: SelfInfo | None = None
-                instance._load()
-                cls._instance = instance
-            return cls._instance
-
-    def _load(self) -> None:
-        row = self._conn.execute("SELECT data FROM self_info WHERE id = 1").fetchone()
-        if row:
-            self._data = SelfInfo.model_validate_json(row[0])
-
-    def put(self, info: SelfInfo) -> None:
-        if not info.ali_id:
-            return
-        with self._lock:
-            if self._data is None:
-                self._data = info
-            else:
-                merged = self._data.model_dump()
-                for field_name, new_val in info:
-                    if new_val and not merged.get(field_name):
-                        merged[field_name] = new_val
-                self._data = SelfInfo.model_validate(merged)
-            _save_model(self._conn, "self_info", "id", 1, self._data)
-
-    def get(self) -> SelfInfo | None:
-        with self._lock:
-            return self._data
-
-    def clear(self) -> None:
-        with self._lock:
-            _clear_table(self._conn, "self_info")
-            self._data = None
-
-
-def get_self_info_pool() -> SelfInfoPool:
-    return SelfInfoPool()
-
-
-# ---------------------------------------------------------------------------
 # ProductCardPool
 # ---------------------------------------------------------------------------
 

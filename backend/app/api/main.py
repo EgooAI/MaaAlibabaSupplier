@@ -13,7 +13,7 @@ from starlette.responses import JSONResponse
 from backend.app.api.envelope import AppError, err
 from backend.app.shared.utils.settings import FRONTEND_DEV_ORIGINS, resolve_repo_root
 
-from backend.app.api.routers import agent, app as app_router, conversations, messages, self, status
+from backend.app.api.routers import agent, app as app_router, conversations, messages, self, settings, status
 
 
 def create_app() -> FastAPI:
@@ -63,6 +63,7 @@ def create_app() -> FastAPI:
     app.include_router(messages.router, tags=["messages"])
     app.include_router(agent.router, tags=["agent"])
     app.include_router(app_router.router, tags=["app"])
+    app.include_router(settings.router, tags=["settings"])
 
     # Serve the exported frontend (frontend/out) from the same origin when it
     # has been built with NEXT_EXPORT=1; dev uses the Next.js server instead.

@@ -12,6 +12,7 @@ import { ConversationList } from "./conversation/ConversationList";
 import { CustomerInfo } from "./conversation/CustomerInfo";
 import { MessageTimeline } from "./conversation/MessageTimeline";
 import { useChatWorkbench } from "./hooks/useChatWorkbench";
+import { DataDirBanner } from "@/features/settings/DataDirBanner";
 import { AssistantSuggestionModal } from "./modals/AssistantSuggestionModal";
 import { ChatAnalysisModal } from "./modals/ChatAnalysisModal";
 import { ChatComposer } from "./workspace/ChatComposer";
@@ -116,6 +117,7 @@ export function ChatPage() {
 
   return (
     <>
+      <DataDirBanner />
       <SplitSessionLayout list={sessionList} detail={sessionDetail} mobileView={mobileView} />
 
       <AssistantSuggestionModal open={workbench.suggestionOpen} suggestions={workbench.suggestions} onClose={() => workbench.setSuggestionOpen(false)} onInsert={workbench.insertSuggestion} />
