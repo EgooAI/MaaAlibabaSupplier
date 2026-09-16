@@ -66,6 +66,16 @@ class AgentConsoleTestCase(unittest.TestCase):
         console = self.client.get("/api/agent/console").json()["data"]
         self.assertTrue(any(level["level"] == 4 for level in console["llmLevels"]))
 
+    def test_llm_config_rejects_blank_required_fields(self) -> None:
+        base = {
+            "level": 0, "base_url": "https://llm.example", "api_key": "k",
+            "model_name": "m", "system_prompt": "", "context": 8000, "max_tool_rounds": 3,
+        }
+        for field in ("base_url", "api_key", "model_name"):
+            payload = dict(base, **{field: "   "})
+            resp = self.client.put("/api/agent/llm-config", json=payload)
+            self.assertEqual(resp.status_code, 422)
+
     def test_preset_crud_and_system_guard(self) -> None:
         created = self.client.post("/api/agent/presets", json={
             "apid": "", "name": "N", "description": "D", "prompt": "P",

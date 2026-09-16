@@ -13,7 +13,6 @@ export const ROUTES: RouteInfo[] = [
   { path: "/batch", title: "批量管理" },
   { path: "/agent", title: "自动化", navParent: "/agent" },
   { path: "/agent/llm", title: "LLM", navParent: "/agent" },
-  { path: "/agent/system-prompt", title: "Level SYSTEM_PROMPT", navParent: "/agent" },
   { path: "/agent/system-agents", title: "系统 Agent", navParent: "/agent" },
   { path: "/agent/regular-agents", title: "普通 Agent", navParent: "/agent" },
   { path: "/status", title: "系统状态", navParent: "/settings" },
@@ -27,7 +26,6 @@ export const PAGE_TITLES: Record<string, string> = Object.fromEntries(
 export function resolveSelectedKey(pathname: string): string {
   if (pathname.startsWith("/chat/agent-sessions")) return "/chat/agent-sessions";
   if (pathname.startsWith("/agent/system-agents")) return "/agent/system-agents";
-  if (pathname.startsWith("/agent/system-prompt")) return "/agent/system-prompt";
   if (pathname.startsWith("/agent/regular-agents")) return "/agent/regular-agents";
   if (pathname.startsWith("/agent/llm")) return "/agent/llm";
   if (pathname === "/agent" || pathname.startsWith("/agent/")) return "/agent/llm";

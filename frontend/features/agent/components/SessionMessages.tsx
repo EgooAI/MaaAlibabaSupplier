@@ -1,14 +1,11 @@
 "use client";
 
-import { RobotOutlined, UserOutlined } from "@ant-design/icons";
+import { RobotOutlined, ShopOutlined } from "@ant-design/icons";
 import { Avatar, Card, Space, Typography } from "antd";
-import { useState } from "react";
-import { fallbackAvatarUrl, sellerAvatarUrl } from "@/domain/chat/avatarModel";
+import { renderMessageHtml } from "@/domain/chat/messageHtml";
 import type { AgentTestSession } from "@/types/agent";
 
 export function SessionMessages({ session }: { session: AgentTestSession }) {
-  const [userAvatar, setUserAvatar] = useState(sellerAvatarUrl);
-
   if (!session.messages.length) {
     return <Typography.Text type="secondary">暂无消息</Typography.Text>;
   }
@@ -22,17 +19,12 @@ export function SessionMessages({ session }: { session: AgentTestSession }) {
             <div className={`flex max-w-[78%] gap-3 ${isAssistant ? "" : "flex-row-reverse"}`}>
               <Avatar
                 className="shrink-0"
-                src={isAssistant ? undefined : userAvatar}
-                icon={isAssistant ? <RobotOutlined /> : <UserOutlined />}
-                style={{ backgroundColor: isAssistant ? "#64748b" : "#e2e8f0" }}
-                onError={isAssistant ? undefined : () => {
-                  setUserAvatar(fallbackAvatarUrl);
-                  return true;
-                }}
+                icon={isAssistant ? <RobotOutlined /> : <ShopOutlined />}
+                style={{ backgroundColor: isAssistant ? "#64748b" : "#1677ff" }}
               />
               <Card size="small" className={isAssistant ? "bg-slate-50" : "bg-blue-50"}>
                 <Typography.Text className="text-xs">{item.createdAt}</Typography.Text>
-                <Typography.Paragraph className="!mb-0 mt-2 whitespace-pre-wrap">{item.content}</Typography.Paragraph>
+                <div className="mt-2 whitespace-pre-wrap break-words" dangerouslySetInnerHTML={renderMessageHtml(item.content)} />
               </Card>
             </div>
           </div>

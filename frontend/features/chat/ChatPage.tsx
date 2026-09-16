@@ -76,6 +76,7 @@ export function ChatPage() {
                 <MessageTimeline
                   messages={active.messages}
                   buyerId={active.customer.id}
+                  buyerName={active.customer.name}
                   showTranslations={workbench.translationVisible}
                   onRegenerate={(item) => workbench.translate(item, true)}
                   onOpenCard={workbench.setActiveCardId}

@@ -1,9 +1,8 @@
 "use client";
 
-import { Avatar, Badge, Button, Checkbox, Empty, Listy, Radio, Space, Typography } from "antd";
+import { Avatar, Badge, Button, Checkbox, Empty, Radio, Space, Typography } from "antd";
 import { useMemo } from "react";
-import { StatusTag } from "@/components/StatusTag";
-import { conversationAvatarUrl } from "@/domain/chat/avatarModel";
+import { avatarColorOf, avatarInitialOf } from "@/domain/chat/avatarModel";
 import { conversationTimeLabel, dialogueCountOf, groupConversations, sortConversations } from "@/domain/chat/chatModel";
 import type { ConversationGroupMode } from "@/domain/chat/chatModel";
 import type { Conversation } from "@/types/chatCanonical";
@@ -32,7 +31,7 @@ export function ConversationList({
   const groups = useMemo(() => groupConversations(sortConversations(conversations), groupMode), [conversations, groupMode]);
 
   return (
-    <Space orientation="vertical" className="w-full" size="middle">
+    <Space orientation="vertical" className="w-full" size="small">
       <Radio.Group
         size="small"
         value={groupMode}
@@ -54,13 +53,14 @@ export function ConversationList({
                 </Space>
               ) : null}
             </div>
-            <Listy
-              items={group.items}
-              rowKey="id"
-              virtual={false}
-              itemRender={(item: Conversation) => (
+            <div className="flex flex-col gap-1">
+              {group.items.map((item: Conversation) => {
+                const isActive = activeId === item.id;
+                return (
                 <div
-                  className={`cursor-pointer rounded-lg px-2 ${activeId === item.id ? "bg-blue-50" : "hover:bg-slate-50"}`}
+                  key={item.id}
+                  aria-current={isActive ? "true" : undefined}
+                  className={`cursor-pointer rounded-lg border px-1.5 py-1.5 ${isActive ? "border-blue-300 bg-blue-100 shadow-sm" : "border-transparent hover:border-slate-200 hover:bg-slate-50"}`}
                   onClick={() => {
                     if (selectable) onToggleSelected?.(item.id);
                     else onSelect?.(item.id);
@@ -68,16 +68,17 @@ export function ConversationList({
                 >
                   <div className="flex w-full gap-2">
                     {selectable ? <Checkbox checked={selectedIds.includes(item.id)} onClick={(event) => event.stopPropagation()} onChange={() => onToggleSelected?.(item.id)} /> : null}
-                    <Avatar src={conversationAvatarUrl(item.customer.id)} size={40} />
+                    <Avatar size={40} className="shrink-0" style={{ backgroundColor: avatarColorOf(item.customer.id) }}>
+                      {avatarInitialOf(item.customer.name)}
+                    </Avatar>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <Typography.Text strong ellipsis>{item.customer.name}</Typography.Text>
                         <Badge count={item.unreadCount} size="small" />
                       </div>
-                      <Typography.Text ellipsis className="block text-xs">{item.customer.company} · {item.customer.country}</Typography.Text>
+                      {item.customer.country ? <Typography.Text ellipsis className="block text-xs">{item.customer.country}</Typography.Text> : null}
                       {item.latestMessage ? <Typography.Text ellipsis className="block text-xs">{item.latestMessage}</Typography.Text> : null}
-                      <div className="mt-2 flex items-center justify-between">
-                        <StatusTag status={item.status} />
+                      <div className="mt-2 flex items-center justify-end">
                         <Typography.Text className="text-xs">
                           {groupMode === "count" ? `对话 ${dialogueCountOf(item)} 条` : conversationTimeLabel(item.updatedAt)}
                         </Typography.Text>
@@ -85,8 +86,9 @@ export function ConversationList({
                     </div>
                   </div>
                 </div>
-              )}
-            />
+                );
+              })}
+            </div>
           </div>
         );
       }) : <Empty description="暂无会话" />}

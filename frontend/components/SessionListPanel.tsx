@@ -23,7 +23,7 @@ export function SessionListPanel({ title, loading, children, extra }: SessionLis
       title={cardTitle}
       loading={loading}
       className="flex h-full min-h-0 w-full flex-col"
-      classNames={{ body: "flex min-h-0 flex-1 flex-col overflow-y-auto" }}
+      classNames={{ body: "flex min-h-0 flex-1 flex-col overflow-y-auto !p-3" }}
     >
       {children}
     </Card>
