@@ -2,7 +2,7 @@ import type { AgentConsoleState, AgentTestInput, AgentTestResult, AgentTestSessi
 import type { AssistantSuggestion, Conversation, ConversationAnalysis, ConversationDetail } from "@/types/chatCanonical";
 import type { ExportConversationsInput, ExportConversationsResult, RequestTranslationsInput, RequestTranslationsResult, SendMessageInput, SendMessageResult, TranslateMessageInput, TranslateMessageResult, ConversationRevision } from "@/types/chatOperations";
 import type { SelfInfo } from "@/types/home";
-import type { AliIdList, CreateTestTaskInput, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskItem, TaskSnapshot } from "@/types/status";
+import type { AliIdList, CreateTestTaskInput, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestEntry, NodeTestSubmission, SystemStatusSnapshot, TaskItem, TaskSnapshot } from "@/types/status";
 
 export interface OperationsBackend {
   getSelfInfo(): Promise<SelfInfo | null>;
@@ -26,7 +26,7 @@ export interface OperationsBackend {
   checkUserStatus(): Promise<KeyStatus>;
   checkMitmProxy(): Promise<NetworkStatus>;
   checkMitmReceiver(): Promise<NetworkStatus>;
-  runNodeTest(entry?: string): Promise<NodeTestResult>;
+  runNodeTest(entry?: NodeTestEntry): Promise<NodeTestSubmission>;
   listTaskSnapshots(): Promise<TaskSnapshot[]>;
   getSystemStatus(): Promise<SystemStatusSnapshot>;
   refreshSystemStatus(): Promise<SystemStatusSnapshot>;

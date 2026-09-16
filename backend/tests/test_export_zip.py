@@ -4,6 +4,7 @@ from io import BytesIO
 from os import environ
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from backend.app.shared.crm.views import CrmConversation, CrmMessage, CrmResolver
 from backend.app.shared.export_zip import (
@@ -49,8 +50,10 @@ class ExportZipTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = TemporaryDirectory()
         self.crm_path = str(Path(self.temp_dir.name) / "crm.sqlite")
-        environ["MAA_CRM_DB_PATH"] = self.crm_path
-        environ["MAA_POOLS_DB_PATH"] = str(Path(self.temp_dir.name) / "pools.db")
+        self.enterContext(mock.patch.dict(environ, {
+            "MAA_CRM_DB_PATH": self.crm_path,
+            "MAA_POOLS_DB_PATH": str(Path(self.temp_dir.name) / "pools.db"),
+        }))
 
     def tearDown(self) -> None:
         from backend.app.shared.crm.sync import CRMAdapter
@@ -59,8 +62,6 @@ class ExportZipTestCase(unittest.TestCase):
             CRMAdapter(database_path=self.crm_path).engine.dispose()
         finally:
             self.temp_dir.cleanup()
-            environ.pop("MAA_CRM_DB_PATH", None)
-            environ.pop("MAA_POOLS_DB_PATH", None)
 
     def test_dialogue_count_skips_system(self) -> None:
         self.assertEqual(dialogue_count(_conv()), 2)

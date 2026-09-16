@@ -1,13 +1,30 @@
 import unittest
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
 from backend.app.api.main import app
+from backend.app.api.routers import status as status_router
+from backend.app.shared.backend import status as status_mod
 
 
 class StatusSnapshotTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(app, raise_server_exceptions=False)
+        self.addCleanup(self.client.close)
+        queue = mock.Mock()
+        queue.all_snapshots.return_value = []
+        patchers = [
+            mock.patch.object(status_router, "get_task_queue", return_value=queue),
+            mock.patch.object(status_router, "_last_node_result", None),
+            mock.patch.object(
+                status_mod, "_check_port",
+                side_effect=lambda host, port: status_mod.NetworkStatus(False, host, port, None, "test offline"),
+            ),
+        ]
+        for patcher in patchers:
+            self.addCleanup(patcher.stop)
+            patcher.start()
 
     def test_system_snapshot_matches_frontend_contract(self) -> None:
         body = self.client.get("/api/status").json()

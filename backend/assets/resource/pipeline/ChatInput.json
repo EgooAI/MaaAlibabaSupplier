@@ -1,6 +1,6 @@
 {
     "ChatInput": {
-        "desc": "【入口点】聚焦到输入框并发送指定的聊天文本",
+        "desc": "【入口点】聚焦并输入聊天文本，调用方需显式指定是否点击发送",
         "pre_delay": 0,
         "post_delay": 0,
         "next": [
@@ -101,20 +101,16 @@
                 "input_text": ""
             }
         },
-        "next": [
-            "ChatInput_SendMessage",
-            "ChatInput_SendMessageNotHit"
-        ]
+        "next": []
     },
     "ChatInput_SendMessage": {
-        "desc": "点击发送按钮发送消息",
+        "desc": "仅点击可用的发送按钮，不代表平台已确认发送",
         "enabled": false,
         "recognition": {
             "type": "TemplateMatch",
             "param": {
                 "template": [
-                    "Chat/按钮_发送_可用.png",
-                    "Chat/按钮_发送_禁用.png"
+                    "Chat/按钮_发送_可用.png"
                 ],
                 "roi": [
                     593,
@@ -128,8 +124,5 @@
         "action": {
             "type": "Click"
         }
-    },
-    "ChatInput_SendMessageNotHit": {
-        "desc": "点击发送按钮发送消息未启用或命中时走这个空节点正常结束"
     }
 }

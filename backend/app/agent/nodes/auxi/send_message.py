@@ -1,14 +1,9 @@
-import time
-
 from pydantic import BaseModel, Field
 
 from maa.agent.agent_server import AgentServer
 from maa.context import Context
 from maa.custom_action import CustomAction
-from maa.pipeline import JActionType, JClickKey, JInputText
-
-
-VK_ENTER = 0x0D
+from backend.app.shared.backend.maafw_runner import chat_input_override
 
 
 class SendMessageParam(BaseModel):
@@ -38,26 +33,14 @@ class SendMessage(CustomAction):
         else:
             raise ValueError("`custom_action_param` must be JSON string or object.")
 
-        detail = context.run_task("ContactSearch_GoToSearch")
+        detail = context.run_task("ContactSearch", {
+            "ContactSearch_InputText": {
+                "action": {"param": {"input_text": param.login_id}}
+            }
+        })
         if detail is None or not detail.status.succeeded:
             return False
-        detail = context.run_action_direct(JActionType.InputText, JInputText(input_text=param.login_id))
-        if detail is None or not detail.success:
-            return False
-        time.sleep(2)
-        detail = context.run_action_direct(JActionType.ClickKey, JClickKey(key=VK_ENTER))
-        if detail is None or not detail.success:
-            return False
-        detail = context.run_task("ChatInput_GoToInput")
-        if detail is None or not detail.status.succeeded:
-            return False
-        detail = context.run_action_direct(JActionType.InputText, JInputText(input_text=param.text))
-        if detail is None or not detail.success:
-            return False
-
-        if not param.dry_run:
-            detail = context.run_action("ChatInput_SendMessage")
-            if detail is None or not detail.success:
-                return False
-
-        return True
+        detail = context.run_task(
+            "ChatInput", chat_input_override(param.text, send=not param.dry_run)
+        )
+        return detail is not None and detail.status.succeeded

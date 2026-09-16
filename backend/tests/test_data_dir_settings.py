@@ -35,16 +35,20 @@ def _encrypt_sqlite_header(key: bytes) -> bytes:
 class DataDirSettingsTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
         self.config_path = Path(self.temp_dir.name) / "app_config.json"
         patcher = mock.patch.object(app_config, "config_file_path", return_value=self.config_path)
         self.addCleanup(patcher.stop)
         patcher.start()
-        self.addCleanup(self.temp_dir.cleanup)
         self._saved_instance = mw_mod.IMDBMiddleware._instance
         mw_mod.IMDBMiddleware._instance = None
         self.addCleanup(self._restore_singleton)
 
     def _restore_singleton(self) -> None:
+        instance = mw_mod.IMDBMiddleware._instance
+        if instance is not None:
+            with instance._lock:
+                instance._reset_runtime_state()
         mw_mod.IMDBMiddleware._instance = self._saved_instance
 
     def _fresh_middleware(self) -> mw_mod.IMDBMiddleware:
@@ -89,8 +93,9 @@ class DataDirSettingsTestCase(unittest.TestCase):
 
     def test_env_var_is_ignored(self) -> None:
         layout = _make_layout(Path(self.temp_dir.name))
-        os.environ["ALIBABA_DATA_DIR"] = str(layout)
-        self.addCleanup(os.environ.pop, "ALIBABA_DATA_DIR", None)
+        patcher = mock.patch.dict(os.environ, {"ALIBABA_DATA_DIR": str(layout)})
+        self.addCleanup(patcher.stop)
+        patcher.start()
         mw = self._fresh_middleware()
         status = mw.data_dir_status()
         self.assertEqual(status["state"], "unconfigured")
@@ -159,6 +164,9 @@ class AccountKeyTestCase(unittest.TestCase):
 class DataDirSettingsApiTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(app, raise_server_exceptions=False)
+        self.addCleanup(self.client.close)
+        self.temp_dir = TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
         self.fake = mock.Mock()
         self.fake.data_dir_status.return_value = {"state": "unconfigured", "path": "", "source": "none", "detail": "x"}
         patcher = mock.patch.object(settings_router, "get_im_db_middleware", return_value=self.fake)
@@ -176,7 +184,8 @@ class DataDirSettingsApiTestCase(unittest.TestCase):
         self.fake.set_data_dir.assert_not_called()
 
     def test_put_rejects_missing_dir(self) -> None:
-        resp = self.client.put("/api/settings/alibaba-data-dir", json={"path": "Z:/no/such/dir"})
+        missing = Path(self.temp_dir.name) / "missing"
+        resp = self.client.put("/api/settings/alibaba-data-dir", json={"path": str(missing)})
         self.assertEqual(resp.status_code, 422)
         self.fake.set_data_dir.assert_not_called()
 
@@ -190,14 +199,18 @@ class DataDirSettingsApiTestCase(unittest.TestCase):
             self.fake.set_data_dir.assert_called_once_with(str(layout))
 
     def test_candidates_returns_list(self) -> None:
-        body = self.client.get("/api/settings/alibaba-data-dir/candidates").json()
+        candidates = [str(_make_layout(Path(self.temp_dir.name)))]
+        with mock.patch.object(settings_router, "find_data_dir_candidates", return_value=candidates) as scan:
+            body = self.client.get("/api/settings/alibaba-data-dir/candidates").json()
         self.assertEqual(body["code"], 0)
-        self.assertIsInstance(body["data"]["candidates"], list)
+        self.assertEqual(body["data"]["candidates"], candidates)
+        scan.assert_called_once_with()
 
 
 class AliIdentityApiTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(app, raise_server_exceptions=False)
+        self.addCleanup(self.client.close)
         self.temp_dir = TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
         self.fake = mock.Mock()

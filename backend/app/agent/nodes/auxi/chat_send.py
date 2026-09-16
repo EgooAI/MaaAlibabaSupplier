@@ -1,8 +1,10 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from maa.agent.agent_server import AgentServer
 from maa.context import Context
 from maa.custom_action import CustomAction
+
+from backend.app.shared.backend.maafw_runner import chat_input_override
 
 
 class ChatSendParam(BaseModel):
@@ -28,13 +30,7 @@ class ChatSend(CustomAction):
         else:
             param = ChatSendParam.model_validate(argv.custom_action_param)
 
-        override: dict = {
-            "ChatInput_InputText": {
-                "action": {"param": {"input_text": param.text}}
-            },
-        }
-        if param.confirm:
-            override["ChatInput_SendMessage"] = {"enabled": True}
-
-        detail = context.run_task("ChatInput", override)
+        detail = context.run_task(
+            "ChatInput", chat_input_override(param.text, send=param.confirm)
+        )
         return detail is not None and detail.status.succeeded

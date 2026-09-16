@@ -474,21 +474,20 @@ def send_message(conversation_id: int, body: SendMessageInput) -> dict:
             return chat_input(content)
         return chat_send(content)
 
-    snap = get_task_queue().enqueue(_run, description=f"send({action}) to {login_id}")
-    current = get_task_queue().get(snap.task_id)
+    # Finish response preparation before accepting any GUI side effect.
     try:
         aggregate = _build_aggregate(CRMAdapter(), self_ali_id, conv)
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
-    queued = current is None or str(current.status) == "pending"
+    snap = get_task_queue().enqueue(_run, description=f"send({action}) conversation={conversation_id}")
     return ok({
         "message": None,
         "conversation": aggregate,
         "execution": {
-            "success": not queued and bool(current and current.result and current.result[0]),
-            "message": current.message if current else "任务已提交，等待执行",
-            "task_snapshot": _snap_to_dict(current) if current else None,
+            "success": None,
+            "message": "任务已提交，请在状态页查看执行结果",
+            "task_snapshot": _snap_to_dict(snap),
         },
     })
 

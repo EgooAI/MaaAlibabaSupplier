@@ -35,9 +35,10 @@ export function StatusPage() {
         <Space wrap>
           <Button icon={<ReloadOutlined />} loading={refreshing} onClick={refresh}>刷新运行状态</Button>
           <Button type="primary" icon={<ExperimentOutlined />} loading={creatingTask} onClick={createTestTask}>创建测试任务</Button>
-          <Button loading={testingNode === "ChatInput_GoToInput"} onClick={() => void runNodeTest("ChatInput_GoToInput")}>测试 ChatInput 操作</Button>
-          <Button loading={testingNode === "ContactSearch_GoToSearch"} onClick={() => void runNodeTest("ContactSearch_GoToSearch")}>测试 ContactSearch 操作</Button>
+          <Button loading={testingNode === "ChatInput_GoToInput"} onClick={() => void runNodeTest("ChatInput_GoToInput")}>检查聊天输入框</Button>
+          <Button loading={testingNode === "ContactSearch_GoToSearch"} onClick={() => void runNodeTest("ContactSearch_GoToSearch")}>检查联系人搜索框</Button>
         </Space>
+        <Typography.Paragraph type="secondary" className="mt-3 mb-0">界面检查会排队执行，仅识别控件，不点击或输入。</Typography.Paragraph>
       </Card>
 
       <Card title="任务队列">

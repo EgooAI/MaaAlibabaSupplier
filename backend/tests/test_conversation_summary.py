@@ -2,6 +2,7 @@ import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from backend.app.api.routers.conversations import (
     _assemble_customer_view,
@@ -39,9 +40,11 @@ class ConversationSummaryTestCase(unittest.TestCase):
         self.temp_dir = TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "crm.sqlite"
         self.pools_path = Path(self.temp_dir.name) / "pools.db"
-        os.environ["MAA_POOLS_DB_PATH"] = str(self.pools_path)
         # Router-level helpers build their own default-path adapter; point it here.
-        os.environ["MAA_CRM_DB_PATH"] = str(self.db_path)
+        self.enterContext(mock.patch.dict(os.environ, {
+            "MAA_POOLS_DB_PATH": str(self.pools_path),
+            "MAA_CRM_DB_PATH": str(self.db_path),
+        }))
         self.adapter = CRMAdapter(database_path=self.db_path)
         self.self_info = SelfInfo(ali_id=SELF_ALI_ID, login_id="seller")
         from backend.app.shared.mitm.pool import get_user_info_pool
@@ -72,8 +75,6 @@ class ConversationSummaryTestCase(unittest.TestCase):
 
         UserInfoPool.reset_for_tests()
         self.temp_dir.cleanup()
-        os.environ.pop("MAA_POOLS_DB_PATH", None)
-        os.environ.pop("MAA_CRM_DB_PATH", None)
 
     def test_digest_carries_latest_pointer_and_counts(self) -> None:
         digest = self.digests[0]

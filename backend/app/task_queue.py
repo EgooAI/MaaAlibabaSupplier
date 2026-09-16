@@ -70,6 +70,7 @@ class TaskQueue:
                 instance._condition = threading.Condition(instance._lock)
                 instance._requests: dict[str, _TaskRequest] = {}
                 instance._queue: deque[str] = deque()
+                instance._closing = False
                 instance._worker = threading.Thread(
                     target=instance._work,
                     daemon=True,
@@ -82,6 +83,8 @@ class TaskQueue:
     def enqueue(self, fn: Callable[[], tuple[bool, str]], *, description: str) -> TaskSnapshot:
         now = time.time()
         with self._condition:
+            if self._closing:
+                raise RuntimeError("任务队列正在关闭")
             self._evict_locked(now)
             if len(self._queue) >= TASK_QUEUE_MAXSIZE:
                 raise OverflowError("任务队列已满，请稍后重试")
@@ -111,6 +114,18 @@ class TaskQueue:
             self._evict_locked(time.time())
             return [r.snapshot() for r in self._requests.values()]
 
+    def shutdown(self, timeout: float = 5.0) -> None:
+        """Drain accepted work before releasing the singleton and worker."""
+        with self._condition:
+            self._closing = True
+            self._condition.notify_all()
+        self._worker.join(timeout)
+        if self._worker.is_alive():
+            raise TimeoutError("任务队列尚未停止")
+        with self._instance_lock:
+            if type(self)._instance is self:
+                type(self)._instance = None
+
     def _evict_locked(self, now: float) -> None:
         expired = [
             task_id for task_id, req in self._requests.items()
@@ -122,8 +137,10 @@ class TaskQueue:
     def _work(self) -> None:
         while True:
             with self._condition:
-                while not self._queue:
+                while not self._queue and not self._closing:
                     self._condition.wait()
+                if not self._queue:
+                    return
                 task_id = self._queue.popleft()
                 request = self._requests.get(task_id)
                 if request is None:

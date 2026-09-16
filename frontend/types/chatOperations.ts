@@ -30,9 +30,9 @@ export interface SendMessageInput {
 }
 
 export interface MessageExecution {
-  success: boolean;
+  success: boolean | null;
   message: string;
-  task_snapshot: TaskSnapshot | null;
+  task_snapshot: TaskSnapshot;
 }
 
 export interface SendMessageResult {

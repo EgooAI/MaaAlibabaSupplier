@@ -2,6 +2,7 @@ import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -33,15 +34,17 @@ def _seed_session(title: str = "seed") -> int:
 class AgentConsoleTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = TemporaryDirectory()
-        os.environ["MAA_CRM_DB_PATH"] = str(Path(self.temp_dir.name) / "crm.sqlite")
+        self.enterContext(mock.patch.dict(os.environ, {
+            "MAA_CRM_DB_PATH": str(Path(self.temp_dir.name) / "crm.sqlite"),
+        }))
         self.client = TestClient(app, raise_server_exceptions=False)
+        self.addCleanup(self.client.close)
 
     def tearDown(self) -> None:
         try:
             ChatHistoryManager().engine.dispose()
         finally:
             self.temp_dir.cleanup()
-            os.environ.pop("MAA_CRM_DB_PATH", None)
 
     def test_console_shape(self) -> None:
         body = self.client.get("/api/agent/console").json()

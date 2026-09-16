@@ -2,6 +2,7 @@ import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from backend.app.shared.agent.default_llm_levels import (
     DEFAULT_SEEDED_LLM_LEVEL,
@@ -13,9 +14,10 @@ from backend.app.shared.crm.sdk import LLMApiConfig, LLMApiConfigManager
 class DefaultLlmLevelsTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = TemporaryDirectory()
-        os.environ["MAA_CRM_DB_PATH"] = str(Path(self.temp_dir.name) / "crm.sqlite")
         self.addCleanup(self.temp_dir.cleanup)
-        self.addCleanup(os.environ.pop, "MAA_CRM_DB_PATH", None)
+        self.enterContext(mock.patch.dict(os.environ, {
+            "MAA_CRM_DB_PATH": str(Path(self.temp_dir.name) / "crm.sqlite"),
+        }))
 
     def tearDown(self) -> None:
         try:

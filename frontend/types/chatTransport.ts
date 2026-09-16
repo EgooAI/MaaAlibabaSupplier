@@ -146,8 +146,8 @@ export interface ConversationSendResultDto {
   message?: ConversationMessageDto;
   conversation: ConversationAggregateDto;
   execution: {
-    success: boolean;
+    success: boolean | null;
     message: string;
-    task_snapshot: TaskSnapshot | null;
+    task_snapshot: TaskSnapshot;
   };
 }

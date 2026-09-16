@@ -2,6 +2,7 @@ import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from backend.app.shared.backend.im_chat_db import ContactConv, MessageRow
 from backend.app.shared.crm.identities import self_sender_id
@@ -37,7 +38,7 @@ class ConversationAggregateTestCase(unittest.TestCase):
         self.temp_dir = TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "crm.sqlite"
         self.pools_path = Path(self.temp_dir.name) / "pools.db"
-        os.environ["MAA_POOLS_DB_PATH"] = str(self.pools_path)
+        self.enterContext(mock.patch.dict(os.environ, {"MAA_POOLS_DB_PATH": str(self.pools_path)}))
         self.adapter = CRMAdapter(database_path=self.db_path)
         self.self_info = SelfInfo(ali_id=SELF_ALI_ID, login_id="seller")
         self.contact_info = UserInfo(ali_id=CONTACT_ALI_ID, login_id="buyer", first_name="Buy", last_name="Er")
@@ -64,7 +65,6 @@ class ConversationAggregateTestCase(unittest.TestCase):
 
         UserInfoPool.reset_for_tests()
         self.temp_dir.cleanup()
-        os.environ.pop("MAA_POOLS_DB_PATH", None)
 
     def test_list_transmits_sid_and_contact(self) -> None:
         convs = self.adapter.list_conversations(SELF_ALI_ID)

@@ -11,7 +11,7 @@ import { SYSTEM_AGENT_APIDS, agentPresetToConfig, agentPresetToDbPreset, canRunA
 import type { AgentConsoleState, AgentPreset, AgentTestSession, DbAgentPreset } from "@/types/agent";
 import type { BusinessCard } from "@/types/cards";
 import type { ConversationDetail } from "@/types/chatCanonical";
-import type { ConversationAggregateDto, Message } from "@/types/chatTransport";
+import type { ConversationAggregateDto } from "@/types/chatTransport";
 import type { SendMessageInput } from "@/types/chatOperations";
 import type { SelfInfo } from "@/types/home";
 import type { AliIdList, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskSnapshot } from "@/types/status";
@@ -129,9 +129,7 @@ export const mockBackend: OperationsBackend = {
   sendMessage: async ({ conversationId, content, action = "send" }: SendMessageInput) => {
     const execution = executeSendMessage({ conversationId, content, action });
     const conversation = buildConversationDetail(conversationId);
-    const message = action === "send" ? conversation.messages.at(-1) : undefined;
-    if (action === "send" && !message) throw new Error("发送消息后未找到消息");
-    return delay(structuredClone({ message, conversation, execution }));
+    return delay(structuredClone({ message: undefined, conversation, execution }));
   },
 
   exportConversations: async ({ conversationIds }) => {
@@ -147,7 +145,11 @@ export const mockBackend: OperationsBackend = {
 
   checkMitmReceiver: () => delay(structuredClone(receiverStatusStore)),
 
-  runNodeTest: () => delay(structuredClone(nodeResultStore), 360),
+  runNodeTest: async (entry = "ChatInput_GoToInput") => {
+    if (entry !== "ChatInput_GoToInput" && entry !== "ContactSearch_GoToSearch") throw new Error("节点测试入口无效");
+    const task = queueMockTask(`节点测试：${entry}`, entry);
+    return delay(structuredClone({ success: null, message: task.message, task_snapshot: task }), 360);
+  },
 
   getDataDirStatus: () => delay(structuredClone(dataDirStatusStore)),
 
@@ -330,43 +332,27 @@ function executeSendMessage(input: SendMessageInput) {
   const content = input.content.trim();
   if (!content) throw new Error("消息内容不能为空");
 
-  const target = conversationStore[index];
+  const task = queueMockTask(action === "send" ? "发送聊天消息" : "输入聊天草稿", String(conversationStore[index].sid));
+  return { success: null, message: task.message, task_snapshot: task };
+}
+
+function queueMockTask(description: string, target: string): TaskSnapshot {
   const timestamp = Math.floor(Date.now() / 1000);
   const task: TaskSnapshot = {
     task_id: `task-${crypto.randomUUID()}`,
-    description: action === "send" ? "发送聊天消息" : "输入聊天草稿",
-    status: "succeeded",
-    message: action === "send" ? "消息已发送" : "消息已输入但未发送",
-    result: [true, action === "send" ? "发送完成" : "输入完成"],
-    target: String(target.sid),
+    description,
+    status: "pending",
+    message: "任务已提交，等待执行",
+    result: null,
+    target,
     created_at: timestamp,
-    started_at: timestamp,
-    completed_at: timestamp + 1,
+    started_at: null,
+    completed_at: null,
   };
-
-  if (action === "send") {
-    const externalMid = `msg-${crypto.randomUUID()}`;
-    const nextUpdatedAt = nowText();
-    const message: Message = {
-      external_mid: externalMid,
-      sid: target.sid,
-      sender: selfInfoStore?.aid ?? 0,
-      read: true,
-      content,
-      type: "text",
-    };
-    conversationStore[index] = {
-      ...target,
-      messages: [...target.messages, { message, created_at: nextUpdatedAt, role: "seller" }],
-      latest: { updated_at: nextUpdatedAt, content },
-      unread_count: 0,
-      status: "following",
-    };
-  }
 
   taskSnapshotStore = [task, ...taskSnapshotStore];
   statusStore = buildStatusSnapshot();
-  return { success: true, message: task.message, task_snapshot: task };
+  return task;
 }
 
 function conversationMatchesId(conversation: ConversationAggregateDto, id: string) {

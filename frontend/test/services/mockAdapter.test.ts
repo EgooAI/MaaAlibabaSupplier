@@ -16,15 +16,33 @@ describe("mock adapter", () => {
     expect(after).toHaveLength(before.length);
   });
 
-  it("does not return the historical latest message for test actions", async () => {
+  it.each(["send", "test"] as const)("queues %s without fabricating a sent message", async (action) => {
     const before = await mockBackend.getConversation("42");
 
-    const result = await mockBackend.sendMessage({ conversationId: "42", content: "draft only", action: "test" });
+    const result = await mockBackend.sendMessage({ conversationId: "42", content: "draft only", action });
     const after = await mockBackend.getConversation("42");
 
+    expect(result.execution).toMatchObject({ success: null, task_snapshot: { status: "pending", result: null, started_at: null, completed_at: null } });
     expect(result.message).toBeUndefined();
-    expect(result.conversation.messages).toHaveLength(before.messages.length);
-    expect(after.messages).toHaveLength(before.messages.length);
+    expect(result.conversation).toEqual(before);
+    expect(after).toEqual(before);
+    const status = await mockBackend.getSystemStatus();
+    expect(status.taskSnapshots[0]).toEqual(result.execution.task_snapshot);
+    expect(status.tasks[0]).toMatchObject({ id: result.execution.task_snapshot.task_id, status: "queued" });
+  });
+
+  it.each([undefined, "ContactSearch_GoToSearch"] as const)("queues node test %s and keeps the last completed result", async (entry) => {
+    const before = await mockBackend.getSystemStatus();
+    const submitted = await mockBackend.runNodeTest(entry);
+    expect(submitted).toMatchObject({ success: null, task_snapshot: { status: "pending", result: null, target: entry ?? "ChatInput_GoToInput" } });
+    const taskId = submitted.task_snapshot.task_id;
+    submitted.task_snapshot.message = "mutated by caller";
+
+    const after = await mockBackend.getSystemStatus();
+    expect(after.nodeResult).toEqual(before.nodeResult);
+    expect(after.taskSnapshots[0]).toMatchObject({ task_id: taskId, status: "pending", started_at: null, completed_at: null });
+    expect(after.taskSnapshots[0].message).not.toBe("mutated by caller");
+    expect(after.tasks[0]).toMatchObject({ id: taskId, status: "queued" });
   });
 
   it("returns cloned status snapshots instead of exposing the store", async () => {

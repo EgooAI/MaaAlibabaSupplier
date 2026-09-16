@@ -22,6 +22,15 @@ export interface NetworkStatus {
 export interface NodeTestResult {
   success: boolean;
   message: string;
+  task_snapshot?: TaskSnapshot;
+}
+
+export type NodeTestEntry = "ChatInput_GoToInput" | "ContactSearch_GoToSearch";
+
+export interface NodeTestSubmission {
+  success: null;
+  message: string;
+  task_snapshot: TaskSnapshot;
 }
 
 export interface TaskSnapshot {

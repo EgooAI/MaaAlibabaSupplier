@@ -2,7 +2,7 @@
 
 import { App } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { mergeConversationDetail, mergeMessageTranslations, messageExecutionState } from "@/domain/chat/chatModel";
+import { mergeMessageTranslations, messageExecutionState } from "@/domain/chat/chatModel";
 import type { ConversationGroupMode } from "@/domain/chat/chatModel";
 import { backend } from "@/services/client";
 import type { AssistantSuggestion, ChatMessage, ConversationDetail } from "@/types/chatCanonical";
@@ -15,7 +15,7 @@ type AnalysisState = {
 
 export function useChatWorkbench() {
   const { message } = App.useApp();
-  const { conversations, loading, reload, revision } = useConversationSummaries();
+  const { conversations, loading, revision } = useConversationSummaries();
   const [activeConversationId, setActiveConversationId] = useState<string>();
   const [activeConversation, setActiveConversation] = useState<ConversationDetail>();
   const [detailLoading, setDetailLoading] = useState(false);
@@ -212,37 +212,26 @@ export function useChatWorkbench() {
       if (sendRequestRef.current !== requestId || activeIdRef.current !== conversationId) return;
       const executionState = messageExecutionState(result.execution);
       if (executionState === "failed") {
-        message.error(result.execution.message || "回复发送失败");
+        message.error(`${result.execution.message || "客户端操作失败"}；请先在客户端确认实际结果，避免重复发送`);
         return;
       }
       if (executionState === "pending") {
-        message.info(result.execution.message || "回复任务已提交");
+        message.info("任务已提交，正在排队或执行；请到状态页查看任务结果，并在客户端确认实际结果");
         return;
       }
 
       if (action === "test") {
-        message.success("已填入客户端输入框（测试，未发送）");
+        message.info("输入测试的 GUI 操作已完成，请在客户端确认输入内容（未发送）");
         return;
       }
 
-      setActiveConversation((current) => {
-        if (!current || current.id !== conversationId) return current;
-        return mergeConversationDetail(current, result.conversation);
-      });
-      setDrafts((current) => {
-        if (current[conversationId]?.trim() !== submittedDraft) return current;
-        const next = { ...current };
-        delete next[conversationId];
-        return next;
-      });
-      await reload();
-      message.success("回复已发送");
+      message.info("发送任务的 GUI 操作已完成，请在客户端确认消息是否实际发送；草稿已保留");
     } catch {
-      if (sendRequestRef.current === requestId && activeIdRef.current === conversationId) message.error("回复发送失败");
+      if (sendRequestRef.current === requestId && activeIdRef.current === conversationId) message.warning("提交结果未知，请先查看任务状态并在客户端确认，避免立即重发；草稿已保留");
     } finally {
       setSendingConversationId((current) => current === conversationId ? undefined : current);
     }
-  }, [activeConversation?.id, draft, sendingConversationId, message, reload]);
+  }, [activeConversation?.id, draft, sendingConversationId, message]);
 
   const gotoContact = useCallback(async () => {
     const conversation = activeConversation;

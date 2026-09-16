@@ -1,0 +1,51 @@
+{
+    "Diagnostics_ChatInput": {
+        "desc": "Read-only check for the chat input location",
+        "recognition": "DirectHit",
+        "action": "DoNothing",
+        "pre_delay": 0,
+        "post_delay": 0,
+        "next": [
+            "Diagnostics_ChatInput_Recognize"
+        ]
+    },
+    "Diagnostics_ChatInput_Recognize": {
+        "recognition": {
+            "type": "Or",
+            "param": {
+                "any_of": [
+                    "ChatInput_GoToInput"
+                ]
+            }
+        },
+        "action": "DoNothing",
+        "pre_delay": 0,
+        "post_delay": 0,
+        "next": []
+    },
+    "Diagnostics_ContactSearch": {
+        "desc": "Read-only check for the contact search controls",
+        "recognition": "DirectHit",
+        "action": "DoNothing",
+        "pre_delay": 0,
+        "post_delay": 0,
+        "next": [
+            "Diagnostics_ContactSearch_Recognize"
+        ]
+    },
+    "Diagnostics_ContactSearch_Recognize": {
+        "recognition": {
+            "type": "Or",
+            "param": {
+                "any_of": [
+                    "ContactSearch_ClearSearchBox",
+                    "ContactSearch_ClickSearchButton"
+                ]
+            }
+        },
+        "action": "DoNothing",
+        "pre_delay": 0,
+        "post_delay": 0,
+        "next": []
+    }
+}

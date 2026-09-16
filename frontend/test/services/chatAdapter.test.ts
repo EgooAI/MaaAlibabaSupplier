@@ -120,10 +120,11 @@ describe("chat adapter", () => {
     const result: ConversationSendResultDto = {
       message: aggregate.messages[1],
       conversation: { ...aggregate, business_cards: [card] },
-      execution: { success: true, message: "ok", task_snapshot: null },
+      execution: { success: null, message: "queued", task_snapshot: { task_id: "task-1", description: "send", status: "pending", message: "queued", result: null, created_at: 0, started_at: null, completed_at: null } },
     };
 
     expect(adaptSendMessageResult(result).message?.card).toEqual(card);
     expect(adaptSendMessageResult(result).conversation.messages[1].card).toEqual(card);
+    expect(adaptSendMessageResult(result).execution).toEqual(result.execution);
   });
 });

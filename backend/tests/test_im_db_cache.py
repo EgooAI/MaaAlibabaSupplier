@@ -13,8 +13,9 @@ import backend.app.shared.backend.im_db_middleware as im_db_middleware_mod
 
 class SourceFingerprintGuardTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        IMDBMiddleware._instance = None
+        self.enterContext(patch.object(IMDBMiddleware, "_instance", None))
         self.mw = IMDBMiddleware()
+        self.addCleanup(self.mw._reset_runtime_state)
         patches = [
             patch.object(im_db_middleware_mod, "write_app_config", return_value={}),
             patch.object(self.mw, "_resolve_self_ali_id", return_value="ali-1"),
@@ -29,9 +30,7 @@ class SourceFingerprintGuardTestCase(unittest.TestCase):
             patch.object(self.mw, "_cleanup_stale_caches"),
             patch.object(self.mw, "sync_to_crm"),
         ]
-        started = [p.start() for p in patches]
-        for p in patches:
-            self.addCleanup(p.stop)
+        started = [self.enterContext(p) for p in patches]
         # patches order: persist, self_ali_id, resolve, fingerprint, crc32,
         # ensure_key, copy_pair, decrypt, verify, replace, cleanup, sync
         self.resolve = started[2]

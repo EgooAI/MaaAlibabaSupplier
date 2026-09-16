@@ -21,6 +21,30 @@ afterEach(() => {
 });
 
 describe("http adapter contract", () => {
+  it.each([false, null])("preserves queued message execution.success=%s and the conversation/message payload", async (success) => {
+    const execution = { success, message: "queued", task_snapshot: { task_id: "task-1", description: "send", status: "pending", message: "queued", result: null, created_at: 0, started_at: null, completed_at: null } };
+    const message = { message: { external_mid: "message-1", sid: 42, sender: 1, read: true, content: "hello", type: "text" }, created_at: "2026-09-08 10:00", role: "seller" };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: { conversation: aggregate, message, execution } })));
+    globalThis.fetch = fetchMock;
+
+    const input = { conversationId: "42", content: "hello", action: "send" as const };
+    const result = await httpBackend.sendMessage(input);
+    expect(result.execution).toEqual(execution);
+    expect(result.conversation.id).toBe("42");
+    expect(result.message).toMatchObject({ content: "hello", role: "seller" });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(input);
+  });
+
+  it.each([undefined, "ChatInput_GoToInput", "ContactSearch_GoToSearch"] as const)("submits node entry %s and preserves the asynchronous receipt", async (entry) => {
+    const receipt = { success: null, message: "任务已提交", task_snapshot: { task_id: "node-1", description: "node", status: "pending", message: "queued", result: null, created_at: 0, started_at: null, completed_at: null } };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: receipt })));
+    globalThis.fetch = fetchMock;
+
+    await expect(httpBackend.runNodeTest(entry)).resolves.toEqual(receipt);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/status/node-test");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ entry: entry ?? "ChatInput_GoToInput" });
+  });
+
   it("accepts void responses without attempting to parse JSON", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response("", { status: 200 }))

@@ -3,7 +3,7 @@
 import { App } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { backend } from "@/services/client";
-import type { SystemStatusSnapshot } from "@/types/status";
+import type { NodeTestEntry, SystemStatusSnapshot } from "@/types/status";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -13,7 +13,7 @@ export function useStatusWorkbench() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
-  const [testingNode, setTestingNode] = useState<string>();
+  const [testingNode, setTestingNode] = useState<NodeTestEntry>();
   const snapshotRequestRef = useRef(0);
 
   const loadSnapshot = useCallback(async (initial = false) => {
@@ -77,15 +77,14 @@ export function useStatusWorkbench() {
     }
   }
 
-  async function runNodeTest(entry: string) {
+  async function runNodeTest(entry: NodeTestEntry) {
     if (testingNode) return;
     setTestingNode(entry);
     try {
-      const result = await backend.runNodeTest(entry);
-      if (result.success) message.success(result.message || "节点测试通过");
-      else message.error(result.message || "节点测试失败");
-    } catch (error: unknown) {
-      message.error(error instanceof Error ? error.message : "节点测试失败");
+      await backend.runNodeTest(entry);
+      message.info("节点测试任务已提交排队，请在状态页任务列表查看结果（每 2 秒自动更新）");
+    } catch {
+      message.warning("节点测试提交结果未知，请先查看任务状态，避免立即重复提交");
     } finally {
       setTestingNode(undefined);
     }

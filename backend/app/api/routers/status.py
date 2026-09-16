@@ -8,14 +8,17 @@ from fastapi import APIRouter
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from backend.app.api.envelope import AppError, api_error, ok
+from backend.app.api.envelope import AppError, ok
 from backend.app.shared.backend import status as status_mod
 from backend.app.shared.backend.maafw_runner import run_node
 from backend.app.task_queue import get_task_queue
 
 router = APIRouter()
 
-ALLOWED_NODE_ENTRIES = frozenset({"ChatInput", "ChatSend", "GotoContact"})
+ALLOWED_NODE_ENTRIES = {
+    "ChatInput_GoToInput": "Diagnostics_ChatInput",
+    "ContactSearch_GoToSearch": "Diagnostics_ContactSearch",
+}
 
 # Last manual node-test outcome shown in the aggregate snapshot.
 # None means "not tested yet" (polls must not trigger real MaaFW runs).
@@ -23,7 +26,7 @@ _last_node_result: dict | None = None
 
 
 class NodeTestInput(BaseModel):
-    entry: str = Field(default="ChatInput", max_length=64)
+    entry: str = Field(default="ChatInput_GoToInput", max_length=64)
 
 
 class CreateTestTaskInput(BaseModel):
@@ -175,17 +178,28 @@ def status_refresh() -> dict:
 
 @router.post("/api/status/node-test")
 def node_test(body: NodeTestInput) -> dict:
-    global _last_node_result
-    entry = (body.entry or "ChatInput").strip() or "ChatInput"
+    entry = body.entry.strip()
     if entry not in ALLOWED_NODE_ENTRIES:
         raise AppError(f"entry must be one of {sorted(ALLOWED_NODE_ENTRIES)}", status_code=422)
-    try:
-        success, message = run_node(entry)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
-    _last_node_result = {"success": success, "message": message}
-    return ok(_last_node_result)
+
+    def _run() -> tuple[bool, str]:
+        global _last_node_result
+        try:
+            success, message = run_node(ALLOWED_NODE_ENTRIES[entry])
+            if success:
+                message = "界面识别通过（未点击、未输入）"
+        except Exception:
+            logger.exception("node diagnostic failed")
+            success, message = False, "界面识别失败"
+        _last_node_result = {"success": success, "message": message}
+        return success, message
+
+    snap = get_task_queue().enqueue(_run, description=f"diagnostic {entry}")
+    return ok({
+        "success": None,
+        "message": "诊断任务已提交，请在任务队列查看结果",
+        "task_snapshot": _snapshot_to_task_snapshot(snap),
+    })
 
 
 @router.post("/api/status/test-tasks")
