@@ -1,6 +1,7 @@
 import type { DbAgentPreset, DocumentLlmConfig } from "@/types/agent";
 import { adaptConversationDetail, adaptConversationSummary, adaptSendMessageResult } from "@/services/chatAdapter";
 import type { ConversationAggregateDto, ConversationSendResultDto } from "@/types/chatTransport";
+import type { ConversationRevision } from "@/types/chatOperations";
 import type { ApiResponse } from "@/types/common";
 import type { OperationsBackend } from "./interfaces";
 
@@ -109,6 +110,7 @@ export const httpBackend: OperationsBackend = {
     const aggregates = await requestJson<ConversationAggregateDto[]>("/api/conversations");
     return aggregates.map(adaptConversationSummary);
   },
+  getConversationRevision: () => requestJson<ConversationRevision>("/api/conversations/revision"),
   getConversation: async (id) => {
     const aggregate = await requestJson<ConversationAggregateDto>(`/api/conversations/${encodeURIComponent(id)}`);
     return adaptConversationDetail(aggregate);

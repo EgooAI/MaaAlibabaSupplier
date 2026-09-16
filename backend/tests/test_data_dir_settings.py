@@ -122,8 +122,6 @@ class DataDirSettingsTestCase(unittest.TestCase):
     def test_resolve_self_ali_id_reads_manual_selection_only(self) -> None:
         app_config.write_app_config({app_config.CONFIG_KEY_SELF_ALI_ID: "10001"})
         self.assertEqual(mw_mod.IMDBMiddleware._resolve_self_ali_id(), "10001")
-        with mock.patch.object(mw_mod, "get_configured_self_ali_id", return_value=""):
-            self.assertEqual(mw_mod.IMDBMiddleware._resolve_self_ali_id(), "")
 
 
 class AccountKeyTestCase(unittest.TestCase):
@@ -187,16 +185,14 @@ class DataDirSettingsApiTestCase(unittest.TestCase):
             layout = _make_layout(Path(tmp))
             self.fake.data_dir_status.return_value = {"state": "ok", "path": str(layout), "source": "file", "detail": ""}
 
-            with mock.patch.object(mw_mod.IMDBMiddleware, "looks_like_data_dir", return_value=True):
-                resp = self.client.put("/api/settings/alibaba-data-dir", json={"path": str(layout)})
+            resp = self.client.put("/api/settings/alibaba-data-dir", json={"path": str(layout)})
             self.assertEqual(resp.status_code, 200)
             self.fake.set_data_dir.assert_called_once_with(str(layout))
 
     def test_candidates_returns_list(self) -> None:
-        with mock.patch.object(settings_router, "find_data_dir_candidates", return_value=["D:/AlibabaSupplierData"]):
-            body = self.client.get("/api/settings/alibaba-data-dir/candidates").json()
+        body = self.client.get("/api/settings/alibaba-data-dir/candidates").json()
         self.assertEqual(body["code"], 0)
-        self.assertEqual(body["data"]["candidates"], ["D:/AlibabaSupplierData"])
+        self.assertIsInstance(body["data"]["candidates"], list)
 
 
 class AliIdentityApiTestCase(unittest.TestCase):

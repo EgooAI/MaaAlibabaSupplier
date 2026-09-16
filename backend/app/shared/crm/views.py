@@ -32,6 +32,18 @@ class CrmConversation:
     participants: tuple[int, ...] = ()
 
 
+@dataclass(frozen=True)
+class CrmConversationDigest:
+    contact_ali_id: str
+    sid: int
+    key: str
+    participants: tuple[int, ...] = ()
+    latest_created_at: Any = None
+    latest_content_label: str | None = None
+    latest_is_card: bool = False
+    dialogue_count: int = 0
+
+
 CARD_CONTENT_TYPE = 10010
 
 
@@ -73,6 +85,7 @@ __all__ = [
     "CARD_CONTENT_TYPE",
     "CrmConversation",
     "CrmMessage",
+    "CrmConversationDigest",
     "CrmResolver",
     "coerce_epoch",
     "format_created_at",

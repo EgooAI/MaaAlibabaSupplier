@@ -17,6 +17,7 @@ from backend.app.shared.agent.runner import run_chat_tool_agent
 from backend.app.shared.agent.suggestions import generate_reply_suggestions
 from backend.app.shared.agent.system_agents import CHAT_CUSTOMER_STAGE_AGENT_APID
 from backend.app.shared.backend.maafw_runner import chat_input, chat_send, goto_contact
+from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
 from backend.app.shared.chat_format import (
     business_card_from_message,
     conversation_transcript,
@@ -26,14 +27,15 @@ from backend.app.shared.crm import (
     REASON_SELF_IDENTITY_NOT_SELECTED,
     get_conversation_detail as crm_get_conversation_detail,
     get_user_info as crm_get_user_info,
-    list_conversations as crm_list_conversations,
     refresh_chat_data,
 )
 from backend.app.shared.crm.identities import PLATFORM_PID
 from backend.app.shared.crm.sdk import AccountMapping
 from backend.app.shared.crm.sync import CRMAdapter
+from backend.app.shared.mitm.pool import UserInfo
 from backend.app.shared.crm.views import (
     CrmConversation,
+    CrmConversationDigest,
     CrmResolver,
     format_created_at,
     message_display_text,
@@ -170,8 +172,107 @@ def _build_aggregate(adapter: CRMAdapter, self_ali_id: str, conv: CrmConversatio
     }
 
 
+def _minimal_customer_view(contact_ali_id: str) -> dict:
+    """Non-null fallback for contacts with zero data (same keys as the full view)."""
+    return {
+        "id": contact_ali_id,
+        "ali_id": None,
+        "login_id": None,
+        "encrypt_account_id": None,
+        "member_id": None,
+        "name": contact_ali_id,
+        "first_name": None,
+        "last_name": None,
+        "company": "",
+        "country": "",
+        "register_date": None,
+        "email": "",
+        "mobile": None,
+        "phone": "",
+        "stage": "unknown",
+        "tags": [],
+        "quality_tag": None,
+        "growth_level": None,
+        "industries": [],
+        "availability": "",
+        "joining_years": None,
+        "potential_score": None,
+        "recent_contact": None,
+        "email_validated": None,
+        "behavior": [],
+        "d90": {},
+    }
+
+
+def _preload_conversation_maps(adapter: CRMAdapter, digests: list[CrmConversationDigest]) -> dict:
+    """Batch preload for the list path: 1 session, few IN queries, no per-conv round trips."""
+    aids: set[int] = set()
+    contacts: set[str] = set()
+    for digest in digests:
+        aids.update(digest.participants or [])
+        if digest.contact_ali_id:
+            contacts.add(digest.contact_ali_id)
+    accounts_map, customers_map, key_to_aid = adapter.batch_load_conversation_maps(aids, contacts)
+    users: dict[str, Any] = {}
+    for contact in contacts:
+        account = accounts_map.get(key_to_aid.get(contact, -1))
+        extra = account.extra if account is not None else None
+        if not isinstance(extra, dict):
+            continue
+        try:
+            users[contact] = UserInfo.model_validate(extra)
+        except ValueError:
+            continue
+    return {"accounts": accounts_map, "customers": customers_map, "users": users}
+
+
+def _build_summary(digest: CrmConversationDigest, preloaded: dict) -> dict:
+    """Lightweight list item: same keys as the aggregate, heavy fields as []."""
+    participants = list(digest.participants or [])
+    accounts_map = preloaded["accounts"]
+    customers_map = preloaded["customers"]
+    accounts = [_dump(accounts_map[aid]) for aid in participants if aid in accounts_map]
+    customers = []
+    for account in accounts:
+        customer = customers_map.get(account.get("cid", 0))
+        if customer is not None:
+            customers.append(_dump(customer))
+    view = _assemble_customer_view(
+        digest.contact_ali_id, accounts, customers, preloaded["users"].get(digest.contact_ali_id)
+    )
+    if digest.latest_is_card:
+        content = digest.latest_content_label or "[\u5361\u7247]"
+    else:
+        content = digest.latest_content_label or ""
+    return {
+        "sid": digest.sid,
+        "name": digest.key,
+        "participants": participants,
+        "messages": [],
+        "accounts": [],
+        "customers": [],
+        "platforms": [{"pid": PLATFORM_PID, "name": "Alibaba"}],
+        "account_mappings": [],
+        "customer_view": view if view is not None else _minimal_customer_view(digest.contact_ali_id),
+        "latest": {
+            "content": content,
+            "updated_at": format_created_at(digest.latest_created_at) or None,
+        },
+        "unread_count": 0,
+        "status": "following",
+        "priority": "medium",
+        "dialogue_count": digest.dialogue_count,
+        "business_cards": [],
+    }
+
+
 def _build_customer_view(contact_ali_id: str, accounts: list[dict], customers: list[dict]) -> dict | None:
-    user = crm_get_user_info(contact_ali_id)
+    return _assemble_customer_view(contact_ali_id, accounts, customers, crm_get_user_info(contact_ali_id))
+
+
+def _assemble_customer_view(
+    contact_ali_id: str, accounts: list[dict], customers: list[dict], user: Any
+) -> dict | None:
     account = next((a for a in accounts if not (a.get("extra") or {}).get("is_self")), None)
     if account is None and accounts:
         account = accounts[0]
@@ -301,11 +402,38 @@ def list_conversations() -> dict:
     self_ali_id = _ready()
     adapter = CRMAdapter()
     try:
-        convs = crm_list_conversations(self_ali_id)
-        return ok([_build_aggregate(adapter, self_ali_id, conv) for conv in convs])
+        digests = adapter.list_conversation_digests(self_ali_id)
+        preloaded = _preload_conversation_maps(adapter, digests)
+        return ok([_build_summary(digest, preloaded) for digest in digests])
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
+
+
+@router.get("/api/conversations/revision")
+def conversation_revision() -> dict:
+    """Poll-friendly freshness probe: cheap when the source is unchanged.
+
+    Always 200 (never throws): unconfigured identities report ready=False so
+    the chat page can poll without error toasts. Triggers the same
+    fingerprint-gated refresh as the list endpoint, so a changed revision
+    means newer source data has been decrypted into the cache.
+    """
+    mw = get_im_db_middleware()
+    if mw.data_dir_status()["state"] != "ok":
+        return ok({"ready": False, "revision": mw.sync_status()["revision"], "reason": REASON_DATA_DIR_NOT_CONFIGURED})
+    state = refresh_chat_data(wait=False)
+    status = mw.sync_status()
+    payload = {
+        "ready": bool(state.ready),
+        "revision": status["revision"],
+        "source_mtime": status["source_mtime"],
+        "cache_time": status["cache_time"],
+        "stale": status["stale"],
+    }
+    if not state.ready:
+        payload["reason"] = state.reason
+    return ok(payload)
 
 
 @router.get("/api/conversations/{conversation_id}")

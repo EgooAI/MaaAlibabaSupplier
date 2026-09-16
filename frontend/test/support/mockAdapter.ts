@@ -89,6 +89,8 @@ export const mockBackend: OperationsBackend = {
 
   listConversations: () => delay(conversationStore.map((conversation) => adaptConversationSummary(conversation))),
 
+  getConversationRevision: () => delay({ ready: true, revision: 1, source_mtime: null, cache_time: 0, stale: false }),
+
   getConversation: async (id) => delay(buildConversationDetail(id)),
 
   translateMessage: async ({ conversationId, messageId, targetLanguage }) => {

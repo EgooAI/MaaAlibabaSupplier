@@ -1,6 +1,6 @@
 import type { AgentConsoleState, AgentTestInput, AgentTestResult, AgentTestSession, DbAgentPreset, DocumentLlmConfig, SystemAgentDefinition } from "@/types/agent";
 import type { AssistantSuggestion, Conversation, ConversationAnalysis, ConversationDetail } from "@/types/chatCanonical";
-import type { ExportConversationsInput, ExportConversationsResult, RequestTranslationsInput, RequestTranslationsResult, SendMessageInput, SendMessageResult, TranslateMessageInput, TranslateMessageResult } from "@/types/chatOperations";
+import type { ExportConversationsInput, ExportConversationsResult, RequestTranslationsInput, RequestTranslationsResult, SendMessageInput, SendMessageResult, TranslateMessageInput, TranslateMessageResult, ConversationRevision } from "@/types/chatOperations";
 import type { SelfInfo } from "@/types/home";
 import type { AliIdList, CreateTestTaskInput, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskItem, TaskSnapshot } from "@/types/status";
 
@@ -13,6 +13,7 @@ export interface OperationsBackend {
   getTranslation(text: string): Promise<string | null>;
 
   listConversations(): Promise<Conversation[]>;
+  getConversationRevision(): Promise<ConversationRevision>;
   getConversation(id: string): Promise<ConversationDetail>;
   translateMessage(input: TranslateMessageInput): Promise<TranslateMessageResult>;
   regenerateTranslation(input: TranslateMessageInput): Promise<TranslateMessageResult>;

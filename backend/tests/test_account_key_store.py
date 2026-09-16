@@ -52,9 +52,7 @@ class AccountKeyStoreTestCase(unittest.TestCase):
         self.store.upsert_key(IMAccountKey(ali_id="10001", aes_key_hex="ab" * 16, source=KEY_SOURCE_AUTO))
         self.store.delete_key("10001")
         self.assertIsNone(self.store.get_key("10001"))
-
-    def test_get_key_returns_none_when_missing(self) -> None:
-        self.assertIsNone(self.store.get_key("nope"))
+        self.assertIsNone(self.store.get_key("never-existed"))
 
     def test_list_keys_returns_all(self) -> None:
         self.store.upsert_key(IMAccountKey(ali_id="10001", aes_key_hex="ab" * 16, source=KEY_SOURCE_AUTO))

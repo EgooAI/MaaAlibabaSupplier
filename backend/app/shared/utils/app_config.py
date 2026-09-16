@@ -22,6 +22,7 @@ from backend.app.shared.utils.settings import resolve_backend_root
 CONFIG_FILENAME = "app_config.json"
 CONFIG_KEY_ALIBABA_DATA_DIR = "alibaba_data_dir"
 CONFIG_KEY_SELF_ALI_ID = "self_ali_id"
+CONFIG_KEY_IM_DATA_REVISION = "im_data_revision"
 
 _lock = threading.Lock()
 
@@ -74,3 +75,12 @@ def get_configured_self_ali_id() -> str:
 
 def set_configured_self_ali_id(ali_id: str) -> None:
     write_app_config({CONFIG_KEY_SELF_ALI_ID: ali_id})
+
+
+def get_im_data_revision() -> int:
+    """Return the persisted IM source-data revision (0 when absent/corrupt)."""
+    value = read_app_config().get(CONFIG_KEY_IM_DATA_REVISION, 0)
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0

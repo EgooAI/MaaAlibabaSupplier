@@ -9,7 +9,9 @@ for a configurable TTL to avoid repeated decryption.
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
+import struct
 
 from loguru import logger
 import threading
@@ -21,20 +23,30 @@ from Crypto.Cipher import AES
 
 from backend.app.shared.mitm.pool import SelfInfo
 from backend.app.shared.utils.im_db_decryptor import retrieve_db_key
-from backend.app.shared.backend.im_chat_db import open_readonly
+from backend.app.shared.backend.im_chat_db import list_msg_tables, open_readonly
 from backend.app.shared.crm import sync_im_database
 from backend.app.shared.crm.account_keys import get_key_hex, get_key_source, save_key
 from backend.app.shared.crm.identities import self_sender_id, strip_icbu_suffix
 from backend.app.shared.utils.app_config import (
+    CONFIG_KEY_ALIBABA_DATA_DIR,
+    CONFIG_KEY_IM_DATA_REVISION,
     get_configured_alibaba_data_dir,
     get_configured_self_ali_id,
+    get_im_data_revision,
     set_configured_self_ali_id,
     write_app_config,
-    CONFIG_KEY_ALIBABA_DATA_DIR,
 )
+from backend.app.shared.utils.env import get_env_str
+from backend.app.shared.utils.im_wal import WalError, rekey_wal_copy
 from backend.app.shared.utils.settings import resolve_backend_root
 
 _CACHE_TTL = 5.0  # seconds
+# Minimum gap between two full source rebuilds; bursts of client writes coalesce.
+_MIN_REFRESH_INTERVAL = 3.0  # seconds
+# Backoff ceiling after consecutive rebuild failures (3s, 6s, 12s, ... capped here).
+_MAX_BACKOFF = 30.0  # seconds
+# Kill switch for the WAL sidecar pipeline ("0" restores main-file-only decrypt).
+_WAL_PIPELINE_ENV = "MAA_IM_WAL_PIPELINE"
 
 # Directory name to look for at each drive root when auto-detecting candidates.
 DATA_DIR_NAME = "AlibabaSupplierData"
@@ -68,9 +80,22 @@ class IMDBMiddleware:
                 instance._cache_dir: Path | None = None
                 instance._cached_db_path: Path | None = None
                 instance._cache_time: float = 0.0
-                instance._source_fingerprint: tuple[int, int] | None = None
+                instance._source_fingerprint: tuple[int, int, int, int, int] | None = None
                 instance._source_crc32: int | None = None
+                instance._source_wal_crc32: int | None = None
                 instance._conn: sqlite3.Connection | None = None
+                instance._last_refresh_start: float = 0.0
+                instance._backoff_until: float = 0.0
+                instance._consecutive_failures: int = 0
+                instance._last_error: str = ""
+                instance._wal_frames_applied: int = 0
+                instance._last_refresh_ms: float = 0.0
+                instance._data_revision: int = 0
+                instance._sync_future = None
+                try:
+                    instance._data_revision = get_im_data_revision()
+                except Exception:
+                    logger.debug("IM数据版本号读取失败，从0开始")
                 instance._init_data_dir()
                 cls._instance = instance
             return cls._instance
@@ -99,6 +124,13 @@ class IMDBMiddleware:
         self._cache_time = 0.0
         self._source_fingerprint = None
         self._source_crc32 = None
+        self._source_wal_crc32 = None
+        self._last_refresh_start = 0.0
+        self._backoff_until = 0.0
+        self._consecutive_failures = 0
+        self._last_error = ""
+        self._wal_frames_applied = 0
+        self._last_refresh_ms = 0.0
 
     def set_data_dir(self, raw: str) -> None:
         """Apply a newly configured data dir at runtime (persists to config file)."""
@@ -278,17 +310,108 @@ class IMDBMiddleware:
                 logger.error("Encrypted DB size is not a multiple of 16 bytes")
                 return None
 
-            cipher = AES.new(self._key, AES.MODE_ECB)
-            decrypted = bytearray(len(encrypted))
-            for offset in range(0, len(encrypted), 16):
-                block = encrypted[offset : offset + 16]
-                decrypted[offset : offset + 16] = cipher.decrypt(block)
-
+            # One-shot ECB decrypt: page-aligned whole-file decrypt is ~100x faster
+            # than a per-block Python loop on a 10MB+ database.
+            decrypted = AES.new(self._key, AES.MODE_ECB).decrypt(encrypted)
             dst.write_bytes(decrypted)
             return zlib.crc32(encrypted) & 0xFFFFFFFF
         except Exception as exc:
             logger.error("DB decryption failed: {}", exc)
             return None
+
+    @staticmethod
+    def _wal_source_for(db_path: Path) -> Path:
+        return db_path.with_name(db_path.name + "-wal")
+
+    @staticmethod
+    def _wal_cache_for(cached: Path) -> Path:
+        return cached.with_name(cached.name + "-wal")
+
+    @staticmethod
+    def _shm_cache_for(cached: Path) -> Path:
+        # SQLite creates this next to any WAL-mode database it opens.
+        return cached.with_name(cached.name + "-shm")
+
+    def _wal_pipeline_enabled(self) -> bool:
+        return get_env_str(_WAL_PIPELINE_ENV, "1") != "0"
+
+    def _copy_source_pair(self, db_path: Path, cached: Path) -> Path | None:
+        """Read-only copy of the live main file plus its WAL sidecar (if any).
+
+        Returns the copied WAL path, or None when there is no sidecar / the
+        pipeline is disabled. Raises OSError when the main file cannot be read
+        (locked, vanished); the caller keeps serving the previous cache.
+        """
+        shutil.copyfile(db_path, cached)
+        if not self._wal_pipeline_enabled():
+            return None
+        src_wal = self._wal_source_for(db_path)
+        if not src_wal.exists():
+            return None
+        dst_wal = self._wal_cache_for(cached)
+        shutil.copyfile(src_wal, dst_wal)
+        return dst_wal
+
+    def _verify_cached_db(self, cached: Path) -> bool:
+        """Smoke-test a freshly built cache copy: it must open and list msg tables.
+
+        Deliberately NOT integrity_check/quick_check: the schema ships FTS5
+        tables using Alibaba's custom 'mobile' tokenizer, which stock SQLite
+        cannot instantiate.
+        """
+        try:
+            conn = open_readonly(cached)
+            try:
+                list_msg_tables(conn)
+            finally:
+                conn.close()
+        except Exception as exc:
+            logger.warning("重建的IM缓存校验失败，已丢弃: {}", exc)
+            return False
+        return True
+
+    def _discard_build(self, cached: Path) -> None:
+        for path in (cached, self._wal_cache_for(cached), self._shm_cache_for(cached)):
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+    def _rebuild_cache(self, db_path: Path, ali_id: str) -> tuple[Path, int] | None:
+        """Build a fresh cache copy at a new timestamped path.
+
+        Returns (cache_path, wal_frames_applied), or None when the source
+        could not be turned into a verified copy. A WAL-sidecar failure never
+        fails the whole rebuild — it degrades to main-file-only.
+        """
+        cached = self._cache_path_for(ali_id)
+        try:
+            wal_copy = self._copy_source_pair(db_path, cached)
+        except OSError as exc:
+            logger.warning("IM源库拷贝失败（可能被客户端锁定），沿用旧缓存: {}", exc)
+            self._discard_build(cached)
+            return None
+        crc = self._decrypt_db(cached, cached)
+        if crc is None:
+            self._discard_build(cached)
+            return None
+        frames = 0
+        if wal_copy is not None:
+            try:
+                with cached.open("rb") as stream:
+                    page_size = struct.unpack(">H", stream.read(32)[16:18])[0]
+                frames = rekey_wal_copy(wal_copy, self._key, page_size)
+            except (WalError, OSError, struct.error) as exc:
+                logger.warning("WAL解密失败，降级为仅主文件: {}", exc)
+                try:
+                    wal_copy.unlink()
+                except OSError:
+                    pass
+                frames = 0
+        if not self._verify_cached_db(cached):
+            self._discard_build(cached)
+            return None
+        return cached, frames
 
     # -- Cache refresh ---------------------------------------------------------
 
@@ -301,20 +424,41 @@ class IMDBMiddleware:
 
     def _cleanup_stale_caches(self, keep: Path) -> None:
         assert self._cache_dir is not None
-        for path in self._cache_dir.glob("im_*.sqlite"):
-            if path == keep or path == self._cached_db_path:
+        protected = {keep, self._wal_cache_for(keep), self._shm_cache_for(keep)}
+        if self._cached_db_path is not None:
+            # Never remove the live files out from under open readers.
+            protected.add(self._cached_db_path)
+            protected.add(self._wal_cache_for(self._cached_db_path))
+            protected.add(self._shm_cache_for(self._cached_db_path))
+        for path in self._cache_dir.glob("im_*.sqlite*"):
+            if path in protected:
                 continue
             try:
                 path.unlink()
             except OSError:
                 pass
 
-    def _source_fingerprint_of(self, db_path: Path) -> tuple[int, int] | None:
+    @staticmethod
+    def _stat_pair(path: Path) -> tuple[int, int]:
+        stat = path.stat()
+        return (stat.st_mtime_ns, stat.st_size)
+
+    def _source_fingerprint_of(self, db_path: Path) -> tuple[int, int, int, int, int] | None:
+        """Fingerprint covering the main file AND the WAL sidecar.
+
+        Client writes land in ``im.sqlite-wal`` first; a main-only fingerprint
+        would never notice them.
+        """
         try:
-            stat = db_path.stat()
+            main_mtime_ns, main_size = self._stat_pair(db_path)
         except OSError:
             return None
-        return (stat.st_mtime_ns, stat.st_size)
+        src_wal = self._wal_source_for(db_path)
+        try:
+            wal_mtime_ns, wal_size = self._stat_pair(src_wal)
+            return (main_mtime_ns, main_size, wal_mtime_ns, wal_size, 1)
+        except OSError:
+            return (main_mtime_ns, main_size, 0, 0, 0)
 
     def _crc32_of(self, db_path: Path) -> int | None:
         try:
@@ -325,6 +469,12 @@ class IMDBMiddleware:
             return crc & 0xFFFFFFFF
         except OSError:
             return None
+
+    def _wal_crc32_of(self, db_path: Path) -> int | None:
+        src_wal = self._wal_source_for(db_path)
+        if not src_wal.exists():
+            return 0
+        return self._crc32_of(src_wal)
 
     def _is_source_fresh(self, db_path: Path, now: float) -> bool:
         """Two-level freshness: fingerprint only within TTL, fingerprint + CRC32 beyond TTL."""
@@ -337,6 +487,9 @@ class IMDBMiddleware:
             return True
         crc = self._crc32_of(db_path)
         if crc is None or crc != self._source_crc32:
+            return False
+        wal_crc = self._wal_crc32_of(db_path)
+        if wal_crc is None or wal_crc != self._source_wal_crc32:
             return False
         self._cache_time = now
         return True
@@ -355,34 +508,70 @@ class IMDBMiddleware:
         self._cached_db_path = cached
         self._cache_time = time.time()
 
+    def _note_success(self, elapsed_ms: float, wal_frames: int) -> None:
+        self._consecutive_failures = 0
+        self._backoff_until = 0.0
+        self._last_error = ""
+        self._last_refresh_ms = elapsed_ms
+        self._wal_frames_applied = wal_frames
+        self._data_revision += 1
+        try:
+            write_app_config({CONFIG_KEY_IM_DATA_REVISION: self._data_revision})
+        except OSError:
+            logger.debug("IM数据版本号持久化失败，仅保留内存值")
+
+    def _note_failure(self, detail: str) -> None:
+        self._consecutive_failures += 1
+        delay = min(_MIN_REFRESH_INTERVAL * (2 ** (self._consecutive_failures - 1)), _MAX_BACKOFF)
+        self._backoff_until = time.time() + delay
+        self._last_error = detail
+        logger.warning("IM源库刷新失败({}次连败)，{}s后重试: {}", self._consecutive_failures, delay, detail)
+
     def _refresh(self) -> bool:
         with self._lock:
             ali_id = self._resolve_self_ali_id()
             db_path = self.resolve_encrypted_db_path(ali_id)
+            now = time.time()
             if db_path is None:
-                return self._has_fresh_cache(time.time())
+                return self._has_fresh_cache(now)
 
-            if self._is_source_fresh(db_path, time.time()):
+            if self._is_source_fresh(db_path, now):
                 return True
 
-            if not self._ensure_key(db_path, ali_id):
-                return False
+            # Coalesce write bursts and back off after failures — but never
+            # block the very first build, and always serve the previous cache.
+            if self._cached_db_path is not None:
+                if now < self._backoff_until:
+                    return True
+                if now - self._last_refresh_start < _MIN_REFRESH_INTERVAL:
+                    return True
 
-            cached = self._cache_path_for(ali_id)
+            if not self._ensure_key(db_path, ali_id):
+                self._note_failure("AES Key不可用")
+                return self._cached_db_path is not None
+
+            self._last_refresh_start = now
+            started = time.perf_counter()
             logger.info("Decrypting IM database...")
-            crc = self._decrypt_db(db_path, cached)
-            if crc is None:
-                return False
+            built = self._rebuild_cache(db_path, ali_id)
+            if built is None:
+                self._note_failure("缓存重建失败")
+                return self._cached_db_path is not None
+            cached, wal_frames = built
 
             try:
                 self._replace_connection(cached, ali_id)
             except sqlite3.Error as exc:
                 logger.error("Failed to open cached IM database: {}", exc)
-                return False
+                self._discard_build(cached)
+                self._note_failure("缓存打开失败")
+                return self._cached_db_path is not None
             fingerprint = self._source_fingerprint_of(db_path)
             if fingerprint is not None:
                 self._source_fingerprint = fingerprint
-            self._source_crc32 = crc
+            self._source_crc32 = self._crc32_of(db_path)
+            self._source_wal_crc32 = self._wal_crc32_of(db_path)
+            self._note_success((time.perf_counter() - started) * 1000, wal_frames)
             self._cleanup_stale_caches(cached)
         self.sync_to_crm()
         logger.info("IM database refreshed (cached at {})", cached)
@@ -393,9 +582,29 @@ class IMDBMiddleware:
         ali_id = self._resolve_self_ali_id()
         if cached is None or not ali_id:
             return
+        previous = self._sync_future
+        if previous is not None and not previous.done():
+            logger.debug("上一次CRM同步仍在进行，跳过本次提交")
+            return
         future = sync_im_database(cached, ali_id, SelfInfo(ali_id=ali_id))
+        self._sync_future = future
         if wait:
             future.result()
+
+    def sync_status(self) -> dict:
+        """Freshness/observability snapshot for the revision + status APIs."""
+        fingerprint = self._source_fingerprint
+        source_mtime = fingerprint[0] / 1e9 if fingerprint else None
+        return {
+            "revision": self._data_revision,
+            "cache_time": self._cache_time,
+            "source_mtime": source_mtime,
+            "wal_frames_applied": self._wal_frames_applied,
+            "last_refresh_ms": round(self._last_refresh_ms, 1),
+            "wal_pipeline": self._wal_pipeline_enabled(),
+            "stale": bool(self._last_error),
+            "last_error": self._last_error,
+        }
 
     # -- Public API ------------------------------------------------------------
 

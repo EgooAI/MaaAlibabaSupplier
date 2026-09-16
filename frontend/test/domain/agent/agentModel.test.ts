@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_TOOL_OPTIONS, SYSTEM_AGENT_APIDS, agentCategoryLabel, agentPresetToConfig, agentPresetToDbPreset, canRegenerateAgentTestReply, canRunAgentExecution, canUndoAgentTestTurn, createRegularAgentPreset, dbPresetToAgentPreset, displayAgentTools, documentToLlmLevelConfig, filterAgentTestSessionsByCategory, filterAgentsByCategory, isValidToolRoundLimit, llmLevelToDocumentConfig, nextAgentTestSessionId, normalizeAgentEditValues, normalizeAgentLevel, normalizeAgentTools, removeLatestAgentTestTurn, replaceLatestAgentTestReply } from "@/domain/agent/agentModel";
+import { AGENT_TOOL_OPTIONS, SYSTEM_AGENT_APIDS, agentPresetToConfig, agentPresetToDbPreset, canRegenerateAgentTestReply, canUndoAgentTestTurn, createRegularAgentPreset, dbPresetToAgentPreset, displayAgentTools, documentToLlmLevelConfig, filterAgentTestSessionsByCategory, isValidToolRoundLimit, llmLevelToDocumentConfig, nextAgentTestSessionId, normalizeAgentEditValues, normalizeAgentLevel, normalizeAgentTools, removeLatestAgentTestTurn, replaceLatestAgentTestReply } from "@/domain/agent/agentModel";
 import { agentPresets } from "@/mock/agentData";
 import type { AgentConfig, AgentPreset, AgentTestSession, DocumentLlmConfig } from "@/types/agent";
 
@@ -15,16 +15,6 @@ const sessions: AgentTestSession[] = [
 ];
 
 describe("agent model", () => {
-  it("returns category labels", () => {
-    expect(agentCategoryLabel("system")).toBe("系统 Agent");
-    expect(agentCategoryLabel("regular")).toBe("普通 Agent");
-  });
-
-  it("filters agents by category while preserving order", () => {
-    expect(filterAgentsByCategory(agents, "system").map((agent) => agent.id)).toEqual(["system-1"]);
-    expect(filterAgentsByCategory(agents, "regular").map((agent) => agent.id)).toEqual(["regular-1", "regular-2"]);
-  });
-
   it("filters test sessions by the agents in a category", () => {
     expect(filterAgentTestSessionsByCategory(sessions, agents, "system").map((session) => session.id)).toEqual(["session-system"]);
     expect(filterAgentTestSessionsByCategory(sessions, agents, "regular").map((session) => session.id)).toEqual(["session-regular"]);
@@ -78,12 +68,6 @@ describe("agent model", () => {
     expect(() => normalizeAgentEditValues({ name: " 报价 ", description: undefined, prompt: " prompt ", level: 2.5, capabilities: [] })).toThrow("Agent 等级必须是 0 到 4 的整数");
     expect(() => normalizeAgentEditValues({ name: " ", prompt: "prompt", level: 0 })).toThrow("请输入名称");
     expect(createRegularAgentPreset({ name: " 报价 ", prompt: " prompt ", level: 2, capabilities: ["CRM 查询"] }, "2026-09-11", "agent-new")).toMatchObject({ name: "报价", description: "", prompt: "prompt", level: 2, tools: ["crm_query"] });
-  });
-
-  it("checks agent execution availability from enabled state", () => {
-    expect(canRunAgentExecution(agents[0])).toBe(true);
-    expect(canRunAgentExecution(agents[2])).toBe(false);
-    expect(canRunAgentExecution(undefined)).toBe(false);
   });
 
   it("maps the domain preset to the database DTO at the service boundary", () => {

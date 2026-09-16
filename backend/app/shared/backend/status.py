@@ -5,6 +5,7 @@ from __future__ import annotations
 import socket
 import time
 from dataclasses import dataclass
+from datetime import datetime
 
 from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
 from backend.app.shared.utils.app_config import get_configured_self_ali_id
@@ -50,6 +51,19 @@ def check_user_status() -> KeyStatus:
 def check_data_dir_status() -> dict:
     """Return the middleware data-dir status dict for the status snapshot."""
     return get_im_db_middleware().data_dir_status()
+
+
+def check_im_sync_status() -> dict:
+    """Return the IM source freshness snapshot (revision, WAL frames, errors)."""
+    status = get_im_db_middleware().sync_status()
+    return {
+        **status,
+        "cache_time_text": (
+            datetime.fromtimestamp(status["cache_time"]).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            if status["cache_time"]
+            else ""
+        ),
+    }
 
 
 def _check_port(host: str, port: int) -> NetworkStatus:

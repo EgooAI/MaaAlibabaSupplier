@@ -44,7 +44,6 @@ export interface SendMessageResult {
 export interface ExportConversationsInput {
   conversationIds: string[];
 }
-
 export interface ExportConversationsResult {
   file_name: string;
   content: string;
@@ -52,4 +51,13 @@ export interface ExportConversationsResult {
   missing?: string[];
   fileName?: string;
   archiveName?: string;
+}
+
+export interface ConversationRevision {
+  ready: boolean;
+  revision: number;
+  source_mtime: number | null;
+  cache_time: number;
+  stale: boolean;
+  reason?: string;
 }

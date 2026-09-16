@@ -15,7 +15,7 @@ type AnalysisState = {
 
 export function useChatWorkbench() {
   const { message } = App.useApp();
-  const { conversations, loading, reload } = useConversationSummaries();
+  const { conversations, loading, reload, revision } = useConversationSummaries();
   const [activeConversationId, setActiveConversationId] = useState<string>();
   const [activeConversation, setActiveConversation] = useState<ConversationDetail>();
   const [detailLoading, setDetailLoading] = useState(false);
@@ -75,6 +75,33 @@ export function useChatWorkbench() {
       queueMicrotask(() => selectConversation(conversations[0].id));
     }
   }, [activeConversationId, conversations, selectConversation]);
+
+  // Quiet detail refresh when the source revision moves (list already reloaded
+  // by useConversationSummaries). No spinner clearing: the old messages stay
+  // visible until the fresh detail swaps in. Failures stay silent to avoid
+  // toast storms from the 10s poll.
+  const refreshActiveDetail = useCallback(async () => {
+    const id = activeIdRef.current;
+    if (!id) return;
+    const requestId = detailRequestRef.current + 1;
+    detailRequestRef.current = requestId;
+    try {
+      const detail = await backend.getConversation(id);
+      if (detailRequestRef.current !== requestId || activeIdRef.current !== id) return;
+      setActiveConversation(detail);
+    } catch {
+      // Silent on purpose (see above).
+    }
+  }, []);
+
+  const revisionSeenRef = useRef(false);
+  useEffect(() => {
+    if (!revisionSeenRef.current) {
+      revisionSeenRef.current = true;
+      return;
+    }
+    void refreshActiveDetail();
+  }, [revision, refreshActiveDetail]);
 
   const translate = useCallback(async (messageItem: ChatMessage, regenerate = false) => {
     const conversationId = activeConversation?.id;

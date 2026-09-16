@@ -88,6 +88,7 @@ def _build_system_snapshot() -> dict:
     proxy = asdict(status_mod.check_mitm_proxy())
     receiver = asdict(status_mod.check_mitm_receiver())
     data_dir = status_mod.check_data_dir_status()
+    im_sync = status_mod.check_im_sync_status()
     snaps = get_task_queue().all_snapshots()
     node = _last_node_result
     return {
@@ -136,6 +137,7 @@ def _build_system_snapshot() -> dict:
         "proxyStatus": proxy,
         "receiverStatus": receiver,
         "dataDirStatus": data_dir,
+        "imSyncStatus": im_sync,
         "nodeResult": node,
         "taskSnapshots": [_snapshot_to_task_snapshot(s) for s in snaps],
     }
