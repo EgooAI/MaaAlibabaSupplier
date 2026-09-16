@@ -3,7 +3,7 @@
     "tasks": [
         {
             "label": "Setup workspace",
-            "detail": "Initialize the developer workspace: portable frontend toolchain + build, portable Python runtime + backend deps, MaaFramework, Yak CLI (see tools/install_all.py).",
+            "detail": "Initialize the developer workspace",
             "type": "shell",
             "command": "python tools/install_all.py --dev",
             "options": {
@@ -13,7 +13,7 @@
         },
         {
             "label": "Build distributable",
-            "detail": "Assemble the install payload and compile the Setup installer locally (see tools/build_distributable.py).",
+            "detail": "Assemble the install payload and compile the Setup installer locally",
             "type": "shell",
             "command": "python tools/build_distributable.py",
             "options": {
@@ -22,6 +22,20 @@
             "group": {
                 "kind": "build",
                 "isDefault": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Dev preview (restart)",
+            "detail": "Kill whatever listens on the env-configured ports then launch backend and frontend",
+            "type": "shell",
+            "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tools/restart-dev-preview.ps1",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
             },
             "problemMatcher": []
         }
