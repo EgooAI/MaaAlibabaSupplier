@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowDownOutlined, ArrowLeftOutlined, PlusOutlined } from "@ant-design/icons";
-import { Button, Card, Empty, Form, Listy, Modal, Select, Space } from "antd";
+import { Button, Card, Empty, Form, Modal, Select, Space } from "antd";
 import { useState } from "react";
 import { ActionConfirmModal } from "@/components/ActionConfirmModal";
 import { SessionListPanel } from "@/components/SessionListPanel";
@@ -52,12 +52,10 @@ export function AgentSessionsPage() {
   const sessionList = (
     <SessionListPanel title="会话列表" loading={workbench.loading}>
       {workbench.sessions.length ? (
-        <Listy
-          items={workbench.sessions}
-          rowKey="id"
-          virtual={false}
-          itemRender={(session) => (
+        <div className="flex flex-col gap-1">
+          {workbench.sessions.map((session) => (
             <SessionListItem
+              key={session.id}
               session={session}
               agentName={agentNames.get(session.agentId) ?? session.agentId}
               active={session.id === workbench.activeSessionId}
@@ -67,8 +65,8 @@ export function AgentSessionsPage() {
               onCopy={() => workbench.copySession(session.id)}
               onDelete={() => setPendingDeleteSession(session)}
             />
-          )}
-        />
+          ))}
+        </div>
       ) : (
         <Empty description="暂无 Agent 会话" />
       )}

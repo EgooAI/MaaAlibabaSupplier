@@ -1,8 +1,9 @@
 "use client";
 
 import { CopyOutlined, DeleteOutlined, MoreOutlined, ReloadOutlined } from "@ant-design/icons";
-import { Button, Dropdown, Tag, Typography } from "antd";
+import { Avatar, Button, Dropdown, Tag, Typography } from "antd";
 import type { MenuProps } from "antd";
+import { avatarColorOf, avatarInitialOf } from "@/domain/chat/avatarModel";
 import { formatAgentSessionDate } from "@/domain/agent/agentModel";
 import type { AgentTestSession } from "@/types/agent";
 
@@ -30,8 +31,11 @@ export function SessionListItem({ session, agentName, active, disabled, deleting
   }
 
   return (
-    <div className={`rounded-lg px-3 py-3 ${disabled ? "cursor-default" : "cursor-pointer"} ${active ? "bg-blue-50" : "hover:bg-slate-50"}`} onClick={onClick}>
+    <div aria-current={active ? "true" : undefined} className={`rounded-lg border px-2 py-2 ${disabled ? "cursor-default" : "cursor-pointer"} ${active ? "border-blue-300 bg-blue-100 shadow-sm" : "border-transparent hover:border-slate-200 hover:bg-slate-50"}`} onClick={onClick}>
       <div className="flex items-center gap-2">
+        <Avatar size={40} className="shrink-0" style={{ backgroundColor: avatarColorOf(session.agentId) }}>
+          {avatarInitialOf(agentName)}
+        </Avatar>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
             <Typography.Text strong ellipsis>{session.title}</Typography.Text>

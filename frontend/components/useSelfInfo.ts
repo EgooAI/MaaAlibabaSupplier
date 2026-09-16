@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { fallbackAvatarUrl } from "@/domain/chat/avatarModel";
 import { backend } from "@/services/client";
 import type { SelfInfo } from "@/types/home";
 
@@ -9,7 +8,7 @@ export function useSelfInfo() {
   const [selfInfo, setSelfInfo] = useState<SelfInfo | null>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
-  const [avatarSource, setAvatarSource] = useState(fallbackAvatarUrl);
+  const [avatarSource, setAvatarSource] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -17,10 +16,10 @@ export function useSelfInfo() {
     try {
       const info = await backend.getSelfInfo();
       setSelfInfo(info);
-      setAvatarSource(info?.avatar_url || fallbackAvatarUrl);
+      setAvatarSource(info?.avatar_url || "");
     } catch (err: unknown) {
       setSelfInfo(null);
-      setAvatarSource(fallbackAvatarUrl);
+      setAvatarSource("");
       setError(err instanceof Error ? err.message : "个人信息加载失败");
     } finally {
       setLoading(false);

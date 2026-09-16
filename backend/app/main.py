@@ -28,6 +28,7 @@ CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 from backend.app.maafw_process import MaaFWProcess, MaaFWProcessError
 from backend.app.mitm.proxy import run_receiver
 from backend.app.shared.agent.system_presets import ensure_system_agents_seeded
+from backend.app.shared.agent.default_llm_levels import ensure_default_llm_levels_seeded
 from backend.app.api.server import run as run_api
 from backend.app.shared.utils.env import load_workdir_env
 from backend.app.shared.utils.logging import configure_logging
@@ -126,6 +127,7 @@ def main() -> None:
 
     backend_root = resolve_backend_root()
     ensure_system_agents_seeded()
+    ensure_default_llm_levels_seeded()
     _register_agent_runtime()
     maafw = MaaFWProcess(backend_root)
     yak_proc: subprocess.Popen | None = None

@@ -1,12 +1,11 @@
 "use client";
 
-import { AppstoreOutlined, CommentOutlined, DashboardOutlined, FileTextOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PoweroffOutlined, RobotOutlined, SelectOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
+import { AppstoreOutlined, CommentOutlined, DashboardOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PoweroffOutlined, RobotOutlined, SelectOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
 import { Avatar, Button, Layout, Menu, Tooltip, Typography } from "antd";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { fallbackAvatarUrl } from "@/domain/chat/avatarModel";
 import { ProfileDrawer } from "./ProfileDrawer";
 import { PAGE_TITLES, resolveOpenKeys, resolveSelectedKey } from "./routes.config";
 import { useSelfInfo } from "./useSelfInfo";
@@ -31,7 +30,6 @@ const navItems = [
     label: "自动化",
     children: [
       { key: "/agent/llm", icon: <SettingOutlined />, label: <Link href="/agent/llm">LLM</Link> },
-      { key: "/agent/system-prompt", icon: <FileTextOutlined />, label: <Link href="/agent/system-prompt">Level SYSTEM_PROMPT</Link> },
       { key: "/agent/system-agents", icon: <RobotOutlined />, label: <Link href="/agent/system-agents">系统 Agent</Link> },
       { key: "/agent/regular-agents", icon: <RobotOutlined />, label: <Link href="/agent/regular-agents">普通 Agent</Link> },
     ],
@@ -142,10 +140,10 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Button type="text" className="flex items-center gap-2" aria-label="打开个人信息" onClick={() => setProfileOpen(true)}>
             <Avatar
               size="small"
-              src={avatarSource}
+              src={avatarSource || undefined}
               icon={<UserOutlined />}
               onError={() => {
-                setAvatarSource(fallbackAvatarUrl);
+                setAvatarSource("");
                 return true;
               }}
             />

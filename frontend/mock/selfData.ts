@@ -9,6 +9,6 @@ export const mockSelfInfo: SelfInfo = {
   last_name: "Seller",
   country: "China",
   company_name: "Hangzhou Smart Export Co., Ltd.",
-  avatar_url: "https://i.pravatar.cc/80?img=12",
+  avatar_url: "",
   account_status: "active",
 };

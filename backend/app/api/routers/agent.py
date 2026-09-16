@@ -184,12 +184,21 @@ def agent_console() -> dict:
 
 @router.put("/api/agent/llm-config")
 def save_llm_config(body: LlmConfigInput) -> dict:
+    base_url = (body.base_url or "").strip()
+    api_key = (body.api_key or "").strip()
+    model_name = (body.model_name or "").strip()
+    if not base_url:
+        raise AppError("服务地址不能为空", status_code=422)
+    if not api_key:
+        raise AppError("API Key 不能为空", status_code=422)
+    if not model_name:
+        raise AppError("模型名称不能为空", status_code=422)
     try:
         config = LLMApiConfig(
             level=int(body.level),
-            base_url=body.base_url,
-            api_key=body.api_key,
-            model_name=body.model_name,
+            base_url=base_url,
+            api_key=api_key,
+            model_name=model_name,
             system_prompt=body.system_prompt,
             context=body.context,
             max_tool_rounds=body.max_tool_rounds,
