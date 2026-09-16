@@ -77,6 +77,7 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: "pip"
 
       - name: Build exported frontend
         shell: bash
@@ -154,7 +155,7 @@ jobs:
         with:
           name: MaaAlibabaSupplier-Setup
           path: dist/*.exe
-          retention-days: 1
+          retention-days: 7
 
   release:
     if: ${{ needs.meta.outputs.is_release == 'true' && needs.install.outputs.has_dotenv == 'true' }}

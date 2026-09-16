@@ -22,7 +22,7 @@ AppPublisherURL      ={#MyAppURL}
 AppSupportURL        ={#MyAppURL}
 
 AllowNoIcons         =yes
-Compression          =lzma2/max
+Compression          =lzma2/normal
 DefaultDirName       ={userpf}\{#MyAppName}
 DefaultGroupName     ={#MyAppName}
 PrivilegesRequired   =lowest
