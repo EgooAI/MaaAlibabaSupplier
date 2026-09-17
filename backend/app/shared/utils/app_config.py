@@ -11,6 +11,8 @@ are intentionally not consulted (configure via the Settings page instead).
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any
@@ -24,7 +26,7 @@ CONFIG_KEY_ALIBABA_DATA_DIR = "alibaba_data_dir"
 CONFIG_KEY_SELF_ALI_ID = "self_ali_id"
 CONFIG_KEY_IM_DATA_REVISION = "im_data_revision"
 
-_lock = threading.Lock()
+_lock = threading.RLock()
 
 
 def config_file_path() -> Path:
@@ -33,11 +35,12 @@ def config_file_path() -> Path:
 
 def read_app_config() -> dict[str, Any]:
     """Read the config file; return {} when missing, unreadable, or corrupt."""
-    path = config_file_path()
-    try:
-        raw = path.read_bytes()
-    except OSError:
-        return {}
+    with _lock:
+        path = config_file_path()
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            return {}
     try:
         data = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
@@ -52,12 +55,21 @@ def write_app_config(patch: dict[str, Any]) -> dict[str, Any]:
         merged = read_app_config()
         merged.update(patch)
         path = config_file_path()
+        temporary = None
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as stream:
+                temporary = Path(stream.name)
+                json.dump(merged, stream, ensure_ascii=False, indent=2)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
         except OSError as exc:
             logger.error("Failed to write app config {}: {}", path, exc)
             raise
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
         return merged
 
 

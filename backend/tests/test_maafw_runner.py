@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 from backend.app.shared.backend import maafw_runner as runner
+from backend.app.api.envelope import AppError
+from backend.app.shared.backend import account_context, gui_session
 from backend.app.shared.utils import settings
 from tools.validate_schema import load_jsonc
 
@@ -37,6 +39,7 @@ def sdk(monkeypatch):
     state = SimpleNamespace(
         windows=[window()], fail=None, controllers=[], taskers=[], bundles=[],
         options=[], calls=[], outcome=True,
+        config={"self_ali_id": "seller-a", "alibaba_data_dir": "test-data"},
     )
 
     class FakeToolkit:
@@ -94,7 +97,26 @@ def sdk(monkeypatch):
     monkeypatch.setattr(runner, "Tasker", FakeTasker)
     for name in ("_tasker", "_resource", "_window_hwnd"):
         monkeypatch.setattr(runner, name, None)
+    monkeypatch.setattr(runner, "_window_generation", "")
+    monkeypatch.setattr(gui_session, "_confirmation", None)
+    monkeypatch.setattr(account_context, "_context", None)
+    monkeypatch.setattr(account_context, "read_app_config", lambda: dict(state.config))
     return state
+
+
+def confirmed_token():
+    status = gui_session.connect_client()
+    epoch = account_context.get_account_context().epoch
+    gui_session.confirm_client(epoch, status["window_generation"])
+    return gui_session.capture_gui_session(epoch)
+
+
+def run_confirmed(fn):
+    try:
+        token = confirmed_token()
+    except AppError as exc:
+        return False, exc.message
+    return gui_session.run_guarded(token, fn)
 
 
 @pytest.mark.parametrize("failure", [
@@ -103,13 +125,13 @@ def sdk(monkeypatch):
 ])
 def test_initialization_failure_can_recover(sdk, failure):
     sdk.fail = failure
-    assert not runner.chat_input("first")[0]
+    assert not run_confirmed(lambda: runner.chat_input("first"))[0]
     assert runner._tasker is None
     assert runner._resource is None
     assert not sdk.calls
 
     sdk.fail = None
-    assert runner.chat_input("second")[0]
+    assert run_confirmed(lambda: runner.chat_input("second"))[0]
     assert len(sdk.calls) == 1
 
 
@@ -120,17 +142,17 @@ def test_initialization_failure_can_recover(sdk, failure):
 ])
 def test_rejects_missing_partial_or_ambiguous_windows_and_recovers(sdk, windows):
     sdk.windows = windows
-    assert not runner.chat_send("first")[0]
+    assert not run_confirmed(lambda: runner.chat_send("first"))[0]
     assert not sdk.controllers
     assert not sdk.calls
 
     sdk.windows = [window()]
-    assert runner.chat_input("second")[0]
+    assert run_confirmed(lambda: runner.chat_input("second"))[0]
 
 
 def test_resource_path_and_controller_match_interface(sdk):
     sdk.windows = [window(2, title="Other"), window(3, class_name="Other"), window(4)]
-    assert runner.goto_contact("buyer-test")[0]
+    assert run_confirmed(lambda: runner.goto_contact("buyer-test"))[0]
     assert sdk.bundles == [settings.resolve_backend_root() / "assets" / "resource"]
     assert sdk.options == [settings.resolve_backend_root() / "debug"]
     config = load_jsonc(ASSETS / "interface.json")["controller"][0]
@@ -145,8 +167,9 @@ def test_resource_path_and_controller_match_interface(sdk):
 
 
 @pytest.mark.parametrize("change", ["new_hwnd", "disconnected", "not_inited"])
-def test_rebinds_on_next_operation(sdk, change):
-    assert runner.chat_input("first")[0]
+def test_rebind_requires_explicit_reconnection_and_confirmation(sdk, change):
+    token = confirmed_token()
+    assert gui_session.run_guarded(token, lambda: runner.chat_input("first"))[0]
     if change == "new_hwnd":
         sdk.windows = [window(2)]
     elif change == "disconnected":
@@ -154,7 +177,11 @@ def test_rebinds_on_next_operation(sdk, change):
     else:
         sdk.taskers[0].inited = False
 
-    assert runner.chat_input("second")[0]
+    assert not gui_session.run_guarded(token, lambda: runner.chat_input("stale"))[0]
+    assert len(sdk.calls) == 1
+    assert len(sdk.controllers) == 1
+    assert run_confirmed(lambda: runner.chat_input("second"))[0]
+    assert token.window_generation != runner._window_generation
     assert len(sdk.controllers) == 2
     assert runner._tasker.controller is sdk.controllers[-1]
     assert runner._window_hwnd == sdk.windows[0].hwnd
@@ -163,27 +190,28 @@ def test_rebinds_on_next_operation(sdk, change):
 
 @pytest.mark.parametrize("windows", [[], [window(1), window(2)], [window(1, title="Other")]])
 def test_cached_window_is_rechecked(sdk, windows):
-    assert runner.chat_input("first")[0]
+    token = confirmed_token()
+    assert gui_session.run_guarded(token, lambda: runner.chat_input("first"))[0]
     sdk.windows = windows
-    assert not runner.chat_send("second")[0]
+    assert not gui_session.run_guarded(token, lambda: runner.chat_send("second"))[0]
     assert len(sdk.calls) == 1
     assert runner._tasker is None
 
     sdk.windows = [window(3)]
-    assert runner.chat_input("third")[0]
+    assert run_confirmed(lambda: runner.chat_input("third"))[0]
     assert sdk.controllers[-1].hwnd == 3
 
 
 @pytest.mark.parametrize("outcome", [False, None, RuntimeError("result unavailable")])
 def test_failed_task_is_not_replayed(sdk, outcome):
     sdk.outcome = outcome
-    assert not runner.chat_send("first")[0]
+    assert not run_confirmed(lambda: runner.chat_send("first"))[0]
     assert len(sdk.calls) == 1
     assert len(sdk.taskers) == 1
 
     sdk.outcome = True
     sdk.windows = [window(2)]
-    assert runner.chat_input("second")[0]
+    assert run_confirmed(lambda: runner.chat_input("second"))[0]
     assert len(sdk.calls) == 2
     assert len(sdk.taskers) == 2
 
@@ -199,9 +227,10 @@ def assert_chat_calls(calls):
 
 
 def test_send_test_send_overrides_both_branches(sdk):
-    assert runner.chat_send("first")[0]
-    assert runner.chat_input("test")[0]
-    assert runner.chat_send("last")[0]
+    token = confirmed_token()
+    assert gui_session.run_guarded(token, lambda: runner.chat_send("first"))[0]
+    assert gui_session.run_guarded(token, lambda: runner.chat_input("test"))[0]
+    assert gui_session.run_guarded(token, lambda: runner.chat_send("last"))[0]
     assert_chat_calls(sdk.calls)
     assert len(sdk.taskers) == 1
 

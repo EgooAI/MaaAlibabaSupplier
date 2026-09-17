@@ -29,11 +29,13 @@ def _unexpected_external_access(*args, **kwargs):
 
 def pytest_configure(config):
     # Fixtures run after collection, but imports can already resolve data paths.
+    source_root = Path(__file__).resolve().parent
+    if config.inipath != source_root.parent / "pytest.ini":
+        raise pytest.UsageError("Backend tests require the repository config: python -m pytest -c pytest.ini")
     temporary = TemporaryDirectory(prefix="maa-pytest-")
     config.add_cleanup(temporary.cleanup)
     patch = pytest.MonkeyPatch()
     config.add_cleanup(patch.undo)
-    source_root = Path(__file__).resolve().parent
     patch.syspath_prepend(str(source_root.parent))
     patch.syspath_prepend(str(source_root / "app" / "crm_sdk"))
     for key in tuple(os.environ):
@@ -53,6 +55,9 @@ def pytest_configure(config):
     patch.setattr(socket, "create_connection", _unexpected_external_access)
     patch.setattr(subprocess, "Popen", _unexpected_external_access)
     config.add_cleanup(_cleanup_runtime)
+    # A process-local marker cannot be inherited by an unprotected child pytest.
+    # Publish it only after every collection-time isolation patch is installed.
+    patch.setattr(pytest, "_maa_backend_isolation_pid", os.getpid(), raising=False)
 
 
 def _cleanup_runtime():

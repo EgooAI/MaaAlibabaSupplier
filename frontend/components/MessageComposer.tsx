@@ -20,6 +20,7 @@ type MessageComposerProps = {
   sendLabel?: string;
   loading?: boolean;
   disabled?: boolean;
+  sendDisabled?: boolean;
   onSend: () => void;
 };
 
@@ -32,13 +33,14 @@ export function MessageComposer({
   sendLabel = "发送",
   loading = false,
   disabled = false,
+  sendDisabled = false,
   onSend,
 }: MessageComposerProps) {
   const menuItems: MenuProps["items"] = useMemo(
     () => tools.map((tool) => ({ key: tool.key, label: tool.label, disabled: tool.disabled })),
     [tools],
   );
-  const canSend = !disabled && Boolean(value.trim());
+  const canSend = !disabled && !sendDisabled && !loading && Boolean(value.trim());
 
   return (
     <Space.Compact className="w-full" orientation="vertical">

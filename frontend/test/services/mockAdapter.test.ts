@@ -4,9 +4,46 @@ import { mockBackend } from "@/test/support/mockAdapter";
 
 beforeEach(async () => {
   await mockBackend.resetCache();
+  const initial = await mockBackend.getConnection();
+  const connected = await mockBackend.connectClient(initial.account.epoch);
+  await mockBackend.confirmClient(connected.account.epoch, connected.client.window_generation);
 });
 
 describe("mock adapter", () => {
+  it("observes without side effects and requires new confirmation on every connection", async () => {
+    const initial = await mockBackend.getConnection();
+    const beforeTasks = await mockBackend.listTaskSnapshots();
+    expect(await mockBackend.getConnection()).toEqual(initial);
+    const connected = await mockBackend.connectClient(initial.account.epoch);
+    expect(connected.capabilities.operate_client).toBe(false);
+    expect(await mockBackend.listTaskSnapshots()).toEqual(beforeTasks);
+    await expect(mockBackend.sendMessage({ conversationId: "42", content: "draft", action: "test" })).rejects.toThrow("人工确认");
+    await expect(mockBackend.confirmClient(connected.account.epoch, initial.client.window_generation)).rejects.toThrow("窗口已变化");
+    const confirmed = await mockBackend.confirmClient(connected.account.epoch, connected.client.window_generation);
+    expect(confirmed.capabilities.operate_client).toBe(true);
+  });
+
+  it("revokes confirmation and sync readiness after selecting a different seller", async () => {
+    const initial = await mockBackend.getConnection();
+    await mockBackend.saveAliId("seller-b", initial.account.epoch);
+    const changed = await mockBackend.getConnection();
+    expect(changed.account.epoch).not.toBe(initial.account.epoch);
+    expect(changed.account.self_ali_id).toBe("seller-b");
+    expect(changed.source.phase).toBe("idle");
+    expect(changed.client.confirmed).toBe(false);
+    await expect(mockBackend.retryConnection(initial.account.epoch)).rejects.toThrow("账号已变化");
+    const synced = await mockBackend.retryConnection(changed.account.epoch);
+    expect(synced.capabilities).toEqual({ read_chat: true, use_ai: true, operate_client: false });
+  });
+
+  it("allows diagnostics after connecting without permitting unconfirmed GUI writes", async () => {
+    const initial = await mockBackend.getConnection();
+    const connected = await mockBackend.connectClient(initial.account.epoch);
+    expect(connected.client.confirmed).toBe(false);
+    await expect(mockBackend.runNodeTest()).resolves.toMatchObject({ success: null, task_snapshot: { status: "pending" } });
+    await expect(mockBackend.sendMessage({ conversationId: "42", content: "hello", action: "test" })).rejects.toThrow("人工确认");
+    await expect(mockBackend.gotoContact("42", "buyer")).rejects.toThrow("人工确认");
+  });
   it("does not create task snapshots when sending to a missing conversation", async () => {
     const before = await mockBackend.listTaskSnapshots();
 

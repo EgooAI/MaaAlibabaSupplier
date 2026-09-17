@@ -2,97 +2,59 @@
 
 import { App } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { backend } from "@/services/client";
+import { AccountChangedError, useAccount, useAccountBackend } from "@/features/account/AccountProvider";
 import type { Conversation } from "@/types/chatCanonical";
-
-// Revision probe cadence while the chat page is visible. Each probe is
-// fingerprint-gated on the backend (microseconds when unchanged); the full
-// list reloads only when the revision actually moved.
-const REVISION_POLL_INTERVAL_MS = 10_000;
 
 export function useConversationSummaries() {
   const { message } = App.useApp();
+  const backend = useAccountBackend();
+  const { snapshot } = useAccount();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
-  const [revision, setRevision] = useState(0);
-  const revisionRef = useRef(0);
-  const baselineReadyRef = useRef(false);
-
-  const noteRevision = useCallback((next: number) => {
-    baselineReadyRef.current = true;
-    if (revisionRef.current === next) return;
-    revisionRef.current = next;
-    setRevision(next);
-  }, []);
-
-  const probeRevision = useCallback(async (): Promise<number | null> => {
-    try {
-      const probe = await backend.getConversationRevision();
-      return probe.ready ? probe.revision : null;
-    } catch {
-      return null;
-    }
-  }, []);
-
+  const [polledRevision, setPolledRevision] = useState(0);
+  const polling = useRef(false);
+  // The source revision can advance before CRM synchronization finishes.
+  const revision = JSON.stringify([Math.max(snapshot?.source.revision ?? 0, polledRevision), snapshot?.source.phase, snapshot?.source.last_success]);
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      // Two passes max: if the source moves mid-fetch, the second pass
-      // converges instead of leaving a fresh baseline over stale list data.
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const before = await probeRevision();
-        setConversations(await backend.listConversations());
-        const after = await probeRevision();
-        if (after !== null) noteRevision(after);
-        if (after === null || after === before) break;
-      }
-    } catch {
-      message.error("聊天数据加载失败");
+      setConversations(await backend.listConversations());
+    } catch (error) {
+      if (!(error instanceof AccountChangedError)) message.error("聊天数据加载失败，请刷新状态后重试");
     } finally {
       setLoading(false);
     }
-  }, [message, noteRevision, probeRevision]);
+  }, [backend, message]);
 
   useEffect(() => {
-    async function loadInitialSummaries() {
-      await reload();
-    }
-
-    void loadInitialSummaries();
-  }, [reload]);
-
-  useEffect(() => {
-    async function tick() {
-      if (document.hidden) return;
-      let probe;
+    if (!snapshot?.account.self_ali_id || snapshot.source.key_validation !== "valid") return;
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled || document.hidden || polling.current) return;
+      polling.current = true;
       try {
-        probe = await backend.getConversationRevision();
+        const next = await backend.getConversationRevision();
+        if (!cancelled && next.ready) setPolledRevision(next.revision);
       } catch {
-        return;
+        // A busy backend or expired workspace must not discard the visible archive.
+      } finally {
+        polling.current = false;
       }
-      if (!probe.ready) return;
-      if (!baselineReadyRef.current) {
-        // Baseline not established yet (initial load still in flight).
-        noteRevision(probe.revision);
-        return;
-      }
-      if (probe.revision === revisionRef.current) return;
-      noteRevision(probe.revision);
-      await reload();
-    }
-
-    const timer = setInterval(() => {
-      void tick();
-    }, REVISION_POLL_INTERVAL_MS);
-    const onVisible = () => {
-      if (!document.hidden) void tick();
     };
+    const timer = setInterval(() => void poll(), 10_000);
+    const onVisible = () => { if (!document.hidden) void poll(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
+      cancelled = true;
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [noteRevision, reload]);
+  }, [backend, snapshot?.account.self_ali_id, snapshot?.source.key_validation]);
 
+  useEffect(() => {
+    // Reload the list when the shared source revision changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void reload();
+  }, [reload, revision]);
   return { conversations, loading, reload, revision };
 }

@@ -29,6 +29,12 @@ def session_key_prefix(self_ali_id: str) -> str:
     return f"{PLATFORM_PID}:{self_ali_id}:"
 
 
+def message_external_id(self_ali_id: str, table_name: str, mid: str) -> str:
+    if not self_ali_id or ":" in self_ali_id or not table_name or ":" in table_name or not mid:
+        raise ValueError("Message identity requires a seller, source table and message ID")
+    return f"{PLATFORM_PID}:{self_ali_id}:{table_name}:{mid}"
+
+
 __all__ = [
     "PLATFORM_PID",
     "ICBU_SUFFIX",
@@ -36,4 +42,5 @@ __all__ = [
     "strip_icbu_suffix",
     "session_key",
     "session_key_prefix",
+    "message_external_id",
 ]

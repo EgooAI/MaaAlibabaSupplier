@@ -1,55 +1,12 @@
 "use client";
 
-import { App, Button, Space, Typography } from "antd";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import { backend } from "@/services/client";
-import type { DataDirStatus } from "@/types/status";
-
-function bannerCopy(status: DataDirStatus): string {
-  if (status.state === "unconfigured") return "尚未配置阿里客户端数据目录，聊天与同步功能不可用，请前往设置页配置。";
-  return `数据目录无效：${status.detail || "请检查路径"}，聊天与同步功能不可用，请前往设置页重新配置。`;
-}
+import { Alert } from "antd";
+import Link from "next/link";
+import { useAccount } from "@/features/account/AccountProvider";
 
 export function DataDirBanner() {
-  const router = useRouter();
-  const { message } = App.useApp();
-  const [copy, setCopy] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function checkBlockingState() {
-      try {
-        const status = await backend.getDataDirStatus();
-        if (cancelled) return;
-        if (status.state !== "ok") {
-          setCopy(bannerCopy(status));
-          return;
-        }
-        const identities = await backend.listAliIds();
-        if (cancelled) return;
-        if (!identities.selected) setCopy("尚未选择阿里账号身份，聊天与同步功能不可用，请前往设置页选择。");
-      } catch {
-        if (!cancelled) message.error("运行状态加载失败");
-      }
-    }
-
-    void checkBlockingState();
-    return () => {
-      cancelled = true;
-    };
-  }, [message]);
-
-  if (!copy) return null;
-
-  return (
-    <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
-      <Space className="w-full justify-between">
-        <Typography.Text>{copy}</Typography.Text>
-        <Button type="primary" size="small" onClick={() => router.push("/settings")}>
-          前往设置
-        </Button>
-      </Space>
-    </div>
-  );
+  const { snapshot, blocked, error } = useAccount();
+  if (!blocked && snapshot?.capabilities.operate_client) return null;
+  const copy = error || (blocked ? "正在刷新账号状态，请稍候。" : !snapshot?.capabilities.read_chat ? "聊天数据尚未就绪，请完成目录、账号和 Key 配置，然后主动同步。" : !snapshot.client.confirmed ? "只读模式：卖家身份尚未人工确认。草稿可编辑，发送、填入测试和跳转联系人暂不可用。" : "客户端暂不可操作，请检查连接并重新确认卖家身份。");
+  return <Alert className="mb-4" type="warning" showIcon message={copy} action={<Link href="/settings">前往接入设置</Link>} />;
 }

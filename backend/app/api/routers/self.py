@@ -3,7 +3,10 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from backend.app.api.envelope import ok
-from backend.app.shared.crm import get_self_info, refresh_chat_data
+from backend.app.api.account_scope import AccountRoute
+from backend.app.shared.backend.account_context import get_account_context
+from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
+from backend.app.shared.crm import get_self_info
 from backend.app.shared.mitm.pool import (
     get_generic_card_pool,
     get_inquiry_card_pool,
@@ -11,12 +14,12 @@ from backend.app.shared.mitm.pool import (
     get_user_info_pool,
 )
 
-router = APIRouter()
+router = APIRouter(route_class=AccountRoute)
 
 
 @router.get("/api/self-info")
 def self_info() -> dict:
-    info = get_self_info()
+    info = get_self_info(get_account_context().self_ali_id)
     if info is None:
         return ok(None)
     return ok(info.model_dump())
@@ -33,5 +36,5 @@ def reset_cache() -> dict:
 
 @router.get("/api/sync-state")
 def sync_state() -> dict:
-    state = refresh_chat_data(wait=False)
-    return ok({"ready": state.ready, "self_ali_id": state.self_ali_id, "reason": state.reason})
+    state = get_im_db_middleware().sync_status()
+    return ok({**state, "reason": state.get("error_code") or ""})

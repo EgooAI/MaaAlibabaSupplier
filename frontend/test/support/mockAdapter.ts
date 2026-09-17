@@ -16,6 +16,7 @@ import type { SendMessageInput } from "@/types/chatOperations";
 import type { SelfInfo } from "@/types/home";
 import type { AliIdList, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskSnapshot } from "@/types/status";
 import type { OperationsBackend } from "@/services/interfaces";
+import { connectionSnapshot } from "@/mock/connectionData";
 
 const delay = <T,>(value: T, ms = 280) => new Promise<T>((resolve) => setTimeout(() => resolve(value), ms));
 
@@ -47,11 +48,49 @@ let taskSnapshotStore: TaskSnapshot[] = structuredClone(initialState.taskSnapsho
 let consoleStore: AgentConsoleState = structuredClone(initialState.console);
 let agentPresetStore: AgentPreset[] = structuredClone(initialState.agentPresets);
 const translationStore = new Map<string, string>();
+let connectionStore = structuredClone(connectionSnapshot);
+
+function changeMockAccount() {
+  connectionStore.account.epoch = crypto.randomUUID();
+  connectionStore.source = { ...connectionStore.source, epoch: connectionStore.account.epoch, self_ali_id: connectionStore.account.self_ali_id, phase: "idle", ready: false, key_validation: "unverified" };
+  connectionStore.client.confirmed = false;
+  connectionStore.capabilities = { read_chat: false, use_ai: false, operate_client: false };
+}
+
+function checkMockEpoch(epoch: string) {
+  if (epoch !== connectionStore.account.epoch) throw new Error("账号已变化");
+}
+
+function requireMockClient() {
+  if (!connectionStore.capabilities.operate_client) throw new Error("请先人工确认客户端卖家身份");
+}
 
 export const mockBackend: OperationsBackend = {
+  getConnection: () => delay(structuredClone(connectionStore)),
+  connectClient: async (epoch) => {
+    checkMockEpoch(epoch);
+    connectionStore.client = { connected: true, window_generation: crypto.randomUUID(), confirmed: false, detail: "请人工确认当前窗口卖家" };
+    connectionStore.capabilities.operate_client = false;
+    return delay(structuredClone(connectionStore));
+  },
+  confirmClient: async (epoch, windowGeneration) => {
+    checkMockEpoch(epoch);
+    if (!connectionStore.client.connected || windowGeneration !== connectionStore.client.window_generation) throw new Error("客户端窗口已变化");
+    connectionStore.client.confirmed = true;
+    connectionStore.capabilities.operate_client = true;
+    return delay(structuredClone(connectionStore));
+  },
+  retryConnection: async (epoch) => {
+    checkMockEpoch(epoch);
+    connectionStore.source = { ...connectionStore.source, phase: "ready", ready: true, key_validation: "valid", last_success: Date.now() / 1000, revision: (connectionStore.source.revision ?? 0) + 1 };
+    connectionStore.capabilities.read_chat = true;
+    connectionStore.capabilities.use_ai = connectionStore.model.configured;
+    return delay(structuredClone(connectionStore));
+  },
   getSelfInfo: () => delay(structuredClone(selfInfoStore)),
 
   resetCache: async () => {
+    connectionStore = structuredClone(connectionSnapshot);
     selfInfoStore = structuredClone(initialState.selfInfo);
     conversationStore = structuredClone(initialState.conversationAggregates);
     businessCardStore = structuredClone(initialState.cards);
@@ -127,6 +166,7 @@ export const mockBackend: OperationsBackend = {
   },
 
   sendMessage: async ({ conversationId, content, action = "send" }: SendMessageInput) => {
+    requireMockClient();
     const execution = executeSendMessage({ conversationId, content, action });
     const conversation = buildConversationDetail(conversationId);
     return delay(structuredClone({ message: undefined, conversation, execution }));
@@ -137,7 +177,10 @@ export const mockBackend: OperationsBackend = {
     return delay(buildConversationExport(selected));
   },
 
-  gotoContact: async () => delay({ status: "queued" }),
+  gotoContact: async () => {
+    requireMockClient();
+    return delay({ status: "queued" });
+  },
 
   checkUserStatus: () => delay(structuredClone(keyStatusStore)),
 
@@ -146,6 +189,7 @@ export const mockBackend: OperationsBackend = {
   checkMitmReceiver: () => delay(structuredClone(receiverStatusStore)),
 
   runNodeTest: async (entry = "ChatInput_GoToInput") => {
+    if (!connectionStore.client.connected) throw new Error("请先接入客户端");
     if (entry !== "ChatInput_GoToInput" && entry !== "ContactSearch_GoToSearch") throw new Error("节点测试入口无效");
     const task = queueMockTask(`节点测试：${entry}`, entry);
     return delay(structuredClone({ success: null, message: task.message, task_snapshot: task }), 360);
@@ -153,23 +197,40 @@ export const mockBackend: OperationsBackend = {
 
   getDataDirStatus: () => delay(structuredClone(dataDirStatusStore)),
 
-  saveDataDirPath: async (path: string) => {
+  saveDataDirPath: async (path, epoch) => {
+    checkMockEpoch(epoch);
     const trimmed = path.trim();
     if (!trimmed) throw new Error("数据目录路径不能为空");
     dataDirStatusStore = { state: "ok", path: trimmed, source: "file", detail: "" };
+    connectionStore.data_dir = dataDirStatusStore;
+    connectionStore.account.data_dir = trimmed;
+    changeMockAccount();
     statusStore = buildStatusSnapshot();
     return delay(structuredClone(dataDirStatusStore));
   },
 
   listDataDirCandidates: (): Promise<DataDirCandidates> => delay({ candidates: [dataDirStatusStore.path].filter(Boolean) }),
 
-  listAliIds: (): Promise<AliIdList> => delay({ accounts: [], selected: "" }),
+  listAliIds: (): Promise<AliIdList> => delay({ accounts: [], selected: connectionStore.account.self_ali_id }),
 
-  saveAliId: async (): Promise<AliIdList> => delay({ accounts: [], selected: "" }),
+  saveAliId: async (aliId, epoch): Promise<AliIdList> => {
+    checkMockEpoch(epoch);
+    connectionStore.account.self_ali_id = aliId;
+    changeMockAccount();
+    return delay({ accounts: [], selected: aliId });
+  },
 
-  saveAliKey: async (): Promise<AliIdList> => delay({ accounts: [], selected: "" }),
+  saveAliKey: async (...[, , epoch]): Promise<AliIdList> => {
+    checkMockEpoch(epoch);
+    changeMockAccount();
+    return delay({ accounts: [], selected: connectionStore.account.self_ali_id });
+  },
 
-  clearAliKey: async (): Promise<AliIdList> => delay({ accounts: [], selected: "" }),
+  clearAliKey: async (...[, epoch]): Promise<AliIdList> => {
+    checkMockEpoch(epoch);
+    changeMockAccount();
+    return delay({ accounts: [], selected: connectionStore.account.self_ali_id });
+  },
 
   listTaskSnapshots: () => delay(structuredClone(taskSnapshotStore)),
 

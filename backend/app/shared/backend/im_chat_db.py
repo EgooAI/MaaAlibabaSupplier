@@ -95,7 +95,11 @@ def _contact_ali_id_from_cid(cid: str, self_ali_id: str) -> str:
     if len(parts) != 2:
         return ""
     first, second = parts
-    return second if first == self_ali_id else first
+    if not self_ali_id:
+        return ""
+    if first == self_ali_id:
+        return second
+    return first if second == self_ali_id else ""
 
 
 def build_conversations(conn: sqlite3.Connection, self_ali_id: str) -> list[ContactConv]:

@@ -9,8 +9,11 @@ from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
-from backend.app.api.envelope import AppError, err
+from backend.app.api.account_scope import is_account_path, request_epoch, response_epoch
+from backend.app.api.envelope import AppError, err, user_message
+from backend.app.shared.backend.account_context import get_account_context
 from backend.app.shared.utils.settings import FRONTEND_DEV_ORIGINS, resolve_repo_root
 
 from backend.app.api.routers import agent, app as app_router, conversations, messages, self, settings, status
@@ -18,26 +21,52 @@ from backend.app.api.routers import agent, app as app_router, conversations, mes
 
 def create_app() -> FastAPI:
     app = FastAPI(title="MaaAlibabaSupplier API")
+    @app.middleware("http")
+    async def add_request_id(request: Request, call_next):  # type: ignore[no-untyped-def]
+        request_id = uuid.uuid4().hex[:12]
+        request.state.request_id = request_id
+        if is_account_path(request.url.path):
+            context = await run_in_threadpool(get_account_context)
+            supplied = request.headers.get("X-Account-Epoch")
+            expected = supplied if supplied is not None else context.epoch
+            if (request.method not in {"GET", "HEAD", "OPTIONS"} and not supplied) or expected != context.epoch:
+                response = JSONResponse(status_code=409, content=err("请求缺少账号版本或账号已切换，请刷新后重试。"))
+                response.headers["X-Account-Epoch"] = context.epoch
+            else:
+                token = request_epoch.set(expected)
+                marker = [expected]
+                response_token = response_epoch.set(marker)
+                try:
+                    try:
+                        response = await call_next(request)
+                    except Exception:
+                        logger.exception("Unhandled account API error [{}] {}:", request_id, request.url.path)
+                        response = JSONResponse(status_code=500, content=err("服务器内部错误", 1))
+                    current = await run_in_threadpool(get_account_context)
+                    if current.epoch != marker[0]:
+                        response = JSONResponse(status_code=409, content=err("处理请求期间账号已切换，请刷新后重试。"))
+                    response.headers["X-Account-Epoch"] = current.epoch
+                finally:
+                    response_epoch.reset(response_token)
+                    request_epoch.reset(token)
+        else:
+            response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=FRONTEND_DEV_ORIGINS,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Account-Epoch", "X-Request-ID"],
     )
-
-    @app.middleware("http")
-    async def add_request_id(request: Request, call_next):  # type: ignore[no-untyped-def]
-        request_id = uuid.uuid4().hex[:12]
-        request.state.request_id = request_id
-        response = await call_next(request)
-        response.headers["X-Request-ID"] = request_id
-        return response
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
         logger.warning("API error {} {}: {}", request.url.path, exc.status_code, exc.message)
-        return JSONResponse(status_code=exc.status_code, content=err(exc.message, exc.code))
+        return JSONResponse(status_code=exc.status_code, content=err(user_message(exc.message), exc.code))
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:

@@ -2,9 +2,14 @@ import type { AgentConsoleState, AgentTestInput, AgentTestResult, AgentTestSessi
 import type { AssistantSuggestion, Conversation, ConversationAnalysis, ConversationDetail } from "@/types/chatCanonical";
 import type { ExportConversationsInput, ExportConversationsResult, RequestTranslationsInput, RequestTranslationsResult, SendMessageInput, SendMessageResult, TranslateMessageInput, TranslateMessageResult, ConversationRevision } from "@/types/chatOperations";
 import type { SelfInfo } from "@/types/home";
+import type { AccountEpoch, ConnectionSnapshot } from "@/types/connection";
 import type { AliIdList, CreateTestTaskInput, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestEntry, NodeTestSubmission, SystemStatusSnapshot, TaskItem, TaskSnapshot } from "@/types/status";
 
 export interface OperationsBackend {
+  getConnection(): Promise<ConnectionSnapshot>;
+  connectClient(epoch: AccountEpoch): Promise<ConnectionSnapshot>;
+  confirmClient(epoch: AccountEpoch, windowGeneration: string): Promise<ConnectionSnapshot>;
+  retryConnection(epoch: AccountEpoch): Promise<ConnectionSnapshot>;
   getSelfInfo(): Promise<SelfInfo | null>;
   resetCache(): Promise<void>;
   shutdownApp(): Promise<void>;
@@ -33,13 +38,13 @@ export interface OperationsBackend {
   createTestTask(input: CreateTestTaskInput): Promise<TaskItem>;
 
   getDataDirStatus(): Promise<DataDirStatus>;
-  saveDataDirPath(path: string): Promise<DataDirStatus>;
+  saveDataDirPath(path: string, epoch: AccountEpoch): Promise<DataDirStatus>;
   listDataDirCandidates(): Promise<DataDirCandidates>;
 
   listAliIds(): Promise<AliIdList>;
-  saveAliId(aliId: string): Promise<AliIdList>;
-  saveAliKey(aliId: string, aesKeyHex: string): Promise<AliIdList>;
-  clearAliKey(aliId: string): Promise<AliIdList>;
+  saveAliId(aliId: string, epoch: AccountEpoch): Promise<AliIdList>;
+  saveAliKey(aliId: string, aesKeyHex: string, epoch: AccountEpoch): Promise<AliIdList>;
+  clearAliKey(aliId: string, epoch: AccountEpoch): Promise<AliIdList>;
 
   getAgentConsole(): Promise<AgentConsoleState>;
   saveLlmConfig(input: DocumentLlmConfig): Promise<DocumentLlmConfig>;

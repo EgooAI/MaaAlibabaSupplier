@@ -7,6 +7,9 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from backend.app.api.envelope import AppError, api_error, ok
+from backend.app.api.account_scope import SettingsRoute, require_epoch
+from backend.app.api.connection import connection_snapshot
+from backend.app.shared.backend.gui_session import connect_client, confirm_client
 from backend.app.shared.backend.im_db_middleware import (
     IMDBMiddleware,
     STATE_OK,
@@ -24,7 +27,41 @@ from backend.app.shared.crm.account_keys import (
 )
 from backend.app.shared.utils.app_config import get_configured_self_ali_id
 
-router = APIRouter()
+router = APIRouter(route_class=SettingsRoute)
+
+
+class ConnectionInput(BaseModel):
+    epoch: str = Field(min_length=1)
+
+
+class ConfirmConnectionInput(ConnectionInput):
+    window_generation: str = Field(min_length=1)
+
+
+@router.get("/api/settings/connection")
+def get_connection() -> dict:
+    return ok(connection_snapshot())
+
+
+@router.post("/api/settings/connection/connect")
+def connect_connection(body: ConnectionInput) -> dict:
+    require_epoch(body.epoch)
+    connect_client()
+    return ok(connection_snapshot())
+
+
+@router.post("/api/settings/connection/confirm")
+def confirm_connection(body: ConfirmConnectionInput) -> dict:
+    require_epoch(body.epoch)
+    confirm_client(body.epoch, body.window_generation)
+    return ok(connection_snapshot())
+
+
+@router.post("/api/settings/connection/retry")
+def retry_connection(body: ConnectionInput) -> dict:
+    require_epoch(body.epoch)
+    get_im_db_middleware().retry_connection(wait=False)
+    return ok(connection_snapshot())
 
 
 class DataDirInput(BaseModel):
@@ -50,13 +87,15 @@ def save_data_dir(body: DataDirInput) -> dict:
     raw = (body.path or "").strip()
     if not raw:
         raise AppError("数据目录路径不能为空", status_code=422)
-    candidate = Path(raw)
+    candidate = Path(raw).resolve()
     if not candidate.exists():
         raise AppError(f"目录不存在: {raw}", status_code=422)
     if not IMDBMiddleware.looks_like_data_dir(candidate):
         raise AppError("目录下未找到 IMServiceDir/MessageSDK IM 数据库结构", status_code=422)
     try:
-        get_im_db_middleware().set_data_dir(raw)
+        get_im_db_middleware().set_data_dir(str(candidate))
+    except AppError:
+        raise
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
@@ -67,6 +106,8 @@ def save_data_dir(body: DataDirInput) -> dict:
 def list_data_dir_candidates() -> dict:
     try:
         candidates = find_data_dir_candidates()
+    except AppError:
+        raise
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
@@ -105,6 +146,8 @@ def list_ali_ids() -> dict:
     mw = _require_data_dir_ok()
     try:
         rows = _ali_id_rows(mw)
+    except AppError:
+        raise
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
@@ -119,6 +162,8 @@ def save_ali_id(body: AliIdInput) -> dict:
         raise AppError(f"数据目录下未发现该账号: {ali_id}", status_code=422)
     try:
         mw.set_self_ali_id(ali_id)
+    except AppError:
+        raise
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
@@ -139,6 +184,8 @@ def save_ali_key(body: AliKeyInput) -> dict:
     try:
         save_key(ali_id, key, "manual")
         mw.drop_cached_key()
+    except AppError:
+        raise
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
@@ -151,6 +198,8 @@ def clear_ali_key(ali_id: str) -> dict:
     try:
         removed = delete_key(ali_id)
         mw.drop_cached_key()
+    except AppError:
+        raise
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)

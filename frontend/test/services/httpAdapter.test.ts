@@ -1,8 +1,14 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { httpBackend, requestInit } from "@/services/httpAdapter";
 import type { ConversationAggregateDto } from "@/types/chatTransport";
+import { accountSession } from "@/services/accountSession";
+import { connectionSnapshot } from "@/mock/connectionData";
 
 const originalFetch = globalThis.fetch;
+
+beforeEach(() => {
+  accountSession.accept({ ...structuredClone(connectionSnapshot), client: { ...connectionSnapshot.client, connected: true }, capabilities: { read_chat: true, use_ai: true, operate_client: true } });
+});
 
 const aggregate: ConversationAggregateDto = {
   sid: 42,
@@ -21,6 +27,136 @@ afterEach(() => {
 });
 
 describe("http adapter contract", () => {
+  it.each([
+    ["/api/settings/alibaba-data-dir", "PUT", { path: "E:\\Data" }, (epoch: string) => httpBackend.saveDataDirPath("E:\\Data", epoch)],
+    ["/api/settings/ali-id", "PUT", { ali_id: "seller-b" }, (epoch: string) => httpBackend.saveAliId("seller-b", epoch)],
+    ["/api/settings/ali-keys", "PUT", { ali_id: "seller-a", aes_key_hex: "test-key" }, (epoch: string) => httpBackend.saveAliKey("seller-a", "test-key", epoch)],
+    ["/api/settings/ali-keys/seller-a", "DELETE", undefined, (epoch: string) => httpBackend.clearAliKey("seller-a", epoch)],
+  ] as const)("settings write %s uses the explicit epoch while current requests are blocked", async (path, method, body, operation) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: {} }), { headers: { "X-Account-Epoch": "new-epoch-after-save" } }));
+    globalThis.fetch = fetchMock;
+    accountSession.invalidate();
+    await operation("captured-before-invalidation");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(path);
+    expect(init.method).toBe(method);
+    expect(init.body && JSON.parse(init.body)).toEqual(body);
+    expect(new Headers(init.headers).get("X-Account-Epoch")).toBe("captured-before-invalidation");
+    await expect(operation("")).rejects.toThrow("账号状态已变化");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a settings write's backend 409 instead of retrying with a new token", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 1, msg: "stale settings epoch", data: null }), { status: 409, headers: { "X-Account-Epoch": "server-new" } }));
+    await expect(httpBackend.saveAliId("seller-b", "old-epoch")).rejects.toMatchObject({ status: 409, message: "stale settings epoch" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("observes connection without an account and sends explicit action tokens", async () => {
+    accountSession.invalidate();
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ code: 0, msg: "ok", data: connectionSnapshot }))));
+    globalThis.fetch = fetchMock;
+    await expect(httpBackend.getConnection()).resolves.toEqual(connectionSnapshot);
+    await httpBackend.connectClient("epoch-a");
+    await httpBackend.confirmClient("epoch-a", "window-a");
+    await httpBackend.retryConnection("epoch-a");
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method ?? "GET", init.body && JSON.parse(init.body)])).toEqual([
+      ["/api/settings/connection", "GET", undefined],
+      ["/api/settings/connection/connect", "POST", { epoch: "epoch-a" }],
+      ["/api/settings/connection/confirm", "POST", { epoch: "epoch-a", window_generation: "window-a" }],
+      ["/api/settings/connection/retry", "POST", { epoch: "epoch-a" }],
+    ]);
+  });
+
+  it.each([
+    () => httpBackend.getSelfInfo(),
+    () => httpBackend.listConversations(),
+    () => httpBackend.getTranslation("hello"),
+    () => httpBackend.requestTranslations({ texts: ["hello"] }),
+    () => httpBackend.exportConversations({ conversationIds: ["42"] }),
+    () => httpBackend.resetCache(),
+  ])("attaches the expected epoch to account data requests", async (call) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: [] })));
+    globalThis.fetch = fetchMock;
+    await call();
+    expect(new Headers(fetchMock.mock.calls[0][1].headers).get("X-Account-Epoch")).toBe("mock-1");
+  });
+
+  it("rejects account requests before fetch while a settings mutation is unresolved", async () => {
+    globalThis.fetch = vi.fn();
+    accountSession.invalidate();
+    await expect(httpBackend.getSelfInfo()).rejects.toThrow("账号状态已变化");
+    await expect(httpBackend.sendMessage({ conversationId: "42", content: "hello" })).rejects.toThrow("账号状态已变化");
+    await expect(httpBackend.resetCache()).rejects.toThrow("账号状态已变化");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["send", "test"] as const)("blocks %s before manual client confirmation", async (action) => {
+    accountSession.accept({ ...structuredClone(connectionSnapshot), client: { ...connectionSnapshot.client, connected: true } });
+    globalThis.fetch = vi.fn();
+    await expect(httpBackend.sendMessage({ conversationId: "42", content: "hello", action })).rejects.toThrow("人工确认");
+    await expect(httpBackend.gotoContact("42", "buyer")).rejects.toThrow("人工确认");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("allows read-only diagnostics on an unconfirmed connected client, including without a readable archive", async () => {
+    accountSession.accept({ ...structuredClone(connectionSnapshot), client: { ...connectionSnapshot.client, connected: true, confirmed: false }, capabilities: { read_chat: false, use_ai: false, operate_client: false } });
+    const receipt = { success: null, message: "queued", task_snapshot: { task_id: "diagnostic-1" } };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: receipt })));
+    globalThis.fetch = fetchMock;
+    await expect(httpBackend.runNodeTest()).resolves.toEqual(receipt);
+    expect(new Headers(fetchMock.mock.calls[0][1].headers).get("X-Account-Epoch")).toBe("mock-1");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ entry: "ChatInput_GoToInput" });
+  });
+
+  it("rejects read-only diagnostics while disconnected", async () => {
+    accountSession.accept(structuredClone(connectionSnapshot));
+    globalThis.fetch = vi.fn();
+    await expect(httpBackend.runNodeTest()).rejects.toThrow("接入客户端");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("allows cache reset without client confirmation and rejects a mismatched response epoch", async () => {
+    accountSession.accept(structuredClone(connectionSnapshot));
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, msg: "ok", data: null }), { headers: { "X-Account-Epoch": "mock-1" } }))
+      .mockResolvedValueOnce(new Response("", { headers: { "X-Account-Epoch": "other-account" } }));
+    await expect(httpBackend.resetCache()).resolves.toBeUndefined();
+    await expect(httpBackend.resetCache()).rejects.toThrow("账号状态已变化");
+  });
+
+  it("keeps AI availability independent of client operation", async () => {
+    accountSession.accept(structuredClone(connectionSnapshot));
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: [] })));
+    await expect(httpBackend.getAssistantSuggestions("42")).resolves.toEqual([]);
+    accountSession.accept({ ...connectionSnapshot, capabilities: { read_chat: true, use_ai: false, operate_client: true } });
+    await expect(httpBackend.analyzeConversation("42")).rejects.toThrow("AI 暂不可用");
+  });
+
+  it("discards an old response after a global epoch change", async () => {
+    let respond!: (response: Response) => void;
+    globalThis.fetch = vi.fn(() => new Promise<Response>((resolve) => { respond = resolve; }));
+    const pending = httpBackend.getSelfInfo();
+    accountSession.accept({ ...connectionSnapshot, account: { ...connectionSnapshot.account, epoch: "epoch-b" } });
+    respond(new Response(JSON.stringify({ code: 0, msg: "ok", data: { login_id: "old-seller" } })));
+    await expect(pending).rejects.toThrow("账号状态已变化");
+  });
+
+  it("checks the epoch again after the response body finishes reading", async () => {
+    let finish!: (text: string) => void;
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, headers: new Headers(), text: () => new Promise<string>((resolve) => { finish = resolve; }) });
+    const pending = httpBackend.getSelfInfo();
+    await Promise.resolve();
+    accountSession.invalidate();
+    finish(JSON.stringify({ code: 0, msg: "ok", data: {} }));
+    await expect(pending).rejects.toThrow("账号状态已变化");
+  });
+
+  it("rejects a mismatching server epoch even before the local poll observes a switch", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: {} }), { headers: { "X-Account-Epoch": "server-new" } }));
+    await expect(httpBackend.getSelfInfo()).rejects.toThrow("账号状态已变化");
+  });
+
   it.each([false, null])("preserves queued message execution.success=%s and the conversation/message payload", async (success) => {
     const execution = { success, message: "queued", task_snapshot: { task_id: "task-1", description: "send", status: "pending", message: "queued", result: null, created_at: 0, started_at: null, completed_at: null } };
     const message = { message: { external_mid: "message-1", sid: 42, sender: 1, read: true, content: "hello", type: "text" }, created_at: "2026-09-08 10:00", role: "seller" };

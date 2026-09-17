@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from backend.app.shared.backend.im_chat_db import ContactConv, MessageRow
-from backend.app.shared.crm.identities import self_sender_id
+from backend.app.shared.crm.identities import message_external_id, self_sender_id
 from backend.app.shared.crm.sync import CRMAdapter
 from backend.app.shared.crm.views import (
     CrmResolver,
@@ -100,10 +100,10 @@ class ConversationAggregateTestCase(unittest.TestCase):
         senders = {message.sender for message in messages}
         self.assertEqual(len(senders), 2)
         for message in messages:
-            self.assertTrue(message.external_mid.startswith("msg_table:"))
+            self.assertTrue(message.external_mid.startswith(f"alibaba_icbu:{SELF_ALI_ID}:msg_table:"))
         self_aid = self.adapter._account_by_mapping("ali_id", SELF_ALI_ID).aid
         by_mid = {message.external_mid: message.sender for message in messages}
-        self.assertEqual(by_mid["msg_table:m2"], self_aid)
+        self.assertEqual(by_mid[message_external_id(SELF_ALI_ID, "msg_table", "m2")], self_aid)
 
     def test_mapping_dedup_across_ids(self) -> None:
         self.adapter.upsert_user_info(

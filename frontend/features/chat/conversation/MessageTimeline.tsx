@@ -7,7 +7,7 @@ import { avatarColorOf, avatarInitialOf } from "@/domain/chat/avatarModel";
 import { renderMessageHtml } from "@/domain/chat/messageHtml";
 import type { ChatMessage } from "@/types/chatCanonical";
 
-export function MessageTimeline({ messages, buyerId = "buyer", buyerName = "", showTranslations = true, onRegenerate, onOpenCard }: { messages: ChatMessage[]; buyerId?: string; buyerName?: string; showTranslations?: boolean; onRegenerate: (message: ChatMessage) => void; onOpenCard: (cardId: string) => void }) {
+export function MessageTimeline({ messages, buyerId = "buyer", buyerName = "", showTranslations = true, onRegenerate, onOpenCard }: { messages: ChatMessage[]; buyerId?: string; buyerName?: string; showTranslations?: boolean; onRegenerate?: (message: ChatMessage) => void; onOpenCard: (cardId: string) => void }) {
   return (
     <Space orientation="vertical" className="w-full" size="middle">
       {messages.map((message) => {
@@ -41,7 +41,7 @@ export function MessageTimeline({ messages, buyerId = "buyer", buyerName = "", s
                     </div>
                   ) : null}
                   {showTranslations && message.role === "buyer" && message.translatedContent ? (
-                    <Button size="small" type="link" onClick={() => onRegenerate(message)}>重新翻译</Button>
+                    <Button size="small" type="link" disabled={!onRegenerate} onClick={() => onRegenerate?.(message)}>重新翻译</Button>
                   ) : null}
                 </Space>
               </Card>

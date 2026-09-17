@@ -7,9 +7,9 @@ from backend.app.shared.crm.views import CrmConversation
 from backend.app.shared.mitm.pool import SelfInfo, UserInfo
 
 
-def get_self_info() -> SelfInfo | None:
+def get_self_info(self_ali_id: str | None = None) -> SelfInfo | None:
     try:
-        return CRMAdapter().get_self_info()
+        return CRMAdapter().get_self_info(self_ali_id)
     except Exception:
         logger.exception("Failed to load SelfInfo from CRM SDK")
         return None

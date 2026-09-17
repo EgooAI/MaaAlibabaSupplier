@@ -9,6 +9,7 @@ import type { ReactNode } from "react";
 import { ProfileDrawer } from "./ProfileDrawer";
 import { PAGE_TITLES, resolveOpenKeys, resolveSelectedKey } from "./routes.config";
 import { useSelfInfo } from "./useSelfInfo";
+import { useAccount } from "@/features/account/AccountProvider";
 
 const { Header, Sider, Content } = Layout;
 
@@ -84,8 +85,7 @@ function NavigationMenu({ selectedKey, routeOpenKeys }: { selectedKey: string; r
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
-  const { selfInfo, loading: profileLoading, error: profileError, avatarSource, setAvatarSource, reload: loadSelfInfo } = useSelfInfo();
+  const { snapshot, blocked, generation } = useAccount();
 
   const selectedKey = resolveSelectedKey(pathname);
   const openKeys = resolveOpenKeys(pathname);
@@ -137,24 +137,25 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Typography.Title level={4} className="!mb-0 truncate">
             {pageTitles[selectedKey] ?? "阿里国际站运营助手"}
           </Typography.Title>
-          <Button type="text" className="flex items-center gap-2" aria-label="打开个人信息" onClick={() => setProfileOpen(true)}>
-            <Avatar
-              size="small"
-              src={avatarSource || undefined}
-              icon={<UserOutlined />}
-              onError={() => {
-                setAvatarSource("");
-                return true;
-              }}
-            />
-            <span className="max-w-40 truncate">{selfInfo ? [selfInfo.first_name, selfInfo.last_name].filter(Boolean).join(" ") || selfInfo.login_id : "个人信息"}</span>
-          </Button>
+          {!blocked && snapshot?.capabilities.read_chat ? <AccountProfile key={`${snapshot.account.epoch}:${generation}`} /> : <Typography.Text type="secondary">{snapshot?.account.self_ali_id || "尚未选择账号"}</Typography.Text>}
         </Header>
         <Content className="min-h-0 overflow-y-auto p-6">
           <div className="mx-auto max-w-[1480px]">{children}</div>
         </Content>
       </Layout>
-      <ProfileDrawer
+    </Layout>
+  );
+}
+
+function AccountProfile() {
+  const [profileOpen, setProfileOpen] = useState(false);
+  const { selfInfo, loading: profileLoading, error: profileError, avatarSource, setAvatarSource, reload: loadSelfInfo } = useSelfInfo();
+  return <>
+    <Button type="text" className="flex items-center gap-2" aria-label="打开个人信息" onClick={() => setProfileOpen(true)}>
+      <Avatar size="small" src={avatarSource || undefined} icon={<UserOutlined />} onError={() => { setAvatarSource(""); return true; }} />
+      <span className="max-w-40 truncate">{selfInfo ? [selfInfo.first_name, selfInfo.last_name].filter(Boolean).join(" ") || selfInfo.login_id : "个人信息"}</span>
+    </Button>
+    <ProfileDrawer
         selfInfo={selfInfo}
         loading={profileLoading}
         error={profileError}
@@ -162,6 +163,5 @@ export function AppShell({ children }: { children: ReactNode }) {
         onClose={() => setProfileOpen(false)}
         onRetry={() => void loadSelfInfo()}
       />
-    </Layout>
-  );
+  </>;
 }

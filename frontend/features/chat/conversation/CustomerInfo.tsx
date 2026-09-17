@@ -3,6 +3,7 @@
 import { Button, Card, Descriptions, Drawer, Space, Tag } from "antd";
 import { stageLabel } from "@/domain/chat/chatModel";
 import type { ConversationDetail } from "@/types/chatCanonical";
+import { useAccount } from "@/features/account/AccountProvider";
 
 export function CustomerInfo({ conversation, open, onClose, onGotoContact }: { conversation?: ConversationDetail; open: boolean; onClose: () => void; onGotoContact?: () => void }) {
   return (
@@ -13,13 +14,14 @@ export function CustomerInfo({ conversation, open, onClose, onGotoContact }: { c
 }
 
 function CustomerInfoContent({ conversation, onGotoContact }: { conversation: ConversationDetail; onGotoContact?: () => void }) {
+  const { snapshot, blocked } = useAccount();
   const { customer } = conversation;
   const value = (text: string | number | undefined) => (text === undefined || text === null || String(text).trim() === "" ? "—" : String(text));
   const d90 = customer.d90;
 
   return (
     <Space orientation="vertical" className="w-full" size="middle">
-      <Card title="身份" extra={onGotoContact ? <Button size="small" onClick={onGotoContact}>跳转到该联系人</Button> : null}>
+      <Card title="身份" extra={onGotoContact ? <Button size="small" disabled={blocked || !snapshot?.capabilities.operate_client} onClick={onGotoContact}>跳转到该联系人</Button> : null}>
         <Descriptions size="small" column={1} items={[
           { key: "ali", label: "Ali ID", children: value(customer.aliId) },
           { key: "member", label: "会员 ID", children: value(customer.memberId) },

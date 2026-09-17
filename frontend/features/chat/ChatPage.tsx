@@ -16,10 +16,18 @@ import { DataDirBanner } from "@/features/settings/DataDirBanner";
 import { AssistantSuggestionModal } from "./modals/AssistantSuggestionModal";
 import { ChatAnalysisModal } from "./modals/ChatAnalysisModal";
 import { ChatComposer } from "./workspace/ChatComposer";
+import { useAccount } from "@/features/account/AccountProvider";
 
 type AnalysisFocus = "intent" | "stage";
 
 export function ChatPage() {
+  const { snapshot, blocked, generation } = useAccount();
+  if (blocked || !snapshot?.capabilities.read_chat) return <DataDirBanner />;
+  return <ChatWorkspace key={`${snapshot.account.epoch}:${generation}`} />;
+}
+
+function ChatWorkspace() {
+  const { snapshot } = useAccount();
   const router = useRouter();
   const { isMobile, mobileView, setMobileView } = useSplitSessionMobile();
   const workbench = useChatWorkbench();
@@ -78,7 +86,7 @@ export function ChatPage() {
                   buyerId={active.customer.id}
                   buyerName={active.customer.name}
                   showTranslations={workbench.translationVisible}
-                  onRegenerate={(item) => workbench.translate(item, true)}
+                  onRegenerate={snapshot?.capabilities.use_ai ? (item) => workbench.translate(item, true) : undefined}
                   onOpenCard={workbench.setActiveCardId}
                 />
               </div>

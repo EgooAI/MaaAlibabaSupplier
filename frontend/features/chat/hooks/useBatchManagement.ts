@@ -2,13 +2,14 @@
 
 import { App } from "antd";
 import { useMemo, useState } from "react";
-import { backend } from "@/services/client";
+import { AccountChangedError, useAccountBackend } from "@/features/account/AccountProvider";
 import type { ConversationGroupMode } from "@/domain/chat/chatModel";
 import type { Conversation } from "@/types/chatCanonical";
 import { useConversationSummaries } from "./useConversationSummaries";
 
 export function useBatchManagement() {
   const { message } = App.useApp();
+  const backend = useAccountBackend();
   const { conversations, loading, reload } = useConversationSummaries();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [groupMode, setGroupMode] = useState<ConversationGroupMode>("time");
@@ -61,7 +62,7 @@ export function useBatchManagement() {
       URL.revokeObjectURL(url);
       message.success(isZip ? "已导出 ZIP 文件" : "已导出 TXT 文件");
     } catch (error: unknown) {
-      message.error(error instanceof Error ? error.message : "会话导出失败");
+      if (!(error instanceof AccountChangedError)) message.error(error instanceof Error ? error.message : "会话导出失败");
     } finally {
       setExporting(false);
     }

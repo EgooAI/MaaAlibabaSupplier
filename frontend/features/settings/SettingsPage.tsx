@@ -6,13 +6,14 @@ import { ActionConfirmModal } from "@/components/ActionConfirmModal";
 import { AliIdentityCard } from "./AliIdentityCard";
 import { useDataDirSettings } from "./hooks/useDataDirSettings";
 import { useShutdownApp } from "./hooks/useShutdownApp";
-import type { DataDirStatus } from "@/types/status";
+import { useAccount } from "@/features/account/AccountProvider";
+import { ConnectionCard } from "@/features/account/ConnectionCard";
 
 type DataDirControls = ReturnType<typeof useDataDirSettings>;
 
 function DataDirCard({ controls }: { controls: DataDirControls }) {
   const { message } = App.useApp();
-  const { status, candidates, path, setPath, loading, scanning, saving, error, scan, save } = controls;
+  const { status, candidates, path, setPath, loading, scanning, saving, canSave, error, scan, save } = controls;
 
   const handleSave = async () => {
     if (await save()) message.success("数据目录已保存，即时生效");
@@ -26,23 +27,23 @@ function DataDirCard({ controls }: { controls: DataDirControls }) {
 
   return (
     <Card title="阿里客户端数据目录">
-      {loading || !status ? (
+      {loading ? (
         <Spin />
       ) : (
         <Space orientation="vertical" size="middle" className="w-full">
           <Typography.Text type="secondary">
             各用户安装位置不同（如 D:\AlibabaSupplierData），请配置本机阿里客户端数据目录。程序会在各盘符根目录自动探测，也可手动填写。保存后即时生效，无需重启。
           </Typography.Text>
-          <Space>
+          <Space wrap>
             <Typography.Text>当前状态：</Typography.Text>
-            {stateTag(status.state)}
-            {status.path ? <Typography.Text code>{status.path}</Typography.Text> : null}
+            {stateTag(status?.state ?? "unconfigured")}
+            {status?.path ? <Typography.Text code className="break-all">{status.path}</Typography.Text> : null}
           </Space>
-          {status.detail ? <Alert type={status.state === "ok" ? "success" : "warning"} showIcon message={status.detail} /> : null}
+          {status?.detail ? <Alert type={status.state === "ok" ? "success" : "warning"} showIcon message={status.detail} /> : null}
           {error ? <Alert type="error" showIcon message={error} /> : null}
           <Space.Compact className="w-full">
             <Input value={path} onChange={(event) => setPath(event.target.value)} placeholder="例如 D:\AlibabaSupplierData" />
-            <Button type="primary" loading={saving} onClick={() => void handleSave()}>
+            <Button type="primary" loading={saving} disabled={!canSave} onClick={() => void handleSave()}>
               保存
             </Button>
           </Space.Compact>
@@ -70,10 +71,18 @@ function DataDirCard({ controls }: { controls: DataDirControls }) {
   );
 }
 
+export function AccountSetup() {
+  const { snapshot } = useAccount();
+  const dataDirControls = useDataDirSettings();
+  return <Space orientation="vertical" size="large" className="w-full">
+    <ConnectionCard />
+    <DataDirCard controls={dataDirControls} />
+    <AliIdentityCard key={JSON.stringify([snapshot?.data_dir.path, snapshot?.account.epoch])} dataDirOk={snapshot?.data_dir.state === "ok"} />
+  </Space>;
+}
+
 export function SettingsPage() {
   const { confirmOpen, setConfirmOpen, terminating, terminated, confirmShutdown } = useShutdownApp();
-  const dataDirControls = useDataDirSettings();
-  const dataDirStatus: DataDirStatus | null = dataDirControls.status;
 
   const handleConfirm = () => void confirmShutdown();
 
@@ -91,8 +100,7 @@ export function SettingsPage() {
 
   return (
     <Space orientation="vertical" size="large" className="w-full">
-      <DataDirCard controls={dataDirControls} />
-      <AliIdentityCard dataDirOk={dataDirStatus?.state === "ok"} />
+      <AccountSetup />
 
       <Card title="程序控制">
         <Space orientation="vertical" size="middle" className="w-full">

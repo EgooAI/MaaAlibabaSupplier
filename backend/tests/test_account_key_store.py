@@ -2,6 +2,11 @@ import sqlite3
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
+
+from Crypto.Cipher import AES
+
+from backend.app.shared.backend import im_db_middleware as middleware_module
 
 from backend.app.shared.crm.account_keys import (
     KEY_SOURCE_AUTO,
@@ -67,6 +72,69 @@ class AccountKeyStoreTestCase(unittest.TestCase):
         self.assertTrue(delete_key("10001", database_path=self.db_path))
         self.assertIsNone(get_key_hex("10001", database_path=self.db_path))
         self.assertFalse(delete_key("10001", database_path=self.db_path))
+
+
+class MiddlewareKeyRecoveryTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.mw = middleware_module.IMDBMiddleware()
+        self.mw.set_self_ali_id("10001")
+        self.key = bytes(range(16))
+        self.source = Path.cwd() / "synthetic-encrypted.sqlite"
+        self.source.write_bytes(AES.new(self.key, AES.MODE_ECB).encrypt(b"SQLite format 3\x00"))
+        self.capture = self.enterContext(patch.object(
+            middleware_module, "retrieve_db_key", side_effect=ValueError("no client")
+        ))
+
+    def test_wrong_stored_key_is_recaptured_and_replaced(self):
+        save_key("10001", bytes(16), "manual")
+        self.capture.side_effect = None
+        self.capture.return_value = self.key
+        self.assertTrue(self.mw._ensure_key(self.source, "10001"))
+        self.assertEqual(get_key_hex("10001"), self.key)
+        self.assertEqual(self.mw.key_status(), (True, "live"))
+        self.assertEqual(self.mw.key_validation_status(), "valid")
+
+    def test_wrong_stored_key_still_exists_but_is_not_validated(self):
+        save_key("10001", bytes(16), "manual")
+        self.assertFalse(self.mw._ensure_key(self.source, "10001"))
+        self.assertEqual(self.mw.key_status(), (True, "manual"))
+        self.assertEqual(self.mw.key_validation_status(), "invalid")
+        self.assertIsNone(self.mw._key)
+
+    def test_unmatched_legacy_keys_are_preserved_without_migration(self):
+        paths = [self.mw._cache_dir / "aes_key.bin", Path.cwd() / "data" / ".cache" / "aes_key.bin"]
+        for path in paths:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(bytes(16))
+        self.assertFalse(self.mw._ensure_key(self.source, "10001"))
+        self.assertIsNone(get_key_hex("10001"))
+        for path in paths:
+            self.assertEqual(path.read_bytes(), bytes(16))
+
+    def test_matching_legacy_key_migrates_without_deleting_file(self):
+        legacy = self.mw._cache_dir / "aes_key.bin"
+        legacy.write_bytes(self.key)
+        self.assertTrue(self.mw._ensure_key(self.source, "10001"))
+        self.assertEqual(get_key_hex("10001"), self.key)
+        self.assertEqual(legacy.read_bytes(), self.key)
+        self.capture.assert_not_called()
+
+    def test_invalid_live_key_is_not_saved(self):
+        self.capture.side_effect = None
+        self.capture.return_value = bytes(16)
+        self.assertFalse(self.mw._ensure_key(self.source, "10001"))
+        self.assertIsNone(get_key_hex("10001"))
+        self.assertEqual(self.mw.key_validation_status(), "invalid")
+
+    def test_in_memory_key_is_revalidated_when_source_changes(self):
+        save_key("10001", self.key, "manual")
+        self.assertTrue(self.mw._ensure_key(self.source, "10001"))
+        changed_key = b"new-source-key!!"
+        self.source.write_bytes(AES.new(changed_key, AES.MODE_ECB).encrypt(b"SQLite format 3\x00"))
+        self.capture.side_effect = None
+        self.capture.return_value = changed_key
+        self.assertTrue(self.mw._ensure_key(self.source, "10001"))
+        self.assertEqual(get_key_hex("10001"), changed_key)
 
 
 if __name__ == "__main__":

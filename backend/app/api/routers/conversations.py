@@ -11,7 +11,11 @@ from pydantic import BaseModel, Field
 from typing import Literal
 from sqlmodel import Session, select
 
-from backend.app.api.envelope import AppError, api_error, ok
+from backend.app.api.envelope import AppError, api_error, ok, user_message
+from backend.app.api.account_scope import AccountRoute, request_epoch
+from backend.app.api.connection import has_selected_archive
+from backend.app.shared.backend.account_context import get_account_context
+from backend.app.shared.backend.gui_session import capture_gui_session, run_guarded
 from backend.app.shared.agent.inputs import build_analysis_input
 from backend.app.shared.agent.runner import run_chat_tool_agent
 from backend.app.shared.agent.suggestions import generate_reply_suggestions
@@ -23,13 +27,10 @@ from backend.app.shared.chat_format import (
     conversation_transcript,
 )
 from backend.app.shared.crm import (
-    REASON_DATA_DIR_NOT_CONFIGURED,
-    REASON_SELF_IDENTITY_NOT_SELECTED,
     get_conversation_detail as crm_get_conversation_detail,
     get_user_info as crm_get_user_info,
-    refresh_chat_data,
 )
-from backend.app.shared.crm.identities import PLATFORM_PID
+from backend.app.shared.crm.identities import PLATFORM_PID, message_external_id
 from backend.app.shared.crm.sdk import AccountMapping
 from backend.app.shared.crm.sync import CRMAdapter
 from backend.app.shared.mitm.pool import UserInfo
@@ -45,7 +46,7 @@ from backend.app.shared.crm.views import (
 from backend.app.shared.export_zip import build_export_zip
 from backend.app.task_queue import TaskStatus, get_task_queue
 
-router = APIRouter()
+router = APIRouter(route_class=AccountRoute)
 
 _STAGE_TASK = "分析客户当前所处成交阶段，并给出下一步推进建议。"
 _TONE_CYCLE = ("formal", "friendly", "urgent")
@@ -70,8 +71,8 @@ def _snap_to_dict(s) -> dict:
         "task_id": s.task_id,
         "description": s.description,
         "status": str(s.status),
-        "message": s.message,
-        "result": list(s.result) if s.result else None,
+        "message": user_message(s.message),
+        "result": [s.result[0], user_message(s.result[1])] if s.result else None,
         "created_at": s.created_at,
         "started_at": s.started_at,
         "completed_at": s.completed_at,
@@ -79,14 +80,13 @@ def _snap_to_dict(s) -> dict:
 
 
 def _ready() -> str:
-    state = refresh_chat_data(wait=False)
-    if not state.ready or not state.self_ali_id:
-        if state.reason == REASON_DATA_DIR_NOT_CONFIGURED:
-            raise AppError("阿里客户端数据目录尚未配置，请前往“设置”页配置后重试", status_code=503)
-        if state.reason == REASON_SELF_IDENTITY_NOT_SELECTED:
-            raise AppError("尚未选择阿里账号身份，请前往“设置”页选择后重试", status_code=503)
-        raise AppError(f"聊天数据未就绪({state.reason or 'unknown'})，请确认阿里客户端已启动且 AES Key 有效", status_code=503)
-    return state.self_ali_id
+    context = get_account_context()
+    if not context.self_ali_id:
+        raise AppError("尚未选择阿里账号身份，请前往设置页选择后重试", status_code=503)
+    state = get_im_db_middleware().sync_status()
+    if not state["ready"] and not has_selected_archive(context.self_ali_id):
+        raise AppError("聊天数据未就绪，请在设置页显式重试同步", status_code=503)
+    return context.self_ali_id
 
 
 def _dump(model: Any) -> dict:
@@ -120,7 +120,7 @@ def _build_aggregate(adapter: CRMAdapter, self_ali_id: str, conv: CrmConversatio
         created = format_created_at(message.created_at) or None
         message_dtos.append({
             "message": {
-                "external_mid": f"{message.table_name}:{message.mid}",
+                "external_mid": message_external_id(self_ali_id, message.table_name, message.mid),
                 "sid": conv.sid,
                 "sender": sender_aid,
                 "read": None,
@@ -405,6 +405,8 @@ def list_conversations() -> dict:
         digests = adapter.list_conversation_digests(self_ali_id)
         preloaded = _preload_conversation_maps(adapter, digests)
         return ok([_build_summary(digest, preloaded) for digest in digests])
+    except AppError:
+        raise
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
@@ -412,27 +414,32 @@ def list_conversations() -> dict:
 
 @router.get("/api/conversations/revision")
 def conversation_revision() -> dict:
-    """Poll-friendly freshness probe: cheap when the source is unchanged.
+    """Preserve polling updates after explicit source/key verification.
 
-    Always 200 (never throws): unconfigured identities report ready=False so
-    the chat page can poll without error toasts. Triggers the same
-    fingerprint-gated refresh as the list endpoint, so a changed revision
-    means newer source data has been decrypted into the cache.
+    This compatibility path refreshes only an already verified source; initial
+    setup and invalid/unavailable keys require explicit connection retry. The
+    middleware coalesces unchanged source versions and in-flight CRM imports.
+    Connection GET remains observation-only; no scheduler is started here.
     """
     mw = get_im_db_middleware()
-    if mw.data_dir_status()["state"] != "ok":
-        return ok({"ready": False, "revision": mw.sync_status()["revision"], "reason": REASON_DATA_DIR_NOT_CONFIGURED})
-    state = refresh_chat_data(wait=False)
     status = mw.sync_status()
+    if status["key_validation"] == "valid":
+        conn = mw.get_connection()
+        status = mw.sync_status()
+        if conn is not None and status["key_validation"] == "valid":
+            mw.sync_to_crm(wait=False)
+            status = mw.sync_status()
+    archive = has_selected_archive(get_account_context().self_ali_id)
     payload = {
-        "ready": bool(state.ready),
+        "ready": bool(status["ready"] or archive),
         "revision": status["revision"],
         "source_mtime": status["source_mtime"],
         "cache_time": status["cache_time"],
-        "stale": status["stale"],
+        "stale": bool(status["stale"] or (archive and not status["ready"])),
+        "epoch": get_account_context().epoch,
     }
-    if not state.ready:
-        payload["reason"] = state.reason
+    if not status["ready"]:
+        payload["reason"] = status.get("error_code") or "source_not_ready"
     return ok(payload)
 
 
@@ -441,6 +448,8 @@ def get_conversation(conversation_id: int) -> dict:
     self_ali_id = _ready()
     try:
         conv = crm_get_conversation_detail(self_ali_id, conversation_id)
+    except AppError:
+        raise
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
@@ -448,6 +457,8 @@ def get_conversation(conversation_id: int) -> dict:
         raise AppError("会话不存在", status_code=404)
     try:
         return ok(_build_aggregate(CRMAdapter(), self_ali_id, conv))
+    except AppError:
+        raise
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
@@ -457,14 +468,17 @@ def get_conversation(conversation_id: int) -> dict:
 def send_message(conversation_id: int, body: SendMessageInput) -> dict:
     content = body.content.strip()
     if not content:
-        raise AppError("content is required", status_code=422)
+        raise AppError("消息内容不能为空", status_code=422)
     action = body.action
+    token = capture_gui_session(request_epoch.get())
     self_ali_id = _ready()
     conv = crm_get_conversation_detail(self_ali_id, conversation_id)
     if conv is None:
         raise AppError("会话不存在", status_code=404)
     user = crm_get_user_info(conv.contact_ali_id)
-    login_id = (user.login_id if user and user.login_id else conv.contact_ali_id).strip()
+    login_id = (user.login_id if user and user.login_id else "").strip()
+    if not login_id:
+        raise AppError("联系人缺少 login_id，无法安全跳转客户端", status_code=503)
 
     def _run() -> tuple[bool, str]:
         reached, message = goto_contact(login_id)
@@ -477,10 +491,12 @@ def send_message(conversation_id: int, body: SendMessageInput) -> dict:
     # Finish response preparation before accepting any GUI side effect.
     try:
         aggregate = _build_aggregate(CRMAdapter(), self_ali_id, conv)
+    except AppError:
+        raise
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
-    snap = get_task_queue().enqueue(_run, description=f"send({action}) conversation={conversation_id}")
+    snap = get_task_queue().enqueue(lambda: run_guarded(token, _run), description=f"send({action}) conversation={conversation_id}")
     return ok({
         "message": None,
         "conversation": aggregate,
@@ -501,6 +517,8 @@ def suggestions(conversation_id: int) -> dict:
     try:
         rows = conversation_transcript(conv.messages, CrmResolver(self_ali_id))
         result = generate_reply_suggestions(rows)
+    except AppError:
+        raise
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
@@ -526,6 +544,8 @@ def analysis(conversation_id: int) -> dict:
     try:
         rows = conversation_transcript(conv.messages, CrmResolver(self_ali_id))
         raw = run_chat_tool_agent(CHAT_CUSTOMER_STAGE_AGENT_APID, build_analysis_input(task=_STAGE_TASK, conversation=rows))
+    except AppError:
+        raise
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
@@ -566,6 +586,8 @@ def export_conversations(body: ExportConversationsInput) -> dict:
     for sid in sids:
         try:
             conv = crm_get_conversation_detail(self_ali_id, sid)
+        except AppError:
+            raise
         except Exception:
             logger.exception("request failed")
             return api_error("服务器内部错误", status_code=500)
@@ -577,6 +599,8 @@ def export_conversations(body: ExportConversationsInput) -> dict:
         raise AppError(f"会话不存在: {missing[0] if missing else ''}", status_code=404)
     try:
         payload, archive_name = build_export_zip(convs, CrmResolver(self_ali_id))
+    except AppError:
+        raise
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
@@ -595,9 +619,19 @@ def export_conversations(body: ExportConversationsInput) -> dict:
 
 @router.post("/api/conversations/{conversation_id}/goto-contact")
 def goto_contact_api(conversation_id: int, body: GotoContactInput) -> dict:
-    login_id = body.login_id.strip()
+    token = capture_gui_session(request_epoch.get())
+    self_ali_id = _ready()
+    conv = crm_get_conversation_detail(self_ali_id, conversation_id)
+    if conv is None:
+        raise AppError("会话不存在", status_code=404)
+    user = crm_get_user_info(conv.contact_ali_id)
+    login_id = (user.login_id if user and user.login_id else "").strip()
+    if not login_id:
+        raise AppError("联系人缺少 login_id，无法安全跳转客户端", status_code=503)
+    if body.login_id.strip() != login_id:
+        raise AppError("跳转目标与当前会话联系人不一致", status_code=409)
     snap = get_task_queue().enqueue(
-        lambda: goto_contact(login_id), description=f"goto-contact {login_id}"
+        lambda: run_guarded(token, lambda: goto_contact(login_id)), description=f"goto-contact {login_id}"
     )
     current = get_task_queue().get(snap.task_id)
     status = str(current.status) if current else str(TaskStatus.PENDING)

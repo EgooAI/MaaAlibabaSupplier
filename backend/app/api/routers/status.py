@@ -3,17 +3,23 @@ from __future__ import annotations
 import time
 from dataclasses import asdict
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import APIRouter
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from backend.app.api.envelope import AppError, ok
+from backend.app.api.envelope import AppError, ok, user_message
+from backend.app.api.account_scope import AccountRoute, request_epoch, require_epoch
+from backend.app.shared.backend.account_context import account_lock, get_account_context
+from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
+from backend.app.shared.crm.identities import self_sender_id
+from backend.app.shared.backend.gui_session import get_client_status
 from backend.app.shared.backend import status as status_mod
 from backend.app.shared.backend.maafw_runner import run_node
 from backend.app.task_queue import get_task_queue
 
-router = APIRouter()
+router = APIRouter(route_class=AccountRoute)
 
 ALLOWED_NODE_ENTRIES = {
     "ChatInput_GoToInput": "Diagnostics_ChatInput",
@@ -67,8 +73,8 @@ def _snapshot_to_task_item(s) -> dict:
         "createdAt": _format_time(s.created_at),
         "duration": _format_duration(s.started_at, s.completed_at),
         "target": None,
-        "message": s.message,
-        "result": result[1] if result else None,
+        "message": user_message(s.message),
+        "result": user_message(result[1]) if result else None,
         "resultSuccess": result[0] if result else None,
     }
 
@@ -78,22 +84,38 @@ def _snapshot_to_task_snapshot(s) -> dict:
         "task_id": s.task_id,
         "description": s.description,
         "status": str(s.status),
-        "message": s.message,
-        "result": list(s.result) if s.result else None,
+        "message": user_message(s.message),
+        "result": [s.result[0], user_message(s.result[1])] if s.result else None,
         "created_at": s.created_at,
         "started_at": s.started_at,
         "completed_at": s.completed_at,
     }
 
 
+def _user_status() -> dict:
+    context = get_account_context()
+    has_key, source = get_im_db_middleware().key_status()
+    # resolve_encrypted_db_path still takes the GUI account lock. Observing
+    # existence only needs the captured directory and selected seller.
+    db_exists = bool(context.data_dir and context.self_ali_id and (
+        Path(context.data_dir) / "IMServiceDir" / "MessageSDK" / self_sender_id(context.self_ali_id) / "database" / "im.sqlite"
+    ).is_file())
+    if get_account_context() != context:
+        raise AppError("读取身份状态期间账号已切换，请刷新后重试。", status_code=409)
+    return {"has_key": has_key, "source": source, "ali_id": context.self_ali_id, "db_exists": db_exists}
+
+
 def _build_system_snapshot() -> dict:
-    user = asdict(status_mod.check_user_status())
+    context = get_account_context()
+    user = _user_status()
     proxy = asdict(status_mod.check_mitm_proxy())
     receiver = asdict(status_mod.check_mitm_receiver())
     data_dir = status_mod.check_data_dir_status()
     im_sync = status_mod.check_im_sync_status()
     snaps = get_task_queue().all_snapshots()
     node = _last_node_result
+    if get_account_context() != context:
+        raise AppError("读取系统状态期间账号已切换，请刷新后重试。", status_code=409)
     return {
         "updatedAt": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S"),
         "modules": [
@@ -148,7 +170,7 @@ def _build_system_snapshot() -> dict:
 
 @router.get("/api/status/user")
 def status_user() -> dict:
-    return ok(asdict(status_mod.check_user_status()))
+    return ok(_user_status())
 
 
 @router.get("/api/status/mitm-proxy")
@@ -180,14 +202,25 @@ def status_refresh() -> dict:
 def node_test(body: NodeTestInput) -> dict:
     entry = body.entry.strip()
     if entry not in ALLOWED_NODE_ENTRIES:
-        raise AppError(f"entry must be one of {sorted(ALLOWED_NODE_ENTRIES)}", status_code=422)
+        raise AppError(f"请选择允许的诊断节点：{sorted(ALLOWED_NODE_ENTRIES)}", status_code=422)
+    expected = request_epoch.get()
+    client = get_client_status()
+    if not client["connected"]:
+        raise AppError(client["detail"], status_code=503)
 
     def _run() -> tuple[bool, str]:
         global _last_node_result
         try:
-            success, message = run_node(ALLOWED_NODE_ENTRIES[entry])
+            with account_lock:
+                require_epoch(expected)
+                current = get_client_status()
+                if not current["connected"] or current["window_generation"] != client["window_generation"]:
+                    raise AppError("客户端窗口已变化，请重新连接后重试诊断。", status_code=409)
+                success, message = run_node(ALLOWED_NODE_ENTRIES[entry])
             if success:
                 message = "界面识别通过（未点击、未输入）"
+        except AppError as exc:
+            success, message = False, user_message(str(exc))
         except Exception:
             logger.exception("node diagnostic failed")
             success, message = False, "界面识别失败"

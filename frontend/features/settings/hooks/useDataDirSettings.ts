@@ -1,39 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { backend } from "@/services/client";
-import type { DataDirStatus } from "@/types/status";
+import { useAccount } from "@/features/account/AccountProvider";
 
 export function useDataDirSettings() {
-  const [status, setStatus] = useState<DataDirStatus | null>(null);
+  const { snapshot, blocked, refresh: reload, mutate, mutating, error: connectionError } = useAccount();
+  const status = snapshot?.data_dir ?? null;
   const [candidates, setCandidates] = useState<string[]>([]);
-  const [path, setPath] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [input, setInput] = useState<{ source: string; path: string }>();
+  const source = status?.path ?? "";
+  const path = input?.source === source ? input.path : source;
+  const setPath = useCallback((path: string) => setInput({ source, path }), [source]);
+  const loading = !snapshot && !connectionError;
   const [scanning, setScanning] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const next = await backend.getDataDirStatus();
-      setStatus(next);
-      setPath(next.path);
-    } catch {
-      setError("数据目录状态加载失败");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    async function loadInitialStatus() {
-      await reload();
-    }
-
-    void loadInitialStatus();
-  }, [reload]);
 
   const scan = useCallback(async () => {
     setScanning(true);
@@ -58,8 +40,7 @@ export function useDataDirSettings() {
     setSaving(true);
     setError(null);
     try {
-      const next = await backend.saveDataDirPath(trimmed);
-      setStatus(next);
+      const next = await mutate((epoch) => backend.saveDataDirPath(trimmed, epoch));
       setPath(next.path);
       return true;
     } catch (err) {
@@ -68,7 +49,7 @@ export function useDataDirSettings() {
     } finally {
       setSaving(false);
     }
-  }, [path]);
+  }, [path, mutate, setPath]);
 
-  return { status, candidates, path, setPath, loading, scanning, saving, error, reload, scan, save };
+  return { status, candidates, path, setPath, loading, scanning, saving: saving || mutating, canSave: !blocked && Boolean(snapshot) && !mutating, error: error || connectionError, reload, scan, save };
 }

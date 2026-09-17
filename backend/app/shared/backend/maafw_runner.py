@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import os
 import re
-from threading import Lock
+from threading import RLock
+from uuid import uuid4
 
 from loguru import logger
 from maa.controller import (
@@ -16,6 +17,8 @@ from maa.resource import Resource
 from maa.tasker import Tasker
 from maa.toolkit import Toolkit
 
+from backend.app.shared.backend.account_context import account_lock
+
 # Must match backend/assets/interface.json controller config.
 _WIN_CLASS_RE = re.compile(r"Qt")
 _WIN_NAME_RE = re.compile(r"接待中心")
@@ -23,7 +26,9 @@ _WIN_NAME_RE = re.compile(r"接待中心")
 _resource: Resource | None = None
 _tasker: Tasker | None = None
 _window_hwnd: int | None = None
-_run_lock = Lock()
+_window_generation = ""
+_run_lock = RLock()
+_READ_ONLY_ENTRIES = frozenset({"Diagnostics_ChatInput", "Diagnostics_ContactSearch"})
 
 
 def _find_window(windows):
@@ -39,8 +44,33 @@ def _find_window(windows):
     return matches[0]
 
 
+def _reset_binding() -> None:
+    global _resource, _tasker, _window_hwnd, _window_generation
+    _resource = None
+    _tasker = None
+    _window_hwnd = None
+    _window_generation = ""
+
+
+def _probe_binding() -> tuple[bool, str]:
+    """Observe without reconnecting. Caller holds account_lock then _run_lock."""
+    try:
+        window = _find_window(Toolkit.find_desktop_windows())
+        if _tasker is None:
+            return False, "Client is not connected; connect and manually confirm the selected account."
+        if _window_hwnd != window.hwnd:
+            raise RuntimeError("Client window changed; reconnect and manually confirm again.")
+        if not _tasker.inited or not _tasker.controller.connected:
+            raise RuntimeError("Client connection lost; reconnect and manually confirm again.")
+        return True, "Client window is connected."
+    except Exception as exc:
+        _reset_binding()
+        return False, str(exc)
+
+
 def _ensure_init() -> tuple[Tasker | None, str | None]:
-    global _resource, _tasker, _window_hwnd
+    """Connect without input. Caller holds account_lock then _run_lock."""
+    global _resource, _tasker, _window_hwnd, _window_generation
 
     try:
         from backend.app.shared.utils.settings import resolve_backend_root
@@ -61,9 +91,7 @@ def _ensure_init() -> tuple[Tasker | None, str | None]:
         ):
             return _tasker, None
 
-        _tasker = None
-        _resource = None
-        _window_hwnd = None
+        _reset_binding()
 
         controller = Win32Controller(
             window.hwnd,
@@ -87,23 +115,35 @@ def _ensure_init() -> tuple[Tasker | None, str | None]:
         _resource = resource
         _tasker = tasker
         _window_hwnd = window.hwnd
+        _window_generation = uuid4().hex
 
         logger.info("MaaFW runner initialized (hwnd={}, window='{}')", window.hwnd, window.window_name)
         return _tasker, None
     except Exception as exc:
-        _tasker = None
-        _resource = None
-        _window_hwnd = None
+        _reset_binding()
         logger.error("MaaFW runner init failed: {}", exc)
         return None, str(exc)
 
 
 def run_node(entry: str, pipeline_override: dict | None = None) -> tuple[bool, str]:
-    """Run a pipeline node by name. Returns (success, message)."""
-    with _run_lock:
-        tasker, err = _ensure_init()
-        if tasker is None:
-            return False, f"初始化失败: {err}"
+    """Run writes only inside run_guarded; bare diagnostics must have no overrides."""
+    from backend.app.api.envelope import AppError
+    from backend.app.shared.backend import gui_session
+
+    with account_lock, _run_lock:
+        token = getattr(gui_session._active_session, "token", None)
+        if token is not None:
+            try:
+                gui_session._validate_token(token)
+            except AppError as exc:
+                return False, exc.message
+            tasker = _tasker
+        elif entry in _READ_ONLY_ENTRIES and not pipeline_override:
+            tasker, err = _ensure_init()
+            if tasker is None:
+                return False, f"初始化失败: {err}"
+        else:
+            return False, "GUI writes require a manually confirmed session and run_guarded."
 
         # Never replay a failed task: its send click may already have happened.
         try:

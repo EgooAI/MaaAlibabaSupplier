@@ -7,6 +7,7 @@ import { AppTable } from "@/components/AppTable";
 import { formatDateTime } from "@/domain/time";
 import { backend } from "@/services/client";
 import type { AliAccount } from "@/types/status";
+import { useAccount } from "@/features/account/AccountProvider";
 
 function formatSize(bytes: number): string {
   if (bytes >= 1 << 20) return `${(bytes / (1 << 20)).toFixed(1)} MB`;
@@ -16,6 +17,8 @@ function formatSize(bytes: number): string {
 
 export function AliIdentityCard({ dataDirOk }: { dataDirOk: boolean }) {
   const { message } = App.useApp();
+  const { mutate, mutating, blocked, snapshot } = useAccount();
+  const disabled = blocked || !snapshot || mutating;
   const [accounts, setAccounts] = useState<AliAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
@@ -50,7 +53,7 @@ export function AliIdentityCard({ dataDirOk }: { dataDirOk: boolean }) {
   const handleActivate = async (aliId: string) => {
     setActingId(aliId);
     try {
-      const next = await backend.saveAliId(aliId);
+      const next = await mutate((epoch) => backend.saveAliId(aliId, epoch));
       setAccounts(next.accounts);
       message.success(`已切换活动账号 ${aliId}，即时生效`);
     } catch (err) {
@@ -65,7 +68,7 @@ export function AliIdentityCard({ dataDirOk }: { dataDirOk: boolean }) {
     setActingId(keyModalId);
     setKeyError(null);
     try {
-      const next = await backend.saveAliKey(keyModalId, keyInput);
+      const next = await mutate((epoch) => backend.saveAliKey(keyModalId, keyInput, epoch));
       setAccounts(next.accounts);
       setKeyModalId(null);
       setKeyInput("");
@@ -81,7 +84,7 @@ export function AliIdentityCard({ dataDirOk }: { dataDirOk: boolean }) {
     if (!clearId) return;
     setActingId(clearId);
     try {
-      const next = await backend.clearAliKey(clearId);
+      const next = await mutate((epoch) => backend.clearAliKey(clearId, epoch));
       setAccounts(next.accounts);
       message.success("AES Key 已清除");
     } catch (err) {
@@ -104,7 +107,7 @@ export function AliIdentityCard({ dataDirOk }: { dataDirOk: boolean }) {
     <Card
       title="阿里账号选择"
       extra={
-        <Button loading={scanning} onClick={() => void reload()}>
+        <Button loading={scanning} disabled={mutating} onClick={() => void reload()}>
           重新扫描数据目录
         </Button>
       }
@@ -114,11 +117,12 @@ export function AliIdentityCard({ dataDirOk }: { dataDirOk: boolean }) {
       ) : (
         <Space orientation="vertical" size="middle" className="w-full">
           <Typography.Text type="secondary">
-            从数据目录自动分析出全部账号。每个账号的 AES Key 不同：程序运行时自动捕获，未捕获到的可手动设置（保存时用该账号数据库试解密校验）。切换活动账号即时生效；旧账号的会话仍在库中，切回即现。
+            从数据目录分析账号。每个账号有独立的 AES Key，未捕获到时可手动设置。保存后请在接入卡中主动验证 Key 并同步。切换账号后需重新确认客户端卖家；旧账号的会话和草稿在切回后恢复。
           </Typography.Text>
           <AppTable<AliAccount>
             rowKey="ali_id"
             pagination={false}
+            scroll={{ x: 640 }}
             dataSource={accounts}
             columns={[
               { title: "Ali ID", dataIndex: "ali_id", key: "ali_id", render: (value: string) => <Typography.Text code>{value}</Typography.Text> },
@@ -152,13 +156,14 @@ export function AliIdentityCard({ dataDirOk }: { dataDirOk: boolean }) {
                     {record.is_active ? (
                       <Tag color="success">当前活动</Tag>
                     ) : (
-                      <Button type="link" size="small" loading={actingId === record.ali_id} onClick={() => void handleActivate(record.ali_id)}>
+                      <Button type="link" size="small" disabled={disabled} loading={actingId === record.ali_id} onClick={() => void handleActivate(record.ali_id)}>
                         设为活动
                       </Button>
                     )}
                     <Button
                       type="link"
                       size="small"
+                      disabled={disabled}
                       onClick={() => {
                         setKeyModalId(record.ali_id);
                         setKeyInput("");
@@ -168,7 +173,7 @@ export function AliIdentityCard({ dataDirOk }: { dataDirOk: boolean }) {
                       手动设置 Key
                     </Button>
                     {record.has_key ? (
-                      <Button type="link" size="small" danger onClick={() => setClearId(record.ali_id)}>
+                      <Button type="link" size="small" danger disabled={disabled} onClick={() => setClearId(record.ali_id)}>
                         清除 Key
                       </Button>
                     ) : null}
@@ -181,6 +186,7 @@ export function AliIdentityCard({ dataDirOk }: { dataDirOk: boolean }) {
             title={`手动设置 AES Key（${keyModalId ?? ""}）`}
             open={keyModalId !== null}
             confirmLoading={actingId !== null}
+            okButtonProps={{ disabled }}
             onCancel={() => setKeyModalId(null)}
             onOk={() => void handleSaveKey()}
             okText="保存并校验"
@@ -192,7 +198,7 @@ export function AliIdentityCard({ dataDirOk }: { dataDirOk: boolean }) {
             </Space>
           </Modal>
           <ActionConfirmModal
-            open={clearId !== null}
+            open={clearId !== null && !blocked && Boolean(snapshot)}
             title="清除 AES Key"
             warning={`确认清除账号 ${clearId ?? ""} 的 Key？清除后该账号需重新捕获或手动设置才能同步。`}
             okText="清除"

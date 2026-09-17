@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 
 from backend.app.shared.crm.identities import (
     PLATFORM_PID,
+    message_external_id,
     self_sender_id,
     session_key,
     session_key_prefix,
@@ -51,7 +52,10 @@ _SYNC_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="crm-sync"
 
 class CRMAdapter:
     def __init__(self, database_path: Path | str | None = None) -> None:
+        from backend.app.shared.crm.migrations import migrate_message_ids
+
         database_path = database_path or _default_database_path()
+        migrate_message_ids(database_path)
         self.platforms = PlatformManager(database_path=database_path)
         self.customers = CustomerManager(database_path=database_path)
         self.accounts = AccountManager(database_path=database_path)
@@ -113,7 +117,7 @@ class CRMAdapter:
 
             for message_row in conv.messages:
                 sender_aid = self_aid if _message_from_self(message_row, self_info) else contact_aid
-                self._upsert_message(message_row, session_meta.sid, sender_aid)
+                self._upsert_message(message_row, session_meta.sid, sender_aid, self_info.ali_id)
 
     def _upsert_account(
         self,
@@ -225,8 +229,8 @@ class CRMAdapter:
         self.sessions.upsert_session_meta(session_meta)
         return session_meta
 
-    def _upsert_message(self, row: MessageRow, sid: int, sender_aid: int) -> None:
-        external_mid = f"{row.table_name}:{row.mid}"
+    def _upsert_message(self, row: MessageRow, sid: int, sender_aid: int, self_ali_id: str) -> None:
+        external_mid = message_external_id(self_ali_id, row.table_name, row.mid)
         content = _message_content(row)
         epoch = coerce_epoch(row.created_at)
         message = Message(
@@ -284,19 +288,22 @@ class CRMAdapter:
             )
             return session.exec(statement).first()
 
-    def get_self_info(self) -> SelfInfo | None:
-        with Session(self.engine) as session:
-            statement = select(Account)
-            for account in session.exec(statement).all():
-                if not isinstance(account.extra, dict):
-                    continue
-                if account.extra.get("is_self") is not True:
-                    continue
-                try:
-                    return SelfInfo.model_validate(account.extra)
-                except ValueError:
-                    return None
-        return None
+    def get_self_info(self, self_ali_id: str | None = None) -> SelfInfo | None:
+        if self_ali_id is None:
+            from backend.app.shared.utils.app_config import get_configured_self_ali_id
+
+            self_ali_id = get_configured_self_ali_id()
+        if not self_ali_id:
+            return None
+        account = self._account_by_mapping(MAPPING_ALI_ID, self_ali_id)
+        if account is None or account.pid != PLATFORM_PID or not isinstance(account.extra, dict):
+            return None
+        if account.extra.get("is_self") is not True or account.extra.get("ali_id") != self_ali_id:
+            return None
+        try:
+            return SelfInfo.model_validate(account.extra)
+        except ValueError:
+            return None
 
     def get_user_info(self, identifier: str) -> UserInfo | None:
         account = self._account_by_any_mapping(identifier)
@@ -502,7 +509,10 @@ def sync_self_info(info: SelfInfo) -> Future:
 
 
 def sync_im_database(db_path: Path, self_ali_id: str, self_info: SelfInfo | None) -> Future:
-    return _submit_sync(_sync_im_database_now, db_path, self_ali_id, self_info)
+    if not self_ali_id or (self_info is not None and self_info.ali_id != self_ali_id):
+        raise ValueError("IM sync requires a matching selected seller identity")
+    snapshot = self_info.model_copy(deep=True) if self_info is not None else SelfInfo(ali_id=self_ali_id)
+    return _submit_sync(_sync_im_database_now, Path(db_path).resolve(), self_ali_id, snapshot)
 
 
 def _submit_sync(func, *args: Any) -> Future:

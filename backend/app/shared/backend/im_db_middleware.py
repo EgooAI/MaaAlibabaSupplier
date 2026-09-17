@@ -12,24 +12,29 @@ from __future__ import annotations
 import shutil
 import sqlite3
 import struct
+from concurrent.futures import Future
 
 from loguru import logger
 import threading
 import time
 import zlib
 from pathlib import Path
+from queue import Empty, SimpleQueue
+from uuid import uuid4
 
 from Crypto.Cipher import AES
 
 from backend.app.shared.mitm.pool import SelfInfo
 from backend.app.shared.utils.im_db_decryptor import retrieve_db_key
 from backend.app.shared.backend.im_chat_db import list_msg_tables, open_readonly
+from backend.app.shared.backend.account_context import account_lock, changing_account, get_account_context, invalidate_account_context
 from backend.app.shared.crm import sync_im_database
-from backend.app.shared.crm.account_keys import get_key_hex, get_key_source, save_key
+from backend.app.shared.crm.account_keys import get_key_hex, get_key_source, save_key, verify_key_against_db
 from backend.app.shared.crm.identities import self_sender_id, strip_icbu_suffix
 from backend.app.shared.utils.app_config import (
     CONFIG_KEY_ALIBABA_DATA_DIR,
     CONFIG_KEY_IM_DATA_REVISION,
+    CONFIG_KEY_SELF_ALI_ID,
     get_configured_alibaba_data_dir,
     get_configured_self_ali_id,
     get_im_data_revision,
@@ -71,11 +76,12 @@ class IMDBMiddleware:
         with cls._instance_lock:
             if cls._instance is None:
                 instance = super().__new__(cls)
-                instance._lock = threading.Lock()
+                instance._lock = threading.RLock()
                 instance._data_dir: Path | None = None
                 instance._key: bytes | None = None
                 instance._key_ali_id: str = ""
                 instance._key_source: str = "none"
+                instance._key_validation: str = "unverified"
                 instance._data_dir_source: str = SOURCE_NONE
                 instance._cache_dir: Path | None = None
                 instance._cached_db_path: Path | None = None
@@ -88,10 +94,18 @@ class IMDBMiddleware:
                 instance._backoff_until: float = 0.0
                 instance._consecutive_failures: int = 0
                 instance._last_error: str = ""
+                instance._error_code: str = ""
                 instance._wal_frames_applied: int = 0
                 instance._last_refresh_ms: float = 0.0
                 instance._data_revision: int = 0
-                instance._sync_future = None
+                instance._sync_future: Future | None = None
+                instance._sync_epoch: str = ""
+                instance._sync_path: Path | None = None
+                instance._syncing_caches: dict[Future, Path] = {}
+                instance._completed_syncs: SimpleQueue[tuple[Future, str, float]] = SimpleQueue()
+                instance._sync_phase: str = "idle"
+                instance._sync_error: str = ""
+                instance._last_success: float | None = None
                 try:
                     instance._data_revision = get_im_data_revision()
                 except Exception:
@@ -120,6 +134,7 @@ class IMDBMiddleware:
         self._key = None
         self._key_ali_id = ""
         self._key_source = "none"
+        self._key_validation = "unverified"
         self._cached_db_path = None
         self._cache_time = 0.0
         self._source_fingerprint = None
@@ -129,29 +144,44 @@ class IMDBMiddleware:
         self._backoff_until = 0.0
         self._consecutive_failures = 0
         self._last_error = ""
+        self._error_code = ""
         self._wal_frames_applied = 0
         self._last_refresh_ms = 0.0
+        # Copies remain protected until their queued completions are drained.
+        self._sync_future = None
+        self._sync_epoch = ""
+        self._sync_path = None
+        self._sync_phase = "idle"
+        self._sync_error = ""
+        self._last_success = None
 
     def set_data_dir(self, raw: str) -> None:
         """Apply a newly configured data dir at runtime (persists to config file)."""
-        write_app_config({CONFIG_KEY_ALIBABA_DATA_DIR: raw})
-        with self._lock:
-            self._data_dir = Path(raw)
-            self._data_dir_source = SOURCE_FILE
+        raw = raw.strip()
+        with changing_account(), self._lock:
+            configured = get_configured_alibaba_data_dir()
+            if raw == configured or (raw and configured and Path(raw) == Path(configured)):
+                return
+            write_app_config({CONFIG_KEY_ALIBABA_DATA_DIR: raw, CONFIG_KEY_SELF_ALI_ID: ""})
+            self._data_dir = Path(raw) if raw else None
+            self._data_dir_source = SOURCE_FILE if raw else SOURCE_NONE
             self._reset_runtime_state()
+            invalidate_account_context()
 
     def set_self_ali_id(self, ali_id: str) -> None:
         """Apply a newly selected identity at runtime (persists to config file)."""
-        set_configured_self_ali_id(ali_id)
-        with self._lock:
+        ali_id = ali_id.strip()
+        with changing_account(), self._lock:
+            if ali_id == self._resolve_self_ali_id():
+                return
+            set_configured_self_ali_id(ali_id)
             self._reset_runtime_state()
+            invalidate_account_context()
 
     def drop_cached_key(self) -> None:
-        """Drop the in-memory key after it was changed/deleted in the database."""
-        with self._lock:
-            self._key = None
-            self._key_ali_id = ""
-            self._key_source = "none"
+        """Invalidate decrypted data too, forcing the next read to verify the key."""
+        with account_lock, self._lock:
+            self._reset_runtime_state()
 
     @staticmethod
     def looks_like_data_dir(path: Path) -> bool:
@@ -166,31 +196,33 @@ class IMDBMiddleware:
 
     def data_dir_status(self) -> dict:
         """Return {state, path, source, detail} for the settings UI."""
-        if self._data_dir is None:
+        with self._lock:
+            data_dir, source = self._data_dir, self._data_dir_source
+        if data_dir is None:
             return {
                 "state": STATE_UNCONFIGURED,
                 "path": "",
                 "source": SOURCE_NONE,
                 "detail": "尚未配置阿里客户端数据目录，请在设置页填写或从候选中选择",
             }
-        if not self._data_dir.exists():
+        if not data_dir.exists():
             return {
                 "state": STATE_INVALID,
-                "path": str(self._data_dir),
-                "source": self._data_dir_source,
+                "path": str(data_dir),
+                "source": source,
                 "detail": "配置的目录不存在，请检查路径或重新选择",
             }
-        if not self.looks_like_data_dir(self._data_dir):
+        if not self.looks_like_data_dir(data_dir):
             return {
                 "state": STATE_INVALID,
-                "path": str(self._data_dir),
-                "source": self._data_dir_source,
+                "path": str(data_dir),
+                "source": source,
                 "detail": "目录下未找到 IMServiceDir/MessageSDK IM 数据库结构",
             }
         return {
             "state": STATE_OK,
-            "path": str(self._data_dir),
-            "source": self._data_dir_source,
+            "path": str(data_dir),
+            "source": source,
             "detail": "",
         }
 
@@ -202,10 +234,12 @@ class IMDBMiddleware:
 
     def scan_ali_ids(self) -> list[dict]:
         """List accounts found under the configured data dir, most-recent first."""
-        if self._data_dir is None:
+        with account_lock, self._lock:
+            data_dir = self._data_dir
+        if data_dir is None:
             return []
         try:
-            entries = (self._data_dir / DATA_DIR_SIGNATURE).glob("*/database/im.sqlite")
+            entries = (data_dir / DATA_DIR_SIGNATURE).glob("*/database/im.sqlite")
             found = []
             for db_path in entries:
                 try:
@@ -227,14 +261,16 @@ class IMDBMiddleware:
     # -- Path resolution ------------------------------------------------------
 
     def resolve_encrypted_db_path(self, ali_id: str) -> Path | None:
-        if self._data_dir is None:
+        with account_lock, self._lock:
+            data_dir = self._data_dir
+        if data_dir is None:
             logger.warning("阿里客户端数据目录未配置，请在设置页配置后重试")
             return None
         if not ali_id:
             logger.warning("尚未在设置页选择阿里账号身份，请选择后重试")
             return None
 
-        db_path = self._data_dir / "IMServiceDir" / "MessageSDK" / self_sender_id(ali_id) / "database" / "im.sqlite"
+        db_path = data_dir / "IMServiceDir" / "MessageSDK" / self_sender_id(ali_id) / "database" / "im.sqlite"
         if not db_path.exists():
             logger.warning("Encrypted DB not found: {}", db_path)
             return None
@@ -243,10 +279,8 @@ class IMDBMiddleware:
 
     # -- Key management (per-account, stored in the app database) --------------
 
-    def _migrate_legacy_key_file(self, ali_id: str) -> None:
+    def _migrate_legacy_key_file(self, db_path: Path, ali_id: str) -> bytes | None:
         """One-time import of the legacy aes_key.bin into the database."""
-        if get_key_hex(ali_id) is not None:
-            return
         candidates = [
             resolve_backend_root() / "data" / ".cache" / "aes_key.bin",
             Path("data/.cache/aes_key.bin"),
@@ -258,41 +292,52 @@ class IMDBMiddleware:
                 continue
             if len(raw) not in (16, 24, 32):
                 logger.warning("Legacy key file {} has invalid size, skipping", path)
-                return
+                continue
+            if not verify_key_against_db(raw, db_path):
+                continue
             save_key(ali_id, raw, "auto")
-            try:
-                path.unlink()
-            except OSError as exc:
-                logger.warning("Failed to remove migrated key file {}: {}", path, exc)
+            # Keep the legacy file: another account may still need it.
             logger.info("Migrated legacy AES key file into database for ali_id={}", ali_id)
-            return
+            return raw
+        return None
 
     def _ensure_key(self, db_path: Path, ali_id: str) -> bool:
         if self._key is not None and self._key_ali_id == ali_id:
-            return True
+            if verify_key_against_db(self._key, db_path):
+                self._key_validation = "valid"
+                return True
+        self._key = None
+        self._key_ali_id = ""
+        self._key_source = "none"
 
         stored = get_key_hex(ali_id)
+        self._key_validation = "invalid" if stored is not None else "unavailable"
+        if stored is not None and verify_key_against_db(stored, db_path):
+            self._key = stored
+            self._key_ali_id = ali_id
+            self._key_source = get_key_source(ali_id) or "auto"
+            self._key_validation = "valid"
+            return True
+
+        stored = self._migrate_legacy_key_file(db_path, ali_id)
         if stored is not None:
             self._key = stored
             self._key_ali_id = ali_id
             self._key_source = get_key_source(ali_id) or "auto"
-            return True
-
-        self._migrate_legacy_key_file(ali_id)
-        stored = get_key_hex(ali_id)
-        if stored is not None:
-            self._key = stored
-            self._key_ali_id = ali_id
-            self._key_source = get_key_source(ali_id) or "auto"
+            self._key_validation = "valid"
             return True
 
         logger.info("Retrieving AES key from process memory...")
         try:
             key = retrieve_db_key(str(db_path))
+            if not verify_key_against_db(key, db_path):
+                self._key_validation = "invalid"
+                return False
             save_key(ali_id, key, "auto")
             self._key = key
             self._key_ali_id = ali_id
             self._key_source = "live"
+            self._key_validation = "valid"
             logger.info("AES key retrieved successfully")
             return True
         except (ValueError, EOFError, OSError) as exc:
@@ -420,11 +465,13 @@ class IMDBMiddleware:
 
     def _cache_path_for(self, ali_id: str) -> Path:
         assert self._cache_dir is not None
-        return self._cache_dir / f"im_{ali_id}_{int(time.time() * 1000)}.sqlite"
+        return self._cache_dir / f"im_{ali_id}_{uuid4().hex}.sqlite"
 
     def _cleanup_stale_caches(self, keep: Path) -> None:
         assert self._cache_dir is not None
         protected = {keep, self._wal_cache_for(keep), self._shm_cache_for(keep)}
+        for cached in self._syncing_caches.values():
+            protected.update((cached, self._wal_cache_for(cached), self._shm_cache_for(cached)))
         if self._cached_db_path is not None:
             # Never remove the live files out from under open readers.
             protected.add(self._cached_db_path)
@@ -496,7 +543,9 @@ class IMDBMiddleware:
 
     def _replace_connection(self, cached: Path, ali_id: str) -> None:
         old_conn = self._conn
-        conn = open_readonly(cached)
+        # Requests may refresh and reset on different threads; lifecycle is locked.
+        conn = sqlite3.connect(cached.resolve().as_uri() + "?mode=ro", uri=True, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
 
         if old_conn is not None:
             try:
@@ -512,6 +561,7 @@ class IMDBMiddleware:
         self._consecutive_failures = 0
         self._backoff_until = 0.0
         self._last_error = ""
+        self._error_code = ""
         self._last_refresh_ms = elapsed_ms
         self._wal_frames_applied = wal_frames
         self._data_revision += 1
@@ -520,34 +570,35 @@ class IMDBMiddleware:
         except OSError:
             logger.debug("IM数据版本号持久化失败，仅保留内存值")
 
-    def _note_failure(self, detail: str) -> None:
+    def _note_failure(self, detail: str, code: str = "decrypt_error") -> None:
         self._consecutive_failures += 1
-        delay = min(_MIN_REFRESH_INTERVAL * (2 ** (self._consecutive_failures - 1)), _MAX_BACKOFF)
+        delay = min(_MIN_REFRESH_INTERVAL * (2 ** min(self._consecutive_failures - 1, 4)), _MAX_BACKOFF)
         self._backoff_until = time.time() + delay
         self._last_error = detail
+        self._error_code = code
         logger.warning("IM源库刷新失败({}次连败)，{}s后重试: {}", self._consecutive_failures, delay, detail)
 
     def _refresh(self) -> bool:
-        with self._lock:
+        with account_lock, self._lock:
             ali_id = self._resolve_self_ali_id()
             db_path = self.resolve_encrypted_db_path(ali_id)
             now = time.time()
+            if now < self._backoff_until:
+                return self._cached_db_path is not None
             if db_path is None:
+                self._note_failure("IM source database is missing or not configured", "source_missing")
                 return self._has_fresh_cache(now)
 
             if self._is_source_fresh(db_path, now):
                 return True
 
-            # Coalesce write bursts and back off after failures — but never
-            # block the very first build, and always serve the previous cache.
+            # Coalesce write bursts while serving the previous cache.
             if self._cached_db_path is not None:
-                if now < self._backoff_until:
-                    return True
                 if now - self._last_refresh_start < _MIN_REFRESH_INTERVAL:
                     return True
 
             if not self._ensure_key(db_path, ali_id):
-                self._note_failure("AES Key不可用")
+                self._note_failure("AES Key不可用", "key_unavailable")
                 return self._cached_db_path is not None
 
             self._last_refresh_start = now
@@ -573,54 +624,152 @@ class IMDBMiddleware:
             self._source_wal_crc32 = self._wal_crc32_of(db_path)
             self._note_success((time.perf_counter() - started) * 1000, wal_frames)
             self._cleanup_stale_caches(cached)
-        self.sync_to_crm()
+            self.sync_to_crm()
         logger.info("IM database refreshed (cached at {})", cached)
         return True
 
     def sync_to_crm(self, wait: bool = False) -> None:
-        cached = self._cached_db_path
-        ali_id = self._resolve_self_ali_id()
-        if cached is None or not ali_id:
-            return
-        previous = self._sync_future
-        if previous is not None and not previous.done():
-            logger.debug("上一次CRM同步仍在进行，跳过本次提交")
-            return
-        future = sync_im_database(cached, ali_id, SelfInfo(ali_id=ali_id))
-        self._sync_future = future
+        """Submit one immutable account/cache snapshot; wait outside both locks."""
+        with account_lock, self._lock:
+            self._drain_sync_completions()
+            context = get_account_context()
+            cached = self._cached_db_path
+            ali_id = context.self_ali_id
+            if cached is None or not ali_id:
+                return
+            future = self._sync_future
+            if future is None or self._sync_epoch != context.epoch or (
+                future.done() and (self._sync_path != cached or future.cancelled() or future.exception() is not None)
+            ):
+                self._sync_phase = "syncing"
+                self._sync_error = ""
+                self._sync_future = None
+                try:
+                    future = sync_im_database(cached, ali_id, SelfInfo(ali_id=ali_id))
+                except Exception as exc:
+                    self._sync_phase = "error"
+                    self._sync_error = str(exc) or type(exc).__name__
+                    if wait:
+                        raise
+                    return
+                self._sync_future = future
+                self._sync_epoch = context.epoch
+                self._sync_path = cached
+                self._syncing_caches[future] = cached
+                future.add_done_callback(lambda done: self._finish_sync(done, context.epoch))
         if wait:
-            future.result()
+            try:
+                future.result()
+            finally:
+                # Future.result() may return before its callbacks finish.
+                self._finish_sync(future, context.epoch)
+                with self._lock:
+                    self._drain_sync_completions()
+
+    def _finish_sync(self, future: Future, epoch: str) -> None:
+        # Never block the CRM executor on a lock owned by a waiting GUI task.
+        self._completed_syncs.put((future, epoch, time.time()))
+
+    def _drain_sync_completions(self) -> None:
+        """Apply completed work on the caller's thread; caller holds _lock."""
+        current = self._sync_future
+        if current in self._syncing_caches and current.done():
+            # A result waiter can wake before the executor invokes callbacks.
+            self._finish_sync(current, self._sync_epoch)
+        while True:
+            try:
+                future, epoch, completed_at = self._completed_syncs.get_nowait()
+            except Empty:
+                return
+            if future not in self._syncing_caches:
+                continue
+            self._syncing_caches.pop(future)
+            if epoch != get_account_context().epoch or future is not self._sync_future:
+                continue
+            try:
+                future.result()
+                error = ""
+            except Exception as exc:
+                error = str(exc) or type(exc).__name__
+            self._sync_error = error
+            self._sync_phase = "error" if error else "ready"
+            if not error:
+                self._last_success = completed_at
 
     def sync_status(self) -> dict:
         """Freshness/observability snapshot for the revision + status APIs."""
-        fingerprint = self._source_fingerprint
-        source_mtime = fingerprint[0] / 1e9 if fingerprint else None
-        return {
-            "revision": self._data_revision,
-            "cache_time": self._cache_time,
-            "source_mtime": source_mtime,
-            "wal_frames_applied": self._wal_frames_applied,
-            "last_refresh_ms": round(self._last_refresh_ms, 1),
-            "wal_pipeline": self._wal_pipeline_enabled(),
-            "stale": bool(self._last_error),
-            "last_error": self._last_error,
-        }
+        with self._lock:
+            self._drain_sync_completions()
+            context = get_account_context()
+            fingerprint = self._source_fingerprint
+            source_mtime = fingerprint[0] / 1e9 if fingerprint else None
+            error = self._last_error or self._sync_error
+            phase = "error" if error else self._sync_phase
+            return {
+                "revision": self._data_revision,
+                "cache_time": self._cache_time,
+                "source_mtime": source_mtime,
+                "wal_frames_applied": self._wal_frames_applied,
+                "last_refresh_ms": round(self._last_refresh_ms, 1),
+                "wal_pipeline": self._wal_pipeline_enabled(),
+                "stale": bool(error),
+                "last_error": error,
+                "error_code": self._error_code or ("sync_error" if self._sync_error else ""),
+                "phase": phase,
+                "ready": phase == "ready" and self._cached_db_path is not None,
+                "last_success": self._last_success,
+                "key_validation": self._key_validation,
+                "self_ali_id": context.self_ali_id,
+                "epoch": context.epoch,
+            }
 
     # -- Public API ------------------------------------------------------------
 
     def key_status(self) -> tuple[bool, str]:
         """Return ``(has_key, source)`` for the selected identity (no live lookup)."""
-        ali_id = self._resolve_self_ali_id()
-        if not ali_id:
-            return False, "none"
-        if self._key is not None and self._key_ali_id == ali_id:
-            return True, self._key_source
-        source = get_key_source(ali_id)
-        return (True, source) if source else (False, "none")
+        with self._lock:
+            ali_id = self._resolve_self_ali_id()
+            if not ali_id:
+                return False, "none"
+            if self._key is not None and self._key_ali_id == ali_id:
+                return True, self._key_source
+            source = get_key_source(ali_id)
+            return (True, source) if source else (False, "none")
+
+    def key_validation_status(self) -> str:
+        """Return unverified/valid/invalid/unavailable without attempting capture."""
+        with self._lock:
+            return self._key_validation
 
     def get_connection(self) -> sqlite3.Connection | None:
-        self._refresh()
-        return self._conn
+        with account_lock:
+            self._refresh()
+            with self._lock:
+                return self._conn
+
+    def retry_connection(self, *, wait: bool = False) -> sqlite3.Connection | None:
+        """Clear backoff, revalidate the source key, rebuild and retry CRM sync."""
+        with account_lock, self._lock:
+            self._key = None
+            self._key_ali_id = ""
+            self._key_source = "none"
+            self._key_validation = "unverified"
+            self._source_fingerprint = None
+            self._backoff_until = 0.0
+            self._last_refresh_start = 0.0
+            self._consecutive_failures = 0
+            self._refresh()
+            conn = self._conn
+            future = self._sync_future
+            epoch = self._sync_epoch
+        if wait and future is not None:
+            try:
+                future.result()
+            finally:
+                self._finish_sync(future, epoch)
+                with self._lock:
+                    self._drain_sync_completions()
+        return conn
 
 
 def get_im_db_middleware() -> IMDBMiddleware:

@@ -4,10 +4,11 @@ from fastapi import APIRouter
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from backend.app.api.envelope import api_error, ok
+from backend.app.api.envelope import AppError, api_error, ok
+from backend.app.api.account_scope import AccountRoute
 from backend.app.shared.crm import get_translation, request_translations
 
-router = APIRouter()
+router = APIRouter(route_class=AccountRoute)
 
 
 class RequestTranslationsInput(BaseModel):
@@ -26,6 +27,8 @@ class TranslateInput(BaseModel):
 def post_translations(body: RequestTranslationsInput) -> dict:
     try:
         saved = request_translations(list(body.texts or []), force=bool(body.force))
+    except AppError:
+        raise
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)

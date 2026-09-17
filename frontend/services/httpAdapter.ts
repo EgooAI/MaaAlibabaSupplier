@@ -4,6 +4,7 @@ import type { ConversationAggregateDto, ConversationSendResultDto } from "@/type
 import type { ConversationRevision } from "@/types/chatOperations";
 import type { ApiResponse } from "@/types/common";
 import type { OperationsBackend } from "./interfaces";
+import { accountSession, AccountChangedError, captureAccount } from "./accountSession";
 
 const REQUEST_TIMEOUT_MS = 8000;
 
@@ -51,14 +52,17 @@ function timeoutSignal(init?: RequestInit): RequestInit {
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const account = prepareAccountRequest(path, init);
   let response: Response;
   try {
-    response = await fetch(path, requestInit(timeoutSignal(init)));
+    response = await fetch(path, requestInit(timeoutSignal(account.init)));
   } catch (error) {
+    account.ticket?.assertCurrent();
     throw new ApiError(`API request failed: ${path}`, path, { cause: error });
   }
 
   const text = await response.text();
+  account.ticket?.assertCurrent(response.headers.get("X-Account-Epoch"));
   if (!response.ok) {
     throw new ApiError(envelopeMessage(text, path), path, { status: response.status });
   }
@@ -78,13 +82,16 @@ function envelopeMessage(text: string, path: string): string {
 }
 
 async function requestVoid(path: string, init?: RequestInit): Promise<void> {
+  const account = prepareAccountRequest(path, init);
   let response: Response;
   try {
-    response = await fetch(path, requestInit(timeoutSignal(init)));
+    response = await fetch(path, requestInit(timeoutSignal(account.init)));
   } catch (error) {
+    account.ticket?.assertCurrent();
     throw new ApiError(`API request failed: ${path}`, path, { cause: error });
   }
   const text = await response.text();
+  account.ticket?.assertCurrent(response.headers.get("X-Account-Epoch"));
   if (!response.ok) {
     throw new ApiError(envelopeMessage(text, path), path, { status: response.status });
   }
@@ -98,7 +105,32 @@ export function requestInit(init?: RequestInit): RequestInit {
   return { ...init, headers };
 }
 
+function prepareAccountRequest(path: string, init?: RequestInit) {
+  const settingsWrite = /^\/api\/settings\/(alibaba-data-dir|ali-id|ali-keys)(?:\/|$)/.test(path) && (init?.method === "PUT" || init?.method === "DELETE");
+  if (settingsWrite) {
+    // Settings writes intentionally run after local invalidation and may change the epoch.
+    if (!new Headers(init?.headers).get("X-Account-Epoch")) throw new AccountChangedError();
+    return { init };
+  }
+  const scoped = /^\/api\/(conversations(?:\/|$)|messages(?:\/|$)|self-info(?:\/|$)|cache\/reset(?:\/|$)|status\/node-test(?:\/|$))/.test(path);
+  if (!scoped) return { init };
+  const ticket = captureAccount();
+  const { capabilities, client } = accountSession.get().snapshot!;
+  const operates = /\/goto-contact$/.test(path) || (/\/conversations\/[^/]+\/messages$/.test(path) && init?.method === "POST");
+  const usesAi = /\/(suggestions|analysis|translate|retranslate)$/.test(path) || (path === "/api/messages/translations" && init?.method === "POST");
+  if (operates && !capabilities.operate_client) throw new Error("请先在设置中接入客户端并人工确认卖家身份");
+  if (path === "/api/status/node-test" && !client.connected) throw new Error("请先在设置中接入客户端，再运行只读界面检查");
+  if (usesAi && !capabilities.use_ai) throw new Error("AI 暂不可用，请检查账号数据和模型配置");
+  const headers = new Headers(init?.headers);
+  headers.set("X-Account-Epoch", ticket.epoch);
+  return { ticket, init: { ...init, headers } };
+}
+
 export const httpBackend: OperationsBackend = {
+  getConnection: () => requestJson("/api/settings/connection"),
+  connectClient: (epoch) => requestJson("/api/settings/connection/connect", { method: "POST", body: JSON.stringify({ epoch }) }),
+  confirmClient: (epoch, windowGeneration) => requestJson("/api/settings/connection/confirm", { method: "POST", body: JSON.stringify({ epoch, window_generation: windowGeneration }) }),
+  retryConnection: (epoch) => requestJson("/api/settings/connection/retry", { method: "POST", body: JSON.stringify({ epoch }) }),
   getSelfInfo: () => requestJson("/api/self-info"),
   resetCache: () => requestVoid("/api/cache/reset", { method: "POST" }),
   shutdownApp: () => requestVoid("/api/app/shutdown", { method: "POST" }),
@@ -136,13 +168,13 @@ export const httpBackend: OperationsBackend = {
   createTestTask: (input) => requestJson("/api/status/test-tasks", { method: "POST", body: JSON.stringify(input) }),
 
   getDataDirStatus: () => requestJson("/api/settings/alibaba-data-dir"),
-  saveDataDirPath: (path) => requestJson("/api/settings/alibaba-data-dir", { method: "PUT", body: JSON.stringify({ path }) }),
+  saveDataDirPath: (path, epoch) => requestJson("/api/settings/alibaba-data-dir", { method: "PUT", headers: { "X-Account-Epoch": epoch }, body: JSON.stringify({ path }) }),
   listDataDirCandidates: () => requestJson("/api/settings/alibaba-data-dir/candidates"),
 
   listAliIds: () => requestJson("/api/settings/ali-ids"),
-  saveAliId: (aliId) => requestJson("/api/settings/ali-id", { method: "PUT", body: JSON.stringify({ ali_id: aliId }) }),
-  saveAliKey: (aliId, aesKeyHex) => requestJson("/api/settings/ali-keys", { method: "PUT", body: JSON.stringify({ ali_id: aliId, aes_key_hex: aesKeyHex }) }),
-  clearAliKey: (aliId) => requestJson(`/api/settings/ali-keys/${encodeURIComponent(aliId)}`, { method: "DELETE" }),
+  saveAliId: (aliId, epoch) => requestJson("/api/settings/ali-id", { method: "PUT", headers: { "X-Account-Epoch": epoch }, body: JSON.stringify({ ali_id: aliId }) }),
+  saveAliKey: (aliId, aesKeyHex, epoch) => requestJson("/api/settings/ali-keys", { method: "PUT", headers: { "X-Account-Epoch": epoch }, body: JSON.stringify({ ali_id: aliId, aes_key_hex: aesKeyHex }) }),
+  clearAliKey: (aliId, epoch) => requestJson(`/api/settings/ali-keys/${encodeURIComponent(aliId)}`, { method: "DELETE", headers: { "X-Account-Epoch": epoch } }),
 
   getAgentConsole: () => requestJson("/api/agent/console"),
   saveLlmConfig: (input: DocumentLlmConfig) => requestJson("/api/agent/llm-config", { method: "PUT", body: JSON.stringify(input) }),

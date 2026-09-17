@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from backend.app.api.main import app
 from backend.app.api.routers import settings as settings_router
 from backend.app.shared.backend import im_db_middleware as mw_mod
+from backend.app.shared.backend.account_context import get_account_context
 from backend.app.shared.crm import account_keys
 from backend.app.shared.utils import app_config
 
@@ -164,6 +165,7 @@ class AccountKeyTestCase(unittest.TestCase):
 class DataDirSettingsApiTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(app, raise_server_exceptions=False)
+        self.client.headers["X-Account-Epoch"] = get_account_context().epoch
         self.addCleanup(self.client.close)
         self.temp_dir = TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
@@ -210,6 +212,7 @@ class DataDirSettingsApiTestCase(unittest.TestCase):
 class AliIdentityApiTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(app, raise_server_exceptions=False)
+        self.client.headers["X-Account-Epoch"] = get_account_context().epoch
         self.addCleanup(self.client.close)
         self.temp_dir = TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)

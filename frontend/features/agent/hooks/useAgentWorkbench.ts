@@ -6,8 +6,10 @@ import { agentConfigToPreset, agentPresetToConfig, agentPresetToDbPreset, create
 import { nowText } from "@/domain/time";
 import { backend } from "@/services/client";
 import type { AgentConfig, AgentConsoleState, AgentEditValues, DbAgentPreset, LlmLevelConfig } from "@/types/agent";
+import { useAccount } from "@/features/account/AccountProvider";
 
 function useAgentWorkbenchController() {
+  const { refresh: refreshConnection } = useAccount();
   const { message } = App.useApp();
   const [state, setState] = useState<AgentConsoleState>();
   const [loading, setLoading] = useState(true);
@@ -56,6 +58,7 @@ function useAgentWorkbenchController() {
         return { ...currentState, llmLevels: nextLevels };
       });
       message.success("LLM 参数已保存");
+      await refreshConnection();
       return true;
     } catch (error: unknown) {
       message.error(error instanceof Error ? error.message : "LLM 参数保存失败");

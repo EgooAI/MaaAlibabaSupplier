@@ -3,6 +3,7 @@
 import { App, ConfigProvider, theme } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import type { ReactNode } from "react";
+import { AccountProvider } from "@/features/account/AccountProvider";
 
 export function AntdProviders({ children }: { children: ReactNode }) {
   return (
@@ -32,7 +33,7 @@ export function AntdProviders({ children }: { children: ReactNode }) {
         },
       }}
     >
-      <App>{children}</App>
+      <App><AccountProvider>{children}</AccountProvider></App>
     </ConfigProvider>
   );
 }

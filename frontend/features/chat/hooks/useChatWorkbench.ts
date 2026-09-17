@@ -4,7 +4,8 @@ import { App } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { mergeMessageTranslations, messageExecutionState } from "@/domain/chat/chatModel";
 import type { ConversationGroupMode } from "@/domain/chat/chatModel";
-import { backend } from "@/services/client";
+import { AccountChangedError, useAccount, useAccountBackend } from "@/features/account/AccountProvider";
+import { loadDraft, saveDraft } from "@/features/account/draftStorage";
 import type { AssistantSuggestion, ChatMessage, ConversationDetail } from "@/types/chatCanonical";
 import { useConversationSummaries } from "./useConversationSummaries";
 
@@ -15,6 +16,15 @@ type AnalysisState = {
 
 export function useChatWorkbench() {
   const { message } = App.useApp();
+  const backend = useAccountBackend();
+  const { snapshot } = useAccount();
+  const account = snapshot!.account;
+  const draftStorageFailed = useRef(false);
+  const warnStorage = useCallback(() => {
+    if (draftStorageFailed.current) return;
+    draftStorageFailed.current = true;
+    message.warning("草稿暂存于当前标签页内存，切换账号后仍保留，存储恢复后会补存；关闭或刷新浏览器前请妥善保留内容");
+  }, [message]);
   const { conversations, loading, revision } = useConversationSummaries();
   const [activeConversationId, setActiveConversationId] = useState<string>();
   const [activeConversation, setActiveConversation] = useState<ConversationDetail>();
@@ -37,19 +47,33 @@ export function useChatWorkbench() {
   const analysisRequestRef = useRef(0);
   const translationVisibleRef = useRef(true);
 
+  useEffect(() => () => {
+    activeIdRef.current = undefined;
+    ++detailRequestRef.current;
+    ++sendRequestRef.current;
+    ++translateRequestRef.current;
+    ++suggestionRequestRef.current;
+    ++analysisRequestRef.current;
+  }, []);
+
   const draft = activeConversationId ? drafts[activeConversationId] ?? "" : "";
 
   const setDraft = useCallback((value: string) => {
     const id = activeIdRef.current;
     if (!id) return;
     setDrafts((current) => ({ ...current, [id]: value }));
-  }, []);
+    try { saveDraft(() => localStorage, account, id, value); } catch { warnStorage(); }
+  }, [account, warnStorage]);
 
   const selectConversation = useCallback(async (id: string) => {
     const requestId = detailRequestRef.current + 1;
     detailRequestRef.current = requestId;
     activeIdRef.current = id;
     setActiveConversationId(id);
+    try {
+      const saved = loadDraft(() => localStorage, account, id, warnStorage);
+      setDrafts((current) => ({ ...current, [id]: current[id] ?? saved }));
+    } catch { warnStorage(); }
     setActiveConversation(undefined);
     setActiveCardId(undefined);
     setAnalysisState({ loading: false });
@@ -68,7 +92,7 @@ export function useChatWorkbench() {
         setDetailLoading(false);
       }
     }
-  }, [message]);
+  }, [account, backend, message, warnStorage]);
 
   useEffect(() => {
     if (!activeConversationId && conversations[0]) {
@@ -92,7 +116,7 @@ export function useChatWorkbench() {
     } catch {
       // Silent on purpose (see above).
     }
-  }, []);
+  }, [backend]);
 
   const revisionSeenRef = useRef(false);
   useEffect(() => {
@@ -125,7 +149,7 @@ export function useChatWorkbench() {
     } catch {
       if (translateRequestRef.current === requestId && activeIdRef.current === conversationId) message.error(regenerate ? "重新翻译失败" : "消息翻译失败");
     }
-  }, [activeConversation?.id, message]);
+  }, [activeConversation?.id, backend, message]);
 
   const translateConversation = useCallback(async (options?: { force?: boolean }) => {
     const force = options?.force ?? false;
@@ -164,7 +188,7 @@ export function useChatWorkbench() {
     } catch {
       if (translateRequestRef.current === requestId && activeIdRef.current === conversationId) message.error(force ? "重新翻译失败" : "会话翻译失败");
     }
-  }, [activeConversation?.id, activeConversation?.messages, message]);
+  }, [activeConversation?.id, activeConversation?.messages, backend, message]);
 
   const retranslateConversation = useCallback(() => translateConversation({ force: true }), [translateConversation]);
 
@@ -191,7 +215,7 @@ export function useChatWorkbench() {
     } catch {
       if (suggestionRequestRef.current === requestId && activeIdRef.current === conversationId) message.error("回复建议加载失败");
     }
-  }, [activeConversation?.id, message]);
+  }, [activeConversation?.id, backend, message]);
 
   const insertSuggestion = useCallback((content: string) => {
     setDraft(content);
@@ -231,7 +255,7 @@ export function useChatWorkbench() {
     } finally {
       setSendingConversationId((current) => current === conversationId ? undefined : current);
     }
-  }, [activeConversation?.id, draft, sendingConversationId, message]);
+  }, [activeConversation?.id, backend, draft, sendingConversationId, message]);
 
   const gotoContact = useCallback(async () => {
     const conversation = activeConversation;
@@ -243,10 +267,10 @@ export function useChatWorkbench() {
     try {
       await backend.gotoContact(conversation.id, loginId);
       message.success("已提交跳转任务");
-    } catch {
-      message.error("跳转任务提交失败");
+    } catch (error) {
+      if (!(error instanceof AccountChangedError)) message.error("跳转任务提交失败");
     }
-  }, [activeConversation, message]);
+  }, [activeConversation, backend, message]);
 
   const analyzeConversation = useCallback(async () => {
     const conversationId = activeConversation?.id;
@@ -266,7 +290,7 @@ export function useChatWorkbench() {
         message.error("会话分析失败");
       }
     }
-  }, [activeConversation?.id, message]);
+  }, [activeConversation?.id, backend, message]);
 
   const activeCard = useMemo(() => activeConversation?.messages.find((item) => item.card?.id === activeCardId)?.card, [activeCardId, activeConversation]);
 

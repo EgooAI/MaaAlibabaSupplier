@@ -7,13 +7,18 @@ from fastapi.testclient import TestClient
 
 from backend.app.api.main import app
 from backend.app.api.routers import conversations, status
+from backend.app.shared.backend.account_context import get_account_context
 from backend.app.task_queue import TaskQueue, TaskStatus
 
 
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(status, "_last_node_result", None)
+    monkeypatch.setattr(status, "get_client_status", lambda: {"connected": True, "window_generation": "fake", "detail": "test"})
+    monkeypatch.setattr(conversations, "capture_gui_session", lambda epoch: epoch)
+    monkeypatch.setattr(conversations, "run_guarded", lambda token, fn: fn())
     with TestClient(app, raise_server_exceptions=False) as client:
+        client.headers["X-Account-Epoch"] = get_account_context().epoch
         yield client
 
 
