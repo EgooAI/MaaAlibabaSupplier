@@ -13,7 +13,6 @@ from backend.app.shared.backend.gui_session import get_client_status
 from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
 from backend.app.shared.crm.identities import PLATFORM_PID
 from backend.app.shared.crm.sdk import LLMApiConfig
-from backend.app.shared.mitm.pool import SelfInfo
 from backend.app.shared.utils.settings import CRM_DB_RELATIVE_DEFAULT, resolve_backend_root
 
 
@@ -44,8 +43,16 @@ def has_selected_archive(self_ali_id: str) -> bool:
     for row in rows:
         extra = json.loads(row["extra"] or "null")
         if isinstance(extra, dict) and extra.get("is_self") is True and extra.get("ali_id") == self_ali_id:
-            return SelfInfo.model_validate(extra).ali_id == self_ali_id
+            return True
     return False
+
+
+def safe_has_selected_archive(self_ali_id: str) -> bool:
+    """Read-only polling variant: unavailable or malformed CRM data is not ready."""
+    try:
+        return has_selected_archive(self_ali_id)
+    except (sqlite3.Error, OSError, ValueError):
+        return False
 
 
 def model_configured() -> bool:

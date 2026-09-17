@@ -14,7 +14,7 @@ from sqlmodel import Session, select
 
 from backend.app.api.envelope import AppError, api_error, ok, user_message
 from backend.app.api.account_scope import AccountRoute, request_epoch
-from backend.app.api.connection import has_selected_archive
+from backend.app.api.connection import safe_has_selected_archive
 from backend.app.api.routers.outbox import public_task
 from backend.app.shared.backend.account_context import AccountContext, get_account_context
 from backend.app.shared.backend.outbox_service import get_outbox_service
@@ -91,7 +91,7 @@ def _inbox_store() -> tuple[InboxStore, Any]:
     if not store.metadata(context.self_ali_id, context.data_dir)["baseline_complete"]:
         # First archive read explicitly adopts history once. This only adds
         # app-owned inbox rows; it never retries the source or rewrites CRM data.
-        if not has_selected_archive(context.self_ali_id) or not has_archive_messages(store, context.self_ali_id):
+        if not safe_has_selected_archive(context.self_ali_id) or not has_archive_messages(store, context.self_ali_id):
             raise AppError("聊天数据未就绪，请在设置页显式重试同步", status_code=503)
         metadata = store.initialize(context.self_ali_id, context.data_dir)
         if not metadata["baseline_complete"]:
@@ -150,7 +150,7 @@ def _ready() -> str:
     if not context.self_ali_id:
         raise AppError("尚未选择阿里账号身份，请前往设置页选择后重试", status_code=503)
     state = get_im_db_middleware().sync_status()
-    if not state["ready"] and not has_selected_archive(context.self_ali_id):
+    if not state["ready"] and not safe_has_selected_archive(context.self_ali_id):
         raise AppError("聊天数据未就绪，请在设置页显式重试同步", status_code=503)
     return context.self_ali_id
 
@@ -511,7 +511,7 @@ def conversation_revision() -> dict:
     """
     context = get_account_context()
     status = get_im_db_middleware().sync_status()
-    archive = has_selected_archive(context.self_ali_id)
+    archive = safe_has_selected_archive(context.self_ali_id)
     if get_account_context() != context or status["epoch"] != context.epoch or status["self_ali_id"] != context.self_ali_id:
         raise AppError("读取同步状态期间账号已切换，请刷新后重试。", status_code=409)
     payload = {

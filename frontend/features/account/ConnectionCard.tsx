@@ -21,7 +21,7 @@ export function ConnectionCard() {
   return (
     <Card title="账号接入" extra={<Button loading={refreshing} disabled={mutating} onClick={() => void refresh()}>刷新状态</Button>}>
       <Space orientation="vertical" size="middle" className="w-full">
-        {error ? <Alert type="error" showIcon message={error} description="请确认后端正在运行，然后刷新状态。刷新只观察状态，不会操作客户端或调用模型。" /> : null}
+        {error ? <Alert type="error" showIcon title={error} description="请确认后端正在运行，然后刷新状态。刷新只观察状态，不会操作客户端或调用模型。" /> : null}
         {!snapshot ? <Typography.Text>正在读取接入状态，请稍候。</Typography.Text> : <>
           <Descriptions column={1} size="small" items={[
             { key: "seller", label: "当前卖家", children: snapshot.account.self_ali_id || "尚未选择，请在下方选择账号" },
@@ -35,8 +35,8 @@ export function ConnectionCard() {
             <Tag color={!blocked && snapshot.capabilities.use_ai ? "success" : "default"}>使用 AI：{!blocked && snapshot.capabilities.use_ai ? "可用" : "不可用"}</Tag>
             <Tag color={!blocked && snapshot.capabilities.operate_client ? "success" : "default"}>操作客户端：{!blocked && snapshot.capabilities.operate_client ? "可用" : "不可用"}</Tag>
           </Space>
-          {!snapshot.client.confirmed ? <Alert type="warning" showIcon message="卖家身份尚未人工确认" description="可以在数据就绪后阅读聊天、编辑草稿。每次接入客户端后，请核对窗口中登录的卖家，再明确确认；确认前不可发送、填入测试或跳转联系人。" /> : null}
-          {snapshot.source.last_error ? <Alert type="error" showIcon message={snapshot.source.last_error} description={`${snapshot.source.error_code || "同步失败"}：请检查下方目录、账号及 Key，修正后点击“验证 Key 并同步”。`} /> : null}
+          {!snapshot.client.confirmed ? <Alert type="warning" showIcon title="卖家身份尚未人工确认" description="可以在数据就绪后阅读聊天、编辑草稿。每次接入客户端后，请核对窗口中登录的卖家，再明确确认；确认前不可发送、填入测试或跳转联系人。" /> : null}
+          {snapshot.source.last_error ? <Alert type="error" showIcon title={snapshot.source.last_error} description={`${snapshot.source.error_code || "同步失败"}：请检查下方目录、账号及 Key，修正后点击“验证 Key 并同步”。`} /> : null}
           {snapshot.steps.map((step) => <div key={step.id}><Tag color={step.state === "ready" ? "success" : step.state === "error" ? "error" : "warning"}>{step.state === "ready" ? "就绪" : step.state === "error" ? "错误" : "待完成"}</Tag>{step.detail || step.id}</div>)}
           <Space wrap>
             <Button loading={mutating} disabled={!canAct} onClick={() => void run(() => backend.connectClient(snapshot.account.epoch))}>{snapshot.client.connected ? "重新接入客户端" : "接入客户端"}</Button>
@@ -55,7 +55,7 @@ export function ConnectionCard() {
       }}>
         <Typography.Paragraph>请在阿里客户端窗口查看当前登录账号，确认其卖家 Ali ID 与下面一致。不要仅凭昵称判断。</Typography.Paragraph>
         <Typography.Paragraph strong>{confirmation?.seller}</Typography.Paragraph>
-        {!current ? <Alert type="warning" message="账号或客户端窗口已变化，请关闭后重新核对。" /> : null}
+        {!current ? <Alert type="warning" title="账号或客户端窗口已变化，请关闭后重新核对。" /> : null}
       </Modal>
     </Card>
   );

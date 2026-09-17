@@ -83,8 +83,8 @@ export function useStatusWorkbench() {
     try {
       await backend.runNodeTest(entry);
       message.info("节点测试任务已提交排队，请在状态页任务列表查看结果（每 2 秒自动更新）");
-    } catch {
-      message.warning("节点测试提交结果未知，请先查看任务状态，避免立即重复提交");
+    } catch (error: unknown) {
+      message.error(error instanceof Error ? error.message : "节点测试提交结果未知，请先查看任务状态，避免立即重复提交");
     } finally {
       setTestingNode(undefined);
     }

@@ -40,8 +40,8 @@ function DataDirCard({ controls }: { controls: DataDirControls }) {
             {stateTag(status?.state ?? "unconfigured")}
             {status?.path ? <Typography.Text code className="break-all">{status.path}</Typography.Text> : null}
           </Space>
-          {status?.detail ? <Alert type={status.state === "ok" ? "success" : "warning"} showIcon message={status.detail} /> : null}
-          {error ? <Alert type="error" showIcon message={error} /> : null}
+          {status?.detail ? <Alert type={status.state === "ok" ? "success" : "warning"} showIcon title={status.detail} /> : null}
+          {error ? <Alert type="error" showIcon title={error} /> : null}
           <Space.Compact className="w-full">
             <Input value={path} onChange={(event) => setPath(event.target.value)} placeholder="例如 D:\AlibabaSupplierData" />
             <Button type="primary" loading={saving} disabled={!canSave} onClick={() => void handleSave()}>
@@ -109,7 +109,7 @@ export function SettingsPage() {
           <Typography.Text type="secondary">
             终止程序将退出后端服务及附带进程（MaaPiCli、Yak MITM 代理），本页面也会随之失效。如需再次使用，请重新启动程序。
           </Typography.Text>
-          <Alert type="warning" showIcon message="终止前请确认没有正在执行的任务（批量发送、Agent 测试等），避免数据丢失。" />
+          <Alert type="warning" showIcon title="终止前请确认没有正在执行的任务（批量发送、Agent 测试等），避免数据丢失。" />
           <Button danger icon={<PoweroffOutlined />} onClick={() => setConfirmOpen(true)}>
             终止程序
           </Button>

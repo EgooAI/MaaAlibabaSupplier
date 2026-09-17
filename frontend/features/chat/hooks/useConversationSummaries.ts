@@ -169,5 +169,5 @@ export function useConversationSummaries(initialQuery: ConversationQuery = {}) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void reload();
   }, [reload, listRevision]);
-  return { conversations, loading, reload, listRevision, detailRevision, refreshError, refreshPending, beginRead, query, changeQuery, page, pagePending, changePage, selectionVersion };
+  return { conversations, loading, reload, detailRevision, refreshError, refreshPending, beginRead, query, changeQuery, page, pagePending, changePage, selectionVersion };
 }

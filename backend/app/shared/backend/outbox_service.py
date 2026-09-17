@@ -34,6 +34,10 @@ class _Attempt:
     attempt: int
 
 
+class ScreenshotExpiredError(AppError):
+    """The stored confirmation screenshot no longer matches the task."""
+
+
 class OutboxService:
     def __init__(self, store: OutboxStore | None = None, queue=None) -> None:
         self.store = store if store is not None else OutboxStore()
@@ -167,13 +171,11 @@ class OutboxService:
             record = self._require(context, task_id)
             if (record["screenshot_id"] != screenshot_id or self._expired(record)
                     or record["status"] not in ("awaiting_confirmation", "queued_send")):
-                raise AppError("Screenshot expired or replaced", status_code=404)
+                raise ScreenshotExpiredError("Screenshot expired or replaced", status_code=404)
             try:
                 return (self._screenshot_dir / f"{screenshot_id}.png").read_bytes()
             except OSError:
                 raise AppError("Screenshot not found", status_code=404) from None
-
-    screenshot = get_screenshot
 
     @staticmethod
     def _expired(record: dict) -> bool:
@@ -271,7 +273,7 @@ class OutboxService:
         failure = "gui_execution_interrupted"
         try:
             baseline = None
-            if send:
+            if send and queued["action"] == "send":
                 from backend.app.shared.backend.source_messages import read_source_messages
 
                 snapshot = read_source_messages(context, queued["contact_ali_id"])
@@ -308,8 +310,9 @@ class OutboxService:
                     if self._expired(record) or compare_frame(record["screenshot_digest"], frame).needs_reconfirm:
                         self._save_frame(record, frame, reason="screenshot_expired_or_changed")
                         return True, "Fresh screenshot requires confirmation"
-                    baseline["send_started_at"] = time.time()
-                    baseline["sent_at"] = baseline["send_started_at"]
+                    if baseline is not None:
+                        baseline["send_started_at"] = time.time()
+                        baseline["sent_at"] = baseline["send_started_at"]
                     record = self._move(record, "running", phase="input", baseline=baseline)
                 ok, reason = runner.chat_input(record["content"])
                 if not ok:

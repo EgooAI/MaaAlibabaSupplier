@@ -152,10 +152,9 @@ def main() -> None:
             logger.exception("Outbox shutdown failed")
         finally:
             try:
-                from backend.app.task_queue import TaskQueue
+                from backend.app.task_queue import shutdown_task_queue
 
-                if TaskQueue._instance is not None:
-                    TaskQueue._instance.shutdown(timeout=5.0)
+                shutdown_task_queue(timeout=5.0)
             except Exception:
                 logger.exception("GUI task queue shutdown failed")
             finally:

@@ -5,7 +5,7 @@ import { backend } from "@/services/client";
 import { useAccount } from "@/features/account/AccountProvider";
 
 export function useDataDirSettings() {
-  const { snapshot, blocked, refresh: reload, mutate, mutating, error: connectionError } = useAccount();
+  const { snapshot, blocked, mutate, mutating, error: connectionError } = useAccount();
   const status = snapshot?.data_dir ?? null;
   const [candidates, setCandidates] = useState<string[]>([]);
   const [input, setInput] = useState<{ source: string; path: string }>();
@@ -51,5 +51,5 @@ export function useDataDirSettings() {
     }
   }, [path, mutate, setPath]);
 
-  return { status, candidates, path, setPath, loading, scanning, saving: saving || mutating, canSave: !blocked && Boolean(snapshot) && !mutating, error: error || connectionError, reload, scan, save };
+  return { status, candidates, path, setPath, loading, scanning, saving: saving || mutating, canSave: !blocked && Boolean(snapshot) && !mutating, error: error || connectionError, scan, save };
 }

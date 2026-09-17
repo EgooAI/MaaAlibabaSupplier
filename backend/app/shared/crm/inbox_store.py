@@ -58,6 +58,8 @@ from backend.app.shared.crm.sync_store import canonical_source_dir, sync_state
 from backend.app.shared.crm.views import coerce_epoch
 
 
+DEFAULT_REPLY_TIMEOUT_S = 86400
+
 _TOKEN_KEY = secrets.token_bytes(32)
 _SCHEMA = MetaData()
 inbox_scope = Table(
@@ -67,7 +69,7 @@ inbox_scope = Table(
     Column("baseline_complete", Integer, nullable=False),
     Column("last_seq", Integer, nullable=False),
     Column("inbox_revision", Integer, nullable=False),
-    Column("timeout_seconds", Integer, nullable=False, server_default="86400"),
+    Column("timeout_seconds", Integer, nullable=False, server_default=str(DEFAULT_REPLY_TIMEOUT_S)),
 )
 inbox_message = Table(
     "app_inbox_message", _SCHEMA,
@@ -236,7 +238,7 @@ def write_inbox(
         values = {
             **key, "baseline_complete": 1, "last_seq": seq,
             "inbox_revision": (previous["inbox_revision"] if previous else 0) + 1,
-            "timeout_seconds": previous["timeout_seconds"] if previous else 86400,
+            "timeout_seconds": previous["timeout_seconds"] if previous else DEFAULT_REPLY_TIMEOUT_S,
         }
         statement = insert(inbox_scope).values(**values)
         session.execute(statement.on_conflict_do_update(
@@ -297,13 +299,13 @@ class InboxStore:
             ).fetchone()
         return {**dict(row), "baseline_complete": bool(row["baseline_complete"])} if row else {
             **key, "baseline_complete": False, "last_seq": 0,
-            "inbox_revision": 0, "timeout_seconds": 86400,
+            "inbox_revision": 0, "timeout_seconds": DEFAULT_REPLY_TIMEOUT_S,
         }
 
     def metadata(self, seller: str, data_dir: str | Path) -> dict:
         key = _scope(seller, data_dir)
         if not self.database_path.is_file():
-            return {**key, "baseline_complete": False, "last_seq": 0, "inbox_revision": 0, "timeout_seconds": 86400}
+            return {**key, "baseline_complete": False, "last_seq": 0, "inbox_revision": 0, "timeout_seconds": DEFAULT_REPLY_TIMEOUT_S}
         with self._connection() as conn:
             return self._metadata(conn, key)
 

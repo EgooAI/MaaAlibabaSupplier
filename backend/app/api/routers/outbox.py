@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from backend.app.api.account_scope import AccountRoute, OutboxObservationRoute, outbox_context, request_epoch
 from backend.app.api.envelope import AppError, ok, user_message
 from backend.app.shared.backend.account_context import get_account_context
-from backend.app.shared.backend.outbox_service import get_outbox_service
+from backend.app.shared.backend.outbox_service import ScreenshotExpiredError, get_outbox_service
 
 router = APIRouter(route_class=AccountRoute)
 observations = APIRouter(route_class=OutboxObservationRoute)
@@ -96,10 +96,8 @@ def get_screenshot(task_id: str, screenshot_id: str, version: int = Query(ge=1))
         raise AppError("Screenshot or task version changed", status_code=409)
     try:
         image = service.get_screenshot(context, task_id, screenshot_id)
-    except AppError as exc:
-        if exc.message == "Screenshot expired or replaced":
-            raise AppError(exc.message, status_code=409) from None
-        raise
+    except ScreenshotExpiredError as exc:
+        raise AppError(exc.message, status_code=409) from None
     current = service.get(context, task_id)
     if current is None or current["version"] != version:
         raise AppError("Screenshot or task version changed", status_code=409)

@@ -30,7 +30,7 @@ export const accountSession = {
   accept(snapshot: ConnectionSnapshot) {
     const previous = state.snapshot?.account;
     const changed = previous?.epoch !== snapshot.account.epoch || previous?.data_dir !== snapshot.account.data_dir || previous?.self_ali_id !== snapshot.account.self_ali_id;
-    state = { snapshot: { ...snapshot, account: !changed && previous ? previous : snapshot.account }, generation: state.generation + (changed ? 1 : 0), blocked: false, suspended: false };
+    state = { snapshot, generation: state.generation + (changed ? 1 : 0), blocked: false, suspended: false };
     listeners.forEach((listener) => listener());
   },
 };

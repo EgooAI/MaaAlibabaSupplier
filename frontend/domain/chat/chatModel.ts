@@ -73,10 +73,6 @@ export function mergeMessageTranslations(messages: ChatMessage[], translations: 
   });
 }
 
-export function mergeConversationTranslations<T extends ConversationDetail>(conversation: T, translations: Array<{ messageId: string; translatedContent: string }>): T {
-  return { ...conversation, messages: mergeMessageTranslations(conversation.messages, translations) };
-}
-
 export function mergeConversationDetail(current: ConversationDetail, incoming: ConversationDetail): ConversationDetail {
   const translationMap = new Map(current.messages.flatMap((item) => item.translatedContent ? [[item.id, item.translatedContent] as const] : []));
   return {

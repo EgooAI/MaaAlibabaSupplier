@@ -891,7 +891,7 @@ def test_connection_rejects_account_switch_between_observations(client, monkeypa
 @pytest.mark.parametrize("phase", ["source", "archive"])
 def test_revision_rejects_account_switch_between_observations(client, monkeypatch, phase):
     mw = get_im_db_middleware()
-    target, name = (mw, "sync_status") if phase == "source" else (conversations, "has_selected_archive")
+    target, name = (mw, "sync_status") if phase == "source" else (conversations, "safe_has_selected_archive")
     original = getattr(target, name)
 
     def change(*args, **kwargs):

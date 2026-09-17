@@ -168,3 +168,10 @@ class TaskQueue:
 
 def get_task_queue() -> TaskQueue:
     return TaskQueue()
+
+
+def shutdown_task_queue(timeout: float = 5.0) -> None:
+    """Drain and release the process-wide queue, if one was ever created."""
+    instance = TaskQueue._instance
+    if instance is not None:
+        instance.shutdown(timeout)
