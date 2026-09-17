@@ -4,12 +4,14 @@ from contextlib import closing
 from threading import Event
 
 import pytest
+from Crypto.Cipher import AES
 
 from backend.app.shared.backend import account_context
 from backend.app.shared.backend.im_chat_db import ContactConv, MessageRow, build_conversations, open_readonly
 from backend.app.shared.crm import ingest, queries, sync
 from backend.app.shared.crm.identities import message_external_id
 from backend.app.shared.mitm.pool import SelfInfo
+from backend.tests.test_im_db_isolation import KEY, committed
 
 
 def conversation(seller, text="hello"):
@@ -117,8 +119,6 @@ def install_middleware(monkeypatch, submit):
     from backend.app.shared.backend import im_db_middleware
 
     class Middleware:
-        _sync_future = None
-
         def data_dir_status(self):
             return {"state": "ok"}
 
@@ -127,14 +127,17 @@ def install_middleware(monkeypatch, submit):
 
         def sync_to_crm(self, wait=False):
             assert wait is False
-            self._sync_future = submit()
+            return submit()
+
+        def wait_for_sync(self, future):
+            return future.result(timeout=5)
 
     monkeypatch.setattr(im_db_middleware, "get_im_db_middleware", Middleware)
 
 
 def test_ingest_returns_selected_identity_and_rejects_unselected(selected_context, monkeypatch):
     future = Future()
-    future.set_result(None)
+    future.set_result(committed(1))
     install_middleware(monkeypatch, lambda: future)
     requested = []
     monkeypatch.setattr(ingest, "get_self_info", lambda seller: requested.append(seller) or SelfInfo(ali_id=seller))
@@ -161,6 +164,7 @@ def test_ingest_wait_releases_lock_and_rechecks_context(selected_context, monkey
                 account_context.invalidate_account_context()
         finally:
             account_context.account_lock.release()
+        return committed(1)
 
     with ThreadPoolExecutor(max_workers=1) as executor:
         install_middleware(monkeypatch, lambda: executor.submit(complete))
@@ -180,18 +184,28 @@ def test_ingest_propagates_sync_failure(selected_context, monkeypatch):
         ingest.refresh_chat_data(wait=True)
 
 
-def test_ingest_waits_for_actual_middleware_future(selected_context, tmp_path, monkeypatch):
+def test_ingest_waits_for_actual_middleware_future(tmp_path, monkeypatch):
     from backend.app.shared.backend import im_db_middleware
+    from backend.app.shared.crm.account_keys import save_key
 
-    source = tmp_path / "im.sqlite"
+    client = tmp_path / "client"
+    source = client / "IMServiceDir" / "MessageSDK" / "A@icbu" / "database" / "im.sqlite"
+    source.parent.mkdir(parents=True)
     source_database(source)
+    source.write_bytes(AES.new(KEY, AES.MODE_ECB).encrypt(source.read_bytes()))
     monkeypatch.setenv("MAA_CRM_DB_PATH", str(tmp_path / "crm.sqlite"))
     middleware = im_db_middleware.get_im_db_middleware()
-    middleware._cached_db_path = source
-    middleware._conn = open_readonly(source)
-    monkeypatch.setattr(middleware, "_refresh", lambda: True)
-    monkeypatch.setattr(middleware, "data_dir_status", lambda: {"state": "ok"})
+    middleware.set_data_dir(str(client))
+    middleware.set_self_ali_id("A")
+    save_key("A", KEY, "manual")
+    assert not ingest.refresh_chat_data(wait=True).ready
+    assert middleware.retry_connection() is not None
     state = ingest.refresh_chat_data(wait=True)
     assert state.ready and state.self_ali_id == "A"
-    assert middleware._sync_future.done()
+    future = middleware.sync_to_crm()
+    assert future.done()
+    result = middleware.wait_for_sync(future)
+    assert result["revision"] == 1
+    assert result["applied_source_revision"] == middleware.sync_status()["source_revision"]
+    assert result["inserted"] == 2
     assert len(queries.list_conversations("A")[0].messages) == 2

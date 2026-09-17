@@ -59,6 +59,7 @@ describe("http adapter contract", () => {
     await expect(httpBackend.getConnection()).resolves.toEqual(connectionSnapshot);
     await httpBackend.connectClient("epoch-a");
     await httpBackend.confirmClient("epoch-a", "window-a");
+    accountSession.accept({ ...connectionSnapshot, account: { ...connectionSnapshot.account, epoch: "epoch-a" } });
     await httpBackend.retryConnection("epoch-a");
     expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method ?? "GET", init.body && JSON.parse(init.body)])).toEqual([
       ["/api/settings/connection", "GET", undefined],
@@ -66,6 +67,20 @@ describe("http adapter contract", () => {
       ["/api/settings/connection/confirm", "POST", { epoch: "epoch-a", window_generation: "window-a" }],
       ["/api/settings/connection/retry", "POST", { epoch: "epoch-a" }],
     ]);
+  });
+
+  it("blocks writes and retry during suspension, then resumes only the same account", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ code: 0, msg: "ok", data: connectionSnapshot }))));
+    globalThis.fetch = fetchMock;
+    accountSession.suspend();
+    await expect(httpBackend.retryConnection("mock-1")).rejects.toThrow("账号状态已变化");
+    await expect(httpBackend.sendMessage({ conversationId: "42", content: "draft" })).rejects.toThrow("账号状态已变化");
+    expect(fetchMock).not.toHaveBeenCalled();
+    accountSession.accept(connectionSnapshot);
+    await httpBackend.retryConnection("mock-1");
+    expect(new Headers(fetchMock.mock.calls[0][1].headers).get("X-Account-Epoch")).toBe("mock-1");
+    await expect(httpBackend.retryConnection("old-epoch")).rejects.toThrow("账号状态已变化");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it.each([

@@ -52,7 +52,7 @@ let connectionStore = structuredClone(connectionSnapshot);
 
 function changeMockAccount() {
   connectionStore.account.epoch = crypto.randomUUID();
-  connectionStore.source = { ...connectionStore.source, epoch: connectionStore.account.epoch, self_ali_id: connectionStore.account.self_ali_id, phase: "idle", ready: false, key_validation: "unverified" };
+  connectionStore.source = { ...connectionStore.source, epoch: connectionStore.account.epoch, self_ali_id: connectionStore.account.self_ali_id, phase: "idle", ready: false, key_validation: "unverified", auto_enabled: false, freshness: "stale", stale: true, syncing: false, pending: false };
   connectionStore.client.confirmed = false;
   connectionStore.capabilities = { read_chat: false, use_ai: false, operate_client: false };
 }
@@ -82,9 +82,15 @@ export const mockBackend: OperationsBackend = {
   },
   retryConnection: async (epoch) => {
     checkMockEpoch(epoch);
-    connectionStore.source = { ...connectionStore.source, phase: "ready", ready: true, key_validation: "valid", last_success: Date.now() / 1000, revision: (connectionStore.source.revision ?? 0) + 1 };
-    connectionStore.capabilities.read_chat = true;
-    connectionStore.capabilities.use_ai = connectionStore.model.configured;
+    connectionStore.source = { ...connectionStore.source, phase: "syncing", ready: false, key_validation: "valid", last_checked: Date.now() / 1000, last_attempt: Date.now() / 1000, auto_enabled: true, syncing: true, pending: true, freshness: "syncing", stale: true };
+    const selectedEpoch = epoch;
+    setTimeout(() => {
+      if (connectionStore.account.epoch !== selectedEpoch) return;
+      const revision = connectionStore.source.revision + 1;
+      connectionStore.source = { ...connectionStore.source, phase: "ready", ready: true, revision, source_revision: revision, applied_source_revision: revision, last_success: Date.now() / 1000, syncing: false, pending: false, freshness: "fresh", stale: false };
+      connectionStore.capabilities.read_chat = true;
+      connectionStore.capabilities.use_ai = connectionStore.model.configured;
+    }, 500);
     return delay(structuredClone(connectionStore));
   },
   getSelfInfo: () => delay(structuredClone(selfInfoStore)),
@@ -128,7 +134,7 @@ export const mockBackend: OperationsBackend = {
 
   listConversations: () => delay(conversationStore.map((conversation) => adaptConversationSummary(conversation))),
 
-  getConversationRevision: () => delay({ ready: true, revision: 1, source_mtime: null, cache_time: 0, stale: false }),
+  getConversationRevision: () => delay({ ...structuredClone(connectionStore.source), ready: connectionStore.capabilities.read_chat }),
 
   getConversation: async (id) => delay(buildConversationDetail(id)),
 

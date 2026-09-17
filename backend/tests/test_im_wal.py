@@ -8,6 +8,7 @@ import struct
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
@@ -134,6 +135,124 @@ class ImWalTestCase(unittest.TestCase):
         _, work_wal = self._work_copies()
         with self.assertRaises(WalError):
             rekey_wal_copy(work_wal, self.key, self.page_size + 1)
+
+    def _middleware(self):
+        from backend.app.shared.backend.im_db_middleware import IMDBMiddleware
+
+        mw = IMDBMiddleware()
+        mw._key = self.key
+        mw._key_validation = "valid"
+        mw._auto_enabled = True
+        self.enterContext(patch.object(mw, "_resolve_self_ali_id", return_value="wal-test"))
+        self.enterContext(patch.object(mw, "resolve_encrypted_db_path", return_value=self.db))
+        self.enterContext(patch.object(mw, "sync_to_crm"))
+        return mw
+
+    def test_middleware_replays_wal_and_preserves_source_bytes(self):
+        mw = self._middleware()
+        before = self.db.read_bytes(), self.wal.read_bytes()
+        self.assertTrue(mw._refresh())
+        bodies = [row[0] for row in mw._conn.execute("SELECT body FROM msg_test ORDER BY id")]
+        self.assertEqual(bodies, ["first", "second"])
+        self.assertGreater(mw.sync_status()["wal_frames_applied"], 0)
+        self.assertEqual(before, (self.db.read_bytes(), self.wal.read_bytes()))
+
+    def test_middleware_reads_native_restart_wal_with_old_salt_tail(self):
+        build = self.tmp / "restart.sqlite"
+        conn = sqlite3.connect(build)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA wal_autocheckpoint=0")
+            conn.execute("CREATE TABLE msg_test(id INTEGER PRIMARY KEY, body TEXT)")
+            for index in range(20):
+                conn.execute("INSERT INTO msg_test(body) VALUES (?)", (str(index),))
+                conn.commit()
+            wal = Path(str(build) + "-wal")
+            previous = wal.read_bytes()
+            checkpoint = conn.execute("PRAGMA wal_checkpoint(RESTART)").fetchone()
+            self.assertEqual(checkpoint[0], 0)
+            self.assertEqual(checkpoint[1], checkpoint[2])
+            conn.execute("INSERT INTO msg_test(body) VALUES ('after restart')")
+            conn.commit()
+            reused = wal.read_bytes()
+            page_size = read_wal_header(reused)["page_size"]
+            next_frame = 32 + 24 + page_size
+            self.assertEqual(len(reused), len(previous))
+            self.assertNotEqual(reused[16:24], previous[16:24])
+            self.assertEqual(reused[40:48], reused[16:24])
+            self.assertEqual(reused[next_frame + 8:next_frame + 16], previous[16:24])
+            expected = conn.execute("SELECT body FROM msg_test ORDER BY id").fetchall()
+            self.assertEqual(len(expected), 21)
+            shutil.copyfile(build, self.db)
+            shutil.copyfile(wal, self.wal)
+        finally:
+            conn.close()
+        _encrypt_fixture(self.db, self.wal, self.key)
+        source_bytes = self.db.read_bytes(), self.wal.read_bytes()
+        mw = self._middleware()
+        self.assertTrue(mw._refresh())
+        self.assertEqual([tuple(row) for row in mw._conn.execute("SELECT body FROM msg_test ORDER BY id")], expected)
+        self.assertEqual(mw.sync_status()["wal_frames_applied"], 1)
+        self.assertEqual(mw.sync_status()["error_code"], "")
+        self.assertEqual(source_bytes, (self.db.read_bytes(), self.wal.read_bytes()))
+
+        # Corruption in the current prefix still fails, even with a legitimate old tail.
+        old_path, revision = mw._cached_db_path, mw._source_revision
+        damaged = bytearray(self.wal.read_bytes())
+        damaged[32 + 24 + 100] ^= 1
+        self.wal.write_bytes(damaged)
+        mw._cache_time = mw._last_refresh_start = mw._backoff_until = 0
+        self.assertTrue(mw._refresh())
+        self.assertEqual(mw.sync_status()["error_code"], "wal_error")
+        self.assertEqual(mw._cached_db_path, old_path)
+        self.assertEqual(mw._source_revision, revision)
+
+    def test_middleware_rejects_corrupt_header_frame_and_torn_tail(self):
+        mw = self._middleware()
+        self.assertTrue(mw._refresh())
+        old_path, revision = mw._cached_db_path, mw._source_revision
+        original = self.wal.read_bytes()
+        for offset in (0, 32 + 24 + 100, -1):
+            with self.subTest(offset=offset):
+                raw = bytearray(original)
+                if offset == -1:
+                    raw = raw[:-1]
+                else:
+                    raw[offset] ^= 1
+                self.wal.write_bytes(raw)
+                mw._cache_time = mw._last_refresh_start = mw._backoff_until = 0
+                self.assertTrue(mw._refresh())
+                self.assertEqual(mw._cached_db_path, old_path)
+                self.assertEqual(mw._source_revision, revision)
+                self.assertEqual(mw.sync_status()["error_code"], "wal_error")
+                self.assertTrue(mw.sync_status()["stale"])
+                self.assertTrue(old_path.exists())
+
+    def test_disabled_wal_never_publishes_complete_main_only_snapshot(self):
+        mw = self._middleware()
+        self.enterContext(patch.object(mw, "_wal_pipeline_enabled", return_value=False))
+        self.assertFalse(mw._refresh())
+        self.assertIsNone(mw._cached_db_path)
+        self.assertEqual(mw.sync_status()["error_code"], "wal_disabled")
+        self.assertTrue(mw.sync_status()["stale"])
+        self.assertFalse(mw.sync_status()["ready"])
+        mw.sync_to_crm.assert_not_called()
+
+    def test_wal_appearing_during_copy_discards_build(self):
+        mw = self._middleware()
+        raw = self.wal.read_bytes()
+        self.wal.unlink()
+        copy = mw._copy_source_pair
+
+        def changed_pair(source, cached):
+            result = copy(source, cached)
+            self.wal.write_bytes(raw)
+            return result
+
+        self.enterContext(patch.object(mw, "_copy_source_pair", side_effect=changed_pair))
+        self.assertFalse(mw._refresh())
+        self.assertIsNone(mw._cached_db_path)
+        self.assertEqual(mw.sync_status()["error_code"], "source_changed")
 
 
 if __name__ == "__main__":

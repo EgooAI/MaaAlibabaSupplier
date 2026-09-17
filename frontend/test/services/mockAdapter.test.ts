@@ -32,8 +32,13 @@ describe("mock adapter", () => {
     expect(changed.source.phase).toBe("idle");
     expect(changed.client.confirmed).toBe(false);
     await expect(mockBackend.retryConnection(initial.account.epoch)).rejects.toThrow("账号已变化");
-    const synced = await mockBackend.retryConnection(changed.account.epoch);
-    expect(synced.capabilities).toEqual({ read_chat: true, use_ai: true, operate_client: false });
+    const submitted = await mockBackend.retryConnection(changed.account.epoch);
+    expect(submitted.source).toMatchObject({ syncing: true, pending: true, freshness: "syncing", revision: changed.source.revision });
+    expect(submitted.capabilities.read_chat).toBe(false);
+    await expect.poll(() => mockBackend.getConnection(), { timeout: 2000 }).toMatchObject({
+      source: { syncing: false, pending: false, freshness: "fresh", revision: changed.source.revision + 1 },
+      capabilities: { read_chat: true, use_ai: true, operate_client: false },
+    });
   });
 
   it("allows diagnostics after connecting without permitting unconfirmed GUI writes", async () => {

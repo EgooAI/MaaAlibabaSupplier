@@ -19,7 +19,6 @@ import threading
 import time
 import zlib
 from pathlib import Path
-from queue import Empty, SimpleQueue
 from uuid import uuid4
 
 from Crypto.Cipher import AES
@@ -28,8 +27,10 @@ from backend.app.shared.mitm.pool import SelfInfo
 from backend.app.shared.utils.im_db_decryptor import retrieve_db_key
 from backend.app.shared.backend.im_chat_db import list_msg_tables, open_readonly
 from backend.app.shared.backend.account_context import account_lock, changing_account, get_account_context, invalidate_account_context
+from backend.app.shared.backend.sync_coordinator import SyncCoordinator
 from backend.app.shared.crm import sync_im_database
-from backend.app.shared.crm.account_keys import get_key_hex, get_key_source, save_key, verify_key_against_db
+from backend.app.shared.crm.sync_store import read_sync_state
+from backend.app.shared.crm.account_keys import get_key_hex, get_key_source, save_key
 from backend.app.shared.crm.identities import self_sender_id, strip_icbu_suffix
 from backend.app.shared.utils.app_config import (
     CONFIG_KEY_ALIBABA_DATA_DIR,
@@ -42,7 +43,7 @@ from backend.app.shared.utils.app_config import (
     write_app_config,
 )
 from backend.app.shared.utils.env import get_env_str
-from backend.app.shared.utils.im_wal import WalError, rekey_wal_copy
+from backend.app.shared.utils.im_wal import WalError, checksum_chain, read_wal_header, rekey_wal_copy
 from backend.app.shared.utils.settings import resolve_backend_root
 
 _CACHE_TTL = 5.0  # seconds
@@ -50,7 +51,7 @@ _CACHE_TTL = 5.0  # seconds
 _MIN_REFRESH_INTERVAL = 3.0  # seconds
 # Backoff ceiling after consecutive rebuild failures (3s, 6s, 12s, ... capped here).
 _MAX_BACKOFF = 30.0  # seconds
-# Kill switch for the WAL sidecar pipeline ("0" restores main-file-only decrypt).
+# Disabling WAL refuses snapshots with frames instead of claiming completeness.
 _WAL_PIPELINE_ENV = "MAA_IM_WAL_PIPELINE"
 
 # Directory name to look for at each drive root when auto-detecting candidates.
@@ -97,20 +98,19 @@ class IMDBMiddleware:
                 instance._error_code: str = ""
                 instance._wal_frames_applied: int = 0
                 instance._last_refresh_ms: float = 0.0
-                instance._data_revision: int = 0
+                instance._source_revision: int = 0
                 instance._sync_future: Future | None = None
-                instance._sync_epoch: str = ""
-                instance._sync_path: Path | None = None
-                instance._syncing_caches: dict[Future, Path] = {}
-                instance._completed_syncs: SimpleQueue[tuple[Future, str, float]] = SimpleQueue()
-                instance._sync_phase: str = "idle"
-                instance._sync_error: str = ""
-                instance._last_success: float | None = None
+                instance._auto_enabled = False
+                instance._source_dirty = False
+                instance._last_checked: float | None = None
+                instance._source_status: dict = {}
+                instance._coordinator = SyncCoordinator(instance._submit_sync)
                 try:
-                    instance._data_revision = get_im_data_revision()
+                    instance._source_revision = get_im_data_revision()
                 except Exception:
                     logger.debug("IM数据版本号读取失败，从0开始")
                 instance._init_data_dir()
+                instance._select_sync_context()
                 cls._instance = instance
             return cls._instance
 
@@ -147,13 +147,34 @@ class IMDBMiddleware:
         self._error_code = ""
         self._wal_frames_applied = 0
         self._last_refresh_ms = 0.0
-        # Copies remain protected until their queued completions are drained.
         self._sync_future = None
-        self._sync_epoch = ""
-        self._sync_path = None
-        self._sync_phase = "idle"
-        self._sync_error = ""
-        self._last_success = None
+        self._auto_enabled = False
+        self._source_dirty = False
+        self._last_checked = None
+        self._publish_source_status()
+
+    def _submit_sync(self, target):
+        return sync_im_database(
+            target.path, target.context.self_ali_id, SelfInfo(ali_id=target.context.self_ali_id),
+            source_revision=target.source_revision, data_dir=target.context.data_dir,
+        )
+
+    def _select_sync_context(self):
+        context = get_account_context()
+        # Invalidate pending work before the potentially slower archive read.
+        self._coordinator.select(context)
+        restored = None
+        if context.self_ali_id:
+            try:
+                restored = read_sync_state(context.self_ali_id, context.data_dir)
+            except (sqlite3.Error, OSError) as exc:
+                self._last_error = str(exc) or type(exc).__name__
+                self._error_code = "sync_error"
+                logger.warning("CRM sync state restore failed: {}", exc)
+        if restored:
+            self._source_revision = max(self._source_revision, restored["applied_source_revision"])
+            self._coordinator.select(context, restored)
+        self._publish_source_status()
 
     def set_data_dir(self, raw: str) -> None:
         """Apply a newly configured data dir at runtime (persists to config file)."""
@@ -167,6 +188,7 @@ class IMDBMiddleware:
             self._data_dir_source = SOURCE_FILE if raw else SOURCE_NONE
             self._reset_runtime_state()
             invalidate_account_context()
+            self._select_sync_context()
 
     def set_self_ali_id(self, ali_id: str) -> None:
         """Apply a newly selected identity at runtime (persists to config file)."""
@@ -177,11 +199,14 @@ class IMDBMiddleware:
             set_configured_self_ali_id(ali_id)
             self._reset_runtime_state()
             invalidate_account_context()
+            self._select_sync_context()
 
     def drop_cached_key(self) -> None:
-        """Invalidate decrypted data too, forcing the next read to verify the key."""
+        """Invalidate decrypted data and require explicit key validation again."""
         with account_lock, self._lock:
             self._reset_runtime_state()
+            invalidate_account_context()
+            self._select_sync_context()
 
     @staticmethod
     def looks_like_data_dir(path: Path) -> bool:
@@ -196,8 +221,7 @@ class IMDBMiddleware:
 
     def data_dir_status(self) -> dict:
         """Return {state, path, source, detail} for the settings UI."""
-        with self._lock:
-            data_dir, source = self._data_dir, self._data_dir_source
+        data_dir, source = self._data_dir, self._data_dir_source
         if data_dir is None:
             return {
                 "state": STATE_UNCONFIGURED,
@@ -279,6 +303,18 @@ class IMDBMiddleware:
 
     # -- Key management (per-account, stored in the app database) --------------
 
+    @staticmethod
+    def _verify_source_key(key: bytes, db_path: Path) -> bool:
+        """Unreadable/incomplete headers are transient source failures, not bad keys."""
+        with db_path.open("rb") as stream:
+            header = stream.read(16)
+        if len(header) != 16:
+            raise OSError("IM source header is incomplete")
+        try:
+            return AES.new(key, AES.MODE_ECB).decrypt(header) == b"SQLite format 3\x00"
+        except ValueError:
+            return False
+
     def _migrate_legacy_key_file(self, db_path: Path, ali_id: str) -> bytes | None:
         """One-time import of the legacy aes_key.bin into the database."""
         candidates = [
@@ -293,7 +329,7 @@ class IMDBMiddleware:
             if len(raw) not in (16, 24, 32):
                 logger.warning("Legacy key file {} has invalid size, skipping", path)
                 continue
-            if not verify_key_against_db(raw, db_path):
+            if not self._verify_source_key(raw, db_path):
                 continue
             save_key(ali_id, raw, "auto")
             # Keep the legacy file: another account may still need it.
@@ -303,7 +339,7 @@ class IMDBMiddleware:
 
     def _ensure_key(self, db_path: Path, ali_id: str) -> bool:
         if self._key is not None and self._key_ali_id == ali_id:
-            if verify_key_against_db(self._key, db_path):
+            if self._verify_source_key(self._key, db_path):
                 self._key_validation = "valid"
                 return True
         self._key = None
@@ -311,13 +347,15 @@ class IMDBMiddleware:
         self._key_source = "none"
 
         stored = get_key_hex(ali_id)
-        self._key_validation = "invalid" if stored is not None else "unavailable"
-        if stored is not None and verify_key_against_db(stored, db_path):
-            self._key = stored
-            self._key_ali_id = ali_id
-            self._key_source = get_key_source(ali_id) or "auto"
-            self._key_validation = "valid"
-            return True
+        self._key_validation = "unverified" if stored is not None else "unavailable"
+        if stored is not None:
+            if self._verify_source_key(stored, db_path):
+                self._key = stored
+                self._key_ali_id = ali_id
+                self._key_source = get_key_source(ali_id) or "auto"
+                self._key_validation = "valid"
+                return True
+            self._key_validation = "invalid"
 
         stored = self._migrate_legacy_key_file(db_path, ali_id)
         if stored is not None:
@@ -330,20 +368,20 @@ class IMDBMiddleware:
         logger.info("Retrieving AES key from process memory...")
         try:
             key = retrieve_db_key(str(db_path))
-            if not verify_key_against_db(key, db_path):
-                self._key_validation = "invalid"
-                return False
-            save_key(ali_id, key, "auto")
-            self._key = key
-            self._key_ali_id = ali_id
-            self._key_source = "live"
-            self._key_validation = "valid"
-            logger.info("AES key retrieved successfully")
-            return True
         except (ValueError, EOFError, OSError) as exc:
             logger.warning("Failed to retrieve DB key from live process: {}", exc)
+            return False
 
-        return False
+        if not self._verify_source_key(key, db_path):
+            self._key_validation = "invalid"
+            return False
+        save_key(ali_id, key, "auto")
+        self._key = key
+        self._key_ali_id = ali_id
+        self._key_source = "live"
+        self._key_validation = "valid"
+        logger.info("AES key retrieved successfully")
+        return True
 
     # -- Decryption ------------------------------------------------------------
 
@@ -383,13 +421,11 @@ class IMDBMiddleware:
     def _copy_source_pair(self, db_path: Path, cached: Path) -> Path | None:
         """Read-only copy of the live main file plus its WAL sidecar (if any).
 
-        Returns the copied WAL path, or None when there is no sidecar / the
-        pipeline is disabled. Raises OSError when the main file cannot be read
+        Returns the copied WAL path, or None when there is no sidecar.
+        Raises OSError when the main file cannot be read
         (locked, vanished); the caller keeps serving the previous cache.
         """
         shutil.copyfile(db_path, cached)
-        if not self._wal_pipeline_enabled():
-            return None
         src_wal = self._wal_source_for(db_path)
         if not src_wal.exists():
             return None
@@ -423,17 +459,23 @@ class IMDBMiddleware:
                 pass
 
     def _rebuild_cache(self, db_path: Path, ali_id: str) -> tuple[Path, int] | None:
-        """Build a fresh cache copy at a new timestamped path.
-
-        Returns (cache_path, wal_frames_applied), or None when the source
-        could not be turned into a verified copy. A WAL-sidecar failure never
-        fails the whole rebuild — it degrades to main-file-only.
-        """
+        """Accept only a stable source pair whose captured bytes match the copy."""
+        self._build_error = ("缓存重建失败", "decrypt_error")
         cached = self._cache_path_for(ali_id)
         try:
+            captured = self._capture_source(db_path)
+            if captured is None:
+                self._build_error = ("Source changed during capture", "source_changed")
+                return None
             wal_copy = self._copy_source_pair(db_path, cached)
+            copied = (self._crc32_of(cached), self._crc32_of(wal_copy) if wal_copy else 0)
+            if self._capture_source(db_path) != captured or copied != captured[1:]:
+                self._build_error = ("Source changed during copy", "source_changed")
+                self._discard_build(cached)
+                return None
         except OSError as exc:
             logger.warning("IM源库拷贝失败（可能被客户端锁定），沿用旧缓存: {}", exc)
+            self._build_error = (str(exc), "source_copy_error")
             self._discard_build(cached)
             return None
         crc = self._decrypt_db(cached, cached)
@@ -443,25 +485,51 @@ class IMDBMiddleware:
         frames = 0
         if wal_copy is not None:
             try:
-                with cached.open("rb") as stream:
-                    page_size = struct.unpack(">H", stream.read(32)[16:18])[0]
-                frames = rekey_wal_copy(wal_copy, self._key, page_size)
-            except (WalError, OSError, struct.error) as exc:
-                logger.warning("WAL解密失败，降级为仅主文件: {}", exc)
-                try:
+                raw = wal_copy.read_bytes()
+                if raw:
+                    header = read_wal_header(raw)
+                    page_size = header["page_size"]
+                    if page_size < 512 or page_size > 65536 or page_size & (page_size - 1):
+                        raise WalError("Invalid WAL page size")
+                    seed = (header["cksum0"], header["cksum1"])
+                    for offset in range(32, len(raw), 24 + page_size):
+                        end = offset + 24 + page_size
+                        if offset + 24 > len(raw):
+                            raise WalError("Incomplete WAL frame header")
+                        if raw[offset + 8:offset + 16] != raw[16:24]:
+                            # RESTART reuses the physical file; old-salt tail frames
+                            # are outside the current WAL, even if their bytes remain.
+                            wal_copy.write_bytes(raw[:offset])
+                            break
+                        if end > len(raw):
+                            raise WalError("Incomplete WAL frame")
+                        if struct.unpack(">I", raw[offset:offset + 4])[0] == 0:
+                            raise WalError("Invalid WAL page number")
+                        seed = checksum_chain(raw[offset:offset + 8], seed)
+                        seed = checksum_chain(raw[offset + 24:end], seed)
+                        if seed != struct.unpack(">II", raw[offset + 16:offset + 24]):
+                            raise WalError("WAL frame checksum mismatch")
+                    with cached.open("rb") as stream:
+                        main_page_size = struct.unpack(">H", stream.read(32)[16:18])[0]
+                    main_page_size = 65536 if main_page_size == 1 else main_page_size
+                    frames = rekey_wal_copy(wal_copy, self._key, main_page_size)
+                    if frames and not self._wal_pipeline_enabled():
+                        self._build_error = ("WAL contains frames but its pipeline is disabled", "wal_disabled")
+                        self._discard_build(cached)
+                        return None
+                else:
                     wal_copy.unlink()
-                except OSError:
-                    pass
-                frames = 0
+            except (WalError, OSError, struct.error) as exc:
+                self._build_error = (str(exc), "wal_error")
+                self._discard_build(cached)
+                return None
         if not self._verify_cached_db(cached):
             self._discard_build(cached)
             return None
+        self._built_source = captured
         return cached, frames
 
     # -- Cache refresh ---------------------------------------------------------
-
-    def _has_fresh_cache(self, now: float) -> bool:
-        return self._cached_db_path is not None and (now - self._cache_time) < _CACHE_TTL
 
     def _cache_path_for(self, ali_id: str) -> Path:
         assert self._cache_dir is not None
@@ -470,7 +538,7 @@ class IMDBMiddleware:
     def _cleanup_stale_caches(self, keep: Path) -> None:
         assert self._cache_dir is not None
         protected = {keep, self._wal_cache_for(keep), self._shm_cache_for(keep)}
-        for cached in self._syncing_caches.values():
+        for cached in self._coordinator.pinned_paths():
             protected.update((cached, self._wal_cache_for(cached), self._shm_cache_for(cached)))
         if self._cached_db_path is not None:
             # Never remove the live files out from under open readers.
@@ -523,6 +591,15 @@ class IMDBMiddleware:
             return 0
         return self._crc32_of(src_wal)
 
+    def _capture_source(self, db_path: Path):
+        fingerprint = self._source_fingerprint_of(db_path)
+        main_crc, wal_crc = self._crc32_of(db_path), self._wal_crc32_of(db_path)
+        if fingerprint is None or main_crc is None or wal_crc is None:
+            return None
+        if fingerprint != self._source_fingerprint_of(db_path):
+            return None
+        return fingerprint, main_crc, wal_crc
+
     def _is_source_fresh(self, db_path: Path, now: float) -> bool:
         """Two-level freshness: fingerprint only within TTL, fingerprint + CRC32 beyond TTL."""
         if self._cached_db_path is None or self._source_fingerprint is None:
@@ -564,9 +641,9 @@ class IMDBMiddleware:
         self._error_code = ""
         self._last_refresh_ms = elapsed_ms
         self._wal_frames_applied = wal_frames
-        self._data_revision += 1
+        self._source_revision += 1
         try:
-            write_app_config({CONFIG_KEY_IM_DATA_REVISION: self._data_revision})
+            write_app_config({CONFIG_KEY_IM_DATA_REVISION: self._source_revision})
         except OSError:
             logger.debug("IM数据版本号持久化失败，仅保留内存值")
 
@@ -580,166 +657,160 @@ class IMDBMiddleware:
 
     def _refresh(self) -> bool:
         with account_lock, self._lock:
-            ali_id = self._resolve_self_ali_id()
-            db_path = self.resolve_encrypted_db_path(ali_id)
-            now = time.time()
-            if now < self._backoff_until:
-                return self._cached_db_path is not None
-            if db_path is None:
-                self._note_failure("IM source database is missing or not configured", "source_missing")
-                return self._has_fresh_cache(now)
-
-            if self._is_source_fresh(db_path, now):
-                return True
-
-            # Coalesce write bursts while serving the previous cache.
-            if self._cached_db_path is not None:
-                if now - self._last_refresh_start < _MIN_REFRESH_INTERVAL:
-                    return True
-
-            if not self._ensure_key(db_path, ali_id):
-                self._note_failure("AES Key不可用", "key_unavailable")
-                return self._cached_db_path is not None
-
-            self._last_refresh_start = now
-            started = time.perf_counter()
-            logger.info("Decrypting IM database...")
-            built = self._rebuild_cache(db_path, ali_id)
-            if built is None:
-                self._note_failure("缓存重建失败")
-                return self._cached_db_path is not None
-            cached, wal_frames = built
-
             try:
-                self._replace_connection(cached, ali_id)
-            except sqlite3.Error as exc:
-                logger.error("Failed to open cached IM database: {}", exc)
-                self._discard_build(cached)
-                self._note_failure("缓存打开失败")
-                return self._cached_db_path is not None
-            fingerprint = self._source_fingerprint_of(db_path)
-            if fingerprint is not None:
-                self._source_fingerprint = fingerprint
-            self._source_crc32 = self._crc32_of(db_path)
-            self._source_wal_crc32 = self._wal_crc32_of(db_path)
-            self._note_success((time.perf_counter() - started) * 1000, wal_frames)
-            self._cleanup_stale_caches(cached)
-            self.sync_to_crm()
+                return self._refresh_locked()
+            finally:
+                self._publish_source_status()
+
+    def _refresh_locked(self) -> bool:
+        if not self._auto_enabled:
+            return self._cached_db_path is not None
+        ali_id = self._resolve_self_ali_id()
+        now = time.time()
+        if now < self._backoff_until:
+            return self._cached_db_path is not None
+        db_path = self.resolve_encrypted_db_path(ali_id)
+        self._last_checked = now
+        if db_path is None:
+            self._note_failure("IM source database is missing or not configured", "source_missing")
+            return self._cached_db_path is not None
+        if self._wal_frames_applied and not self._wal_pipeline_enabled():
+            self._note_failure("WAL pipeline is disabled", "wal_disabled")
+            return self._cached_db_path is not None
+
+        if self._is_source_fresh(db_path, now):
+            self._last_error = self._error_code = ""
+            self._backoff_until = 0.0
+            self._consecutive_failures = 0
+            self._source_dirty = False
+            return True
+        self._source_dirty = True
+
+        # Coalesce write bursts while serving the previous cache.
+        if self._cached_db_path is not None and now - self._last_refresh_start < _MIN_REFRESH_INTERVAL:
+            return True
+
+        try:
+            key_valid = self._key is not None and self._verify_source_key(self._key, db_path)
+        except OSError as exc:
+            self._note_failure(str(exc), "source_unreadable")
+            return self._cached_db_path is not None
+        if not key_valid:
+            self._key_validation = "invalid" if self._key else "unavailable"
+            self._auto_enabled = False
+            self._note_failure("AES Key不可用", "key_unavailable")
+            return self._cached_db_path is not None
+
+        self._last_refresh_start = now
+        self._publish_source_status()
+        started = time.perf_counter()
+        logger.info("Decrypting IM database...")
+        built = self._rebuild_cache(db_path, ali_id)
+        if built is None:
+            self._note_failure(*self._build_error)
+            return self._cached_db_path is not None
+        cached, wal_frames = built
+
+        try:
+            self._replace_connection(cached, ali_id)
+        except sqlite3.Error as exc:
+            logger.error("Failed to open cached IM database: {}", exc)
+            self._discard_build(cached)
+            self._note_failure("缓存打开失败")
+            return self._cached_db_path is not None
+        self._source_fingerprint, self._source_crc32, self._source_wal_crc32 = self._built_source
+        self._source_dirty = False
+        self._note_success((time.perf_counter() - started) * 1000, wal_frames)
+        self.sync_to_crm()
+        self._cleanup_stale_caches(cached)
         logger.info("IM database refreshed (cached at {})", cached)
         return True
 
-    def sync_to_crm(self, wait: bool = False) -> None:
-        """Submit one immutable account/cache snapshot; wait outside both locks."""
+    def sync_to_crm(self, wait: bool = False) -> Future | None:
+        """Wait for this source target, including a superseding pending target."""
         with account_lock, self._lock:
-            self._drain_sync_completions()
             context = get_account_context()
             cached = self._cached_db_path
-            ali_id = context.self_ali_id
-            if cached is None or not ali_id:
+            if cached is None or not context.self_ali_id or not self._auto_enabled:
                 return
-            future = self._sync_future
-            if future is None or self._sync_epoch != context.epoch or (
-                future.done() and (self._sync_path != cached or future.cancelled() or future.exception() is not None)
-            ):
-                self._sync_phase = "syncing"
-                self._sync_error = ""
-                self._sync_future = None
-                try:
-                    future = sync_im_database(cached, ali_id, SelfInfo(ali_id=ali_id))
-                except Exception as exc:
-                    self._sync_phase = "error"
-                    self._sync_error = str(exc) or type(exc).__name__
-                    if wait:
-                        raise
-                    return
-                self._sync_future = future
-                self._sync_epoch = context.epoch
-                self._sync_path = cached
-                self._syncing_caches[future] = cached
-                future.add_done_callback(lambda done: self._finish_sync(done, context.epoch))
+            future = self._coordinator.request(context, cached, self._source_revision)
+            self._sync_future = future
+            self._coordinator.tick()
         if wait:
-            try:
-                future.result()
-            finally:
-                # Future.result() may return before its callbacks finish.
-                self._finish_sync(future, context.epoch)
-                with self._lock:
-                    self._drain_sync_completions()
+            self.wait_for_sync(future)
+        return future
 
-    def _finish_sync(self, future: Future, epoch: str) -> None:
-        # Never block the CRM executor on a lock owned by a waiting GUI task.
-        self._completed_syncs.put((future, epoch, time.time()))
+    def wait_for_sync(self, future: Future) -> dict:
+        """Wait for the captured target without selecting or submitting another one."""
+        return self._coordinator.wait(future)
 
-    def _drain_sync_completions(self) -> None:
-        """Apply completed work on the caller's thread; caller holds _lock."""
-        current = self._sync_future
-        if current in self._syncing_caches and current.done():
-            # A result waiter can wake before the executor invokes callbacks.
-            self._finish_sync(current, self._sync_epoch)
-        while True:
-            try:
-                future, epoch, completed_at = self._completed_syncs.get_nowait()
-            except Empty:
+    def sync_tick(self):
+        """One controllable worker iteration; GUI contention skips source work."""
+        self._coordinator.tick()
+        if not account_lock.acquire(blocking=False):
+            return
+        try:
+            if not self._lock.acquire(blocking=False):
                 return
-            if future not in self._syncing_caches:
-                continue
-            self._syncing_caches.pop(future)
-            if epoch != get_account_context().epoch or future is not self._sync_future:
-                continue
             try:
-                future.result()
-                error = ""
-            except Exception as exc:
-                error = str(exc) or type(exc).__name__
-            self._sync_error = error
-            self._sync_phase = "error" if error else "ready"
-            if not error:
-                self._last_success = completed_at
+                if self._auto_enabled:
+                    self._refresh()
+            finally:
+                self._lock.release()
+        finally:
+            account_lock.release()
+
+    def _publish_source_status(self):
+        fingerprint = self._source_fingerprint
+        self._source_status = {
+            "source_revision": self._source_revision,
+            "cache_time": self._cache_time,
+            "source_mtime": fingerprint[0] / 1e9 if fingerprint else None,
+            "wal_frames_applied": self._wal_frames_applied,
+            "last_refresh_ms": round(self._last_refresh_ms, 1),
+            "last_checked": self._last_checked,
+            "last_error": self._last_error,
+            "error_code": self._error_code,
+            "retry_at": self._backoff_until or None,
+            "key_validation": self._key_validation,
+            "auto_enabled": self._auto_enabled,
+            "source_dirty": self._source_dirty,
+        }
 
     def sync_status(self) -> dict:
-        """Freshness/observability snapshot for the revision + status APIs."""
-        with self._lock:
-            self._drain_sync_completions()
-            context = get_account_context()
-            fingerprint = self._source_fingerprint
-            source_mtime = fingerprint[0] / 1e9 if fingerprint else None
-            error = self._last_error or self._sync_error
-            phase = "error" if error else self._sync_phase
-            return {
-                "revision": self._data_revision,
-                "cache_time": self._cache_time,
-                "source_mtime": source_mtime,
-                "wal_frames_applied": self._wal_frames_applied,
-                "last_refresh_ms": round(self._last_refresh_ms, 1),
-                "wal_pipeline": self._wal_pipeline_enabled(),
-                "stale": bool(error),
-                "last_error": error,
-                "error_code": self._error_code or ("sync_error" if self._sync_error else ""),
-                "phase": phase,
-                "ready": phase == "ready" and self._cached_db_path is not None,
-                "last_success": self._last_success,
-                "key_validation": self._key_validation,
-                "self_ali_id": context.self_ali_id,
-                "epoch": context.epoch,
-            }
+        """Pure observation: no source reads, completion draining or scheduling."""
+        source = self._source_status
+        sync = self._coordinator.snapshot()
+        error = source["last_error"] or sync["last_error"]
+        syncing = sync["syncing"] or sync["pending"]
+        stale = bool(error or not source["auto_enabled"] or source["source_dirty"] or syncing
+                     or source["source_revision"] != sync["applied_source_revision"])
+        phase = "error" if error else ("syncing" if syncing else sync["phase"])
+        return {
+            **source, **sync,
+            "last_error": error,
+            "error_code": source["error_code"] or ("sync_error" if sync["last_error"] else ""),
+            "retry_at": max(source["retry_at"] or 0, sync["retry_at"] or 0) or None,
+            "wal_pipeline": self._wal_pipeline_enabled(),
+            "phase": phase, "stale": stale, "ready": phase == "ready" and not stale,
+            "freshness": "stale" if stale and error else ("syncing" if syncing else ("stale" if stale else "fresh")),
+        }
 
     # -- Public API ------------------------------------------------------------
 
     def key_status(self) -> tuple[bool, str]:
         """Return ``(has_key, source)`` for the selected identity (no live lookup)."""
-        with self._lock:
-            ali_id = self._resolve_self_ali_id()
-            if not ali_id:
-                return False, "none"
-            if self._key is not None and self._key_ali_id == ali_id:
-                return True, self._key_source
-            source = get_key_source(ali_id)
-            return (True, source) if source else (False, "none")
+        ali_id = self._resolve_self_ali_id()
+        if not ali_id:
+            return False, "none"
+        if self._key is not None and self._key_ali_id == ali_id:
+            return True, self._key_source
+        source = get_key_source(ali_id)
+        return (True, source) if source else (False, "none")
 
     def key_validation_status(self) -> str:
         """Return unverified/valid/invalid/unavailable without attempting capture."""
-        with self._lock:
-            return self._key_validation
+        return self._key_validation
 
     def get_connection(self) -> sqlite3.Connection | None:
         with account_lock:
@@ -748,27 +819,38 @@ class IMDBMiddleware:
                 return self._conn
 
     def retry_connection(self, *, wait: bool = False) -> sqlite3.Connection | None:
-        """Clear backoff, revalidate the source key, rebuild and retry CRM sync."""
+        """The only entry point allowed to capture a key and enable source checks."""
+        future = None
         with account_lock, self._lock:
-            self._key = None
-            self._key_ali_id = ""
-            self._key_source = "none"
-            self._key_validation = "unverified"
-            self._source_fingerprint = None
             self._backoff_until = 0.0
             self._last_refresh_start = 0.0
             self._consecutive_failures = 0
-            self._refresh()
-            conn = self._conn
-            future = self._sync_future
-            epoch = self._sync_epoch
-        if wait and future is not None:
+            self._coordinator.clear_retry()
+            ali_id = self._resolve_self_ali_id()
+            db_path = self.resolve_encrypted_db_path(ali_id)
+            self._last_checked = time.time()
             try:
-                future.result()
-            finally:
-                self._finish_sync(future, epoch)
-                with self._lock:
-                    self._drain_sync_completions()
+                if db_path is None:
+                    self._note_failure("IM source database is missing or not configured", "source_missing")
+                elif not self._ensure_key(db_path, ali_id):
+                    self._auto_enabled = False
+                    self._note_failure("AES Key不可用", "key_unavailable")
+                else:
+                    self._auto_enabled = True
+                    # Force content validation even when metadata and the TTL match.
+                    self._cache_time = 0.0
+                    previous_revision = self._source_revision
+                    self._refresh()
+                    if not self._last_error:
+                        if self._source_revision == previous_revision:
+                            self.sync_to_crm()
+                        future = self._sync_future
+            except OSError as exc:
+                self._note_failure(str(exc), "source_unreadable")
+            self._publish_source_status()
+            conn = self._conn
+        if wait and future is not None:
+            self.wait_for_sync(future)
         return conn
 
 

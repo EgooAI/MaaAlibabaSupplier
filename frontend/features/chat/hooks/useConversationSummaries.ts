@@ -1,46 +1,97 @@
 "use client";
 
-import { App } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AccountChangedError, useAccount, useAccountBackend } from "@/features/account/AccountProvider";
+import { useAccount, useAccountBackend } from "@/features/account/AccountProvider";
 import type { Conversation } from "@/types/chatCanonical";
 
+type ReadState = { pending: boolean; success: boolean; failureVersion: number };
+
 export function useConversationSummaries() {
-  const { message } = App.useApp();
   const backend = useAccountBackend();
-  const { snapshot } = useAccount();
+  const { snapshot, blocked, readRefreshSequence } = useAccount();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [polledRevision, setPolledRevision] = useState(0);
+  const [recovery, setRecovery] = useState(0);
+  const [refreshError, setRefreshError] = useState(false);
+  const [refreshPending, setRefreshPending] = useState(false);
+  const needsRecovery = useRef(false);
+  const recoveryQueued = useRef(false);
+  const failureVersion = useRef(0);
+  const reads = useRef<Partial<Record<"list" | "detail", ReadState>>>({});
+  const listRequest = useRef(0);
   const polling = useRef(false);
-  // The source revision can advance before CRM synchronization finishes.
-  const revision = JSON.stringify([Math.max(snapshot?.source.revision ?? 0, polledRevision), snapshot?.source.phase, snapshot?.source.last_success]);
+  const revision = `${Math.max(snapshot?.source.revision ?? 0, polledRevision)}:${readRefreshSequence}:${recovery}`;
+  const markReloadNeeded = useCallback(() => {
+    ++failureVersion.current;
+    needsRecovery.current = true;
+    setRefreshError(true);
+  }, []);
+  const beginRead = useCallback((kind: "list" | "detail") => {
+    const state: ReadState = { pending: true, success: false, failureVersion: failureVersion.current };
+    reads.current[kind] = state;
+    setRefreshPending(true);
+    return (success: boolean) => {
+      if (reads.current[kind] !== state) return;
+      state.pending = false;
+      state.success = success;
+      if (!success) markReloadNeeded();
+      const required = Object.values(reads.current);
+      const pending = required.some((read) => read.pending);
+      setRefreshPending(pending);
+      // A revision response is not an acknowledgement of the actual data reads.
+      if (!pending && required.every((read) => read.success && read.failureVersion === failureVersion.current)) {
+        needsRecovery.current = false;
+        setRefreshError(false);
+      }
+    };
+  }, [markReloadNeeded]);
   const reload = useCallback(async () => {
-    setLoading(true);
+    recoveryQueued.current = false;
+    const request = ++listRequest.current;
+    const acknowledge = beginRead("list");
     try {
-      setConversations(await backend.listConversations());
-    } catch (error) {
-      if (!(error instanceof AccountChangedError)) message.error("聊天数据加载失败，请刷新状态后重试");
+      const next = await backend.listConversations();
+      if (request === listRequest.current) {
+        setConversations(next);
+        acknowledge(true);
+      }
+    } catch {
+      acknowledge(false);
     } finally {
-      setLoading(false);
+      if (request === listRequest.current) setLoading(false);
     }
-  }, [backend, message]);
+  }, [backend, beginRead]);
+
+  useEffect(() => () => { ++listRequest.current; reads.current = {}; }, []);
 
   useEffect(() => {
-    if (!snapshot?.account.self_ali_id || snapshot.source.key_validation !== "valid") return;
+    if (blocked) {
+      ++failureVersion.current;
+      needsRecovery.current = true;
+      return;
+    }
+    if (!snapshot?.account.self_ali_id) return;
     let cancelled = false;
     const poll = async () => {
       if (cancelled || document.hidden || polling.current) return;
       polling.current = true;
       try {
         const next = await backend.getConversationRevision();
-        if (!cancelled && next.ready) setPolledRevision(next.revision);
+        if (!cancelled && next.ready) {
+          setPolledRevision(next.revision);
+          if (needsRecovery.current && !recoveryQueued.current && !Object.values(reads.current).some((read) => read.pending)) {
+            recoveryQueued.current = true;
+            setRecovery((value) => value + 1);
+          }
+        }
       } catch {
-        // A busy backend or expired workspace must not discard the visible archive.
+        if (!cancelled) markReloadNeeded();
       } finally {
         polling.current = false;
       }
     };
+    if (needsRecovery.current) void poll();
     const timer = setInterval(() => void poll(), 10_000);
     const onVisible = () => { if (!document.hidden) void poll(); };
     document.addEventListener("visibilitychange", onVisible);
@@ -49,12 +100,12 @@ export function useConversationSummaries() {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [backend, snapshot?.account.self_ali_id, snapshot?.source.key_validation]);
+  }, [backend, blocked, snapshot?.account.self_ali_id, markReloadNeeded]);
 
   useEffect(() => {
-    // Reload the list when the shared source revision changes.
+    // Commits, explicit refreshes and recovery each trigger data reads.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void reload();
   }, [reload, revision]);
-  return { conversations, loading, reload, revision };
+  return { conversations, loading, reload, revision, refreshError, refreshPending, beginRead };
 }

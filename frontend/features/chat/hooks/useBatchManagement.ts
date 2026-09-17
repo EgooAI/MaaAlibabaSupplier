@@ -10,7 +10,7 @@ import { useConversationSummaries } from "./useConversationSummaries";
 export function useBatchManagement() {
   const { message } = App.useApp();
   const backend = useAccountBackend();
-  const { conversations, loading, reload } = useConversationSummaries();
+  const { conversations, loading, refreshError, refreshPending } = useConversationSummaries();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [groupMode, setGroupMode] = useState<ConversationGroupMode>("time");
   const [exporting, setExporting] = useState(false);
@@ -82,7 +82,8 @@ export function useBatchManagement() {
     invertSelection,
     clearSelection: () => setSelectedIds([]),
     exportSelected,
-    reload,
+    refreshError,
+    refreshPending,
   };
 }
 

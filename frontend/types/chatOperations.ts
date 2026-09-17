@@ -1,5 +1,6 @@
 import type { ChatMessage, ConversationDetail } from "./chatCanonical";
 import type { TaskSnapshot } from "@/types/status";
+import type { SourceSyncStatus } from "./connection";
 
 export interface TranslateMessageInput {
   conversationId: string;
@@ -53,11 +54,8 @@ export interface ExportConversationsResult {
   archiveName?: string;
 }
 
-export interface ConversationRevision {
+export interface ConversationRevision extends SourceSyncStatus {
+  // Archive availability, independent of source freshness and key validation.
   ready: boolean;
-  revision: number;
-  source_mtime: number | null;
-  cache_time: number;
-  stale: boolean;
   reason?: string;
 }

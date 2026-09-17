@@ -6,10 +6,11 @@ import { ConversationList } from "./conversation/ConversationList";
 import { useBatchManagement } from "./hooks/useBatchManagement";
 import { useAccount } from "@/features/account/AccountProvider";
 import { DataDirBanner } from "@/features/settings/DataDirBanner";
+import { SyncStatus } from "@/features/account/SyncStatus";
 
 export function BatchPage() {
-  const { snapshot, blocked, generation } = useAccount();
-  if (blocked || !snapshot?.capabilities.read_chat) return <DataDirBanner />;
+  const { snapshot, blocked, suspended, generation } = useAccount();
+  if ((blocked && !suspended) || !snapshot?.capabilities.read_chat) return <DataDirBanner />;
   return <BatchWorkspace key={`${snapshot.account.epoch}:${generation}`} />;
 }
 
@@ -19,6 +20,7 @@ function BatchWorkspace() {
   return (
     <Space orientation="vertical" size="large" className="w-full">
       <DataDirBanner />
+      <SyncStatus refreshError={workbench.refreshError} refreshPending={workbench.refreshPending} />
       <BatchManagement
         selectedCount={workbench.selectedCount}
         exporting={workbench.exporting}

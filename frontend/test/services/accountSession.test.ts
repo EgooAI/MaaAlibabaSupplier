@@ -6,6 +6,20 @@ import type { OperationsBackend } from "@/services/interfaces";
 beforeEach(() => accountSession.accept(structuredClone(connectionSnapshot)));
 
 describe("account lifetime", () => {
+  it("allows a workspace mounted during suspension to resume without reviving invalidated scopes", async () => {
+    const source = { getSelfInfo: vi.fn().mockResolvedValue(null) } as unknown as OperationsBackend;
+    accountSession.suspend();
+    const scoped = scopeBackend(source);
+    await expect(scoped.getSelfInfo()).rejects.toThrow("账号状态已变化");
+    accountSession.accept(connectionSnapshot);
+    await expect(scoped.getSelfInfo()).resolves.toBeNull();
+    accountSession.invalidate();
+    accountSession.suspend();
+    expect(accountSession.get().suspended).toBe(false);
+    accountSession.accept(connectionSnapshot);
+    await expect(scoped.getSelfInfo()).rejects.toThrow("账号状态已变化");
+  });
+
   it("invalidates old chains even if A -> B -> A returns the same epoch", () => {
     const ticket = captureAccount();
     accountSession.accept({ ...connectionSnapshot, account: { ...connectionSnapshot.account, epoch: "b", self_ali_id: "b" } });

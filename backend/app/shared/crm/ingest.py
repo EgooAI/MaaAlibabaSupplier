@@ -33,14 +33,13 @@ def refresh_chat_data(*, wait: bool = False) -> ChatSyncState:
             return ChatSyncState(ready=False, self_ali_id="", reason=REASON_DATA_DIR_NOT_CONFIGURED)
         if mw.get_connection() is None:
             return ChatSyncState(ready=False, self_ali_id="", reason=REASON_IM_DB_NOT_READY)
-        mw.sync_to_crm(wait=False)
-        future = mw._sync_future
+        future = mw.sync_to_crm(wait=False)
         if future is None:
             return ChatSyncState(ready=False, self_ali_id=context.self_ali_id, reason=REASON_SYNC_ERROR)
 
     # Release our account guard while waiting so other callers can switch.
     if wait or future.done():
-        future.result()
+        mw.wait_for_sync(future)
 
     with account_lock:
         if get_account_context() != context:

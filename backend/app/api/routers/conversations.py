@@ -399,6 +399,8 @@ def _as_list(value: Any) -> list[str]:
 
 @router.get("/api/conversations")
 def list_conversations() -> dict:
+    # Digests and profile enrichment use separate reads. Keep the array contract;
+    # a revision header would require metadata and data in one read transaction.
     self_ali_id = _ready()
     adapter = CRMAdapter()
     try:
@@ -414,29 +416,22 @@ def list_conversations() -> dict:
 
 @router.get("/api/conversations/revision")
 def conversation_revision() -> dict:
-    """Preserve polling updates after explicit source/key verification.
+    """Observe committed CRM progress and archive availability without scheduling.
 
-    This compatibility path refreshes only an already verified source; initial
-    setup and invalid/unavailable keys require explicit connection retry. The
-    middleware coalesces unchanged source versions and in-flight CRM imports.
-    Connection GET remains observation-only; no scheduler is started here.
+    Revision describes the coordinator's last observed commit, not a snapshot
+    shared with a subsequent list/detail request. Source progress is independent.
     """
-    mw = get_im_db_middleware()
-    status = mw.sync_status()
-    if status["key_validation"] == "valid":
-        conn = mw.get_connection()
-        status = mw.sync_status()
-        if conn is not None and status["key_validation"] == "valid":
-            mw.sync_to_crm(wait=False)
-            status = mw.sync_status()
-    archive = has_selected_archive(get_account_context().self_ali_id)
+    context = get_account_context()
+    status = get_im_db_middleware().sync_status()
+    archive = has_selected_archive(context.self_ali_id)
+    if get_account_context() != context or status["epoch"] != context.epoch or status["self_ali_id"] != context.self_ali_id:
+        raise AppError("读取同步状态期间账号已切换，请刷新后重试。", status_code=409)
     payload = {
+        **status,
         "ready": bool(status["ready"] or archive),
-        "revision": status["revision"],
-        "source_mtime": status["source_mtime"],
-        "cache_time": status["cache_time"],
         "stale": bool(status["stale"] or (archive and not status["ready"])),
-        "epoch": get_account_context().epoch,
+        "error_code": status.get("error_code") or None,
+        "last_error": user_message(status["last_error"]) if status.get("last_error") else None,
     }
     if not status["ready"]:
         payload["reason"] = status.get("error_code") or "source_not_ready"

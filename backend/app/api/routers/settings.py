@@ -59,6 +59,7 @@ def confirm_connection(body: ConfirmConnectionInput) -> dict:
 
 @router.post("/api/settings/connection/retry")
 def retry_connection(body: ConnectionInput) -> dict:
+    """Validate the source now; report current progress without waiting for CRM."""
     require_epoch(body.epoch)
     get_im_db_middleware().retry_connection(wait=False)
     return ok(connection_snapshot())

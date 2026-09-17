@@ -34,7 +34,7 @@ function Probe() {
   const settings = useDataDirSettings();
   useEffect(() => { account = current; }, [current]);
   useEffect(() => { directory = settings; }, [settings]);
-  return !current.blocked && current.snapshot ? <Workspace key={`${current.snapshot.account.epoch}:${current.generation}`} /> : null;
+  return (!current.blocked || current.suspended) && current.snapshot ? <Workspace key={`${current.snapshot.account.epoch}:${current.generation}`} /> : null;
 }
 
 function deferred<T>() {
@@ -53,6 +53,7 @@ beforeEach(() => {
   Object.defineProperty(document, "hidden", { configurable: true, value: false });
   mocks.backend.getConnection.mockReset().mockResolvedValue(structuredClone(connectionSnapshot));
   mocks.backend.getSelfInfo.mockReset().mockResolvedValue(null);
+  mocks.backend.retryConnection.mockReset().mockResolvedValue(structuredClone(connectionSnapshot));
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -71,6 +72,71 @@ async function mount() {
 }
 
 describe("shared account provider", () => {
+  it("submits sync without invalidation, remount, broadcast or treating its response as completion", async () => {
+    await mount();
+    const input = container.querySelector("input");
+    const scope = scoped;
+    const generation = account.generation;
+    const pending = deferred<ConnectionSnapshot>();
+    mocks.backend.retryConnection.mockReturnValueOnce(pending.promise);
+    let submission!: Promise<void>;
+    await act(async () => { submission = account.requestSync(); });
+    expect(account.syncBusy).toBe(true);
+    expect(account.mutating).toBe(false);
+    expect(account.blocked).toBe(false);
+    expect(account.readRefreshSequence).toBe(0);
+    await expect(account.requestSync()).rejects.toThrow("正在提交");
+    await act(async () => pending.resolve({ ...connectionSnapshot, source: { ...connectionSnapshot.source, revision: 99 } }));
+    await submission;
+    expect(account.syncBusy).toBe(false);
+    expect(account.generation).toBe(generation);
+    expect(account.snapshot?.source.revision).toBe(1);
+    expect(account.readRefreshSequence).toBe(1);
+    expect(container.querySelector("input")).toBe(input);
+    expect(scoped).toBe(scope);
+    expect(localStorage.getItem("maa:account-changed")).toBeNull();
+    expect(mocks.backend.retryConnection).toHaveBeenCalledExactlyOnceWith(connectionSnapshot.account.epoch);
+  });
+
+  it("rejects an old sync receipt after the account changes", async () => {
+    await mount();
+    const pending = deferred<ConnectionSnapshot>();
+    mocks.backend.retryConnection.mockReturnValueOnce(pending.promise);
+    let result!: Promise<void>;
+    await act(async () => { result = account.requestSync(); });
+    const rejected = expect(result).rejects.toThrow("账号状态已变化");
+    mocks.backend.getConnection.mockResolvedValueOnce({ ...connectionSnapshot, account: { ...connectionSnapshot.account, epoch: "b" } });
+    await act(async () => { await account.refresh(); });
+    await act(async () => pending.resolve(connectionSnapshot));
+    await rejected;
+    expect(account.snapshot?.account.epoch).toBe("b");
+    expect(account.readRefreshSequence).toBe(0);
+  });
+
+  it("suspends writes on a transient observation failure and restores the same scope and DOM", async () => {
+    await mount();
+    const input = container.querySelector("input")!;
+    input.value = "draft";
+    input.scrollTop = 34;
+    const scope = scoped;
+    const generation = account.generation;
+    mocks.backend.getConnection.mockRejectedValueOnce(new Error("offline"));
+    await act(async () => { await account.refresh(); });
+    expect(account.blocked).toBe(true);
+    expect(account.suspended).toBe(true);
+    expect(account.generation).toBe(generation);
+    expect(container.querySelector("input")).toBe(input);
+    expect(input.value).toBe("draft");
+    expect(input.scrollTop).toBe(34);
+    await expect(scope.retryConnection(connectionSnapshot.account.epoch)).rejects.toThrow("账号状态已变化");
+    expect(mocks.backend.retryConnection).not.toHaveBeenCalled();
+    await act(async () => { await account.refresh(); });
+    expect(scoped).toBe(scope);
+    expect(account.blocked).toBe(false);
+    expect(container.querySelector("input")).toBe(input);
+    await expect(scope.getSelfInfo()).resolves.toBeNull();
+  });
+
   it("observes initially, on focus, visibility and visible interval without connecting or syncing", async () => {
     await mount();
     expect(mocks.backend.getConnection).toHaveBeenCalledTimes(1);

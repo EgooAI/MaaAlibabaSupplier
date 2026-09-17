@@ -8,7 +8,7 @@ export class AccountChangedError extends Error {
   }
 }
 
-const initial = { snapshot: null as ConnectionSnapshot | null, generation: 0, blocked: true };
+const initial = { snapshot: null as ConnectionSnapshot | null, generation: 0, blocked: true, suspended: false };
 let state = initial;
 const listeners = new Set<() => void>();
 export const accountSession = {
@@ -19,20 +19,25 @@ export const accountSession = {
     return () => { listeners.delete(listener); };
   },
   invalidate() {
-    state = { ...state, generation: state.generation + 1, blocked: true };
+    state = { ...state, generation: state.generation + 1, blocked: true, suspended: false };
+    listeners.forEach((listener) => listener());
+  },
+  suspend() {
+    // An invalidated settings/account scope must never become resumable.
+    state = { ...state, blocked: true, suspended: state.suspended || !state.blocked };
     listeners.forEach((listener) => listener());
   },
   accept(snapshot: ConnectionSnapshot) {
     const previous = state.snapshot?.account;
     const changed = previous?.epoch !== snapshot.account.epoch || previous?.data_dir !== snapshot.account.data_dir || previous?.self_ali_id !== snapshot.account.self_ali_id;
-    state = { snapshot: { ...snapshot, account: !changed && previous ? previous : snapshot.account }, generation: state.generation + (changed ? 1 : 0), blocked: false };
+    state = { snapshot: { ...snapshot, account: !changed && previous ? previous : snapshot.account }, generation: state.generation + (changed ? 1 : 0), blocked: false, suspended: false };
     listeners.forEach((listener) => listener());
   },
 };
 
-export function captureAccount() {
+export function captureAccount(allowSuspended = false) {
   const captured = accountSession.get();
-  if (captured.blocked || !captured.snapshot?.account.epoch) throw new AccountChangedError();
+  if ((captured.blocked && !(allowSuspended && captured.suspended)) || !captured.snapshot?.account.epoch) throw new AccountChangedError();
   const epoch = captured.snapshot.account.epoch;
   return {
     epoch,
@@ -47,7 +52,7 @@ export function captureAccount() {
 
 // Bind the entire async chain, including requests started after an await, to its workspace.
 export function scopeBackend(backend: OperationsBackend, isActive: () => boolean = () => true): OperationsBackend {
-  const ticket = captureAccount();
+  const ticket = captureAccount(true);
   return new Proxy(backend, {
     get(target, key: keyof OperationsBackend) {
       return async (...args: unknown[]) => {

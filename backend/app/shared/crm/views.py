@@ -78,6 +78,8 @@ def normalize_message_type(message: CrmMessage) -> str:
 def message_display_text(message: CrmMessage) -> str:
     if is_card_message(message):
         return message.content_label or "[卡片]"
+    if message.user_content_type not in (0, CARD_CONTENT_TYPE):
+        return f"[暂不支持的消息类型: {message.user_content_type if message.user_content_type is not None else 'unknown'}]"
     return message.content_label or ""
 
 

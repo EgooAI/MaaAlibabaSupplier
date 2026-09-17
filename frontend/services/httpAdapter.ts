@@ -112,7 +112,7 @@ function prepareAccountRequest(path: string, init?: RequestInit) {
     if (!new Headers(init?.headers).get("X-Account-Epoch")) throw new AccountChangedError();
     return { init };
   }
-  const scoped = /^\/api\/(conversations(?:\/|$)|messages(?:\/|$)|self-info(?:\/|$)|cache\/reset(?:\/|$)|status\/node-test(?:\/|$))/.test(path);
+  const scoped = path === "/api/settings/connection/retry" || /^\/api\/(conversations(?:\/|$)|messages(?:\/|$)|self-info(?:\/|$)|cache\/reset(?:\/|$)|status\/node-test(?:\/|$))/.test(path);
   if (!scoped) return { init };
   const ticket = captureAccount();
   const { capabilities, client } = accountSession.get().snapshot!;
@@ -130,7 +130,10 @@ export const httpBackend: OperationsBackend = {
   getConnection: () => requestJson("/api/settings/connection"),
   connectClient: (epoch) => requestJson("/api/settings/connection/connect", { method: "POST", body: JSON.stringify({ epoch }) }),
   confirmClient: (epoch, windowGeneration) => requestJson("/api/settings/connection/confirm", { method: "POST", body: JSON.stringify({ epoch, window_generation: windowGeneration }) }),
-  retryConnection: (epoch) => requestJson("/api/settings/connection/retry", { method: "POST", body: JSON.stringify({ epoch }) }),
+  retryConnection: async (epoch) => {
+    captureAccount().assertCurrent(epoch);
+    return requestJson("/api/settings/connection/retry", { method: "POST", body: JSON.stringify({ epoch }) });
+  },
   getSelfInfo: () => requestJson("/api/self-info"),
   resetCache: () => requestVoid("/api/cache/reset", { method: "POST" }),
   shutdownApp: () => requestVoid("/api/app/shutdown", { method: "POST" }),

@@ -76,7 +76,7 @@ def _is_auto_reply(extension: str | None) -> bool:
 def open_readonly(db_path: Path) -> sqlite3.Connection:
     if not db_path.exists():
         raise FileNotFoundError(f"SQLite db not found: {db_path}")
-    uri = f"file:{db_path.as_posix()}?mode=ro"
+    uri = db_path.resolve().as_uri() + "?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     conn.row_factory = sqlite3.Row
     return conn
@@ -107,10 +107,10 @@ def build_conversations(conn: sqlite3.Connection, self_ali_id: str) -> list[Cont
 
     groups: dict[str, list[MessageRow]] = defaultdict(list)
     for table in list_msg_tables(conn):
+        quoted_table = '"' + table.replace('"', '""') + '"'
         for row in conn.execute(
             f"SELECT cid, mid, sender_id, created_at, user_content_type, content_label, extension, content "
-            f"FROM {table} "
-            f"WHERE user_content_type IN (0, 10010) "
+            f"FROM {quoted_table} "
             f"ORDER BY created_at ASC"
         ):
             contact = _contact_ali_id_from_cid(str(row["cid"]), self_ali_id)
@@ -129,6 +129,8 @@ def build_conversations(conn: sqlite3.Connection, self_ali_id: str) -> list[Cont
                 is_auto_reply=_is_auto_reply(row["extension"]),
             ))
 
+    for messages in groups.values():
+        messages.sort(key=lambda message: coerce_epoch(message.created_at))
     conversations = [
         ContactConv(
             contact_ali_id=contact_ali_id,

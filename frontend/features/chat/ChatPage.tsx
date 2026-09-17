@@ -17,17 +17,18 @@ import { AssistantSuggestionModal } from "./modals/AssistantSuggestionModal";
 import { ChatAnalysisModal } from "./modals/ChatAnalysisModal";
 import { ChatComposer } from "./workspace/ChatComposer";
 import { useAccount } from "@/features/account/AccountProvider";
+import { SyncStatus } from "@/features/account/SyncStatus";
 
 type AnalysisFocus = "intent" | "stage";
 
 export function ChatPage() {
-  const { snapshot, blocked, generation } = useAccount();
-  if (blocked || !snapshot?.capabilities.read_chat) return <DataDirBanner />;
+  const { snapshot, blocked, suspended, generation } = useAccount();
+  if ((blocked && !suspended) || !snapshot?.capabilities.read_chat) return <DataDirBanner />;
   return <ChatWorkspace key={`${snapshot.account.epoch}:${generation}`} />;
 }
 
 function ChatWorkspace() {
-  const { snapshot } = useAccount();
+  const { snapshot, blocked } = useAccount();
   const router = useRouter();
   const { isMobile, mobileView, setMobileView } = useSplitSessionMobile();
   const workbench = useChatWorkbench();
@@ -86,7 +87,7 @@ function ChatWorkspace() {
                   buyerId={active.customer.id}
                   buyerName={active.customer.name}
                   showTranslations={workbench.translationVisible}
-                  onRegenerate={snapshot?.capabilities.use_ai ? (item) => workbench.translate(item, true) : undefined}
+                  onRegenerate={!blocked && snapshot?.capabilities.use_ai ? (item) => workbench.translate(item, true) : undefined}
                   onOpenCard={workbench.setActiveCardId}
                 />
               </div>
@@ -127,6 +128,7 @@ function ChatWorkspace() {
   return (
     <>
       <DataDirBanner />
+      <div className="mb-2"><SyncStatus refreshError={workbench.refreshError} refreshPending={workbench.refreshPending} /></div>
       <SplitSessionLayout list={sessionList} detail={sessionDetail} mobileView={mobileView} />
 
       <AssistantSuggestionModal open={workbench.suggestionOpen} suggestions={workbench.suggestions} onClose={() => workbench.setSuggestionOpen(false)} onInsert={workbench.insertSuggestion} />

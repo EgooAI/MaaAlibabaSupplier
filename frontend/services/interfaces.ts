@@ -9,6 +9,7 @@ export interface OperationsBackend {
   getConnection(): Promise<ConnectionSnapshot>;
   connectClient(epoch: AccountEpoch): Promise<ConnectionSnapshot>;
   confirmClient(epoch: AccountEpoch, windowGeneration: string): Promise<ConnectionSnapshot>;
+  // Submission receipt; completion is observed through committed revisions.
   retryConnection(epoch: AccountEpoch): Promise<ConnectionSnapshot>;
   getSelfInfo(): Promise<SelfInfo | null>;
   resetCache(): Promise<void>;
@@ -18,6 +19,7 @@ export interface OperationsBackend {
   getTranslation(text: string): Promise<string | null>;
 
   listConversations(): Promise<Conversation[]>;
+  // Pure read of committed revision and sync status, including stale archives.
   getConversationRevision(): Promise<ConversationRevision>;
   getConversation(id: string): Promise<ConversationDetail>;
   translateMessage(input: TranslateMessageInput): Promise<TranslateMessageResult>;

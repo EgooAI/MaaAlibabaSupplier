@@ -111,3 +111,24 @@ The user authorized preserving a verified complete copy and resetting that data.
 The root configuration and process-local collection guards above were added in
 response. Passing individual isolated tests is not proof that another invocation
 loads their fixtures; verify the entry path before changing test invocation rules.
+
+## Stage 2 Coverage
+
+- `test_crm_snapshot_sync.py` checks one-transaction rollback of data and revision,
+  late messages, source updates, duplicate imports, unknown types and bounded SQL
+  batches. A 1000-message fixture uses two message write batches and one commit;
+  replaying the same payload performs no message writes.
+- `test_im_sync_coordinator.py` drives controlled futures and clocks to verify
+  latest-pending coalescing, retry backoff, pinned caches, target waiting, lifecycle
+  shutdown and late commits to the same archive after an epoch change.
+- Source tests use encrypted synthetic databases and native SQLite WAL files,
+  including RESTART reuse, uncommitted frames, corrupt current frames and transient
+  file access failures. They never inspect the installed client database.
+- API tests assert that 100 revision observations schedule zero imports, and that
+  source changes cannot advance the public revision before the CRM transaction.
+- Frontend lifecycle tests cover unchanged-revision recovery, delayed list/detail
+  acknowledgements, manual profile refresh, translation preservation and retaining
+  the workspace across temporary connection failures.
+
+Source snapshots are still scanned in full when changed. This avoids assuming
+that message time or source row IDs are reliable insertion/update cursors.

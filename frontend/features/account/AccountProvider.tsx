@@ -15,6 +15,9 @@ function useAccountController() {
   const [error, setError] = useState<string>();
   const [refreshing, setRefreshing] = useState(false);
   const [mutating, setMutating] = useState(false);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [readRefreshSequence, setReadRefreshSequence] = useState(0);
+  const syncRequest = useRef(false);
   const request = useRef(0);
   const mutation = useRef(false);
   const mounted = useRef(true);
@@ -40,7 +43,7 @@ function useAccountController() {
       return snapshot;
     } catch (err) {
       if (!mounted.current || id !== request.current) return;
-      accountSession.invalidate();
+      accountSession.suspend();
       setError(err instanceof Error ? err.message : "接入状态加载失败");
     } finally {
       if (mounted.current && id === request.current) setRefreshing(false);
@@ -65,6 +68,28 @@ function useAccountController() {
       notify();
     }
   }, [notify, refresh]);
+
+  const requestSync = useCallback(async () => {
+    if (syncRequest.current) throw new Error("同步请求正在提交，请稍候");
+    const ticket = captureAccount();
+    syncRequest.current = true;
+    setSyncBusy(true);
+    try {
+      const submitted = await backend.retryConnection(ticket.epoch);
+      if (!mounted.current) throw new AccountChangedError();
+      ticket.assertCurrent(submitted.account.epoch);
+      // Profile writes can change CRM without advancing the IM commit revision.
+      setReadRefreshSequence((value) => value + 1);
+      // The POST only submits work. Polling observes its eventual commit.
+    } catch (error) {
+      if (!mounted.current) throw new AccountChangedError();
+      ticket.assertCurrent();
+      throw error;
+    } finally {
+      syncRequest.current = false;
+      if (mounted.current) setSyncBusy(false);
+    }
+  }, []);
 
   useEffect(() => {
     mounted.current = true;
@@ -94,7 +119,7 @@ function useAccountController() {
     };
   }, [refresh]);
 
-  return { ...session, error, refreshing, mutating, refresh, mutate };
+  return { ...session, error, refreshing, mutating, syncBusy, readRefreshSequence, refresh, mutate, requestSync };
 }
 
 const AccountContext = createContext<ReturnType<typeof useAccountController> | null>(null);

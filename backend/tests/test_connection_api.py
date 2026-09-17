@@ -1,6 +1,6 @@
 import os
 import sqlite3
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 from pathlib import Path
 from threading import Event
@@ -21,6 +21,7 @@ from backend.app.shared.backend import im_db_middleware as middleware
 from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
 from backend.app.shared.backend.im_chat_db import ContactConv, MessageRow
 from backend.app.shared.crm.account_keys import save_key
+from backend.app.shared.crm import sync as crm_sync
 from backend.app.shared.crm.identities import message_external_id, self_sender_id
 from backend.app.shared.crm.sdk import LLMApiConfig, LLMApiConfigManager
 from backend.app.shared.crm.sync import CRMAdapter
@@ -33,7 +34,7 @@ from backend.tests.test_maafw_runner import sdk, window
 @pytest.fixture
 def client(sdk, monkeypatch, tmp_path):
     directory = tmp_path / "source"
-    for seller in ("seller-a", "seller-b"):
+    for seller in ("seller-a", "seller-b", "10001", "10002"):
         database = directory / "IMServiceDir" / "MessageSDK" / f"{seller}@icbu" / "database"
         database.mkdir(parents=True)
         (database / "im.sqlite").write_bytes(b"invalid encrypted test fixture")
@@ -93,7 +94,7 @@ def test_connection_poll_is_observation_only(client, sdk, monkeypatch):
     assert not sdk.controllers and not sdk.calls
 
 
-def test_connection_poll_does_not_migrate_existing_crm(client, monkeypatch):
+def test_connection_and_revision_polls_do_not_migrate_existing_crm(client, monkeypatch):
     from backend.app.shared.crm import migrations
 
     CRMAdapter().sync_conversations([], SelfInfo(ali_id="seller-a"))
@@ -101,6 +102,9 @@ def test_connection_poll_does_not_migrate_existing_crm(client, monkeypatch):
     monkeypatch.setattr(migrations, "migrate_message_ids", migrate)
     snapshot = client.get("/api/settings/connection").json()["data"]
     assert snapshot["capabilities"]["read_chat"]
+    revision = client.get("/api/conversations/revision")
+    assert revision.status_code == 200, revision.text
+    assert revision.json()["data"]["ready"]
     migrate.assert_not_called()
 
 
@@ -142,14 +146,16 @@ def test_connection_rejects_stale_body_epoch(client, sdk, monkeypatch, operation
 
 
 def test_retry_retains_failure_and_never_initializes_gui(client, sdk, monkeypatch):
-    mw = get_im_db_middleware()
-    extract = Mock(return_value=False)
-    monkeypatch.setattr(mw, "_ensure_key", extract)
+    extract = Mock(side_effect=OSError("test client unavailable"))
+    monkeypatch.setattr(middleware, "retrieve_db_key", extract)
     response = client.post("/api/settings/connection/retry", json={"epoch": client.headers["X-Account-Epoch"]})
     assert response.status_code == 200, response.text
     source = response.json()["data"]["source"]
     assert source["phase"] == "error"
     assert source["error_code"] == "key_unavailable"
+    assert source["key_validation"] == "unavailable" and not source["auto_enabled"]
+    assert source["revision"] == source["applied_source_revision"] == 0
+    assert source["last_checked"] > 0 and source["last_success"] is None
     assert source["last_error"]
     assert client.get("/api/settings/connection").json()["data"]["source"] == source
     extract.assert_called_once()
@@ -162,7 +168,7 @@ def test_only_selected_seller_archive_is_readable_offline(client, archive_seller
         CRMAdapter().sync_conversations([], SelfInfo(ali_id=archive_seller))
     snapshot = client.get("/api/settings/connection").json()["data"]
     assert snapshot["capabilities"]["read_chat"] is readable
-    assert snapshot["source"]["stale"] is readable
+    assert snapshot["source"]["stale"]
     if readable:
         assert conversations._ready() == "seller-a"
     else:
@@ -187,39 +193,6 @@ def test_model_flag_checks_configuration_without_invocation(client, url, key, mo
         assert key not in str(snapshot)
 
 
-def test_explicit_retry_decrypts_and_reports_async_sync_outcome(client, sdk, monkeypatch, tmp_path):
-    plain = tmp_path / "plain.sqlite"
-    with sqlite3.connect(plain) as database:
-        database.execute("CREATE TABLE test (id INTEGER)")
-    key = bytes(range(16))
-    mw = get_im_db_middleware()
-    mw.resolve_encrypted_db_path("seller-a").write_bytes(AES.new(key, AES.MODE_ECB).encrypt(plain.read_bytes()))
-    save_key("seller-a", key, "manual")
-    future = Future()
-    submit = Mock(return_value=future)
-    monkeypatch.setattr(middleware, "sync_im_database", submit)
-    response = client.post("/api/settings/connection/retry", json={"epoch": client.headers["X-Account-Epoch"]})
-    assert response.status_code == 200, response.text
-    source = response.json()["data"]["source"]
-    assert source["phase"] == "syncing" and not source["ready"]
-    assert source["key_validation"] == "valid"
-    assert source["revision"] > 0 and source["source_mtime"] > 0
-    submit.assert_called_once()
-    future.set_exception(RuntimeError("test CRM migration failed"))
-    failed = client.get("/api/settings/connection").json()["data"]["source"]
-    assert failed["phase"] == "error" and failed["error_code"] == "sync_error"
-    assert failed["last_error"] == "test CRM migration failed"
-    recovered = Future()
-    recovered.set_result(None)
-    submit.return_value = recovered
-    response = client.post("/api/settings/connection/retry", json={"epoch": client.headers["X-Account-Epoch"]})
-    source = response.json()["data"]["source"]
-    assert source["ready"] and source["phase"] == "ready"
-    assert source["last_success"] > 1_000_000_000
-    assert source["last_error"] is None and source["error_code"] is None
-    assert not sdk.controllers and not sdk.calls
-
-
 @pytest.mark.parametrize("key_validation", ["unverified", "invalid", "unavailable"])
 @pytest.mark.parametrize("archive", [False, True])
 def test_revision_observes_unverified_or_archive_only_source_without_key_lookup(client, monkeypatch, key_validation, archive):
@@ -227,6 +200,7 @@ def test_revision_observes_unverified_or_archive_only_source_without_key_lookup(
         CRMAdapter().sync_conversations([], SelfInfo(ali_id="seller-a"))
     mw = get_im_db_middleware()
     monkeypatch.setattr(mw, "_key_validation", key_validation)
+    mw._publish_source_status()
     refresh = Mock(side_effect=AssertionError("source requires explicit retry"))
     extract = Mock(side_effect=AssertionError("poll must not look up keys"))
     sync = Mock(side_effect=AssertionError("archive read must not submit a sync"))
@@ -238,7 +212,7 @@ def test_revision_observes_unverified_or_archive_only_source_without_key_lookup(
         assert response.status_code == 200, response.text
         state = response.json()["data"]
         assert state["ready"] is archive
-        assert state["stale"] is archive
+        assert state["stale"]
         assert state["epoch"] == client.headers["X-Account-Epoch"]
         assert client.get("/api/settings/connection").status_code == 200
     refresh.assert_not_called()
@@ -248,42 +222,189 @@ def test_revision_observes_unverified_or_archive_only_source_without_key_lookup(
 
 @pytest.fixture
 def revision_source(client, monkeypatch, tmp_path):
+    # IM conversation IDs use '-' as a separator, so use realistic numeric IDs.
+    response = client.put("/api/settings/ali-id", json={"ali_id": "10001"})
+    assert response.status_code == 200
+    client.headers["X-Account-Epoch"] = response.headers["X-Account-Epoch"]
     key = bytes(range(16))
     mw = get_im_db_middleware()
     submissions = []
 
-    def publish(seller, text=None):
+    def publish(seller, text="original"):
         plain = tmp_path / f"{seller}.sqlite"
         with closing(sqlite3.connect(plain)) as database, database:
-            database.execute("CREATE TABLE IF NOT EXISTS updates (content TEXT)")
-            if text is not None:
-                database.execute("INSERT INTO updates VALUES (?)", (text,))
+            database.execute(
+                "CREATE TABLE IF NOT EXISTS msg_table (cid TEXT, mid TEXT PRIMARY KEY, sender_id TEXT, "
+                "created_at INTEGER, user_content_type INTEGER, content_label TEXT, extension TEXT, content BLOB)"
+            )
+            database.execute(
+                "INSERT OR REPLACE INTO msg_table VALUES (?, 'same-id', 'buyer@icbu', 1756720000, 0, ?, '', ?)",
+                (f"{seller}-buyer", text, text.encode()),
+            )
         source = mw.resolve_encrypted_db_path(seller)
         previous_mtime = source.stat().st_mtime_ns
         source.write_bytes(AES.new(key, AES.MODE_ECB).encrypt(plain.read_bytes()))
         os.utime(source, ns=(previous_mtime + 1_000_000_000, previous_mtime + 1_000_000_000))
         save_key(seller, key, "manual")
 
-    def submit(path, seller, info):
-        with closing(sqlite3.connect(path)) as database:
-            rows = database.execute("SELECT content FROM updates").fetchall()
-        future = Future()
-        submissions.append(SimpleNamespace(path=path, seller=seller, info=info, rows=rows, future=future))
+    original = middleware.sync_im_database
+
+    def submit(path, seller, info, **kwargs):
+        future = original(path, seller, info, **kwargs)
+        submissions.append(SimpleNamespace(path=path, seller=seller, info=info, future=future, **kwargs))
         return future
 
     monkeypatch.setattr(middleware, "sync_im_database", submit)
     # Exercise fingerprint/version dedup without sleeping through burst coalescing.
     monkeypatch.setattr(middleware, "_MIN_REFRESH_INTERVAL", 0)
-    yield publish, submissions
-    for submitted in submissions:
-        if not submitted.future.done():
-            submitted.future.set_result(None)
+    return publish, submissions
 
 
-def test_revision_refreshes_changed_source_for_current_account_without_duplicate_imports(client, revision_source):
+def finish_sync(mw):
+    # Drain completion through the real coordinator, including its callback race.
+    result = mw._coordinator.wait(mw._sync_future)
+    mw.sync_tick()
+    return result
+
+
+def test_revision_poll_100_calls_never_reads_source_or_submits_sync(client, revision_source, monkeypatch):
     publish, submissions = revision_source
-    for seller in ("seller-a", "seller-b"):
-        if seller == "seller-b":
+    publish("10001")
+    mw = get_im_db_middleware()
+    release = Event()
+    blocker = crm_sync._SYNC_EXECUTOR.submit(lambda: release.wait(30))
+    try:
+        response = client.post("/api/settings/connection/retry", json={"epoch": client.headers["X-Account-Epoch"]})
+        assert response.status_code == 200, response.text
+        source = response.json()["data"]["source"]
+        assert source["phase"] == "syncing" and not source["ready"]
+        assert source["key_validation"] == "valid" and source["auto_enabled"]
+        assert source["revision"] == source["applied_source_revision"] == 0
+        assert source["source_revision"] > 0 and source["source_mtime"] > 0
+        assert source["last_success"] is None
+        assert source["last_checked"] > 0 and source["last_attempt"] > 0
+        assert source["counts"] == {"inserted": 0, "updated": 0, "unchanged": 0}
+        forbidden = Mock(side_effect=AssertionError("GET must only observe"))
+        with monkeypatch.context() as patch:
+            for name in ("get_connection", "sync_to_crm", "retry_connection", "sync_tick", "_ensure_key", "_capture_source"):
+                patch.setattr(mw, name, forbidden)
+            patch.setattr(middleware, "sync_im_database", forbidden)
+            for _ in range(100):
+                response = client.get("/api/conversations/revision")
+                assert response.status_code == 200, response.text
+                assert response.json()["data"] == {**source, "reason": "source_not_ready"}
+            assert client.get("/api/settings/connection").json()["data"]["source"] == source
+            forbidden.assert_not_called()
+        assert len(submissions) == 1
+    finally:
+        release.set()
+        blocker.result(timeout=10)
+    result = finish_sync(mw)
+    assert result["revision"] == 1
+    assert result["inserted"] == 1
+    ready = client.get("/api/conversations/revision").json()["data"]
+    assert ready["ready"] and not ready["stale"] and "reason" not in ready
+    assert ready["revision"] == 1
+    assert ready["applied_source_revision"] == ready["source_revision"] == source["source_revision"]
+    assert ready["counts"] == {"inserted": 1, "updated": 0, "unchanged": 0}
+    assert ready["last_success"] > 0
+    assert ready == client.get("/api/settings/connection").json()["data"]["source"]
+    state = client.get("/api/sync-state").json()["data"]
+    for key in ("revision", "source_revision", "applied_source_revision", "counts", "last_success", "last_checked", "last_attempt"):
+        assert ready[key] == state[key]
+
+
+def test_revision_and_old_message_change_only_after_actual_crm_commit(client, revision_source, monkeypatch):
+    publish, submissions = revision_source
+    mw = get_im_db_middleware()
+    publish("10001")
+    assert client.post("/api/settings/connection/retry", json={"epoch": client.headers["X-Account-Epoch"]}).status_code == 200
+    first = finish_sync(mw)
+    summary = client.get("/api/conversations").json()["data"][0]
+    sid = summary["sid"]
+    entered, release = Event(), Event()
+    original = crm_sync.write_sync_state
+
+    def hold_commit(*args, **kwargs):
+        result = original(*args, **kwargs)
+        entered.set()
+        assert release.wait(30)
+        return result
+
+    monkeypatch.setattr(crm_sync, "write_sync_state", hold_commit)
+    publish("10001", "edited existing message")
+    try:
+        mw.sync_tick()
+        assert entered.wait(10)
+        pending = client.get("/api/conversations/revision").json()["data"]
+        assert pending["revision"] == first["revision"] == 1
+        assert pending["source_revision"] > pending["applied_source_revision"]
+        assert pending["applied_source_revision"] == first["applied_source_revision"]
+        assert pending["last_success"] == first["last_success"]
+        assert pending["ready"] and pending["stale"] and pending["phase"] == "syncing"
+        assert pending["counts"] == {"inserted": 1, "updated": 0, "unchanged": 0}
+        for _ in range(3):
+            observed = client.get("/api/conversations/revision").json()["data"]
+            assert observed == pending
+        listing = client.get("/api/conversations")
+        assert listing.status_code == 200, listing.text
+        assert isinstance(listing.json()["data"], list)
+        assert "X-CRM-Revision" not in listing.headers
+        assert listing.json()["data"][0]["latest"]["content"] == "original"
+        detail = client.get(f"/api/conversations/{sid}")
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["data"]["messages"][0]["message"]["content"] == "original"
+        connection_state = client.get("/api/settings/connection").json()["data"]
+        assert connection_state["capabilities"]["read_chat"]
+        assert not connection_state["source"]["ready"]
+        assert len(submissions) == 2
+    finally:
+        release.set()
+    second = finish_sync(mw)
+    assert second["revision"] == 2
+    updated = client.get("/api/conversations/revision").json()["data"]
+    assert updated["revision"] == 2 and not updated["stale"]
+    assert updated["source_revision"] == pending["source_revision"] == updated["applied_source_revision"]
+    assert updated["counts"] == {"inserted": 0, "updated": 1, "unchanged": 0}
+    listing = client.get("/api/conversations").json()["data"]
+    assert len(listing) == 1 and listing[0]["sid"] == sid
+    assert listing[0]["latest"]["content"] == "edited existing message"
+    detail = client.get(f"/api/conversations/{sid}").json()["data"]
+    assert len(detail["messages"]) == 1
+    assert detail["messages"][0]["message"]["external_mid"] == message_external_id("10001", "msg_table", "same-id")
+    assert detail["messages"][0]["message"]["content"] == "edited existing message"
+
+
+def test_manual_retry_copy_failure_reports_phase_error_with_readable_archive(client, revision_source, monkeypatch):
+    publish, submissions = revision_source
+    mw = get_im_db_middleware()
+    publish("10001")
+    assert client.post("/api/settings/connection/retry", json={"epoch": client.headers["X-Account-Epoch"]}).status_code == 200
+    committed = finish_sync(mw)
+    publish("10001", "not committed")
+    copy = Mock(side_effect=PermissionError("source temporarily locked"))
+    monkeypatch.setattr(mw, "_copy_source_pair", copy)
+    response = client.post("/api/settings/connection/retry", json={"epoch": client.headers["X-Account-Epoch"]})
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["capabilities"]["read_chat"]
+    source = data["source"]
+    assert source["phase"] == "error" and source["stale"] and not source["ready"]
+    assert source["error_code"] == "source_copy_error" and source["last_error"]
+    assert source["retry_at"] is not None
+    assert source["revision"] == committed["revision"]
+    assert source["last_success"] == committed["last_success"]
+    copy.assert_called_once()
+    assert len(submissions) == 1
+    assert client.get("/api/settings/connection").json()["data"]["source"] == source
+    assert client.get("/api/conversations").json()["data"][0]["latest"]["content"] == "original"
+
+
+def test_revision_observes_worker_commits_for_current_account_without_duplicate_imports(client, revision_source):
+    publish, submissions = revision_source
+    mw = get_im_db_middleware()
+    for seller in ("10001", "10002"):
+        if seller == "10002":
             response = client.put("/api/settings/ali-id", json={"ali_id": seller})
             assert response.status_code == 200
             assert client.get("/api/conversations/revision").status_code == 409
@@ -293,12 +414,9 @@ def test_revision_refreshes_changed_source_for_current_account_without_duplicate
         publish(seller)
         response = client.post("/api/settings/connection/retry", json={"epoch": client.headers["X-Account-Epoch"]})
         assert response.status_code == 200, response.text
-        original_revision = response.json()["data"]["source"]["revision"]
         assert len(submissions) == before + 1
         assert submissions[-1].seller == submissions[-1].info.ali_id == seller
-        # Neither an in-flight import nor its completed version is resubmitted.
-        assert client.get("/api/conversations/revision").json()["data"]["revision"] == original_revision
-        submissions[-1].future.set_result(None)
+        original_revision = finish_sync(mw)["revision"]
         assert client.get("/api/conversations/revision").json()["data"]["ready"]
         assert len(submissions) == before + 1
         old_path = submissions[-1].path
@@ -307,61 +425,80 @@ def test_revision_refreshes_changed_source_for_current_account_without_duplicate
         observed = client.get("/api/settings/connection").json()["data"]
         assert observed["source"]["revision"] == original_revision
         assert len(submissions) == before + 1
+        assert client.get("/api/conversations/revision").json()["data"]["revision"] == original_revision
+        assert len(submissions) == before + 1
+        mw.sync_tick()
+        result = finish_sync(mw)
         response = client.get("/api/conversations/revision")
         assert response.status_code == 200, response.text
         updated = response.json()["data"]
-        assert updated["revision"] > original_revision
+        assert updated["revision"] == original_revision + 1 == result["revision"]
+        assert updated["source_revision"] == updated["applied_source_revision"]
+        assert updated["counts"] == {"inserted": 0, "updated": 1, "unchanged": 0}
         assert updated["epoch"] == client.headers["X-Account-Epoch"]
         assert len(submissions) == before + 2
         assert submissions[-1].seller == submissions[-1].info.ali_id == seller
         assert submissions[-1].path != old_path
-        assert submissions[-1].rows == [(f"new message for {seller}",)]
         assert client.get("/api/conversations/revision").json()["data"]["revision"] == updated["revision"]
-        submissions[-1].future.set_result(None)
         assert client.get("/api/conversations/revision").json()["data"]["ready"]
+        mw.sync_tick()
         assert len(submissions) == before + 2
 
 
-def test_revision_retries_failed_crm_import_when_key_remains_valid(client, revision_source):
+def test_worker_retries_failed_crm_import_without_revision_poll_side_effects(client, revision_source, monkeypatch):
     publish, submissions = revision_source
-    publish("seller-a")
+    mw = get_im_db_middleware()
+    clock = [1_800_000_000.0]
+    monkeypatch.setattr(mw._coordinator, "_clock", lambda: clock[0])
+    original = crm_sync.write_sync_state
+    monkeypatch.setattr(crm_sync, "write_sync_state", Mock(side_effect=RuntimeError("test sync failure")))
+    publish("10001")
     response = client.post("/api/settings/connection/retry", json={"epoch": client.headers["X-Account-Epoch"]})
     assert response.status_code == 200
     revision = response.json()["data"]["source"]["revision"]
-    submissions[0].future.set_exception(RuntimeError("test sync failure"))
+    with pytest.raises(RuntimeError, match="test sync failure"):
+        finish_sync(mw)
     observed = client.get("/api/settings/connection").json()["data"]["source"]
     assert observed["phase"] == "error" and observed["key_validation"] == "valid"
     assert len(submissions) == 1
     response = client.get("/api/conversations/revision")
     assert response.status_code == 200
     assert response.json()["data"]["revision"] == revision
+    assert response.json()["data"]["pending"]
+    assert response.json()["data"]["retry_at"] == clock[0] + 3
+    assert len(submissions) == 1
+    monkeypatch.setattr(crm_sync, "write_sync_state", original)
+    clock[0] += 3
+    mw.sync_tick()
     assert len(submissions) == 2
     assert submissions[1].path == submissions[0].path
-    assert submissions[1].seller == "seller-a"
-    submissions[1].future.set_result(None)
+    assert submissions[1].seller == "10001"
+    submissions[1].future.result(timeout=10)
+    # Wait for the retry target, which is owned by the coordinator.
+    mw._coordinator.wait(mw._coordinator._last_target.waiters[-1])
     assert client.get("/api/conversations/revision").json()["data"]["ready"]
+    assert client.get("/api/conversations/revision").json()["data"]["revision"] == revision + 1
     assert len(submissions) == 2
 
 
-def test_revision_stops_refreshing_after_key_becomes_unavailable(client, monkeypatch):
+def test_revision_keeps_archive_readable_after_worker_detects_invalid_key(client, revision_source):
+    publish, submissions = revision_source
     mw = get_im_db_middleware()
-    monkeypatch.setattr(mw, "_key_validation", "valid")
-
-    def lose_key():
-        mw._key_validation = "unavailable"
-        mw._note_failure("密钥不可用，请显式重试", "key_unavailable")
-        return object()  # A previous cached connection must not authorize sync.
-
-    refresh = Mock(side_effect=lose_key)
-    sync = Mock(side_effect=AssertionError("invalid key must not submit a sync"))
-    monkeypatch.setattr(mw, "get_connection", refresh)
-    monkeypatch.setattr(mw, "sync_to_crm", sync)
+    publish("10001")
+    assert client.post("/api/settings/connection/retry", json={"epoch": client.headers["X-Account-Epoch"]}).status_code == 200
+    committed = finish_sync(mw)
+    mw.resolve_encrypted_db_path("10001").write_bytes(b"invalid encrypted source")
+    mw.sync_tick()
     for _ in range(2):
         response = client.get("/api/conversations/revision")
         assert response.status_code == 200
         assert response.json()["data"]["reason"] == "key_unavailable"
-    refresh.assert_called_once()
-    sync.assert_not_called()
+        assert response.json()["data"]["revision"] == committed["revision"]
+        assert response.json()["data"]["ready"] and response.json()["data"]["stale"]
+        assert response.json()["data"]["phase"] == "error"
+    assert client.get("/api/settings/connection").json()["data"]["capabilities"]["read_chat"]
+    assert client.get("/api/conversations").json()["data"][0]["latest"]["content"] == "original"
+    assert len(submissions) == 1
 
 
 @pytest.mark.parametrize("path,body", [
@@ -733,6 +870,24 @@ def test_connection_rejects_account_switch_between_observations(client, monkeypa
     assert selected == ["seller-a"]
 
 
+@pytest.mark.parametrize("phase", ["source", "archive"])
+def test_revision_rejects_account_switch_between_observations(client, monkeypatch, phase):
+    mw = get_im_db_middleware()
+    target, name = (mw, "sync_status") if phase == "source" else (conversations, "has_selected_archive")
+    original = getattr(target, name)
+
+    def change(*args, **kwargs):
+        result = original(*args, **kwargs)
+        mw.set_self_ali_id("seller-b")
+        return result
+
+    monkeypatch.setattr(target, name, change)
+    response = client.get("/api/conversations/revision")
+    assert response.status_code == 409
+    assert response.json()["data"] is None
+    assert response.headers["X-Account-Epoch"] == account_context.get_account_context().epoch
+
+
 SETTINGS_WRITES = [
     ("PUT", "/api/settings/alibaba-data-dir", {"path": "must-not-scan"}),
     ("PUT", "/api/settings/ali-id", {"ali_id": "seller-b"}),
@@ -816,11 +971,13 @@ def test_key_writes_with_current_epoch_persist_without_implicit_sync(client, mon
     response = client.put("/api/settings/ali-keys", json={"ali_id": "seller-a", "aes_key_hex": key.hex()})
     assert response.status_code == 200, response.text
     assert get_key_hex("seller-a") == key
-    assert response.headers["X-Account-Epoch"] == client.headers["X-Account-Epoch"]
+    assert response.headers["X-Account-Epoch"] != client.headers["X-Account-Epoch"]
+    client.headers["X-Account-Epoch"] = response.headers["X-Account-Epoch"]
     response = client.delete("/api/settings/ali-keys/seller-a")
     assert response.status_code == 200, response.text
     assert get_key_hex("seller-a") is None
-    assert response.headers["X-Account-Epoch"] == client.headers["X-Account-Epoch"]
+    assert response.headers["X-Account-Epoch"] != client.headers["X-Account-Epoch"]
+    assert response.headers["X-Account-Epoch"] == account_context.get_account_context().epoch
     retry.assert_not_called()
 
 

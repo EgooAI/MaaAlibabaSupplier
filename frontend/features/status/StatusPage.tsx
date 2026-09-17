@@ -9,6 +9,7 @@ import type { HealthModule, TaskItem } from "@/types/status";
 import { useStatusWorkbench } from "./hooks/useStatusWorkbench";
 import { useAccount } from "@/features/account/AccountProvider";
 import { DataDirBanner } from "@/features/settings/DataDirBanner";
+import { SyncStatus } from "@/features/account/SyncStatus";
 
 export function StatusPage() {
   const account = useAccount();
@@ -29,6 +30,7 @@ export function StatusPage() {
 
   return (
     <Space orientation="vertical" size="large" className="w-full">
+      <Card title="聊天同步"><SyncStatus details /></Card>
       <Card loading={loading}>
         <Row gutter={[16, 16]}>
           {modules.map((module) => <Col xs={24} md={8} key={module.id}><HealthModulePanel module={module} /></Col>)}

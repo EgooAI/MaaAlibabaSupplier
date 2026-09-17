@@ -25,7 +25,7 @@ export function useChatWorkbench() {
     draftStorageFailed.current = true;
     message.warning("草稿暂存于当前标签页内存，切换账号后仍保留，存储恢复后会补存；关闭或刷新浏览器前请妥善保留内容");
   }, [message]);
-  const { conversations, loading, revision } = useConversationSummaries();
+  const { conversations, loading, revision, refreshError, refreshPending, beginRead } = useConversationSummaries();
   const [activeConversationId, setActiveConversationId] = useState<string>();
   const [activeConversation, setActiveConversation] = useState<ConversationDetail>();
   const [detailLoading, setDetailLoading] = useState(false);
@@ -69,6 +69,10 @@ export function useChatWorkbench() {
     const requestId = detailRequestRef.current + 1;
     detailRequestRef.current = requestId;
     activeIdRef.current = id;
+    ++sendRequestRef.current;
+    ++translateRequestRef.current;
+    ++suggestionRequestRef.current;
+    ++analysisRequestRef.current;
     setActiveConversationId(id);
     try {
       const saved = loadDraft(() => localStorage, account, id, warnStorage);
@@ -78,12 +82,15 @@ export function useChatWorkbench() {
     setActiveCardId(undefined);
     setAnalysisState({ loading: false });
     setDetailLoading(true);
+    const acknowledge = beginRead("detail");
 
     try {
       const detail = await backend.getConversation(id);
       if (detailRequestRef.current !== requestId || activeIdRef.current !== id) return;
       setActiveConversation(detail);
+      acknowledge(true);
     } catch {
+      acknowledge(false);
       if (detailRequestRef.current === requestId && activeIdRef.current === id) {
         message.error("会话详情加载失败");
       }
@@ -92,7 +99,7 @@ export function useChatWorkbench() {
         setDetailLoading(false);
       }
     }
-  }, [account, backend, message, warnStorage]);
+  }, [account, backend, message, warnStorage, beginRead]);
 
   useEffect(() => {
     if (!activeConversationId && conversations[0]) {
@@ -100,23 +107,37 @@ export function useChatWorkbench() {
     }
   }, [activeConversationId, conversations, selectConversation]);
 
-  // Quiet detail refresh when the source revision moves (list already reloaded
-  // by useConversationSummaries). No spinner clearing: the old messages stay
-  // visible until the fresh detail swaps in. Failures stay silent to avoid
-  // toast storms from the 10s poll.
+  // Keep the current detail visible while reading a committed version or retrying.
   const refreshActiveDetail = useCallback(async () => {
     const id = activeIdRef.current;
     if (!id) return;
     const requestId = detailRequestRef.current + 1;
     detailRequestRef.current = requestId;
+    const acknowledge = beginRead("detail");
     try {
       const detail = await backend.getConversation(id);
       if (detailRequestRef.current !== requestId || activeIdRef.current !== id) return;
-      setActiveConversation(detail);
+      setActiveConversation((current) => {
+        if (!current || current.id !== detail.id) return detail;
+        const previous = new Map(current.messages.map((item) => [item.id, item]));
+        return {
+          ...detail,
+          analysis: current.analysis ?? detail.analysis,
+          messages: detail.messages.map((item) => {
+            const old = previous.get(item.id);
+            return old?.content === item.content && old.translatedContent
+              ? { ...item, translatedContent: old.translatedContent }
+              : item;
+          }),
+        };
+      });
+      acknowledge(true);
     } catch {
-      // Silent on purpose (see above).
+      acknowledge(false);
+    } finally {
+      if (detailRequestRef.current === requestId && activeIdRef.current === id) setDetailLoading(false);
     }
-  }, [backend]);
+  }, [backend, beginRead]);
 
   const revisionSeenRef = useRef(false);
   useEffect(() => {
@@ -142,7 +163,8 @@ export function useChatWorkbench() {
 
       setActiveConversation((current) => {
         if (!current || current.id !== conversationId) return current;
-        return { ...current, messages: mergeMessageTranslations(current.messages, [result]) };
+        const unchanged = current.messages.some((item) => item.id === messageItem.id && item.content === messageItem.content);
+        return unchanged ? { ...current, messages: mergeMessageTranslations(current.messages, [result]) } : current;
       });
       if (translationVisibleRef.current) setTranslationVisible(true);
       message.success(regenerate ? "已重新翻译" : "已翻译消息");
@@ -181,7 +203,9 @@ export function useChatWorkbench() {
       if (translateRequestRef.current !== requestId || activeIdRef.current !== conversationId) return;
       setActiveConversation((current) => {
         if (!current || current.id !== conversationId) return current;
-        return { ...current, messages: mergeMessageTranslations(current.messages, translatedMessages) };
+        const originals = new Map(buyerMessages.map((item) => [item.id, item.content]));
+        const unchanged = new Set(current.messages.filter((item) => originals.get(item.id) === item.content).map((item) => item.id));
+        return { ...current, messages: mergeMessageTranslations(current.messages, translatedMessages.filter((result) => unchanged.has(result.messageId))) };
       });
       if (translationVisibleRef.current) setTranslationVisible(true);
       message.success(force ? "已重新翻译当前会话" : "已翻译当前会话");
@@ -298,6 +322,8 @@ export function useChatWorkbench() {
     conversations,
     activeConversation,
     loading,
+    refreshError,
+    refreshPending,
     detailLoading,
     draft,
     setDraft,

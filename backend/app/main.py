@@ -32,6 +32,7 @@ from backend.app.shared.agent.default_llm_levels import ensure_default_llm_level
 from backend.app.api.server import run as run_api
 from backend.app.shared.utils.env import load_workdir_env
 from backend.app.shared.utils.logging import configure_logging
+from backend.app.shared.backend.sync_coordinator import start_sync_service, stop_sync_service
 
 
 def _register_agent_runtime() -> None:
@@ -137,11 +138,13 @@ def main() -> None:
         logger.info("MaaFW process started")
         _start_mitm_receiver()
         yak_proc = _start_yak_mitm(backend_root)
+        start_sync_service()
         run_api()
     except MaaFWProcessError:
         logger.exception("Failed to start MaaFW")
         raise
     finally:
+        stop_sync_service()
         maafw.stop()
         if yak_proc and yak_proc.poll() is None:
             yak_proc.terminate()

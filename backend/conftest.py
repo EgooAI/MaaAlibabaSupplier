@@ -61,6 +61,10 @@ def pytest_configure(config):
 
 
 def _cleanup_runtime():
+    coordinator = sys.modules.get("backend.app.shared.backend.sync_coordinator")
+    if coordinator is not None:
+        coordinator.stop_sync_service()
+
     tasks = sys.modules.get("backend.app.task_queue")
     if tasks is not None and tasks.TaskQueue._instance is not None:
         tasks.TaskQueue._instance.shutdown()
@@ -74,6 +78,7 @@ def _cleanup_runtime():
     if middleware is not None:
         cls = middleware.IMDBMiddleware
         if cls._instance is not None:
+            cls._instance._coordinator.shutdown()
             with cls._instance._lock:
                 cls._instance._reset_runtime_state()
             cls._instance = None
