@@ -33,6 +33,7 @@ from backend.app.api.server import run as run_api
 from backend.app.shared.utils.env import load_workdir_env
 from backend.app.shared.utils.logging import configure_logging
 from backend.app.shared.backend.sync_coordinator import start_sync_service, stop_sync_service
+from backend.app.shared.backend.outbox_service import start_outbox_service, stop_outbox_service
 
 
 def _register_agent_runtime() -> None:
@@ -139,20 +140,45 @@ def main() -> None:
         _start_mitm_receiver()
         yak_proc = _start_yak_mitm(backend_root)
         start_sync_service()
+        start_outbox_service()
         run_api()
     except MaaFWProcessError:
         logger.exception("Failed to start MaaFW")
         raise
     finally:
-        stop_sync_service()
-        maafw.stop()
-        if yak_proc and yak_proc.poll() is None:
-            yak_proc.terminate()
+        try:
+            stop_outbox_service()
+        except Exception:
+            logger.exception("Outbox shutdown failed")
+        finally:
             try:
-                yak_proc.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                yak_proc.kill()
-            logger.info("Yak MITM proxy terminated")
+                from backend.app.task_queue import TaskQueue
+
+                if TaskQueue._instance is not None:
+                    TaskQueue._instance.shutdown(timeout=5.0)
+            except Exception:
+                logger.exception("GUI task queue shutdown failed")
+            finally:
+                try:
+                    stop_sync_service()
+                except Exception:
+                    logger.exception("IM sync shutdown failed")
+                finally:
+                    try:
+                        maafw.stop()
+                    except Exception:
+                        logger.exception("MaaFW shutdown failed")
+                    finally:
+                        try:
+                            if yak_proc and yak_proc.poll() is None:
+                                yak_proc.terminate()
+                                try:
+                                    yak_proc.wait(timeout=5.0)
+                                except subprocess.TimeoutExpired:
+                                    yak_proc.kill()
+                                logger.info("Yak MITM proxy terminated")
+                        except Exception:
+                            logger.exception("Yak MITM shutdown failed")
 
 
 if __name__ == "__main__":

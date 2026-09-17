@@ -2,6 +2,7 @@ import type { AgentConsoleState, AgentTestInput, AgentTestResult, AgentTestSessi
 import type { AssistantSuggestion, Conversation, ConversationAnalysis, ConversationDetail } from "@/types/chatCanonical";
 import type { ExportConversationsInput, ExportConversationsResult, RequestTranslationsInput, RequestTranslationsResult, SendMessageInput, SendMessageResult, TranslateMessageInput, TranslateMessageResult, ConversationRevision } from "@/types/chatOperations";
 import type { SelfInfo } from "@/types/home";
+import type { OutboxTask } from "@/types/chatOperations";
 import type { AccountEpoch, ConnectionSnapshot } from "@/types/connection";
 import type { AliIdList, CreateTestTaskInput, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestEntry, NodeTestSubmission, SystemStatusSnapshot, TaskItem, TaskSnapshot } from "@/types/status";
 
@@ -27,6 +28,12 @@ export interface OperationsBackend {
   getAssistantSuggestions(conversationId: string): Promise<AssistantSuggestion[]>;
   analyzeConversation(conversationId: string): Promise<ConversationAnalysis>;
   sendMessage(input: SendMessageInput): Promise<SendMessageResult>;
+  listOutbox(conversationId: string): Promise<OutboxTask[]>;
+  getOutbox(id: string): Promise<OutboxTask>;
+  confirmOutbox(id: string, version: number, screenshotId: string): Promise<OutboxTask>;
+  cancelOutbox(id: string, version: number): Promise<OutboxTask>;
+  retryOutbox(id: string, version: number): Promise<OutboxTask>;
+  getOutboxScreenshot(id: string, screenshotId: string, version: number): Promise<Blob>;
   exportConversations(input: ExportConversationsInput): Promise<ExportConversationsResult>;
   gotoContact(conversationId: string, loginId: string): Promise<{ status: string }>;
 

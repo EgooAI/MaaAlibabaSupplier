@@ -235,6 +235,100 @@ def test_send_test_send_overrides_both_branches(sdk):
     assert len(sdk.taskers) == 1
 
 
+def test_submit_send_validates_and_posts_without_waiting(sdk, monkeypatch):
+    token = confirmed_token()
+    calls = []
+    validate = gui_session._validate_token
+
+    def checked_token(value):
+        validate(value)
+        calls.append("validate")
+
+    class Job(FakeJob):
+        def wait(self):
+            calls.append("wait")
+            return super().wait()
+
+    job = Job(detail=SimpleNamespace(status=SimpleNamespace(succeeded=True)))
+
+    def post(entry, override):
+        assert entry == "ChatInput_SendOnly"
+        assert override == {"ChatInput_SendMessage": {"enabled": True}}
+        calls.append("post")
+        return job
+
+    monkeypatch.setattr(gui_session, "_validate_token", checked_token)
+    monkeypatch.setattr(runner._tasker, "post_task", post)
+
+    def send():
+        calls.clear()
+        assert runner.submit_send() is job
+        assert calls == ["validate", "post"]
+        return runner.wait_send(job)
+
+    assert gui_session.run_guarded(token, send)[0]
+    assert calls == ["validate", "post", "wait"]
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_submit_send_requires_guard_and_never_initializes(sdk, confirmed):
+    if confirmed:
+        confirmed_token()
+    with pytest.raises(AppError, match="run_guarded"):
+        runner.submit_send()
+    assert sdk.calls == []
+    assert len(sdk.controllers) == int(confirmed)
+
+
+def test_submit_send_revalidates_session_inside_guard_before_native_post(sdk, monkeypatch):
+    token = confirmed_token()
+
+    def send():
+        monkeypatch.setattr(gui_session, "_confirmation", None)
+        return runner.submit_send()
+
+    ok, reason = gui_session.run_guarded(token, send)
+    assert not ok and "expired" in reason
+    assert sdk.calls == []
+
+
+@pytest.mark.parametrize("outcome", [True, False, None, RuntimeError("wait failed")])
+def test_wait_send_only_waits_for_original_job_without_reposting(sdk, outcome):
+    token = confirmed_token()
+    sdk.outcome = outcome
+
+    def send():
+        job = runner.submit_send()
+        return runner.wait_send(job)
+
+    assert gui_session.run_guarded(token, send)[0] is (outcome is True)
+    assert sdk.calls == [("ChatInput_SendOnly", {"ChatInput_SendMessage": {"enabled": True}})]
+
+
+def test_wait_send_keeps_outer_account_and_gui_guard(sdk, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    token = confirmed_token()
+
+    def probe():
+        for lock in (account_context.account_lock, runner._run_lock):
+            acquired = lock.acquire(blocking=False)
+            if acquired:
+                lock.release()
+            assert not acquired
+
+    class Job(FakeJob):
+        def wait(self):
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                pool.submit(probe).result(timeout=5)
+            return super().wait()
+
+    monkeypatch.setattr(runner._tasker, "post_task", lambda *args: Job(
+        detail=SimpleNamespace(status=SimpleNamespace(succeeded=True)),
+    ))
+    assert gui_session.run_guarded(token, lambda: runner.wait_send(runner.submit_send()))[0]
+
+
 @pytest.fixture
 def actions(monkeypatch):
     from maa.library import Library
@@ -305,6 +399,8 @@ def native_pipeline(tmp_path):
             self.texts = []
             self.keys = []
             self.click_ok = True
+            self.screencap_ok = True
+            self.screencaps = 0
             super().__init__()
 
         def connect(self):
@@ -317,7 +413,8 @@ def native_pipeline(tmp_path):
             return 0
 
         def screencap(self):
-            return self.frame.copy()
+            self.screencaps += 1
+            return self.frame.copy() if self.screencap_ok else np.empty((0, 0, 3), dtype=np.uint8)
 
         def click(self, x, y):
             self.clicks.append((x, y))

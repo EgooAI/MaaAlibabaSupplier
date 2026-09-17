@@ -1,38 +1,29 @@
 from threading import Event
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from fastapi.testclient import TestClient
-
-from backend.app.api.main import app
 from backend.app.api.routers import conversations, status
-from backend.app.shared.backend.account_context import get_account_context
+from backend.app.shared.backend import outbox_service
 from backend.app.task_queue import TaskQueue, TaskStatus
+from backend.tests.test_connection_api import client as base_client, chat, connect, sdk
+from backend.tests.test_outbox_api import outbox
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(base_client, monkeypatch):
+    connect(base_client, confirm=True)
     monkeypatch.setattr(status, "_last_node_result", None)
-    monkeypatch.setattr(status, "get_client_status", lambda: {"connected": True, "window_generation": "fake", "detail": "test"})
-    monkeypatch.setattr(conversations, "capture_gui_session", lambda epoch: epoch)
-    monkeypatch.setattr(conversations, "run_guarded", lambda token, fn: fn())
-    with TestClient(app, raise_server_exceptions=False) as client:
-        client.headers["X-Account-Epoch"] = get_account_context().epoch
-        yield client
+    return base_client
 
 
 @pytest.fixture
-def send_setup(monkeypatch):
+def send_setup(outbox, monkeypatch):
     calls = []
-    monkeypatch.setattr(conversations, "_ready", lambda: "seller-test")
-    monkeypatch.setattr(conversations, "crm_get_conversation_detail", lambda *args: SimpleNamespace(contact_ali_id="buyer-test"))
-    monkeypatch.setattr(conversations, "crm_get_user_info", lambda *args: SimpleNamespace(login_id="buyer-login"))
-    monkeypatch.setattr(conversations, "CRMAdapter", lambda: object())
-    monkeypatch.setattr(conversations, "_build_aggregate", lambda *args: {"sid": 1})
-    monkeypatch.setattr(conversations, "goto_contact", lambda target: (calls.append(("goto", target)) is None, "located"))
-    monkeypatch.setattr(conversations, "chat_input", lambda text: (calls.append(("input", text)) is None, "filled"))
-    monkeypatch.setattr(conversations, "chat_send", lambda text: (calls.append(("send", text)) is None, "GUI completed"))
+    outbox.service._queue = TaskQueue()
+    monkeypatch.setattr(outbox_service.runner, "goto_contact", lambda target: (calls.append(("goto", target)) is None, "located"))
+    monkeypatch.setattr(outbox_service.runner, "chat_input", lambda text: (calls.append(("input", text)) is None, "filled"))
+    monkeypatch.setattr(outbox_service.runner, "submit_send", lambda: calls.append(("send", None)))
+    monkeypatch.setattr(outbox_service.runner, "wait_send", lambda job: (True, "clicked"))
     return calls
 
 
@@ -56,81 +47,72 @@ def blocked_queue():
         queue.shutdown()
 
 
-@pytest.mark.parametrize("action, expected", [("send", "send"), ("test", "input")])
-def test_send_acceptance_is_pending_and_queryable(client, send_setup, blocked_queue, action, expected):
+@pytest.mark.parametrize("action", ["send", "test"])
+def test_send_acceptance_is_pending_and_queryable(client, send_setup, blocked_queue, action):
     queue, release = blocked_queue
-    response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": action})
+    response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": action, "idempotency_key": "key"})
     assert response.status_code == 200
     result = response.json()["data"]
-    assert result["conversation"] == {"sid": 1}
-    assert result["execution"]["success"] is None
-    snapshot = result["execution"]["task_snapshot"]
-    assert snapshot["status"] == "pending"
-    assert snapshot["result"] is None
+    assert set(result) == {"outbox"}
+    snapshot = result["outbox"]
+    assert snapshot["status"] == "queued" and not snapshot["may_have_sent"]
     assert send_setup == []
-    tasks = client.get("/api/status/tasks").json()["data"]
-    assert any(task["task_id"] == snapshot["task_id"] for task in tasks)
+    tasks = client.get("/api/conversations/1/outbox").json()["data"]
+    assert any(task["id"] == snapshot["id"] for task in tasks)
 
     release.set()
     queue.shutdown()
-    assert send_setup == [("goto", "buyer-login"), (expected, "hello")]
-    assert queue.get(snapshot["task_id"]).status == TaskStatus.SUCCEEDED
+    assert send_setup == [("goto", "buyer-login")]
+    assert client.get(f"/api/outbox/{snapshot['id']}").json()["data"]["status"] == "awaiting_confirmation"
 
 
-def test_response_preparation_failure_cannot_enqueue_send(client, send_setup, monkeypatch):
-    queue = TaskQueue()
-    monkeypatch.setattr(conversations, "_build_aggregate", Mock(side_effect=RuntimeError("aggregate failed")))
-    response = client.post("/api/conversations/1/messages", json={"content": "hello"})
-    assert response.status_code == 500
-    assert queue.all_snapshots() == []
+def test_submission_does_not_build_legacy_conversation_aggregate(client, send_setup, blocked_queue, monkeypatch):
+    aggregate = Mock(side_effect=AssertionError("legacy aggregate must not be built"))
+    monkeypatch.setattr(conversations, "_build_aggregate", aggregate)
+    response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": "send", "idempotency_key": "key"})
+    assert response.status_code == 200
+    assert response.json()["data"]["outbox"]["status"] == "queued"
+    aggregate.assert_not_called()
     assert send_setup == []
 
 
 def test_failed_navigation_never_inputs_or_sends(client, send_setup, monkeypatch):
     queue = TaskQueue()
-    monkeypatch.setattr(conversations, "goto_contact", lambda target: (False, "not found"))
-    response = client.post("/api/conversations/1/messages", json={"content": "hello"})
-    snapshot = response.json()["data"]["execution"]["task_snapshot"]
+    monkeypatch.setattr(outbox_service.runner, "goto_contact", lambda target: (False, "not found"))
+    response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": "send", "idempotency_key": "key"})
+    snapshot = response.json()["data"]["outbox"]
     queue.shutdown()
     assert send_setup == []
-    assert queue.get(snapshot["task_id"]).status == TaskStatus.FAILED
+    assert client.get(f"/api/outbox/{snapshot['id']}").json()["data"]["status"] == "unknown"
 
 
-def test_diagnostics_cannot_interrupt_navigation_and_send(client, send_setup, monkeypatch):
-    queue = TaskQueue()
-    navigating, release = Event(), Event()
-
-    def goto(target):
-        send_setup.append(("goto", target))
-        navigating.set()
-        if not release.wait(5):
-            raise TimeoutError("test gate not released")
-        return True, "located"
+def test_diagnostics_share_queue_without_bypassing_recipient_confirmation(client, send_setup, blocked_queue, monkeypatch):
+    queue, release = blocked_queue
 
     def diagnose(entry):
         send_setup.append(("diagnostic", entry))
         return True, "matched"
 
-    monkeypatch.setattr(conversations, "goto_contact", goto)
     monkeypatch.setattr(status, "run_node", diagnose)
     try:
-        client.post("/api/conversations/1/messages", json={"content": "hello"})
-        assert navigating.wait(2)
+        response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": "send", "idempotency_key": "key"})
+        task_id = response.json()["data"]["outbox"]["id"]
         response = client.post("/api/status/node-test", json={"entry": "ContactSearch_GoToSearch"})
         assert response.status_code == 200
         result = response.json()["data"]
         assert result["success"] is None
         assert result["task_snapshot"]["status"] == "pending"
         assert status._last_node_result is None
-        assert send_setup == [("goto", "buyer-login")]
+        assert send_setup == []
     finally:
         release.set()
         queue.shutdown()
     assert send_setup == [
-        ("goto", "buyer-login"), ("send", "hello"),
+        ("goto", "buyer-login"),
         ("diagnostic", "Diagnostics_ContactSearch"),
     ]
     assert status._last_node_result["success"] is True
+    assert client.get(f"/api/outbox/{task_id}").json()["data"]["status"] == "awaiting_confirmation"
 
 
 def test_diagnostic_failure_updates_last_result(client, monkeypatch):
@@ -153,15 +135,16 @@ def test_diagnostic_rejects_action_entries(client, monkeypatch, entry):
     run.assert_not_called()
 
 
-def test_queue_full_rejects_request_without_gui_action(client, send_setup, blocked_queue, monkeypatch):
+def test_queue_full_persists_failed_outbox_without_gui_action(client, send_setup, blocked_queue, monkeypatch):
     from backend.app import task_queue
 
     queue, _ = blocked_queue
     monkeypatch.setattr(task_queue, "TASK_QUEUE_MAXSIZE", 1)
-    first = client.post("/api/conversations/1/messages", json={"content": "first"})
-    second = client.post("/api/conversations/1/messages", json={"content": "second"})
+    first = client.post("/api/conversations/1/messages", json={"content": "first", "action": "send", "idempotency_key": "first"})
+    second = client.post("/api/conversations/1/messages", json={"content": "second", "action": "send", "idempotency_key": "second"})
     assert first.status_code == 200
-    assert second.status_code == 429
+    assert second.status_code == 200
+    assert second.json()["data"]["outbox"]["status"] == "failed"
     assert len(queue.all_snapshots()) == 2
     assert send_setup == []
 

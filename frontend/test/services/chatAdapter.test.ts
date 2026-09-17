@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { adaptConversationDetail, adaptConversationSummary, adaptSendMessageResult } from "@/services/chatAdapter";
+import { adaptConversationDetail, adaptConversationSummary } from "@/services/chatAdapter";
 import type { BusinessCard } from "@/types/cards";
-import type { ConversationAggregateDto, ConversationSendResultDto } from "@/types/chatTransport";
+import type { ConversationAggregateDto } from "@/types/chatTransport";
 
 const card: BusinessCard = {
   id: "card-1",
@@ -116,15 +116,4 @@ describe("chat adapter", () => {
     expect(summary.updatedAt).toBe("未知时间");
   });
 
-  it("applies the same card completion to send-message results", () => {
-    const result: ConversationSendResultDto = {
-      message: aggregate.messages[1],
-      conversation: { ...aggregate, business_cards: [card] },
-      execution: { success: null, message: "queued", task_snapshot: { task_id: "task-1", description: "send", status: "pending", message: "queued", result: null, created_at: 0, started_at: null, completed_at: null } },
-    };
-
-    expect(adaptSendMessageResult(result).message?.card).toEqual(card);
-    expect(adaptSendMessageResult(result).conversation.messages[1].card).toEqual(card);
-    expect(adaptSendMessageResult(result).execution).toEqual(result.execution);
-  });
 });

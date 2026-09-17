@@ -65,11 +65,10 @@ not an operating-system sandbox.
 
 ## Stage 0 Contract
 
-Sending and node diagnostics return an initial `pending` task snapshot with
-`success: null`. The existing status API exposes subsequent execution results.
-GUI completion does not establish platform acceptance or recipient delivery.
-Drafts remain intact. Chat-level persistent task tracking and result reconciliation
-belong to the later sending stage.
+Node diagnostics return an initial `pending` task snapshot with `success: null`.
+The status API exposes their execution results. Stage 3 replaces the original
+message-send response with a durable outbox record; GUI completion does not
+establish platform acceptance or recipient delivery. Drafts remain intact.
 
 The status-page diagnostic entries map to independent recognition-only pipelines.
 They share the GUI queue, perform no input or click, and do not override business
@@ -132,3 +131,29 @@ loads their fixtures; verify the entry path before changing test invocation rule
 
 Source snapshots are still scanned in full when changed. This avoids assuming
 that message time or source row IDs are reliable insertion/update cursors.
+
+## Stage 3 Coverage
+
+- `test_outbox_store.py` checks concurrent idempotency, immutable payloads,
+  versioned state transitions, cancellation/claim races, restart recovery,
+  conservative retry and unique local-message evidence claims.
+- `test_outbox_service.py` checks screenshot confirmation, expiry/change handling,
+  the durable send barrier, transient database failures after clicks, safe
+  result-only retries and independent cleanup after shutdown failures.
+- `test_gui_evidence.py` checks fresh screenshot jobs, full-frame lossless PNG
+  encoding, stale-image rejection, and native send-only recognition using
+  synthetic frames. Stopping and posting the send job share an admission boundary;
+  tests pause before and after posting to verify that stop cannot admit a late send.
+- `test_source_messages.py` / `test_send_verification.py` check reader pins,
+  complete baselines, strict source ownership, exact text and sender matching,
+  malformed extension data, duplicate candidates and ambiguous attempts.
+- `test_outbox_api.py` checks scoped images, no-store headers, task versions,
+  idempotent receipts and fast busy conflicts rather than delayed GUI admission.
+- Frontend outbox tests require PNG load before confirmation and preserve one
+  intent key across timeout/retry. They recover known tasks outside the recent
+  100-record list and revoke blob URLs across task/account lifetimes.
+
+The tests use synthetic frames and records. They do not validate recognition of
+real contacts, actual Alibaba delivery, or browser layout screenshots. The GUI
+flow deliberately requires the operator to inspect the recipient screenshot;
+the final automated result is only a local matching-message observation.

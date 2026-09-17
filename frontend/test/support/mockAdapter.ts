@@ -12,7 +12,8 @@ import type { AgentConsoleState, AgentPreset, AgentTestSession, DbAgentPreset } 
 import type { BusinessCard } from "@/types/cards";
 import type { ConversationDetail } from "@/types/chatCanonical";
 import type { ConversationAggregateDto } from "@/types/chatTransport";
-import type { SendMessageInput } from "@/types/chatOperations";
+import type { OutboxTask } from "@/types/chatOperations";
+import { canCancel, canRetry, frameFresh } from "@/features/chat/outbox/outboxModel";
 import type { SelfInfo } from "@/types/home";
 import type { AliIdList, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskSnapshot } from "@/types/status";
 import type { OperationsBackend } from "@/services/interfaces";
@@ -49,6 +50,15 @@ let consoleStore: AgentConsoleState = structuredClone(initialState.console);
 let agentPresetStore: AgentPreset[] = structuredClone(initialState.agentPresets);
 const translationStore = new Map<string, string>();
 let connectionStore = structuredClone(connectionSnapshot);
+const outboxStore = new Map<string, { scope: string; task: OutboxTask }>();
+const outboxScope = () => JSON.stringify([connectionStore.account.data_dir, connectionStore.account.self_ali_id]);
+
+function getMockOutbox(id: string, version?: number) {
+  const record = outboxStore.get(id);
+  if (!record || record.scope !== outboxScope()) throw new Error("任务不存在");
+  if (version !== undefined && record.task.version !== version) throw new Error("任务版本已变化");
+  return record.task;
+}
 
 function changeMockAccount() {
   connectionStore.account.epoch = crypto.randomUUID();
@@ -110,6 +120,7 @@ export const mockBackend: OperationsBackend = {
     consoleStore = structuredClone(initialState.console);
     statusStore = buildStatusSnapshot();
     translationStore.clear();
+    outboxStore.clear();
     return delay(undefined);
   },
 
@@ -171,12 +182,47 @@ export const mockBackend: OperationsBackend = {
     return delay(detail.analysis);
   },
 
-  sendMessage: async ({ conversationId, content, action = "send" }: SendMessageInput) => {
+  sendMessage: async ({ conversationId, content, action, idempotency_key }) => {
     requireMockClient();
-    const execution = executeSendMessage({ conversationId, content, action });
     const conversation = buildConversationDetail(conversationId);
-    return delay(structuredClone({ message: undefined, conversation, execution }));
+    if (!idempotency_key || !content.trim()) throw new Error("缺少提交内容或幂等键");
+    const existing = [...outboxStore.values()].find((record) => record.scope === outboxScope() && record.task.idempotency_key === idempotency_key)?.task;
+    if (existing) {
+      if (existing.content !== content || existing.action !== action || String(existing.conversation_id) !== conversationId) throw new Error("幂等键冲突");
+      return delay({ outbox: structuredClone(existing) });
+    }
+    const task: OutboxTask = {
+      id: crypto.randomUUID(), conversation_id: Number(conversationId), contact_ali_id: conversation.customer.aliId ?? "",
+      login_id: conversation.customer.loginId ?? "", content, action, idempotency_key, status: "queued", version: 1,
+      attempt: 1, phase: "search", may_have_sent: false, reason: null, created_at: Date.now() / 1000, updated_at: Date.now() / 1000,
+      screenshot_id: null, screenshot_at: null, matched_message_id: null,
+    };
+    outboxStore.set(task.id, { scope: outboxScope(), task });
+    return delay({ outbox: structuredClone(task) });
   },
+  listOutbox: (sid) => delay([...outboxStore.values()].filter((record) => record.scope === outboxScope() && String(record.task.conversation_id) === sid).map((record) => structuredClone(record.task))),
+  getOutbox: (id) => delay(structuredClone(getMockOutbox(id))),
+  confirmOutbox: async (id, version, screenshotId) => {
+    requireMockClient();
+    const task = getMockOutbox(id, version);
+    if (!frameFresh(task) || task.screenshot_id !== screenshotId) throw new Error("截图已变化或过期");
+    Object.assign(task, { status: "queued_send", version: version + 1, updated_at: Date.now() / 1000 });
+    return delay(structuredClone(task));
+  },
+  cancelOutbox: async (id, version) => {
+    const task = getMockOutbox(id, version);
+    if (!canCancel(task)) throw new Error("任务不可取消");
+    Object.assign(task, { status: "cancelled", version: version + 1, screenshot_id: null, screenshot_at: null, updated_at: Date.now() / 1000 });
+    return delay(structuredClone(task));
+  },
+  retryOutbox: async (id, version) => {
+    requireMockClient();
+    const task = getMockOutbox(id, version);
+    if (!canRetry(task)) throw new Error("任务不可重试");
+    Object.assign(task, { status: "queued", version: version + 1, attempt: task.attempt + 1, screenshot_id: null, screenshot_at: null, updated_at: Date.now() / 1000 });
+    return delay(structuredClone(task));
+  },
+  getOutboxScreenshot: async () => { throw new Error("Mock 不提供真实客户端截图"); },
 
   exportConversations: async ({ conversationIds }) => {
     const selected = conversationIds.map((id) => buildConversationDetail(id));
@@ -389,18 +435,6 @@ function buildConversationDetail(id: string): ConversationDetail {
   const conversation = conversationStore.find((item) => conversationMatchesId(item, id));
   if (!conversation) throw new Error("会话不存在");
   return adaptConversationDetail(conversation, { cards: businessCardStore });
-}
-
-function executeSendMessage(input: SendMessageInput) {
-  const action = input.action ?? "send";
-  if (action !== "send" && action !== "test") throw new Error("消息动作无效");
-  const index = conversationStore.findIndex((item) => conversationMatchesId(item, input.conversationId));
-  if (index < 0) throw new Error("会话不存在");
-  const content = input.content.trim();
-  if (!content) throw new Error("消息内容不能为空");
-
-  const task = queueMockTask(action === "send" ? "发送聊天消息" : "输入聊天草稿", String(conversationStore[index].sid));
-  return { success: null, message: task.message, task_snapshot: task };
 }
 
 function queueMockTask(description: string, target: string): TaskSnapshot {

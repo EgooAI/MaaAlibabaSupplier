@@ -2,7 +2,7 @@
 
 import { App } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { mergeMessageTranslations, messageExecutionState } from "@/domain/chat/chatModel";
+import { mergeMessageTranslations } from "@/domain/chat/chatModel";
 import type { ConversationGroupMode } from "@/domain/chat/chatModel";
 import { AccountChangedError, useAccount, useAccountBackend } from "@/features/account/AccountProvider";
 import { loadDraft, saveDraft } from "@/features/account/draftStorage";
@@ -30,7 +30,6 @@ export function useChatWorkbench() {
   const [activeConversation, setActiveConversation] = useState<ConversationDetail>();
   const [detailLoading, setDetailLoading] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [sendingConversationId, setSendingConversationId] = useState<string>();
   const [suggestions, setSuggestions] = useState<AssistantSuggestion[]>([]);
   const [suggestionOpen, setSuggestionOpen] = useState(false);
   const [analysisOpen, setAnalysisOpen] = useState(false);
@@ -41,7 +40,6 @@ export function useChatWorkbench() {
   // 并发守卫：快速切换会话时丢弃旧请求回包，各请求域独立计数。
   const activeIdRef = useRef<string | undefined>(undefined);
   const detailRequestRef = useRef(0);
-  const sendRequestRef = useRef(0);
   const translateRequestRef = useRef(0);
   const suggestionRequestRef = useRef(0);
   const analysisRequestRef = useRef(0);
@@ -50,7 +48,6 @@ export function useChatWorkbench() {
   useEffect(() => () => {
     activeIdRef.current = undefined;
     ++detailRequestRef.current;
-    ++sendRequestRef.current;
     ++translateRequestRef.current;
     ++suggestionRequestRef.current;
     ++analysisRequestRef.current;
@@ -69,7 +66,6 @@ export function useChatWorkbench() {
     const requestId = detailRequestRef.current + 1;
     detailRequestRef.current = requestId;
     activeIdRef.current = id;
-    ++sendRequestRef.current;
     ++translateRequestRef.current;
     ++suggestionRequestRef.current;
     ++analysisRequestRef.current;
@@ -247,40 +243,6 @@ export function useChatWorkbench() {
     message.success("已插入到回复框");
   }, [message, setDraft]);
 
-  const sendMessage = useCallback(async (action: "send" | "test" = "send") => {
-    const conversationId = activeConversation?.id;
-    const submittedDraft = draft.trim();
-    if (!conversationId || !submittedDraft || sendingConversationId === conversationId) return;
-    const requestId = sendRequestRef.current + 1;
-    sendRequestRef.current = requestId;
-
-    setSendingConversationId(conversationId);
-    try {
-      const result = await backend.sendMessage({ conversationId, content: submittedDraft, action });
-      if (sendRequestRef.current !== requestId || activeIdRef.current !== conversationId) return;
-      const executionState = messageExecutionState(result.execution);
-      if (executionState === "failed") {
-        message.error(`${result.execution.message || "客户端操作失败"}；请先在客户端确认实际结果，避免重复发送`);
-        return;
-      }
-      if (executionState === "pending") {
-        message.info("任务已提交，正在排队或执行；请到状态页查看任务结果，并在客户端确认实际结果");
-        return;
-      }
-
-      if (action === "test") {
-        message.info("输入测试的 GUI 操作已完成，请在客户端确认输入内容（未发送）");
-        return;
-      }
-
-      message.info("发送任务的 GUI 操作已完成，请在客户端确认消息是否实际发送；草稿已保留");
-    } catch {
-      if (sendRequestRef.current === requestId && activeIdRef.current === conversationId) message.warning("提交结果未知，请先查看任务状态并在客户端确认，避免立即重发；草稿已保留");
-    } finally {
-      setSendingConversationId((current) => current === conversationId ? undefined : current);
-    }
-  }, [activeConversation?.id, backend, draft, sendingConversationId, message]);
-
   const gotoContact = useCallback(async () => {
     const conversation = activeConversation;
     const loginId = conversation?.customer.loginId || conversation?.customer.name;
@@ -327,7 +289,6 @@ export function useChatWorkbench() {
     detailLoading,
     draft,
     setDraft,
-    sending: activeConversationId !== undefined && sendingConversationId === activeConversationId,
     selectConversation,
     translate,
     translateConversation,
@@ -345,7 +306,6 @@ export function useChatWorkbench() {
     analysisLoading: analysisState.loading,
     analysisError: analysisState.error,
     analyzeConversation,
-    sendMessage,
     groupMode,
     setGroupMode,
     activeCard,

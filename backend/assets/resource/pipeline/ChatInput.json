@@ -103,6 +103,15 @@
         },
         "next": []
     },
+    "ChatInput_SendOnly": {
+        "recognition": "DirectHit",
+        "action": "DoNothing",
+        "pre_delay": 0,
+        "post_delay": 0,
+        "next": [
+            "ChatInput_SendMessage"
+        ]
+    },
     "ChatInput_SendMessage": {
         "desc": "仅点击可用的发送按钮，不代表平台已确认发送",
         "enabled": false,

@@ -15,7 +15,7 @@ import { useChatWorkbench } from "./hooks/useChatWorkbench";
 import { DataDirBanner } from "@/features/settings/DataDirBanner";
 import { AssistantSuggestionModal } from "./modals/AssistantSuggestionModal";
 import { ChatAnalysisModal } from "./modals/ChatAnalysisModal";
-import { ChatComposer } from "./workspace/ChatComposer";
+import { OutboxWorkspace } from "./outbox/OutboxWorkspace";
 import { useAccount } from "@/features/account/AccountProvider";
 import { SyncStatus } from "@/features/account/SyncStatus";
 
@@ -105,7 +105,9 @@ function ChatWorkspace() {
             ) : null}
           </div>
           <div className="shrink-0">
-            <ChatComposer
+            <OutboxWorkspace
+              key={active.id}
+              conversation={active}
               value={workbench.draft}
               onChange={workbench.setDraft}
               translationVisible={workbench.translationVisible}
@@ -114,8 +116,6 @@ function ChatWorkspace() {
               onOpenSuggestions={workbench.openSuggestions}
               onOpenIntentAnalysis={() => void openAnalysis("intent")}
               onOpenStageAnalysis={() => void openAnalysis("stage")}
-              loading={workbench.sending}
-              onSend={workbench.sendMessage}
             />
           </div>
         </div>

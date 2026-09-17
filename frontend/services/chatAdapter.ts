@@ -1,7 +1,7 @@
 import type { BusinessCard } from "@/types/cards";
 import { formatDateTime } from "@/domain/time";
 import type { ConversationAnalysis, ConversationDetail, Conversation, ChatMessage, CustomerProfile } from "@/types/chatCanonical";
-import type { ConversationAggregateDto, ConversationAnalysisDto, ConversationMessageDto, ConversationSendResultDto, CustomerViewDto } from "@/types/chatTransport";
+import type { ConversationAggregateDto, ConversationAnalysisDto, ConversationMessageDto, CustomerViewDto } from "@/types/chatTransport";
 
 interface ChatAdapterOptions {
   cards?: BusinessCard[];
@@ -31,13 +31,6 @@ export function adaptConversationDetail(aggregate: ConversationAggregateDto | un
     messages,
     analysis: adaptAnalysis(aggregate.analysis),
   };
-}
-
-export function adaptSendMessageResult(input: ConversationSendResultDto, options: ChatAdapterOptions = {}) {
-  const conversation = adaptConversationDetail(input.conversation, options);
-  const cards = input.conversation.business_cards ?? options.cards ?? [];
-  const message = input.message ? adaptMessage(input.message, cards) : undefined;
-  return { message, conversation, execution: input.execution };
 }
 
 function adaptCustomer(aggregate: ConversationAggregateDto): CustomerProfile {

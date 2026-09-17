@@ -1,5 +1,4 @@
 import type { ChatMessage, Conversation, ConversationDetail } from "@/types/chatCanonical";
-import type { MessageExecution } from "@/types/chatOperations";
 import { formatMonthDay } from "@/domain/time";
 
 export type ConversationGroupMode = "time" | "status" | "count";
@@ -87,16 +86,6 @@ export function mergeConversationDetail(current: ConversationDetail, incoming: C
       return translatedContent === undefined ? item : { ...item, translatedContent };
     }),
   };
-}
-
-// TODO: move MessageExecution to chatCanonical to keep domain free of transport/ops DTOs.
-export function messageExecutionState(execution: MessageExecution) {
-  const status = execution.task_snapshot?.status;
-  if (status === "pending" || status === "running") return "pending";
-  if (status === "failed" || status === "succeeded") return status;
-  if (execution.success === true) return "succeeded";
-  if (execution.success === false) return "failed";
-  return "pending";
 }
 
 export function buildConversationExport(details: ConversationDetail[], now = Date.now()) {

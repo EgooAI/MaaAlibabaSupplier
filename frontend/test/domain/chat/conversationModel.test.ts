@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildConversationExport, dateGroup, dialogueCountGroup, dialogueCountOf, groupConversations, mergeConversationDetail, mergeMessageTranslations, messageExecutionState, sortConversations } from "@/domain/chat/chatModel";
+import { buildConversationExport, dateGroup, dialogueCountGroup, dialogueCountOf, groupConversations, mergeConversationDetail, mergeMessageTranslations, sortConversations } from "@/domain/chat/chatModel";
 import type { ChatMessage, Conversation, ConversationDetail } from "@/types/chatCanonical";
-import type { MessageExecution } from "@/types/chatOperations";
 
 const summary = (id: string, updatedAt: string, status: Conversation["status"] = "following"): Conversation => ({
   id,
@@ -88,29 +87,6 @@ describe("conversation domain model", () => {
 
     expect(merged.analysis).toBe(detail.analysis);
     expect(merged.messages[0]).toMatchObject({ id: "message-1", translatedContent: "Quote needed" });
-  });
-
-  it.each([false, null, true])("uses task status before execution.success=%s", (success) => {
-    for (const status of ["pending", "running", "failed", "succeeded"] as const) {
-      const terminal = status === "failed" || status === "succeeded";
-      expect(messageExecutionState({
-        success,
-        message: status,
-        task_snapshot: {
-          task_id: "task-1", description: "", status, message: status,
-          result: terminal ? [status === "succeeded", status] : null,
-          created_at: 0, started_at: status === "pending" ? null : 1, completed_at: terminal ? 2 : null,
-        },
-      })).toBe(terminal ? status : "pending");
-    }
-  });
-
-  it.each([null, undefined])("does not infer success from a missing result with snapshot=%s", (task_snapshot) => {
-    // Older or incomplete responses may omit the now-required snapshot.
-    for (const success of [null, false, true]) {
-      const execution = { success, message: "", task_snapshot } as unknown as MessageExecution;
-      expect(messageExecutionState(execution)).toBe(success === null ? "pending" : success ? "succeeded" : "failed");
-    }
   });
 
   it("exports canonical details", () => {

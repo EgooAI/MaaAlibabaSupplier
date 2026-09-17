@@ -1,7 +1,6 @@
 import type { BusinessCard } from "@/types/cards";
 import type { ConversationStatus, CustomerStage } from "@/types/chatCanonical";
 import type { ID } from "@/types/common";
-import type { TaskSnapshot } from "@/types/status";
 
 export type TransportMessageRole = "buyer" | "seller" | "system" | "card";
 
@@ -140,14 +139,4 @@ export interface ConversationAggregateDto extends SessionMeta {
   dialogue_count?: number;
   analysis?: ConversationAnalysisDto;
   business_cards?: BusinessCard[];
-}
-
-export interface ConversationSendResultDto {
-  message?: ConversationMessageDto;
-  conversation: ConversationAggregateDto;
-  execution: {
-    success: boolean | null;
-    message: string;
-    task_snapshot: TaskSnapshot;
-  };
 }

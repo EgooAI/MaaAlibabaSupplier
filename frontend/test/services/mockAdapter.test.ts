@@ -17,7 +17,7 @@ describe("mock adapter", () => {
     const connected = await mockBackend.connectClient(initial.account.epoch);
     expect(connected.capabilities.operate_client).toBe(false);
     expect(await mockBackend.listTaskSnapshots()).toEqual(beforeTasks);
-    await expect(mockBackend.sendMessage({ conversationId: "42", content: "draft", action: "test" })).rejects.toThrow("人工确认");
+    await expect(mockBackend.sendMessage({ conversationId: "42", content: "draft", action: "test", idempotency_key: "key" })).rejects.toThrow("人工确认");
     await expect(mockBackend.confirmClient(connected.account.epoch, initial.client.window_generation)).rejects.toThrow("窗口已变化");
     const confirmed = await mockBackend.confirmClient(connected.account.epoch, connected.client.window_generation);
     expect(confirmed.capabilities.operate_client).toBe(true);
@@ -46,13 +46,13 @@ describe("mock adapter", () => {
     const connected = await mockBackend.connectClient(initial.account.epoch);
     expect(connected.client.confirmed).toBe(false);
     await expect(mockBackend.runNodeTest()).resolves.toMatchObject({ success: null, task_snapshot: { status: "pending" } });
-    await expect(mockBackend.sendMessage({ conversationId: "42", content: "hello", action: "test" })).rejects.toThrow("人工确认");
+    await expect(mockBackend.sendMessage({ conversationId: "42", content: "hello", action: "test", idempotency_key: "key" })).rejects.toThrow("人工确认");
     await expect(mockBackend.gotoContact("42", "buyer")).rejects.toThrow("人工确认");
   });
   it("does not create task snapshots when sending to a missing conversation", async () => {
     const before = await mockBackend.listTaskSnapshots();
 
-    await expect(mockBackend.sendMessage({ conversationId: "missing", content: "hello", action: "send" })).rejects.toThrow("会话不存在");
+    await expect(mockBackend.sendMessage({ conversationId: "missing", content: "hello", action: "send", idempotency_key: "key" })).rejects.toThrow("会话不存在");
 
     const after = await mockBackend.listTaskSnapshots();
     expect(after).toHaveLength(before.length);
@@ -61,16 +61,14 @@ describe("mock adapter", () => {
   it.each(["send", "test"] as const)("queues %s without fabricating a sent message", async (action) => {
     const before = await mockBackend.getConversation("42");
 
-    const result = await mockBackend.sendMessage({ conversationId: "42", content: "draft only", action });
+    const input = { conversationId: "42", content: "draft only", action, idempotency_key: "key" };
+    const result = await mockBackend.sendMessage(input);
     const after = await mockBackend.getConversation("42");
 
-    expect(result.execution).toMatchObject({ success: null, task_snapshot: { status: "pending", result: null, started_at: null, completed_at: null } });
-    expect(result.message).toBeUndefined();
-    expect(result.conversation).toEqual(before);
+    expect(result.outbox).toMatchObject({ status: "queued", may_have_sent: false, idempotency_key: "key" });
     expect(after).toEqual(before);
-    const status = await mockBackend.getSystemStatus();
-    expect(status.taskSnapshots[0]).toEqual(result.execution.task_snapshot);
-    expect(status.tasks[0]).toMatchObject({ id: result.execution.task_snapshot.task_id, status: "queued" });
+    expect(await mockBackend.sendMessage(input)).toEqual(result);
+    expect(await mockBackend.listOutbox("42")).toEqual([result.outbox]);
   });
 
   it.each([undefined, "ContactSearch_GoToSearch"] as const)("queues node test %s and keeps the last completed result", async (entry) => {

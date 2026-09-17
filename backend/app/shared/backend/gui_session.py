@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from threading import local
-from typing import TypedDict
+from typing import TypeVar, TypedDict
 from uuid import uuid4
 
 from backend.app.api.envelope import AppError
@@ -36,6 +36,7 @@ class GuiSessionToken:
 
 _confirmation: GuiSessionToken | None = None
 _active_session = local()
+_Result = TypeVar("_Result")
 _MANUAL_NOTICE = (
     "Manual confirmation only, not automatic login identity verification. "
     "Account changes inside the same window cannot be detected; reconnect and confirm again."
@@ -151,11 +152,14 @@ def _validate_token(token: GuiSessionToken) -> None:
         raise AppError(status["detail"], status_code=503)
 
 
-def run_guarded(token: GuiSessionToken, fn: Callable[[], tuple[bool, str]]) -> tuple[bool, str]:
+def run_guarded(token: GuiSessionToken, fn: Callable[[], _Result]) -> _Result | tuple[bool, str]:
     """Hold the account and runner locks for the complete synchronous GUI task.
 
     Account switching in another thread must use changing_account's nonblocking
     lock. Thread-local authorization does not propagate to spawned work.
+    Results pass through unchanged; exceptions return (False, reason). Release
+    this guard before waiting for the user's screenshot confirmation, then reuse
+    the original token for the fresh-frame comparison, input and send barrier.
     """
     with account_lock, runner._run_lock:
         previous = getattr(_active_session, "token", None)

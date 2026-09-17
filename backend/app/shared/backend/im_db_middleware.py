@@ -12,7 +12,9 @@ from __future__ import annotations
 import shutil
 import sqlite3
 import struct
+import os
 from concurrent.futures import Future
+from contextlib import contextmanager
 
 from loguru import logger
 import threading
@@ -26,7 +28,7 @@ from Crypto.Cipher import AES
 from backend.app.shared.mitm.pool import SelfInfo
 from backend.app.shared.utils.im_db_decryptor import retrieve_db_key
 from backend.app.shared.backend.im_chat_db import list_msg_tables, open_readonly
-from backend.app.shared.backend.account_context import account_lock, changing_account, get_account_context, invalidate_account_context
+from backend.app.shared.backend.account_context import AccountContext, account_lock, changing_account, get_account_context, invalidate_account_context
 from backend.app.shared.backend.sync_coordinator import SyncCoordinator
 from backend.app.shared.crm import sync_im_database
 from backend.app.shared.crm.sync_store import read_sync_state
@@ -86,6 +88,7 @@ class IMDBMiddleware:
                 instance._data_dir_source: str = SOURCE_NONE
                 instance._cache_dir: Path | None = None
                 instance._cached_db_path: Path | None = None
+                instance._reader_pins: dict[Path, int] = {}
                 instance._cache_time: float = 0.0
                 instance._source_fingerprint: tuple[int, int, int, int, int] | None = None
                 instance._source_crc32: int | None = None
@@ -537,21 +540,24 @@ class IMDBMiddleware:
 
     def _cleanup_stale_caches(self, keep: Path) -> None:
         assert self._cache_dir is not None
-        protected = {keep, self._wal_cache_for(keep), self._shm_cache_for(keep)}
-        for cached in self._coordinator.pinned_paths():
-            protected.update((cached, self._wal_cache_for(cached), self._shm_cache_for(cached)))
-        if self._cached_db_path is not None:
-            # Never remove the live files out from under open readers.
-            protected.add(self._cached_db_path)
-            protected.add(self._wal_cache_for(self._cached_db_path))
-            protected.add(self._shm_cache_for(self._cached_db_path))
-        for path in self._cache_dir.glob("im_*.sqlite*"):
-            if path in protected:
-                continue
-            try:
-                path.unlink()
-            except OSError:
-                pass
+        with self._lock:
+            protected = {keep, self._wal_cache_for(keep), self._shm_cache_for(keep)}
+            for cached in self._coordinator.pinned_paths():
+                protected.update((cached, self._wal_cache_for(cached), self._shm_cache_for(cached)))
+            for cached in self._reader_pins:
+                protected.update((cached, self._wal_cache_for(cached), self._shm_cache_for(cached)))
+            if self._cached_db_path is not None:
+                # Never remove the live files out from under open readers.
+                protected.add(self._cached_db_path)
+                protected.add(self._wal_cache_for(self._cached_db_path))
+                protected.add(self._shm_cache_for(self._cached_db_path))
+            for path in self._cache_dir.glob("im_*.sqlite*"):
+                if path in protected:
+                    continue
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
 
     @staticmethod
     def _stat_pair(path: Path) -> tuple[int, int]:
@@ -797,6 +803,49 @@ class IMDBMiddleware:
         }
 
     # -- Public API ------------------------------------------------------------
+
+    @contextmanager
+    def pin_source_reader(self, context: AccountContext):
+        """Pin verified cache metadata under locks; the caller reads outside them.
+
+        This never refreshes or captures keys. Pins outlive runtime resets. Epoch
+        is intentionally excluded: local evidence can be read after a restart in
+        the same selected seller/directory scope. GUI authorization is separate.
+        """
+        with account_lock, self._lock:
+            current = get_account_context()
+            directory = os.path.normcase(str(Path(context.data_dir).expanduser().resolve()))
+            if (not context.self_ali_id or not context.data_dir
+                    or current.self_ali_id != context.self_ali_id
+                    or not current.data_dir or self._data_dir is None
+                    or os.path.normcase(str(Path(current.data_dir).expanduser().resolve())) != directory
+                    or os.path.normcase(str(self._data_dir.expanduser().resolve())) != directory):
+                raise ValueError("source_context_mismatch")
+            if (not self._auto_enabled or self._key_validation != "valid"
+                    or self._key is None or self._key_ali_id != context.self_ali_id):
+                raise ValueError("source_not_verified")
+            cached = self._cached_db_path
+            if cached is None or self._source_fingerprint is None:
+                raise ValueError("source_cache_missing")
+            source = (Path(directory) / DATA_DIR_SIGNATURE / self_sender_id(context.self_ali_id)
+                      / "database" / "im.sqlite")
+            captured = {
+                "path": cached,
+                "origin": {"seller": context.self_ali_id, "data_dir": directory,
+                           "source_path": os.path.normcase(str(source))},
+                "source_revision": self._source_revision,
+                "signature": (self._source_fingerprint, self._source_crc32, self._source_wal_crc32),
+            }
+            self._reader_pins[cached] = self._reader_pins.get(cached, 0) + 1
+        try:
+            yield captured
+        finally:
+            with self._lock:
+                remaining = self._reader_pins[cached] - 1
+                if remaining:
+                    self._reader_pins[cached] = remaining
+                else:
+                    del self._reader_pins[cached]
 
     def key_status(self) -> tuple[bool, str]:
         """Return ``(has_key, source)`` for the selected identity (no live lookup)."""

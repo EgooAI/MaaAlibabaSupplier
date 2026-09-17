@@ -13,11 +13,13 @@ from maa.controller import (
     MaaWin32ScreencapMethodEnum,
     Win32Controller,
 )
+from maa.job import TaskJob
 from maa.resource import Resource
 from maa.tasker import Tasker
 from maa.toolkit import Toolkit
 
 from backend.app.shared.backend.account_context import account_lock
+from backend.app.shared.backend.gui_evidence import ClientFrame, frame_from_image
 
 # Must match backend/assets/interface.json controller config.
 _WIN_CLASS_RE = re.compile(r"Qt")
@@ -159,6 +161,29 @@ def run_node(entry: str, pipeline_override: dict | None = None) -> tuple[bool, s
             return False, str(exc)
 
 
+def capture_client_frame() -> ClientFrame:
+    """Capture with zero input inside run_guarded; failures never return old evidence.
+
+    The service owns timestamps, expiry and task-specific storage paths. This
+    function raises on failure; run_guarded reports it as (False, reason).
+    """
+    from backend.app.api.envelope import AppError
+    from backend.app.shared.backend import gui_session
+
+    with account_lock, _run_lock:
+        token = getattr(gui_session._active_session, "token", None)
+        if token is None:
+            raise AppError("Screenshot capture requires run_guarded.", status_code=409)
+        gui_session._validate_token(token)
+        job = _tasker.controller.post_screencap().wait()
+        # MaaFW's result getter reads cached_image even after a failed capture.
+        if not job.succeeded:
+            raise RuntimeError("Fresh client screenshot failed.")
+        frame = frame_from_image(job.get())
+        gui_session._validate_token(token)
+        return frame
+
+
 def goto_contact(login_id: str) -> tuple[bool, str]:
     """Navigate to a contact's chat window via MaaFW ContactSearch pipeline."""
     override = {
@@ -191,6 +216,44 @@ def chat_input_override(text: str, *, send: bool) -> dict:
 def chat_input(text: str) -> tuple[bool, str]:
     """Type text into the chat input box via MaaFW ChatInput pipeline (no send)."""
     return run_node("ChatInput", chat_input_override(text, send=False))
+
+
+def submit_send() -> TaskJob:
+    """Post once without waiting, inside run_guarded and the service admission lock.
+
+    Persist send uncertainty first. A post exception cannot prove no action was
+    submitted. Keep the outer GUI/account guard until wait_send has completed.
+    """
+    from backend.app.api.envelope import AppError
+    from backend.app.shared.backend import gui_session
+
+    with account_lock, _run_lock:
+        token = getattr(gui_session._active_session, "token", None)
+        if token is None:
+            raise AppError("GUI writes require a manually confirmed session and run_guarded.", status_code=409)
+        gui_session._validate_token(token)
+        return _tasker.post_task("ChatInput_SendOnly", {"ChatInput_SendMessage": {"enabled": True}})
+
+
+def wait_send(job: TaskJob) -> tuple[bool, str]:
+    """Wait for an already posted job; never submit or replay any GUI action."""
+    try:
+        detail = job.wait().get()
+        if detail and detail.status.succeeded:
+            return True, "GUI send completed (not a delivery confirmation)."
+        return False, f"Send task status: {detail.status}" if detail else "No send task result"
+    except Exception as exc:
+        logger.error("MaaFW send wait failed: {}", exc)
+        return False, str(exc)
+
+
+def click_send() -> tuple[bool, str]:
+    """Synchronous guarded send for callers without a separate admission lock."""
+    try:
+        return wait_send(submit_send())
+    except Exception as exc:
+        logger.error("MaaFW send submission failed: {}", exc)
+        return False, str(exc)
 
 
 def chat_send(text: str) -> tuple[bool, str]:

@@ -1,13 +1,11 @@
 "use client";
 
-import { Button, Modal, Typography } from "antd";
-import { useState } from "react";
 import { MessageComposer } from "@/components/MessageComposer";
 import { useAccount } from "@/features/account/AccountProvider";
 
 type ChatToolKey = "translation" | "retranslate" | "suggestions" | "intent-analysis" | "stage-analysis";
 
-type ChatComposerProps = {
+export type ChatComposerProps = {
   value: string;
   onChange: (value: string) => void;
   translationVisible: boolean;
@@ -17,7 +15,7 @@ type ChatComposerProps = {
   onOpenIntentAnalysis: () => void;
   onOpenStageAnalysis: () => void;
   loading: boolean;
-  onSend: (action: "send" | "test") => void;
+  onSend: () => void;
 };
 
 export function ChatComposer({
@@ -32,7 +30,6 @@ export function ChatComposer({
   loading,
   onSend,
 }: ChatComposerProps) {
-  const [confirmOpen, setConfirmOpen] = useState(false);
   const { snapshot, blocked } = useAccount();
   const canOperate = !blocked && Boolean(snapshot?.capabilities.operate_client);
   const canUseAi = !blocked && Boolean(snapshot?.capabilities.use_ai);
@@ -54,12 +51,6 @@ export function ChatComposer({
     if (toolKey === "stage-analysis") onOpenStageAnalysis();
   }
 
-  function handleConfirm(action: "send" | "test") {
-    if (!canOperate) return;
-    setConfirmOpen(false);
-    onSend(action);
-  }
-
   return (
     <>
       <MessageComposer
@@ -70,26 +61,8 @@ export function ChatComposer({
         onToolClick={handleToolClick}
         placeholder="输入卖家回复，或插入 AI 建议话术..."
         loading={loading}
-        onSend={() => setConfirmOpen(true)}
+        onSend={onSend}
       />
-      <Modal
-        title="确认发送"
-        open={confirmOpen}
-        destroyOnHidden
-        onCancel={() => setConfirmOpen(false)}
-        footer={[
-          <Button key="cancel" onClick={() => setConfirmOpen(false)}>取消</Button>,
-          <Button key="test" disabled={!canOperate} loading={loading} onClick={() => handleConfirm("test")}>测试（仅填入）</Button>,
-          <Button key="send" type="primary" disabled={!canOperate} loading={loading} onClick={() => handleConfirm("send")}>确认发送</Button>,
-        ]}
-      >
-        <Typography.Paragraph>
-          测试仅将内容填入客户端输入框而不发送；确认发送将通过自动化跳转到该联系人并发送。
-        </Typography.Paragraph>
-        <Typography.Paragraph type="secondary" ellipsis={{ rows: 4 }}>
-          {value.trim() || "（空内容）"}
-        </Typography.Paragraph>
-      </Modal>
     </>
   );
 }

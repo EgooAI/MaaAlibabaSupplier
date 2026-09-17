@@ -30,6 +30,7 @@ def test_status_polling_never_initializes_and_connect_has_zero_input(sdk):
 @pytest.mark.parametrize("operation", [
     lambda: runner.chat_send("text"),
     lambda: runner.chat_input("text"),
+    lambda: runner.click_send(),
     lambda: runner.goto_contact("buyer"),
     lambda: runner.run_node("ChatInput_SendMessage"),
     lambda: runner.run_node("Diagnostics_Unknown"),

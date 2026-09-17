@@ -1,6 +1,6 @@
 import type { DbAgentPreset, DocumentLlmConfig } from "@/types/agent";
-import { adaptConversationDetail, adaptConversationSummary, adaptSendMessageResult } from "@/services/chatAdapter";
-import type { ConversationAggregateDto, ConversationSendResultDto } from "@/types/chatTransport";
+import { adaptConversationDetail, adaptConversationSummary } from "@/services/chatAdapter";
+import type { ConversationAggregateDto } from "@/types/chatTransport";
 import type { ConversationRevision } from "@/types/chatOperations";
 import type { ApiResponse } from "@/types/common";
 import type { OperationsBackend } from "./interfaces";
@@ -112,11 +112,11 @@ function prepareAccountRequest(path: string, init?: RequestInit) {
     if (!new Headers(init?.headers).get("X-Account-Epoch")) throw new AccountChangedError();
     return { init };
   }
-  const scoped = path === "/api/settings/connection/retry" || /^\/api\/(conversations(?:\/|$)|messages(?:\/|$)|self-info(?:\/|$)|cache\/reset(?:\/|$)|status\/node-test(?:\/|$))/.test(path);
+  const scoped = path === "/api/settings/connection/retry" || /^\/api\/(outbox(?:\/|$)|conversations(?:\/|$)|messages(?:\/|$)|self-info(?:\/|$)|cache\/reset(?:\/|$)|status\/node-test(?:\/|$))/.test(path);
   if (!scoped) return { init };
   const ticket = captureAccount();
   const { capabilities, client } = accountSession.get().snapshot!;
-  const operates = /\/goto-contact$/.test(path) || (/\/conversations\/[^/]+\/messages$/.test(path) && init?.method === "POST");
+  const operates = /\/goto-contact$/.test(path) || (/\/conversations\/[^/]+\/messages$/.test(path) && init?.method === "POST") || /\/outbox\/[^/]+\/(confirm|retry)$/.test(path);
   const usesAi = /\/(suggestions|analysis|translate|retranslate)$/.test(path) || (path === "/api/messages/translations" && init?.method === "POST");
   if (operates && !capabilities.operate_client) throw new Error("请先在设置中接入客户端并人工确认卖家身份");
   if (path === "/api/status/node-test" && !client.connected) throw new Error("请先在设置中接入客户端，再运行只读界面检查");
@@ -154,9 +154,32 @@ export const httpBackend: OperationsBackend = {
   regenerateTranslation: (input) => requestJson("/api/messages/retranslate", { method: "POST", body: JSON.stringify(input) }),
   getAssistantSuggestions: (conversationId) => requestJson(`/api/conversations/${encodeURIComponent(conversationId)}/suggestions`),
   analyzeConversation: (conversationId) => requestJson(`/api/conversations/${encodeURIComponent(conversationId)}/analysis`),
-  sendMessage: async (input) => {
-    const result = await requestJson<ConversationSendResultDto>(`/api/conversations/${encodeURIComponent(input.conversationId)}/messages`, { method: "POST", body: JSON.stringify(input) });
-    return adaptSendMessageResult(result);
+  sendMessage: async ({ conversationId, ...input }) => {
+    if (!input.idempotency_key?.trim()) throw new Error("提交消息必须提供已持久化的幂等键");
+    return requestJson(`/api/conversations/${encodeURIComponent(conversationId)}/messages`, { method: "POST", body: JSON.stringify(input) });
+  },
+  listOutbox: (id) => requestJson(`/api/conversations/${encodeURIComponent(id)}/outbox`, { cache: "no-store" }),
+  getOutbox: (id) => requestJson(`/api/outbox/${encodeURIComponent(id)}`, { cache: "no-store" }),
+  confirmOutbox: (id, version, screenshotId) => requestJson(`/api/outbox/${encodeURIComponent(id)}/confirm`, { method: "POST", body: JSON.stringify({ version, screenshot_id: screenshotId }) }),
+  cancelOutbox: (id, version) => requestJson(`/api/outbox/${encodeURIComponent(id)}/cancel`, { method: "POST", body: JSON.stringify({ version }) }),
+  retryOutbox: (id, version) => requestJson(`/api/outbox/${encodeURIComponent(id)}/retry`, { method: "POST", body: JSON.stringify({ version }) }),
+  getOutboxScreenshot: async (id, screenshotId, version) => {
+    const path = `/api/outbox/${encodeURIComponent(id)}/screenshot/${encodeURIComponent(screenshotId)}?version=${encodeURIComponent(version)}`;
+    const account = prepareAccountRequest(path, { cache: "no-store" });
+    try {
+      const response = await fetch(path, timeoutSignal(account.init));
+      // Frames require an explicit matching epoch, including on cached/proxied responses.
+      if (response.headers.get("X-Account-Epoch") !== account.ticket!.epoch) throw new AccountChangedError();
+      account.ticket!.assertCurrent();
+      if (!response.ok) throw new ApiError("截图不可用，请刷新任务", path, { status: response.status });
+      if (response.headers.get("Content-Type")?.split(";")[0] !== "image/png") throw new ApiError("截图格式无效", path);
+      const blob = await response.blob();
+      account.ticket!.assertCurrent();
+      return blob;
+    } catch (error) {
+      account.ticket!.assertCurrent();
+      throw error;
+    }
   },
   exportConversations: (input) => requestJson("/api/conversations/export", { method: "POST", body: JSON.stringify(input) }),
   gotoContact: (conversationId, loginId) => requestJson(`/api/conversations/${encodeURIComponent(conversationId)}/goto-contact`, { method: "POST", body: JSON.stringify({ login_id: loginId }) }),

@@ -74,7 +74,7 @@ describe("http adapter contract", () => {
     globalThis.fetch = fetchMock;
     accountSession.suspend();
     await expect(httpBackend.retryConnection("mock-1")).rejects.toThrow("账号状态已变化");
-    await expect(httpBackend.sendMessage({ conversationId: "42", content: "draft" })).rejects.toThrow("账号状态已变化");
+    await expect(httpBackend.sendMessage({ conversationId: "42", content: "draft", action: "send", idempotency_key: "key" })).rejects.toThrow("账号状态已变化");
     expect(fetchMock).not.toHaveBeenCalled();
     accountSession.accept(connectionSnapshot);
     await httpBackend.retryConnection("mock-1");
@@ -101,7 +101,7 @@ describe("http adapter contract", () => {
     globalThis.fetch = vi.fn();
     accountSession.invalidate();
     await expect(httpBackend.getSelfInfo()).rejects.toThrow("账号状态已变化");
-    await expect(httpBackend.sendMessage({ conversationId: "42", content: "hello" })).rejects.toThrow("账号状态已变化");
+    await expect(httpBackend.sendMessage({ conversationId: "42", content: "hello", action: "send", idempotency_key: "key" })).rejects.toThrow("账号状态已变化");
     await expect(httpBackend.resetCache()).rejects.toThrow("账号状态已变化");
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -109,7 +109,7 @@ describe("http adapter contract", () => {
   it.each(["send", "test"] as const)("blocks %s before manual client confirmation", async (action) => {
     accountSession.accept({ ...structuredClone(connectionSnapshot), client: { ...connectionSnapshot.client, connected: true } });
     globalThis.fetch = vi.fn();
-    await expect(httpBackend.sendMessage({ conversationId: "42", content: "hello", action })).rejects.toThrow("人工确认");
+    await expect(httpBackend.sendMessage({ conversationId: "42", content: "hello", action, idempotency_key: "key" })).rejects.toThrow("人工确认");
     await expect(httpBackend.gotoContact("42", "buyer")).rejects.toThrow("人工确认");
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -172,18 +172,15 @@ describe("http adapter contract", () => {
     await expect(httpBackend.getSelfInfo()).rejects.toThrow("账号状态已变化");
   });
 
-  it.each([false, null])("preserves queued message execution.success=%s and the conversation/message payload", async (success) => {
-    const execution = { success, message: "queued", task_snapshot: { task_id: "task-1", description: "send", status: "pending", message: "queued", result: null, created_at: 0, started_at: null, completed_at: null } };
-    const message = { message: { external_mid: "message-1", sid: 42, sender: 1, read: true, content: "hello", type: "text" }, created_at: "2026-09-08 10:00", role: "seller" };
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: { conversation: aggregate, message, execution } })));
+  it("submits the required idempotency key and returns only the outbox receipt", async () => {
+    const outbox = { id: "task-1", status: "queued", idempotency_key: "key" };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: { outbox } })));
     globalThis.fetch = fetchMock;
 
-    const input = { conversationId: "42", content: "hello", action: "send" as const };
+    const input = { conversationId: "42", content: "hello", action: "send" as const, idempotency_key: "key", draft_version: 2 };
     const result = await httpBackend.sendMessage(input);
-    expect(result.execution).toEqual(execution);
-    expect(result.conversation.id).toBe("42");
-    expect(result.message).toMatchObject({ content: "hello", role: "seller" });
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(input);
+    expect(result).toEqual({ outbox });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ content: "hello", action: "send", idempotency_key: "key", draft_version: 2 });
   });
 
   it.each([undefined, "ChatInput_GoToInput", "ContactSearch_GoToSearch"] as const)("submits node entry %s and preserves the asynchronous receipt", async (entry) => {

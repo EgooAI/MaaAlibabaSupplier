@@ -61,6 +61,10 @@ def pytest_configure(config):
 
 
 def _cleanup_runtime():
+    outbox = sys.modules.get("backend.app.shared.backend.outbox_service")
+    if outbox is not None:
+        outbox.stop_outbox_service()
+
     coordinator = sys.modules.get("backend.app.shared.backend.sync_coordinator")
     if coordinator is not None:
         coordinator.stop_sync_service()

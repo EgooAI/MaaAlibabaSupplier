@@ -14,13 +14,15 @@ from sqlmodel import Session, select
 from backend.app.api.envelope import AppError, api_error, ok, user_message
 from backend.app.api.account_scope import AccountRoute, request_epoch
 from backend.app.api.connection import has_selected_archive
+from backend.app.api.routers.outbox import public_task
 from backend.app.shared.backend.account_context import get_account_context
+from backend.app.shared.backend.outbox_service import get_outbox_service
 from backend.app.shared.backend.gui_session import capture_gui_session, run_guarded
 from backend.app.shared.agent.inputs import build_analysis_input
 from backend.app.shared.agent.runner import run_chat_tool_agent
 from backend.app.shared.agent.suggestions import generate_reply_suggestions
 from backend.app.shared.agent.system_agents import CHAT_CUSTOMER_STAGE_AGENT_APID
-from backend.app.shared.backend.maafw_runner import chat_input, chat_send, goto_contact
+from backend.app.shared.backend.maafw_runner import goto_contact
 from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
 from backend.app.shared.chat_format import (
     business_card_from_message,
@@ -59,7 +61,9 @@ class GotoContactInput(BaseModel):
 
 class SendMessageInput(BaseModel):
     content: str = Field(min_length=1)
-    action: Literal["send", "test"] = "send"
+    action: Literal["send", "test"]
+    idempotency_key: str = Field(min_length=1, max_length=128, pattern=r"\S")
+    draft_version: int | None = Field(default=None, ge=0, strict=True)
 
 
 class ExportConversationsInput(BaseModel):
@@ -464,43 +468,25 @@ def send_message(conversation_id: int, body: SendMessageInput) -> dict:
     content = body.content.strip()
     if not content:
         raise AppError("消息内容不能为空", status_code=422)
-    action = body.action
-    token = capture_gui_session(request_epoch.get())
     self_ali_id = _ready()
+    context = get_account_context()
+    if not context.data_dir:
+        raise AppError("请先在设置页选择数据目录。", status_code=503)
     conv = crm_get_conversation_detail(self_ali_id, conversation_id)
     if conv is None:
         raise AppError("会话不存在", status_code=404)
+    if not conv.contact_ali_id or not conv.contact_ali_id.strip():
+        raise AppError("会话缺少联系人身份，无法安全跳转客户端", status_code=503)
     user = crm_get_user_info(conv.contact_ali_id)
     login_id = (user.login_id if user and user.login_id else "").strip()
     if not login_id:
         raise AppError("联系人缺少 login_id，无法安全跳转客户端", status_code=503)
 
-    def _run() -> tuple[bool, str]:
-        reached, message = goto_contact(login_id)
-        if not reached:
-            return False, message
-        if action == "test":
-            return chat_input(content)
-        return chat_send(content)
-
-    # Finish response preparation before accepting any GUI side effect.
-    try:
-        aggregate = _build_aggregate(CRMAdapter(), self_ali_id, conv)
-    except AppError:
-        raise
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
-    snap = get_task_queue().enqueue(lambda: run_guarded(token, _run), description=f"send({action}) conversation={conversation_id}")
-    return ok({
-        "message": None,
-        "conversation": aggregate,
-        "execution": {
-            "success": None,
-            "message": "任务已提交，请在状态页查看执行结果",
-            "task_snapshot": _snap_to_dict(snap),
-        },
-    })
+    task = get_outbox_service().submit(
+        context, conversation_id, conv.contact_ali_id, login_id,
+        content, body.action, body.idempotency_key, draft_version=body.draft_version,
+    )
+    return ok({"outbox": public_task(task)})
 
 
 @router.get("/api/conversations/{conversation_id}/suggestions")

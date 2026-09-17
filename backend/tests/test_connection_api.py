@@ -16,7 +16,7 @@ from backend.app.api import account_scope, connection, main
 from backend.app.api.account_scope import AccountRoute
 from backend.app.api.envelope import AppError, ok
 from backend.app.api.routers import conversations, messages, settings, status
-from backend.app.shared.backend import account_context, gui_session
+from backend.app.shared.backend import account_context, gui_session, outbox_service
 from backend.app.shared.backend import im_db_middleware as middleware
 from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
 from backend.app.shared.backend.im_chat_db import ContactConv, MessageRow
@@ -502,14 +502,20 @@ def test_revision_keeps_archive_readable_after_worker_detects_invalid_key(client
 
 
 @pytest.mark.parametrize("path,body", [
-    ("/api/conversations/1/messages", {"content": "hello"}),
-    ("/api/conversations/1/messages", {"content": "hello", "action": "test"}),
+    ("/api/conversations/1/messages", {"content": "hello", "action": "send", "idempotency_key": "key"}),
+    ("/api/conversations/1/messages", {"content": "hello", "action": "test", "idempotency_key": "key"}),
     ("/api/conversations/1/goto-contact", {"login_id": "buyer-login"}),
 ])
 def test_gui_writes_require_manual_confirmation(client, sdk, chat, path, body):
     connect(client)
     response = client.post(path, json=body)
-    assert response.status_code == 409
+    if path.endswith("/messages"):
+        assert response.status_code == 200
+        task = response.json()["data"]["outbox"]
+        assert task["status"] == "failed" and not task["may_have_sent"]
+        assert "人工确认" in task["reason"]
+    else:
+        assert response.status_code == 409
     assert TaskQueue._instance is None
     assert not sdk.calls
 
@@ -519,7 +525,7 @@ def test_send_rejects_missing_login_and_goto_rejects_unrelated_target(client, sd
     response = client.post("/api/conversations/1/goto-contact", json={"login_id": "another-buyer"})
     assert response.status_code == 409
     monkeypatch.setattr(conversations, "crm_get_user_info", lambda *args: SimpleNamespace(login_id=""))
-    response = client.post("/api/conversations/1/messages", json={"content": "hello"})
+    response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": "send", "idempotency_key": "key"})
     assert response.status_code == 503
     assert TaskQueue._instance is None
     assert not sdk.calls
@@ -528,6 +534,7 @@ def test_send_rejects_missing_login_and_goto_rejects_unrelated_target(client, sd
 @pytest.mark.parametrize("change", ["account", "reconnect", "window"])
 def test_queued_send_fails_when_session_expires(client, sdk, chat, monkeypatch, change):
     connect(client, confirm=True)
+    context = account_context.get_account_context()
     queue = TaskQueue()
     entered, release = Event(), Event()
 
@@ -539,9 +546,9 @@ def test_queued_send_fails_when_session_expires(client, sdk, chat, monkeypatch, 
     queue.enqueue(block, description="gate")
     assert entered.wait(2)
     try:
-        response = client.post("/api/conversations/1/messages", json={"content": "hello"})
+        response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": "send", "idempotency_key": "key"})
         assert response.status_code == 200, response.text
-        task_id = response.json()["data"]["execution"]["task_snapshot"]["task_id"]
+        task_id = response.json()["data"]["outbox"]["id"]
         if change == "account":
             response = client.put("/api/settings/ali-id", json={"ali_id": "seller-b"})
             assert response.status_code == 200
@@ -552,14 +559,14 @@ def test_queued_send_fails_when_session_expires(client, sdk, chat, monkeypatch, 
     finally:
         release.set()
         queue.shutdown()
-    assert queue.get(task_id).status == TaskStatus.FAILED
+    failed = outbox_service.get_outbox_service().get(context, task_id)
+    assert failed["status"] == "failed"
     assert not sdk.calls
     monkeypatch.setattr(status, "get_task_queue", lambda: queue)
     tasks = client.get("/api/status/tasks").json()["data"]
-    failed = next(task for task in tasks if task["task_id"] == task_id)
-    reason = "账号已切换" if change == "account" else "授权已失效"
-    assert reason in failed["message"]
-    assert failed["result"][1] == failed["message"]
+    assert all(not task["description"].startswith("Outbox ") for task in tasks)
+    reason = "Account context changed" if change == "account" else "GUI session expired"
+    assert reason in failed["reason"]
 
 
 @pytest.mark.parametrize("operation", ["account", "directory", "key", "connect", "retry", "confirm"])
@@ -766,21 +773,29 @@ def test_queued_diagnostic_cannot_run_for_next_account(client, sdk):
     assert not sdk.calls
 
 
-@pytest.mark.parametrize("action,send", [("send", True), ("test", False)])
-def test_confirmed_send_runs_real_guard_with_fake_sdk(client, sdk, chat, action, send):
+@pytest.mark.parametrize("action", ["send", "test"])
+def test_confirmed_submission_only_navigates_with_fake_sdk(client, sdk, chat, monkeypatch, action):
+    import numpy as np
+    from backend.app.shared.backend.gui_evidence import frame_from_image
+
+    monkeypatch.setattr(outbox_service.runner, "capture_client_frame", lambda: frame_from_image(np.zeros((4, 5, 3), dtype=np.uint8)))
     connect(client, confirm=True)
-    response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": action})
+    response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": action, "idempotency_key": "key"})
     assert response.status_code == 200, response.text
-    task_id = response.json()["data"]["execution"]["task_snapshot"]["task_id"]
+    task_id = response.json()["data"]["outbox"]["id"]
     queue = TaskQueue._instance
     queue.shutdown()
-    assert queue.get(task_id).status == TaskStatus.SUCCEEDED
-    assert [entry for entry, _ in sdk.calls] == ["ContactSearch", "ChatInput"]
+    task = client.get(f"/api/outbox/{task_id}").json()["data"]
+    assert task["status"] == "awaiting_confirmation" and not task["may_have_sent"]
+    assert [entry for entry, _ in sdk.calls] == ["ContactSearch"]
     assert sdk.calls[0][1]["ContactSearch_InputText"]["action"]["param"]["input_text"] == "buyer-login"
-    assert sdk.calls[1][1]["ChatInput_SendMessage"]["enabled"] is send
 
 
 def test_running_send_returns_task_id_and_all_observers_remain_responsive(client, sdk, chat, monkeypatch):
+    import numpy as np
+    from backend.app.shared.backend.gui_evidence import frame_from_image
+
+    monkeypatch.setattr(outbox_service.runner, "capture_client_frame", lambda: frame_from_image(np.zeros((4, 5, 3), dtype=np.uint8)))
     connect(client, confirm=True)
     queue = TaskQueue()
     entered, release = Event(), Event()
@@ -807,33 +822,35 @@ def test_running_send_returns_task_id_and_all_observers_remain_responsive(client
     monkeypatch.setattr(status.status_mod, "_check_port", lambda host, port: status.status_mod.NetworkStatus(False, host, port, None, "测试离线"))
     with ThreadPoolExecutor(max_workers=1) as executor:
         try:
-            request = executor.submit(client.post, "/api/conversations/1/messages", json={"content": "hello"})
+            request = executor.submit(client.post, "/api/conversations/1/messages", json={"content": "hello", "action": "send", "idempotency_key": "key"})
             assert entered.wait(2)
             response = request.result(timeout=2)
             assert response.status_code == 200, response.text
-            task_id = response.json()["data"]["execution"]["task_snapshot"]["task_id"]
-            assert queue.get(task_id).status == TaskStatus.RUNNING
+            task_id = response.json()["data"]["outbox"]["id"]
+            service = outbox_service.get_outbox_service()
+            context = account_context.get_account_context()
+            assert service.get(context, task_id)["status"] == "navigating"
             acquired = account_context.account_lock.acquire(blocking=False)
             if acquired:
                 account_context.account_lock.release()
             assert not acquired
-            for path in ("/api/settings/connection", "/api/status", "/api/status/tasks", "/api/status/user"):
+            for path in ("/api/settings/connection", "/api/status", "/api/status/tasks", "/api/status/user", f"/api/outbox/{task_id}", "/api/conversations/1/outbox"):
                 response = executor.submit(client.get, path).result(timeout=2)
                 assert response.status_code == 200, response.text
-                assert queue.get(task_id).status == TaskStatus.RUNNING
+                assert service.get(context, task_id)["status"] == "navigating"
                 assert not release.is_set()
                 data = response.json()["data"]
                 if path == "/api/settings/connection":
                     assert data["client"]["confirmed"]
                     assert "操作正在执行" in data["client"]["detail"]
                 elif path == "/api/status/tasks":
-                    assert next(task for task in data if task["task_id"] == task_id)["status"] == "running"
+                    assert all(not task["description"].startswith("Outbox ") for task in data)
                 elif path == "/api/status":
-                    assert next(task for task in data["tasks"] if task["id"] == task_id)["status"] == "running"
+                    assert all(not task["type"].startswith("Outbox ") for task in data["tasks"])
         finally:
             release.set()
             queue.shutdown()
-    assert queue.get(task_id).status == TaskStatus.SUCCEEDED
+    assert service.get(context, task_id)["status"] == "awaiting_confirmation"
 
 
 @pytest.mark.parametrize("phase", ["directory", "source", "archive", "client", "model"])
@@ -1016,9 +1033,10 @@ def test_connection_details_and_guard_errors_are_chinese(client, sdk, chat):
     assert "尚未验证" in steps["model"]["detail"]
     assert "密钥" in steps["key"]["detail"]
     assert "存档" in steps["crm"]["detail"]
-    response = client.post("/api/conversations/1/messages", json={"content": "hello"})
-    assert response.status_code == 409
-    assert response.json()["msg"] == "请先人工确认所选账号与客户端窗口一致。"
+    response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": "send", "idempotency_key": "key"})
+    assert response.status_code == 200
+    assert response.json()["data"]["outbox"]["status"] == "failed"
+    assert response.json()["data"]["outbox"]["reason"] == "请先人工确认所选账号与客户端窗口一致。"
     sdk.windows = [window(2)]
     response = client.post("/api/settings/connection/confirm", json={
         "epoch": client.headers["X-Account-Epoch"], "window_generation": snapshot["client"]["window_generation"],

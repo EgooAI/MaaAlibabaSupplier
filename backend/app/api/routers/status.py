@@ -112,7 +112,7 @@ def _build_system_snapshot() -> dict:
     receiver = asdict(status_mod.check_mitm_receiver())
     data_dir = status_mod.check_data_dir_status()
     im_sync = status_mod.check_im_sync_status()
-    snaps = get_task_queue().all_snapshots()
+    snaps = [s for s in get_task_queue().all_snapshots() if not s.description.startswith("Outbox ")]
     node = _last_node_result
     if get_account_context() != context:
         raise AppError("读取系统状态期间账号已切换，请刷新后重试。", status_code=409)
@@ -185,7 +185,8 @@ def status_receiver() -> dict:
 
 @router.get("/api/status/tasks")
 def status_tasks() -> dict:
-    return ok([_snapshot_to_task_snapshot(s) for s in get_task_queue().all_snapshots()])
+    return ok([_snapshot_to_task_snapshot(s) for s in get_task_queue().all_snapshots()
+               if not s.description.startswith("Outbox ")])
 
 
 @router.get("/api/status")
