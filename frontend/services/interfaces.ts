@@ -1,5 +1,6 @@
 import type { AgentConsoleState, AgentTestInput, AgentTestResult, AgentTestSession, DbAgentPreset, DocumentLlmConfig, SystemAgentDefinition } from "@/types/agent";
-import type { AssistantSuggestion, Conversation, ConversationAnalysis, ConversationDetail } from "@/types/chatCanonical";
+import type { AssistantSuggestion, ConversationAnalysis, ConversationDetail } from "@/types/chatCanonical";
+import type { ConversationPage, ConversationQuery, InboxOverview, InboxSettings, ReadReceipt } from "@/types/inbox";
 import type { ExportConversationsInput, ExportConversationsResult, RequestTranslationsInput, RequestTranslationsResult, SendMessageInput, SendMessageResult, TranslateMessageInput, TranslateMessageResult, ConversationRevision } from "@/types/chatOperations";
 import type { SelfInfo } from "@/types/home";
 import type { OutboxTask } from "@/types/chatOperations";
@@ -19,7 +20,11 @@ export interface OperationsBackend {
   requestTranslations(input: RequestTranslationsInput): Promise<RequestTranslationsResult>;
   getTranslation(text: string): Promise<string | null>;
 
-  listConversations(): Promise<Conversation[]>;
+  listConversations(query?: ConversationQuery): Promise<ConversationPage>;
+  markConversationRead(id: string, readSnapshot: string): Promise<ReadReceipt>;
+  getInboxOverview(): Promise<InboxOverview>;
+  getInboxSettings(): Promise<InboxSettings>;
+  saveInboxSettings(timeoutSeconds: number): Promise<InboxSettings>;
   // Pure read of committed revision and sync status, including stale archives.
   getConversationRevision(): Promise<ConversationRevision>;
   getConversation(id: string): Promise<ConversationDetail>;

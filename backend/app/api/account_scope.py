@@ -25,7 +25,7 @@ def is_account_setting(path: str) -> bool:
 
 def is_account_path(path: str) -> bool:
     return is_account_setting(path) or any(path == prefix or path.startswith(prefix + "/") for prefix in (
-        "/api/conversations", "/api/messages", "/api/outbox", "/api/self-info",
+        "/api/conversations", "/api/inbox", "/api/messages", "/api/outbox", "/api/self-info",
         "/api/sync-state", "/api/cache/reset", "/api/status/node-test",
     ))
 
@@ -41,11 +41,11 @@ class AccountRoute(APIRoute):
     def __init__(self, path, endpoint, **kwargs):
         if is_account_path(path) and not getattr(endpoint, "_account_scoped", False):
             original = endpoint
-            reject_busy = "POST" in (kwargs.get("methods") or ()) and path in {
+            reject_busy = ("PUT" in (kwargs.get("methods") or ()) and path == "/api/inbox/settings") or ("POST" in (kwargs.get("methods") or ()) and path in {
                 "/api/conversations/{conversation_id}/messages",
                 "/api/outbox/{task_id}/confirm",
                 "/api/outbox/{task_id}/retry",
-            }
+            })
 
             @wraps(original)
             def endpoint(*args, **values):

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildConversationExport, dateGroup, dialogueCountGroup, dialogueCountOf, groupConversations, mergeConversationDetail, mergeMessageTranslations, sortConversations } from "@/domain/chat/chatModel";
 import type { ChatMessage, Conversation, ConversationDetail } from "@/types/chatCanonical";
 
-const summary = (id: string, updatedAt: string, status: Conversation["status"] = "following"): Conversation => ({
+const summary = (id: string, updatedAt: string, replyState: Conversation["replyState"] = "waiting_customer"): Conversation => ({
   id,
   customer: {
     id,
@@ -19,9 +19,9 @@ const summary = (id: string, updatedAt: string, status: Conversation["status"] =
   },
   latestMessage: "最新消息",
   updatedAt,
-  unreadCount: status === "unread" ? 1 : 0,
-  status,
-  priority: "high",
+  unreadCount: 0,
+  replyState,
+  pendingSince: null, dueAt: null, isOverdue: false, historyPending: false, uncertain: false,
 });
 
 const messages: ChatMessage[] = [
@@ -30,7 +30,7 @@ const messages: ChatMessage[] = [
 ];
 
 const detail: ConversationDetail = {
-  ...summary("42", "2026-09-08 10:11", "unread"),
+  ...summary("42", "2026-09-08 10:11", "needs_reply"),
   messages,
   analysis: {
     intent: "需要报价",
@@ -44,9 +44,9 @@ const detail: ConversationDetail = {
 
 describe("conversation domain model", () => {
   it("sorts and groups canonical conversations", () => {
-    const conversations = [summary("old", "2026-09-06 10:00"), summary("new", "2026-09-08 10:00", "unread")];
+    const conversations = [summary("old", "2026-09-06 10:00"), summary("new", "2026-09-08 10:00", "needs_reply")];
     expect(sortConversations(conversations).map((item) => item.id)).toEqual(["new", "old"]);
-    expect(groupConversations(conversations, "status").map((group) => group.label)).toEqual(["跟进中", "未读待回"]);
+    expect(groupConversations(conversations, "status").map((group) => group.label)).toEqual(["等待客户", "待回复"]);
   });
 
   it("groups by dialogue count with fixed order", () => {

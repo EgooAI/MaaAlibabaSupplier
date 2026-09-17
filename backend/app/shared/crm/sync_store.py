@@ -94,6 +94,7 @@ def upsert_messages(session: Session, messages: list[Message]) -> dict[str, int]
     # Source IDs, not text or timestamps, are the identity. Never delete history.
     payloads = {message.external_mid: message.model_dump() for message in messages}
     keys = list(payloads)
+    changed = []
     for offset in range(0, len(keys), 500):
         batch = keys[offset:offset + 500]
         existing = {
@@ -101,7 +102,6 @@ def upsert_messages(session: Session, messages: list[Message]) -> dict[str, int]
                 select(table).where(table.c.external_mid.in_(batch)),
             ).mappings()
         }
-        changed = []
         for key in batch:
             payload = payloads[key]
             current = existing.get(key)
@@ -113,10 +113,13 @@ def upsert_messages(session: Session, messages: list[Message]) -> dict[str, int]
             else:
                 counts["updated"] += 1
             changed.append(payload)
-        if changed:
+        # Coalesce sparse changes across comparison batches without exceeding the
+        # existing 500-row write bound (inbox projection shares this transaction).
+        while len(changed) >= 500 or (changed and offset + 500 >= len(keys)):
             statement = insert(table)
             session.execute(statement.on_conflict_do_update(
                 index_elements=[table.c.external_mid],
                 set_={field: statement.excluded[field] for field in fields},
-            ), changed)
+            ), changed[:500])
+            del changed[:500]
     return counts

@@ -1,6 +1,10 @@
 "use client";
 
-import { Card, Space } from "antd";
+import { Card, Space, Spin } from "antd";
+import { Suspense, useEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
+import { inboxQueryFromUrl } from "@/domain/chat/inboxModel";
+import { ConversationFilters, ConversationPaging } from "./conversation/ConversationFilters";
 import { BatchManagement } from "./batch/BatchManagement";
 import { ConversationList } from "./conversation/ConversationList";
 import { useBatchManagement } from "./hooks/useBatchManagement";
@@ -11,11 +15,19 @@ import { SyncStatus } from "@/features/account/SyncStatus";
 export function BatchPage() {
   const { snapshot, blocked, suspended, generation } = useAccount();
   if ((blocked && !suspended) || !snapshot?.capabilities.read_chat) return <DataDirBanner />;
-  return <BatchWorkspace key={`${snapshot.account.epoch}:${generation}`} />;
+  return <Suspense fallback={<Spin />}><BatchWorkspace key={`${snapshot.account.epoch}:${generation}`} /></Suspense>;
 }
 
 function BatchWorkspace() {
-  const workbench = useBatchManagement();
+  const params = useSearchParams().toString();
+  const workbench = useBatchManagement(inboxQueryFromUrl(new URLSearchParams(params)));
+  const { changeQuery } = workbench;
+  const previousParams = useRef(params);
+  useEffect(() => {
+    if (previousParams.current === params) return;
+    previousParams.current = params;
+    changeQuery(inboxQueryFromUrl(new URLSearchParams(params)));
+  }, [params, changeQuery]);
 
   return (
     <Space orientation="vertical" size="large" className="w-full">
@@ -30,6 +42,8 @@ function BatchWorkspace() {
         onExport={workbench.exportSelected}
       />
       <Card title="选择会话" loading={workbench.loading}>
+        <ConversationFilters key={params} query={inboxQueryFromUrl(new URLSearchParams(params))} onChange={workbench.changeQuery} />
+        <ConversationPaging page={workbench.page} pending={workbench.pagePending} onChange={workbench.changePage} />
         <ConversationList
           conversations={workbench.conversations}
           selectedIds={workbench.selectedIds}

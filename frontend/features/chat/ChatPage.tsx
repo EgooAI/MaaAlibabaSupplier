@@ -1,9 +1,12 @@
 "use client";
 
 import { ArrowDownOutlined, ArrowLeftOutlined, SettingOutlined } from "@ant-design/icons";
-import { useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { Button, Card, Space, Spin, Typography } from "antd";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { inboxQueryFromUrl } from "@/domain/chat/inboxModel";
+import { ConversationFilters, ConversationPaging } from "./conversation/ConversationFilters";
+import { InboxBadges } from "./conversation/InboxBadges";
 import { CardDetailDrawer } from "@/components/CardDetailDrawer";
 import { SessionListPanel } from "@/components/SessionListPanel";
 import { SplitSessionLayout, useSplitSessionMobile } from "@/components/SplitSessionLayout";
@@ -24,14 +27,22 @@ type AnalysisFocus = "intent" | "stage";
 export function ChatPage() {
   const { snapshot, blocked, suspended, generation } = useAccount();
   if ((blocked && !suspended) || !snapshot?.capabilities.read_chat) return <DataDirBanner />;
-  return <ChatWorkspace key={`${snapshot.account.epoch}:${generation}`} />;
+  return <Suspense fallback={<Spin />}><ChatWorkspace key={`${snapshot.account.epoch}:${generation}`} /></Suspense>;
 }
 
 function ChatWorkspace() {
   const { snapshot, blocked } = useAccount();
   const router = useRouter();
   const { isMobile, mobileView, setMobileView } = useSplitSessionMobile();
-  const workbench = useChatWorkbench();
+  const params = useSearchParams().toString();
+  const workbench = useChatWorkbench(inboxQueryFromUrl(new URLSearchParams(params)));
+  const { changeQuery } = workbench;
+  const previousParams = useRef(params);
+  useEffect(() => {
+    if (previousParams.current === params) return;
+    previousParams.current = params;
+    changeQuery(inboxQueryFromUrl(new URLSearchParams(params)));
+  }, [params, changeQuery]);
   const active = workbench.activeConversation;
   const [customerInfoOpen, setCustomerInfoOpen] = useState(false);
   const [analysisFocus, setAnalysisFocus] = useState<AnalysisFocus>("intent");
@@ -54,6 +65,8 @@ function ChatWorkspace() {
       loading={workbench.loading}
       extra={<Button type="link" size="small" icon={<SettingOutlined />} onClick={() => router.push("/batch")}>管理会话</Button>}
     >
+      <ConversationFilters key={params} query={inboxQueryFromUrl(new URLSearchParams(params))} onChange={workbench.changeQuery} />
+      <ConversationPaging page={workbench.page} pending={workbench.pagePending} onChange={workbench.changePage} />
       <ConversationList
         conversations={workbench.conversations}
         activeId={active?.id}
@@ -67,7 +80,7 @@ function ChatWorkspace() {
     <Card
       title={active ? `${active.customer.name} · ${active.customer.company}` : "消息时间线"}
       extra={
-        <Space>
+        <Space wrap>
           {isMobile ? <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => setMobileView("list")}>返回列表</Button> : null}
           <Button type="primary" onClick={() => setCustomerInfoOpen(true)} disabled={!active}>客户信息</Button>
         </Space>
@@ -77,6 +90,10 @@ function ChatWorkspace() {
     >
       {active ? (
         <div className="flex min-h-0 flex-1 flex-col gap-6">
+          <Space wrap>
+            <InboxBadges conversation={active} />
+            <Button size="small" disabled={blocked || !active.readSnapshot} loading={workbench.markingRead} onClick={() => void workbench.markRead()}>标记工作台已读</Button>
+          </Space>
           <div className="relative flex min-h-0 flex-1 flex-col">
             {workbench.detailLoading ? (
               <div className="flex flex-1 items-center justify-center"><Spin /></div>

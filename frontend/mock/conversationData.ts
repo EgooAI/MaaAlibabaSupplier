@@ -60,8 +60,7 @@ export const conversationAggregates: ConversationAggregateDto[] = [
     },
     latest: { updated_at: "2026-09-07 10:21", content: "客户浏览了 3 个太阳能灯 SKU，并下载认证附件。" },
     unread_count: 1,
-    status: "unread",
-    priority: "high",
+    reply_state: "needs_reply", pending_since: 1788750000, due_at: 1788836400, is_overdue: true, history_pending: false, uncertain: false, read_snapshot: "mock-snapshot-42",
     analysis: {
       intent: "客户浏览了 3 个太阳能灯 SKU，并下载认证附件。",
       stage: "interested",
@@ -95,9 +94,8 @@ export const conversationAggregates: ConversationAggregateDto[] = [
       behavior: ["商品浏览 9 次", "有效询盘 6 条", "活跃 46 天", "近期已联系"],
     },
     latest: { updated_at: "2026-09-07 09:48", content: "系统推荐卡片" },
-    unread_count: 1,
-    status: "unread",
-    priority: "high",
+    unread_count: 0,
+    reply_state: "history_pending", pending_since: null, due_at: null, is_overdue: false, history_pending: true, uncertain: false, read_snapshot: "mock-snapshot-43",
     analysis: {
       intent: "客户关注冷链传感器 500 套阶梯价与 24 个月质保。",
       stage: "negotiating",
@@ -132,8 +130,7 @@ export const conversationAggregates: ConversationAggregateDto[] = [
     },
     latest: { updated_at: "2026-09-06 22:11", content: "系统推荐卡片" },
     unread_count: 1,
-    status: "unread",
-    priority: "medium",
+    reply_state: "waiting_customer", pending_since: null, due_at: null, is_overdue: false, history_pending: false, uncertain: false, read_snapshot: "mock-snapshot-44",
     analysis: {
       intent: "客户需要最新目录和样品条款。",
       stage: "new",

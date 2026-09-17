@@ -1,9 +1,10 @@
 "use client";
 
-import { Avatar, Badge, Button, Checkbox, Empty, Radio, Space, Typography } from "antd";
+import { Avatar, Button, Checkbox, Empty, Radio, Space, Typography } from "antd";
 import { useMemo } from "react";
 import { avatarColorOf, avatarInitialOf } from "@/domain/chat/avatarModel";
-import { conversationTimeLabel, dialogueCountOf, groupConversations, sortConversations } from "@/domain/chat/chatModel";
+import { conversationTimeLabel, dialogueCountOf, groupConversations } from "@/domain/chat/chatModel";
+import { InboxBadges } from "./InboxBadges";
 import type { ConversationGroupMode } from "@/domain/chat/chatModel";
 import type { Conversation } from "@/types/chatCanonical";
 
@@ -28,7 +29,7 @@ export function ConversationList({
   onSelectGroup?: (ids: string[], value: boolean) => void;
   selectable?: boolean;
 }) {
-  const groups = useMemo(() => groupConversations(sortConversations(conversations), groupMode), [conversations, groupMode]);
+  const groups = useMemo(() => groupConversations(conversations, groupMode), [conversations, groupMode]);
 
   return (
     <Space orientation="vertical" className="w-full" size="small">
@@ -74,8 +75,8 @@ export function ConversationList({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <Typography.Text strong ellipsis>{item.customer.name}</Typography.Text>
-                        <Badge count={item.unreadCount} size="small" />
                       </div>
+                      <InboxBadges conversation={item} />
                       {item.customer.country ? <Typography.Text ellipsis className="block text-xs">{item.customer.country}</Typography.Text> : null}
                       {item.latestMessage ? <Typography.Text ellipsis className="block text-xs">{item.latestMessage}</Typography.Text> : null}
                       <div className="mt-2 flex items-center justify-end">

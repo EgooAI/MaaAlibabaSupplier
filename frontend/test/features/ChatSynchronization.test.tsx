@@ -13,6 +13,10 @@ import type { ConnectionSnapshot } from "@/types/connection";
 import type { ConversationAggregateDto } from "@/types/chatTransport";
 import type { ConversationDetail } from "@/types/chatCanonical";
 import { draftKey } from "@/features/account/draftStorage";
+import type { ConversationPage } from "@/types/inbox";
+
+const pageOf = (items = [adaptConversationSummary(aggregate)]): ConversationPage => ({ items, total: items.length, offset: 0, limit: 50, inbox_revision: 1, pagination_revision: "page-1" });
+const revisionOf = (revision: number) => ({ ready: true, revision, inbox_revision: 1, next_due_at: null });
 
 const mocks = vi.hoisted(() => ({
   message: { warning: vi.fn(), error: vi.fn(), success: vi.fn(), info: vi.fn() },
@@ -31,7 +35,7 @@ vi.mock("@/services/client", () => ({ backend: mocks.backend }));
 const aggregate: ConversationAggregateDto = {
   sid: 42, name: "Buyer", participants: [], messages: [],
   latest: { content: "latest", updated_at: "2026-09-08 10:00" },
-  unread_count: 0, status: "following", priority: "medium",
+  unread_count: 0, reply_state: "waiting_customer", pending_since: null, due_at: null, is_overdue: false, history_pending: false, uncertain: false, read_snapshot: "snapshot-42",
 };
 let root: Root;
 let container: HTMLDivElement;
@@ -65,9 +69,9 @@ beforeEach(() => {
   accountSession.invalidate();
   localStorage.clear();
   mocks.backend.getConnection.mockReset().mockResolvedValue(structuredClone(connectionSnapshot));
-  mocks.backend.listConversations.mockReset().mockResolvedValue([adaptConversationSummary(aggregate)]);
+  mocks.backend.listConversations.mockReset().mockResolvedValue(pageOf());
   mocks.backend.getConversation.mockReset().mockResolvedValue(adaptConversationDetail(aggregate));
-  mocks.backend.getConversationRevision.mockReset().mockResolvedValue({ ready: true, revision: connectionSnapshot.source.revision });
+  mocks.backend.getConversationRevision.mockReset().mockResolvedValue(revisionOf(connectionSnapshot.source.revision));
   mocks.backend.retryConnection.mockReset().mockResolvedValue(connectionSnapshot);
   mocks.backend.translateMessage.mockReset();
   mocks.backend.analyzeConversation.mockReset();
@@ -124,7 +128,7 @@ describe("chat synchronization boundaries", () => {
     const updated = adaptConversationDetail(aggregate);
     updated.messages = [{ id: "new-message", role: "buyer", content: "new buyer message", createdAt: "2026-09-17 12:00", type: "text" }];
     mocks.backend.getConversation.mockResolvedValue(updated);
-    mocks.backend.getConversationRevision.mockResolvedValueOnce({ ready: true, revision: 2 });
+    mocks.backend.getConversationRevision.mockResolvedValueOnce(revisionOf(2));
     await act(async () => { await vi.advanceTimersByTimeAsync(9_999); });
     expect(mocks.backend.getConversationRevision).not.toHaveBeenCalled();
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
@@ -202,7 +206,7 @@ describe("chat synchronization boundaries", () => {
     await observe(next);
     const listCalls = mocks.backend.listConversations.mock.calls.length;
     const detailCalls = mocks.backend.getConversation.mock.calls.length;
-    await act(async () => resolve({ ready: true, revision: 99 }));
+    await act(async () => resolve(revisionOf(99)));
     expect(mocks.backend.listConversations).toHaveBeenCalledTimes(listCalls);
     expect(mocks.backend.getConversation).toHaveBeenCalledTimes(detailCalls);
     expect(account.snapshot?.account.self_ali_id).toBe("seller-b");
@@ -283,7 +287,7 @@ describe("chat synchronization boundaries", () => {
     await observe({ ...connectionSnapshot, source: { ...connectionSnapshot.source, last_success: 1_789_600_200 } });
     expect(mocks.backend.listConversations).toHaveBeenCalledTimes(listCalls);
     expect(mocks.backend.getConversation).toHaveBeenCalledTimes(detailCalls);
-    mocks.backend.getConversationRevision.mockResolvedValue({ ...connectionSnapshot.source, ready: true, source_revision: 3, syncing: true, pending: true });
+    mocks.backend.getConversationRevision.mockResolvedValue({ ...connectionSnapshot.source, ...revisionOf(connectionSnapshot.source.revision), source_revision: 3, syncing: true, pending: true });
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     expect(mocks.backend.listConversations).toHaveBeenCalledTimes(listCalls);
     expect(mocks.backend.getConversation).toHaveBeenCalledTimes(detailCalls);
@@ -300,7 +304,7 @@ describe("chat synchronization boundaries", () => {
     const before = container.querySelector("textarea");
     const failing = target === "list" ? mocks.backend.listConversations : mocks.backend.getConversation;
     failing.mockRejectedValueOnce(new Error("offline"));
-    mocks.backend.getConversationRevision.mockResolvedValue({ ready: true, revision: 2 });
+    mocks.backend.getConversationRevision.mockResolvedValue(revisionOf(2));
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     expect(workbench.refreshError).toBe(true);
     expect(workbench.loading).toBe(false);
@@ -334,14 +338,14 @@ describe("chat synchronization boundaries", () => {
     mocks.backend.getConversationRevision.mockRejectedValueOnce(new Error("offline"));
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     expect(workbench.refreshError).toBe(true);
-    let resolveList!: (value: ReturnType<typeof adaptConversationSummary>[]) => void;
+    let resolveList!: (value: ConversationPage) => void;
     let resolveDetail!: (value: ConversationDetail) => void;
     mocks.backend.listConversations.mockReturnValueOnce(new Promise((done) => { resolveList = done; }));
     mocks.backend.getConversation.mockReturnValueOnce(new Promise((done) => { resolveDetail = done; }));
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     const listCalls = mocks.backend.listConversations.mock.calls.length;
     const detailCalls = mocks.backend.getConversation.mock.calls.length;
-    const finish = (kind: string) => kind === "list" ? resolveList([adaptConversationSummary(aggregate)]) : resolveDetail(adaptConversationDetail(aggregate));
+    const finish = (kind: string) => kind === "list" ? resolveList(pageOf()) : resolveDetail(adaptConversationDetail(aggregate));
     await act(async () => finish(first));
     expect(workbench.refreshPending).toBe(true);
     expect(workbench.refreshError).toBe(true);
@@ -384,7 +388,7 @@ describe("chat synchronization boundaries", () => {
     await act(async () => root.render(<AccountProvider><ReadableWorkspace isBatch /></AccountProvider>));
     mocks.backend.getConversationRevision.mockRejectedValueOnce(new Error("offline"));
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
-    let resolve!: (value: ReturnType<typeof adaptConversationSummary>[]) => void;
+    let resolve!: (value: ConversationPage) => void;
     mocks.backend.listConversations.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     const calls = mocks.backend.listConversations.mock.calls.length;
@@ -392,7 +396,7 @@ describe("chat synchronization boundaries", () => {
     expect(mocks.backend.listConversations).toHaveBeenCalledTimes(calls);
     expect(batch.refreshError).toBe(true);
     expect(batch.refreshPending).toBe(true);
-    await act(async () => resolve([adaptConversationSummary(aggregate)]));
+    await act(async () => resolve(pageOf()));
     expect(batch.refreshError).toBe(false);
     expect(batch.refreshPending).toBe(false);
     expect(mocks.backend.getConversation).not.toHaveBeenCalled();
@@ -409,7 +413,7 @@ describe("chat synchronization boundaries", () => {
     const detailCalls = mocks.backend.getConversation.mock.calls.length;
     const updated = adaptConversationDetail(aggregate);
     updated.customer = { ...updated.customer, name: "MITM updated buyer", company: "New company", email: "buyer@example.test" };
-    mocks.backend.listConversations.mockResolvedValue([updated]);
+    mocks.backend.listConversations.mockResolvedValue(pageOf([updated]));
     mocks.backend.getConversation.mockResolvedValue(updated);
     let finishDetail!: (value: ConversationDetail) => void;
     mocks.backend.getConversation.mockReturnValueOnce(new Promise((done) => { finishDetail = done; }));
@@ -498,7 +502,7 @@ describe("chat synchronization boundaries", () => {
     const before = container.querySelector("textarea");
     let resolve!: (value: ConversationDetail) => void;
     mocks.backend.getConversation.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
-    mocks.backend.getConversationRevision.mockResolvedValue({ ready: true, revision: 2 });
+    mocks.backend.getConversationRevision.mockResolvedValue(revisionOf(2));
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     expect(workbench.detailLoading).toBe(false);
     expect(mocks.backend.translateMessage).not.toHaveBeenCalled();
@@ -522,15 +526,15 @@ describe("chat synchronization boundaries", () => {
   it("discards old detail and list responses when a newer committed revision overtakes them", async () => {
     await mount();
     let oldDetail!: (value: ConversationDetail) => void;
-    let oldList!: (value: ReturnType<typeof adaptConversationSummary>[]) => void;
+    let oldList!: (value: ConversationPage) => void;
     mocks.backend.getConversation.mockReturnValueOnce(new Promise((done) => { oldDetail = done; }));
     mocks.backend.listConversations.mockReturnValueOnce(new Promise((done) => { oldList = done; }));
     await observe({ ...connectionSnapshot, source: { ...connectionSnapshot.source, revision: 2 } });
     const latest = adaptConversationDetail({ ...aggregate, name: "latest commit" });
     mocks.backend.getConversation.mockResolvedValue(latest);
-    mocks.backend.listConversations.mockResolvedValue([latest]);
+    mocks.backend.listConversations.mockResolvedValue(pageOf([latest]));
     await observe({ ...connectionSnapshot, source: { ...connectionSnapshot.source, revision: 3 } });
-    await act(async () => { oldDetail(adaptConversationDetail(aggregate)); oldList([]); });
+    await act(async () => { oldDetail(adaptConversationDetail(aggregate)); oldList(pageOf([])); });
     expect(workbench.activeConversation).toEqual(latest);
     expect(workbench.conversations).toEqual([latest]);
   });

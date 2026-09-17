@@ -2,6 +2,7 @@ import type { DbAgentPreset, DocumentLlmConfig } from "@/types/agent";
 import { adaptConversationDetail, adaptConversationSummary } from "@/services/chatAdapter";
 import type { ConversationAggregateDto } from "@/types/chatTransport";
 import type { ConversationRevision } from "@/types/chatOperations";
+import type { ConversationPage } from "@/types/inbox";
 import type { ApiResponse } from "@/types/common";
 import type { OperationsBackend } from "./interfaces";
 import { accountSession, AccountChangedError, captureAccount } from "./accountSession";
@@ -106,13 +107,14 @@ export function requestInit(init?: RequestInit): RequestInit {
 }
 
 function prepareAccountRequest(path: string, init?: RequestInit) {
+  path = new URL(path, "http://localhost").pathname;
   const settingsWrite = /^\/api\/settings\/(alibaba-data-dir|ali-id|ali-keys)(?:\/|$)/.test(path) && (init?.method === "PUT" || init?.method === "DELETE");
   if (settingsWrite) {
     // Settings writes intentionally run after local invalidation and may change the epoch.
     if (!new Headers(init?.headers).get("X-Account-Epoch")) throw new AccountChangedError();
     return { init };
   }
-  const scoped = path === "/api/settings/connection/retry" || /^\/api\/(outbox(?:\/|$)|conversations(?:\/|$)|messages(?:\/|$)|self-info(?:\/|$)|cache\/reset(?:\/|$)|status\/node-test(?:\/|$))/.test(path);
+  const scoped = path === "/api/settings/connection/retry" || /^\/api\/(inbox(?:\/|$)|outbox(?:\/|$)|conversations(?:\/|$)|messages(?:\/|$)|self-info(?:\/|$)|cache\/reset(?:\/|$)|status\/node-test(?:\/|$))/.test(path);
   if (!scoped) return { init };
   const ticket = captureAccount();
   const { capabilities, client } = accountSession.get().snapshot!;
@@ -141,10 +143,18 @@ export const httpBackend: OperationsBackend = {
   requestTranslations: (input) => requestJson("/api/messages/translations", { method: "POST", body: JSON.stringify(input) }),
   getTranslation: (text) => requestJson(`/api/messages/translations/${encodeURIComponent(text)}`),
 
-  listConversations: async () => {
-    const aggregates = await requestJson<ConversationAggregateDto[]>("/api/conversations");
-    return aggregates.map(adaptConversationSummary);
+  listConversations: async (query = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined) params.set(key, String(value));
+    }
+    const page = await requestJson<ConversationPage<ConversationAggregateDto>>(`/api/conversations?${params}`, { cache: "no-store" });
+    return { ...page, items: page.items.map(adaptConversationSummary) };
   },
+  markConversationRead: (id, readSnapshot) => requestJson(`/api/conversations/${encodeURIComponent(id)}/read`, { method: "POST", body: JSON.stringify({ read_snapshot: readSnapshot }) }),
+  getInboxOverview: () => requestJson("/api/inbox/overview", { cache: "no-store" }),
+  getInboxSettings: () => requestJson("/api/inbox/settings", { cache: "no-store" }),
+  saveInboxSettings: (timeoutSeconds) => requestJson("/api/inbox/settings", { method: "PUT", body: JSON.stringify({ timeout_seconds: timeoutSeconds }) }),
   getConversationRevision: () => requestJson<ConversationRevision>("/api/conversations/revision"),
   getConversation: async (id) => {
     const aggregate = await requestJson<ConversationAggregateDto>(`/api/conversations/${encodeURIComponent(id)}`);

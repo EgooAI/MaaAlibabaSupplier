@@ -40,8 +40,7 @@ const aggregate: ConversationAggregateDto = {
   },
   latest: { content: "聚合最新内容", updated_at: "2026-09-08 11:00" },
   unread_count: 1,
-  status: "unread",
-  priority: "high",
+  reply_state: "needs_reply", pending_since: 100, due_at: 86500, is_overdue: true, history_pending: false, uncertain: false, read_snapshot: "snapshot-42",
   analysis: {
     intent: "需要报价",
     stage: "negotiating",
@@ -74,8 +73,7 @@ describe("chat adapter", () => {
       latestMessage: "聚合最新内容",
       updatedAt: "2026-09-08 11:00",
       unreadCount: 1,
-      status: "unread",
-      priority: "high",
+      replyState: "needs_reply", pendingSince: 100, dueAt: 86500, isOverdue: true, historyPending: false, uncertain: false,
     });
   });
 
@@ -111,7 +109,7 @@ describe("chat adapter", () => {
   });
 
   it("keeps customer relationship fields unknown instead of guessing from array order", () => {
-    const summary = adaptConversationSummary({ sid: 99, name: null, participants: [9001], accounts: [{ aid: 9001, cid: 901, pid: "alibaba", account: "seller-account", nickname: "Seller", avatar: null, sids: [99], extra: null }], customers: [{ cid: 901, name: "Seller Customer", region: "China" }], messages: [], latest: { content: null, updated_at: null }, unread_count: 0, status: "following", priority: "low" });
+    const summary = adaptConversationSummary({ sid: 99, name: null, participants: [9001], accounts: [{ aid: 9001, cid: 901, pid: "alibaba", account: "seller-account", nickname: "Seller", avatar: null, sids: [99], extra: null }], customers: [{ cid: 901, name: "Seller Customer", region: "China" }], messages: [], latest: { content: null, updated_at: null }, unread_count: 0, reply_state: "unknown", pending_since: null, due_at: null, is_overdue: false, history_pending: false, uncertain: true });
     expect(summary.customer).toMatchObject({ id: "99", name: "未知客户", country: "", company: "", stage: "unknown" });
     expect(summary.updatedAt).toBe("未知时间");
   });

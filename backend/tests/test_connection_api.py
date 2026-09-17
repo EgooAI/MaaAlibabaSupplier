@@ -292,7 +292,7 @@ def test_revision_poll_100_calls_never_reads_source_or_submits_sync(client, revi
             for _ in range(100):
                 response = client.get("/api/conversations/revision")
                 assert response.status_code == 200, response.text
-                assert response.json()["data"] == {**source, "reason": "source_not_ready"}
+                assert response.json()["data"] == {**source, "reason": "source_not_ready", "inbox_revision": 0, "next_due_at": None}
             assert client.get("/api/settings/connection").json()["data"]["source"] == source
             forbidden.assert_not_called()
         assert len(submissions) == 1
@@ -308,7 +308,8 @@ def test_revision_poll_100_calls_never_reads_source_or_submits_sync(client, revi
     assert ready["applied_source_revision"] == ready["source_revision"] == source["source_revision"]
     assert ready["counts"] == {"inserted": 1, "updated": 0, "unchanged": 0}
     assert ready["last_success"] > 0
-    assert ready == client.get("/api/settings/connection").json()["data"]["source"]
+    assert {key: value for key, value in ready.items() if key not in {"inbox_revision", "next_due_at"}} == client.get("/api/settings/connection").json()["data"]["source"]
+    assert ready["inbox_revision"] == 1 and ready["next_due_at"] is None
     state = client.get("/api/sync-state").json()["data"]
     for key in ("revision", "source_revision", "applied_source_revision", "counts", "last_success", "last_checked", "last_attempt"):
         assert ready[key] == state[key]
@@ -320,7 +321,7 @@ def test_revision_and_old_message_change_only_after_actual_crm_commit(client, re
     publish("10001")
     assert client.post("/api/settings/connection/retry", json={"epoch": client.headers["X-Account-Epoch"]}).status_code == 200
     first = finish_sync(mw)
-    summary = client.get("/api/conversations").json()["data"][0]
+    summary = client.get("/api/conversations").json()["data"]["items"][0]
     sid = summary["sid"]
     entered, release = Event(), Event()
     original = crm_sync.write_sync_state
@@ -348,9 +349,9 @@ def test_revision_and_old_message_change_only_after_actual_crm_commit(client, re
             assert observed == pending
         listing = client.get("/api/conversations")
         assert listing.status_code == 200, listing.text
-        assert isinstance(listing.json()["data"], list)
+        assert isinstance(listing.json()["data"]["items"], list)
         assert "X-CRM-Revision" not in listing.headers
-        assert listing.json()["data"][0]["latest"]["content"] == "original"
+        assert listing.json()["data"]["items"][0]["latest"]["content"] == "original"
         detail = client.get(f"/api/conversations/{sid}")
         assert detail.status_code == 200, detail.text
         assert detail.json()["data"]["messages"][0]["message"]["content"] == "original"
@@ -366,7 +367,7 @@ def test_revision_and_old_message_change_only_after_actual_crm_commit(client, re
     assert updated["revision"] == 2 and not updated["stale"]
     assert updated["source_revision"] == pending["source_revision"] == updated["applied_source_revision"]
     assert updated["counts"] == {"inserted": 0, "updated": 1, "unchanged": 0}
-    listing = client.get("/api/conversations").json()["data"]
+    listing = client.get("/api/conversations").json()["data"]["items"]
     assert len(listing) == 1 and listing[0]["sid"] == sid
     assert listing[0]["latest"]["content"] == "edited existing message"
     detail = client.get(f"/api/conversations/{sid}").json()["data"]
@@ -397,7 +398,7 @@ def test_manual_retry_copy_failure_reports_phase_error_with_readable_archive(cli
     copy.assert_called_once()
     assert len(submissions) == 1
     assert client.get("/api/settings/connection").json()["data"]["source"] == source
-    assert client.get("/api/conversations").json()["data"][0]["latest"]["content"] == "original"
+    assert client.get("/api/conversations").json()["data"]["items"][0]["latest"]["content"] == "original"
 
 
 def test_revision_observes_worker_commits_for_current_account_without_duplicate_imports(client, revision_source):
@@ -497,7 +498,7 @@ def test_revision_keeps_archive_readable_after_worker_detects_invalid_key(client
         assert response.json()["data"]["ready"] and response.json()["data"]["stale"]
         assert response.json()["data"]["phase"] == "error"
     assert client.get("/api/settings/connection").json()["data"]["capabilities"]["read_chat"]
-    assert client.get("/api/conversations").json()["data"][0]["latest"]["content"] == "original"
+    assert client.get("/api/conversations").json()["data"]["items"][0]["latest"]["content"] == "original"
     assert len(submissions) == 1
 
 
@@ -663,9 +664,9 @@ def test_self_info_and_chat_archive_follow_selected_seller(client):
             user_content_type=0, content_label=seller, content=seller.encode(),
         )
         conv = ContactConv(contact_ali_id="buyer", messages=[row], last_created_at=row.created_at, last_content_label=seller)
-        adapter.sync_conversations([conv], SelfInfo(ali_id=seller))
+        adapter.sync_conversations([conv], SelfInfo(ali_id=seller), data_dir=account_context.get_account_context().data_dir)
     assert client.get("/api/self-info").json()["data"]["ali_id"] == "seller-a"
-    summaries = client.get("/api/conversations").json()["data"]
+    summaries = client.get("/api/conversations").json()["data"]["items"]
     assert len(summaries) == 1 and summaries[0]["latest"]["content"] == "seller-a"
     sid = summaries[0]["sid"]
     aggregate = client.get(f"/api/conversations/{sid}").json()["data"]
@@ -676,7 +677,7 @@ def test_self_info_and_chat_archive_follow_selected_seller(client):
     client.headers["X-Account-Epoch"] = account_context.get_account_context().epoch
     assert client.get("/api/self-info").json()["data"]["ali_id"] == "seller-b"
     assert client.get(f"/api/conversations/{sid}").status_code == 404
-    summaries = client.get("/api/conversations").json()["data"]
+    summaries = client.get("/api/conversations").json()["data"]["items"]
     assert len(summaries) == 1 and summaries[0]["latest"]["content"] == "seller-b"
     state = client.get("/api/sync-state")
     assert state.json()["data"]["epoch"] == state.headers["X-Account-Epoch"]

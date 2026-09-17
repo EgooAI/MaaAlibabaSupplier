@@ -29,13 +29,13 @@ export function BatchManagement({ selectedCount, exporting, onSelectAll, onInver
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-600">
             <CheckOutlined />
           </div>
-          <Typography.Text>批量操作</Typography.Text>
+          <Typography.Text>仅操作当前页选中的会话；切换筛选或页码会清空选择。</Typography.Text>
         </div>
         <Space wrap size={[8, 8]} className="md:justify-end">
-          <Button size="small" icon={<CheckOutlined />} onClick={onSelectAll}>全选</Button>
+          <Button size="small" icon={<CheckOutlined />} onClick={onSelectAll}>全选当前页</Button>
           <Button size="small" icon={<SwapOutlined />} onClick={onInvert}>反选</Button>
           <Button size="small" icon={<ClearOutlined />} onClick={onClear}>清空</Button>
-          <Button size="small" icon={<ExportOutlined />} loading={exporting} disabled={exporting} onClick={onExport}>导出聊天</Button>
+          <Button size="small" icon={<ExportOutlined />} loading={exporting} disabled={exporting || !selectedCount} onClick={onExport}>导出当前页所选聊天</Button>
           <Button size="small" icon={<MessageOutlined />} disabled>群发</Button>
         </Space>
       </div>

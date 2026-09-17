@@ -2,6 +2,19 @@ import type { BusinessCard } from "@/types/cards";
 import { formatDateTime } from "@/domain/time";
 import type { ConversationAnalysis, ConversationDetail, Conversation, ChatMessage, CustomerProfile } from "@/types/chatCanonical";
 import type { ConversationAggregateDto, ConversationAnalysisDto, ConversationMessageDto, CustomerViewDto } from "@/types/chatTransport";
+import type { InboxStateDto } from "@/types/inbox";
+
+export function adaptInboxState(state: InboxStateDto) {
+  return {
+    unreadCount: state.unread_count,
+    replyState: state.reply_state,
+    pendingSince: state.pending_since,
+    dueAt: state.due_at,
+    isOverdue: state.is_overdue,
+    historyPending: state.history_pending,
+    uncertain: state.uncertain,
+  };
+}
 
 interface ChatAdapterOptions {
   cards?: BusinessCard[];
@@ -14,9 +27,7 @@ export function adaptConversationSummary(aggregate: ConversationAggregateDto): C
     customer,
     latestMessage: aggregate.latest?.content ?? "",
     updatedAt: formatDateTime(aggregate.latest?.updated_at ?? null),
-    unreadCount: aggregate.unread_count ?? 0,
-    status: aggregate.status ?? "following",
-    priority: aggregate.priority ?? "medium",
+    ...adaptInboxState(aggregate),
     dialogueCount: aggregate.dialogue_count ?? undefined,
   };
 }
@@ -28,6 +39,7 @@ export function adaptConversationDetail(aggregate: ConversationAggregateDto | un
   const messages = (aggregate.messages ?? []).map((item) => adaptMessage(item, cards));
   return {
     ...summary,
+    readSnapshot: aggregate.read_snapshot,
     messages,
     analysis: adaptAnalysis(aggregate.analysis),
   };

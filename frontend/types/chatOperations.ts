@@ -69,6 +69,8 @@ export interface ExportConversationsResult {
 }
 
 export interface ConversationRevision extends SourceSyncStatus {
+  inbox_revision: number;
+  next_due_at: number | null;
   // Archive availability, independent of source freshness and key validation.
   ready: boolean;
   reason?: string;

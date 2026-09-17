@@ -157,3 +157,26 @@ The tests use synthetic frames and records. They do not validate recognition of
 real contacts, actual Alibaba delivery, or browser layout screenshots. The GUI
 flow deliberately requires the operator to inspect the recipient screenshot;
 the final automated result is only a local matching-message observation.
+
+## Stage 4 Coverage
+
+- `test_inbox_store.py` checks one-time historical baselines, both upgrade
+  initialization orders, retained CRM history missing from the current source,
+  new-directory initialization, late-message unread counts and atomic rollback.
+- Read tokens bind database, seller, directory, account epoch, conversation and
+  sequence. Tests acknowledge a snapshot while newer messages arrive, reject
+  changed/tampered scopes, and verify monotonic reads without clearing reply state.
+- Reply-state tests distinguish unread, historical pending, human replies,
+  automatic/system messages, ambiguous timestamps and configurable deadlines.
+- `test_inbox_api.py` checks literal historical text searches, resolved country
+  and tag filters, stable paging, stale page tokens and overview/list agreement.
+  Directory-only messages are excluded from other directories' search, detail,
+  AI inputs and ZIP exports. These reads do not mark messages read.
+- Frontend tests cover explicit acknowledgement, filtered paging, deadline
+  crossings, cross-tab revisions and retained details/outbox dialogs when a list
+  response observes a newer inbox revision before the poll does.
+
+The response contract and initialization limits are documented in
+`backend/app/api/INBOX.md`. Inbox labels describe local workspace state, not
+platform unread counts or verified delivery acknowledgements. Tests use temporary
+archives, synthetic messages and mocked model calls, not real customer data.

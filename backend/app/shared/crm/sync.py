@@ -41,6 +41,7 @@ from backend.app.shared.crm.views import (
     message_display_text,
 )
 from backend.app.shared.crm.sync_store import canonical_source_dir, upsert_messages, write_sync_state
+from backend.app.shared.crm.inbox_store import _epoch, write_inbox
 from backend.app.shared.mitm.pool import SelfInfo, UserInfo, get_user_info_pool
 
 if TYPE_CHECKING:
@@ -146,6 +147,8 @@ class CRMAdapter:
                 for row in conv.messages:
                     sender_aid = self_aid if _message_from_self(row, self_info) else contact_aid
                     messages.append(self._message_payload(row, session_meta.sid, sender_aid, self_info.ali_id))
+            # Preserve the pre-sync archive/scope boundary for inbox upgrades.
+            write_inbox(session, self_info.ali_id, data_dir, messages)
             counts = upsert_messages(session, messages)
             result = write_sync_state(session, self_info.ali_id, data_dir, source_revision, counts)
             session.commit()
@@ -281,7 +284,7 @@ class CRMAdapter:
     def _message_payload(self, row: MessageRow, sid: int, sender_aid: int, self_ali_id: str) -> Message:
         external_mid = message_external_id(self_ali_id, row.table_name, row.mid)
         content = _message_content(row)
-        epoch = coerce_epoch(row.created_at)
+        epoch = _epoch(row.created_at)
         return Message(
             external_mid=external_mid,
             sid=sid,
@@ -289,7 +292,7 @@ class CRMAdapter:
             read=None,
             content=content,
             type=_message_type(row),
-            created_at=datetime.fromtimestamp(epoch) if epoch > 0 else None,
+            created_at=datetime.fromtimestamp(epoch) if epoch is not None else None,
         )
 
     def _account_by_mapping(self, mapping_type: str, key: str, session: Session | None = None) -> Any | None:

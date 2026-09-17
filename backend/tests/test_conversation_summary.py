@@ -98,7 +98,7 @@ class ConversationSummaryTestCase(unittest.TestCase):
         summary = _build_summary(self.digests[0], self.preloaded)
         self.assertEqual(set(summary), set(full))
         for key in ("sid", "name", "participants", "latest", "unread_count",
-                    "status", "priority", "dialogue_count", "customer_view"):
+                    "dialogue_count", "customer_view"):
             self.assertEqual(summary[key], full[key], key)
         for key in ("messages", "accounts", "customers", "account_mappings", "business_cards"):
             self.assertEqual(summary[key], [], key)

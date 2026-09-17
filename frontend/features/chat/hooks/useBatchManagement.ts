@@ -6,16 +6,23 @@ import { AccountChangedError, useAccountBackend } from "@/features/account/Accou
 import type { ConversationGroupMode } from "@/domain/chat/chatModel";
 import type { Conversation } from "@/types/chatCanonical";
 import { useConversationSummaries } from "./useConversationSummaries";
+import type { ConversationQuery } from "@/types/inbox";
 
-export function useBatchManagement() {
+export function useBatchManagement(initialQuery: ConversationQuery = {}) {
   const { message } = App.useApp();
   const backend = useAccountBackend();
-  const { conversations, loading, refreshError, refreshPending } = useConversationSummaries();
+  const summaries = useConversationSummaries(initialQuery);
+  const { conversations, loading, refreshError, refreshPending, selectionVersion, pagePending } = summaries;
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectedVersion, setSelectedVersion] = useState(selectionVersion);
+  if (selectedVersion !== selectionVersion) {
+    setSelectedVersion(selectionVersion);
+    setSelectedIds([]);
+  }
   const [groupMode, setGroupMode] = useState<ConversationGroupMode>("time");
   const [exporting, setExporting] = useState(false);
   const availableIds = useMemo(() => new Set(conversations.map((conversation) => conversation.id)), [conversations]);
-  const visibleSelectedIds = useMemo(() => selectedIds.filter((id) => availableIds.has(id)), [availableIds, selectedIds]);
+  const visibleSelectedIds = useMemo(() => pagePending ? [] : selectedIds.filter((id) => availableIds.has(id)), [availableIds, selectedIds, pagePending]);
 
   function toggleSelected(id: string) {
     setSelectedIds((ids) => (ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id]));
@@ -69,6 +76,7 @@ export function useBatchManagement() {
   }
 
   return {
+    ...summaries,
     conversations,
     loading,
     selectedIds: visibleSelectedIds,

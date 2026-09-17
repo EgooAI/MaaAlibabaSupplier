@@ -1,5 +1,6 @@
 import type { BusinessCard } from "@/types/cards";
-import type { ConversationStatus, CustomerStage } from "@/types/chatCanonical";
+import type { CustomerStage } from "@/types/chatCanonical";
+import type { InboxStateDto } from "./inbox";
 import type { ID } from "@/types/common";
 
 export type TransportMessageRole = "buyer" | "seller" | "system" | "card";
@@ -125,7 +126,7 @@ export interface ConversationAnalysisDto {
 }
 
 /** 后端基于 SDK 实体生成的会话聚合响应。 */
-export interface ConversationAggregateDto extends SessionMeta {
+export interface ConversationAggregateDto extends SessionMeta, InboxStateDto {
   messages: ConversationMessageDto[];
   accounts?: Account[];
   customers?: Customer[];
@@ -133,9 +134,7 @@ export interface ConversationAggregateDto extends SessionMeta {
   account_mappings?: AccountMapping[];
   customer_view?: CustomerViewDto;
   latest: ConversationLatestDto;
-  unread_count: number;
-  status: ConversationStatus;
-  priority: "high" | "medium" | "low";
+  read_snapshot?: string;
   dialogue_count?: number;
   analysis?: ConversationAnalysisDto;
   business_cards?: BusinessCard[];

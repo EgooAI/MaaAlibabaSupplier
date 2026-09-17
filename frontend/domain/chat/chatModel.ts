@@ -24,7 +24,7 @@ export function groupConversations(conversations: Conversation[], mode: Conversa
   const groups = new Map<string, Conversation[]>();
 
   for (const conversation of conversations) {
-    const key = mode === "status" ? statusLabel(conversation.status) : mode === "count" ? dialogueCountGroup(conversation) : dateGroup(conversation.updatedAt, now);
+    const key = mode === "status" ? statusLabel(conversation.replyState) : mode === "count" ? dialogueCountGroup(conversation) : dateGroup(conversation.updatedAt, now);
     const items = groups.get(key);
     if (items) {
       items.push(conversation);
@@ -40,12 +40,13 @@ export function groupConversations(conversations: Conversation[], mode: Conversa
   return entries.map(([label, items]) => ({ label, items }));
 }
 
-export function statusLabel(status: Conversation["status"] | (string & {})) {
+export function statusLabel(status: Conversation["replyState"] | (string & {})) {
   return ({
-    unread: "未读待回",
-    following: "跟进中",
-    waiting: "等待客户",
-    closed: "已关闭",
+    needs_reply: "待回复",
+    waiting_customer: "等待客户",
+    history_pending: "历史待确认",
+    none: "无需回复",
+    unknown: "回复状态未知",
   } as Record<string, string>)[status] ?? String(status);
 }
 

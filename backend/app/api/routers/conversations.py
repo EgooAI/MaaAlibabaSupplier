@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import re
 from base64 import b64encode
-from typing import Any
+from dataclasses import replace
+from typing import Annotated, Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from loguru import logger
 from pydantic import BaseModel, Field
 from typing import Literal
@@ -15,7 +16,7 @@ from backend.app.api.envelope import AppError, api_error, ok, user_message
 from backend.app.api.account_scope import AccountRoute, request_epoch
 from backend.app.api.connection import has_selected_archive
 from backend.app.api.routers.outbox import public_task
-from backend.app.shared.backend.account_context import get_account_context
+from backend.app.shared.backend.account_context import AccountContext, get_account_context
 from backend.app.shared.backend.outbox_service import get_outbox_service
 from backend.app.shared.backend.gui_session import capture_gui_session, run_guarded
 from backend.app.shared.agent.inputs import build_analysis_input
@@ -33,6 +34,8 @@ from backend.app.shared.crm import (
     get_user_info as crm_get_user_info,
 )
 from backend.app.shared.crm.identities import PLATFORM_PID, message_external_id
+from backend.app.shared.crm.inbox_store import InboxStore
+from backend.app.shared.crm.inbox_queries import has_archive_messages, observe_inbox, public_state, query_inbox, scoped_message_ids
 from backend.app.shared.crm.sdk import AccountMapping
 from backend.app.shared.crm.sync import CRMAdapter
 from backend.app.shared.mitm.pool import UserInfo
@@ -53,6 +56,65 @@ router = APIRouter(route_class=AccountRoute)
 _STAGE_TASK = "分析客户当前所处成交阶段，并给出下一步推进建议。"
 _TONE_CYCLE = ("formal", "friendly", "urgent")
 _SCORE_RE = re.compile(r"(\d+(?:\.\d+)?)")
+
+
+class InboxFilters(BaseModel):
+    q: str = Field(default="", max_length=200)
+    search_scope: Literal["all", "customer", "messages"] = "all"
+    country: str | None = None
+    tag: str | None = None
+    reply_state: Literal["needs_reply", "waiting_customer", "history_pending", "none", "unknown"] | None = None
+    unread: bool | None = None
+    overdue: bool | None = None
+
+
+class ReadConversationInput(BaseModel):
+    read_snapshot: str = Field(min_length=1, max_length=8192)
+
+
+class InboxListQuery(InboxFilters):
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=50, ge=1, le=100)
+    pagination_revision: str | None = Field(default=None, max_length=128)
+
+
+class InboxSettingsInput(BaseModel):
+    timeout_seconds: int = Field(ge=3600, le=604800, strict=True)
+
+
+def _inbox_store() -> tuple[InboxStore, Any]:
+    _ready()
+    context = get_account_context()
+    if not context.data_dir:
+        raise AppError("请先在设置页选择数据目录。", status_code=503)
+    store = InboxStore()
+    if not store.metadata(context.self_ali_id, context.data_dir)["baseline_complete"]:
+        # First archive read explicitly adopts history once. This only adds
+        # app-owned inbox rows; it never retries the source or rewrites CRM data.
+        if not has_selected_archive(context.self_ali_id) or not has_archive_messages(store, context.self_ali_id):
+            raise AppError("聊天数据未就绪，请在设置页显式重试同步", status_code=503)
+        metadata = store.initialize(context.self_ali_id, context.data_dir)
+        if not metadata["baseline_complete"]:
+            raise AppError("当前数据目录尚未完成首次同步，请在设置页重试同步。", status_code=503)
+    return store, context
+
+
+def _inbox_projection(filters: InboxFilters) -> dict:
+    store, context = _inbox_store()
+    return query_inbox(store, context.self_ali_id, context.data_dir, _summary_customer_view, filters.model_dump())
+
+
+def _scoped_conversation(store: InboxStore, context: AccountContext, sid: int) -> CrmConversation | None:
+    conv = crm_get_conversation_detail(context.self_ali_id, sid)
+    if conv is None:
+        return None
+    mids = scoped_message_ids(store, context.self_ali_id, context.data_dir, sid)
+    messages = [message for message in conv.messages
+                if message_external_id(context.self_ali_id, message.table_name, message.mid) in mids]
+    if not messages:
+        return None
+    return replace(conv, messages=messages, last_created_at=messages[-1].created_at,
+                   last_content_label=messages[-1].content_label)
 
 
 class GotoContactInput(BaseModel):
@@ -169,8 +231,6 @@ def _build_aggregate(adapter: CRMAdapter, self_ali_id: str, conv: CrmConversatio
             "updated_at": last["created_at"] if last else None,
         },
         "unread_count": 0,
-        "status": "following",
-        "priority": "medium",
         "dialogue_count": dialogue_count,
         "business_cards": cards,
     }
@@ -230,8 +290,7 @@ def _preload_conversation_maps(adapter: CRMAdapter, digests: list[CrmConversatio
     return {"accounts": accounts_map, "customers": customers_map, "users": users}
 
 
-def _build_summary(digest: CrmConversationDigest, preloaded: dict) -> dict:
-    """Lightweight list item: same keys as the aggregate, heavy fields as []."""
+def _summary_customer_view(digest: CrmConversationDigest, preloaded: dict) -> dict:
     participants = list(digest.participants or [])
     accounts_map = preloaded["accounts"]
     customers_map = preloaded["customers"]
@@ -244,6 +303,13 @@ def _build_summary(digest: CrmConversationDigest, preloaded: dict) -> dict:
     view = _assemble_customer_view(
         digest.contact_ali_id, accounts, customers, preloaded["users"].get(digest.contact_ali_id)
     )
+    return view if view is not None else _minimal_customer_view(digest.contact_ali_id)
+
+
+def _build_summary(digest: CrmConversationDigest, preloaded: dict, view: dict | None = None) -> dict:
+    """Only assemble page DTOs; filtering uses the same customer view."""
+    participants = list(digest.participants or [])
+    view = _summary_customer_view(digest, preloaded) if view is None else view
     if digest.latest_is_card:
         content = digest.latest_content_label or "[\u5361\u7247]"
     else:
@@ -257,14 +323,12 @@ def _build_summary(digest: CrmConversationDigest, preloaded: dict) -> dict:
         "customers": [],
         "platforms": [{"pid": PLATFORM_PID, "name": "Alibaba"}],
         "account_mappings": [],
-        "customer_view": view if view is not None else _minimal_customer_view(digest.contact_ali_id),
+        "customer_view": view,
         "latest": {
             "content": content,
             "updated_at": format_created_at(digest.latest_created_at) or None,
         },
         "unread_count": 0,
-        "status": "following",
-        "priority": "medium",
         "dialogue_count": digest.dialogue_count,
         "business_cards": [],
     }
@@ -402,20 +466,40 @@ def _as_list(value: Any) -> list[str]:
 
 
 @router.get("/api/conversations")
-def list_conversations() -> dict:
-    # Digests and profile enrichment use separate reads. Keep the array contract;
-    # a revision header would require metadata and data in one read transaction.
-    self_ali_id = _ready()
-    adapter = CRMAdapter()
-    try:
-        digests = adapter.list_conversation_digests(self_ali_id)
-        preloaded = _preload_conversation_maps(adapter, digests)
-        return ok([_build_summary(digest, preloaded) for digest in digests])
-    except AppError:
-        raise
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+def list_conversations(
+    query: Annotated[InboxListQuery, Query()],
+) -> dict:
+    offset, limit, pagination_revision = query.offset, query.limit, query.pagination_revision
+    projection = _inbox_projection(InboxFilters.model_validate(query.model_dump()))
+    if offset > 0 and pagination_revision != projection["pagination_revision"]:
+        raise AppError("会话数据已变更或缺少分页版本，请返回第一页重新加载。", status_code=409)
+    items = [
+        {**_build_summary(digest, projection["preloaded"], projection["views"][digest.sid]),
+         **public_state(projection["states"][digest.sid])}
+        for digest in projection["digests"][offset:offset + limit]
+    ]
+    return ok({"items": items, "total": projection["total"], "offset": offset, "limit": limit,
+               "inbox_revision": projection["inbox_revision"], "pagination_revision": projection["pagination_revision"]})
+
+
+@router.get("/api/inbox/overview")
+def inbox_overview(filters: Annotated[InboxFilters, Query()]) -> dict:
+    projection = _inbox_projection(filters)
+    return ok({field: projection[field] for field in ("counts", "inbox_revision", "timeout_seconds", "updated_at")})
+
+
+@router.get("/api/inbox/settings")
+def inbox_settings() -> dict:
+    store, context = _inbox_store()
+    metadata = store.metadata(context.self_ali_id, context.data_dir)
+    return ok({field: metadata[field] for field in ("timeout_seconds", "inbox_revision")})
+
+
+@router.put("/api/inbox/settings")
+def update_inbox_settings(body: InboxSettingsInput) -> dict:
+    store, context = _inbox_store()
+    metadata = store.set_timeout(body.timeout_seconds, seller=context.self_ali_id, data_dir=context.data_dir)
+    return ok({field: metadata[field] for field in ("timeout_seconds", "inbox_revision")})
 
 
 @router.get("/api/conversations/revision")
@@ -432,6 +516,7 @@ def conversation_revision() -> dict:
         raise AppError("读取同步状态期间账号已切换，请刷新后重试。", status_code=409)
     payload = {
         **status,
+        **observe_inbox(InboxStore(), context.self_ali_id, context.data_dir),
         "ready": bool(status["ready"] or archive),
         "stale": bool(status["stale"] or (archive and not status["ready"])),
         "error_code": status.get("error_code") or None,
@@ -444,9 +529,14 @@ def conversation_revision() -> dict:
 
 @router.get("/api/conversations/{conversation_id}")
 def get_conversation(conversation_id: int) -> dict:
-    self_ali_id = _ready()
+    store, context = _inbox_store()
+    self_ali_id = context.self_ali_id
     try:
-        conv = crm_get_conversation_detail(self_ali_id, conversation_id)
+        snapshot = store.snapshot(conversation_id, seller=self_ali_id, data_dir=context.data_dir, epoch=context.epoch)
+    except ValueError:
+        raise AppError("会话不存在", status_code=404)
+    try:
+        conv = _scoped_conversation(store, context, conversation_id)
     except AppError:
         raise
     except Exception:
@@ -455,12 +545,26 @@ def get_conversation(conversation_id: int) -> dict:
     if conv is None:
         raise AppError("会话不存在", status_code=404)
     try:
-        return ok(_build_aggregate(CRMAdapter(), self_ali_id, conv))
+        state = store.states(self_ali_id, context.data_dir, [conversation_id])[conversation_id]
+        return ok({**_build_aggregate(CRMAdapter(), self_ali_id, conv), **public_state(state),
+                   "read_snapshot": snapshot})
     except AppError:
         raise
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
+
+
+@router.post("/api/conversations/{conversation_id}/read")
+def mark_conversation_read(conversation_id: int, body: ReadConversationInput) -> dict:
+    store, context = _inbox_store()
+    try:
+        state = store.mark_read(conversation_id, body.read_snapshot, seller=context.self_ali_id,
+                                data_dir=context.data_dir, epoch=context.epoch)
+    except ValueError:
+        raise AppError("已读快照无效，请重新加载会话。", status_code=409)
+    metadata = store.metadata(context.self_ali_id, context.data_dir)
+    return ok({"state": state, "inbox_revision": metadata["inbox_revision"]})
 
 
 @router.post("/api/conversations/{conversation_id}/messages")
@@ -491,12 +595,12 @@ def send_message(conversation_id: int, body: SendMessageInput) -> dict:
 
 @router.get("/api/conversations/{conversation_id}/suggestions")
 def suggestions(conversation_id: int) -> dict:
-    self_ali_id = _ready()
-    conv = crm_get_conversation_detail(self_ali_id, conversation_id)
+    store, context = _inbox_store()
+    conv = _scoped_conversation(store, context, conversation_id)
     if conv is None:
         raise AppError("会话不存在", status_code=404)
     try:
-        rows = conversation_transcript(conv.messages, CrmResolver(self_ali_id))
+        rows = conversation_transcript(conv.messages, CrmResolver(context.self_ali_id))
         result = generate_reply_suggestions(rows)
     except AppError:
         raise
@@ -518,12 +622,12 @@ def suggestions(conversation_id: int) -> dict:
 
 @router.get("/api/conversations/{conversation_id}/analysis")
 def analysis(conversation_id: int) -> dict:
-    self_ali_id = _ready()
-    conv = crm_get_conversation_detail(self_ali_id, conversation_id)
+    store, context = _inbox_store()
+    conv = _scoped_conversation(store, context, conversation_id)
     if conv is None:
         raise AppError("会话不存在", status_code=404)
     try:
-        rows = conversation_transcript(conv.messages, CrmResolver(self_ali_id))
+        rows = conversation_transcript(conv.messages, CrmResolver(context.self_ali_id))
         raw = run_chat_tool_agent(CHAT_CUSTOMER_STAGE_AGENT_APID, build_analysis_input(task=_STAGE_TASK, conversation=rows))
     except AppError:
         raise
@@ -561,12 +665,12 @@ def analysis(conversation_id: int) -> dict:
 @router.post("/api/conversations/export")
 def export_conversations(body: ExportConversationsInput) -> dict:
     sids = body.conversationIds
-    self_ali_id = _ready()
+    store, context = _inbox_store()
     convs: list[CrmConversation] = []
     missing: list[int] = []
     for sid in sids:
         try:
-            conv = crm_get_conversation_detail(self_ali_id, sid)
+            conv = _scoped_conversation(store, context, sid)
         except AppError:
             raise
         except Exception:
@@ -579,7 +683,7 @@ def export_conversations(body: ExportConversationsInput) -> dict:
     if not convs:
         raise AppError(f"会话不存在: {missing[0] if missing else ''}", status_code=404)
     try:
-        payload, archive_name = build_export_zip(convs, CrmResolver(self_ali_id))
+        payload, archive_name = build_export_zip(convs, CrmResolver(context.self_ali_id))
     except AppError:
         raise
     except Exception:

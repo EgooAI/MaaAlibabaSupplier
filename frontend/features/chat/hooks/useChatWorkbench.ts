@@ -8,16 +8,18 @@ import { AccountChangedError, useAccount, useAccountBackend } from "@/features/a
 import { loadDraft, saveDraft } from "@/features/account/draftStorage";
 import type { AssistantSuggestion, ChatMessage, ConversationDetail } from "@/types/chatCanonical";
 import { useConversationSummaries } from "./useConversationSummaries";
+import type { ConversationQuery } from "@/types/inbox";
+import { adaptInboxState } from "@/services/chatAdapter";
 
 type AnalysisState = {
   loading: boolean;
   error?: string;
 };
 
-export function useChatWorkbench() {
+export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
   const { message } = App.useApp();
   const backend = useAccountBackend();
-  const { snapshot } = useAccount();
+  const { snapshot, refreshReads } = useAccount();
   const account = snapshot!.account;
   const draftStorageFailed = useRef(false);
   const warnStorage = useCallback(() => {
@@ -25,7 +27,10 @@ export function useChatWorkbench() {
     draftStorageFailed.current = true;
     message.warning("草稿暂存于当前标签页内存，切换账号后仍保留，存储恢复后会补存；关闭或刷新浏览器前请妥善保留内容");
   }, [message]);
-  const { conversations, loading, revision, refreshError, refreshPending, beginRead } = useConversationSummaries();
+  const summaries = useConversationSummaries(initialQuery);
+  const { conversations, loading, detailRevision, refreshError, refreshPending, beginRead } = summaries;
+  const [markingRead, setMarkingRead] = useState(false);
+  const readBusy = useRef(false);
   const [activeConversationId, setActiveConversationId] = useState<string>();
   const [activeConversation, setActiveConversation] = useState<ConversationDetail>();
   const [detailLoading, setDetailLoading] = useState(false);
@@ -39,6 +44,7 @@ export function useChatWorkbench() {
   const [activeCardId, setActiveCardId] = useState<string>();
   // 并发守卫：快速切换会话时丢弃旧请求回包，各请求域独立计数。
   const activeIdRef = useRef<string | undefined>(undefined);
+  const selectionRef = useRef(0);
   const detailRequestRef = useRef(0);
   const translateRequestRef = useRef(0);
   const suggestionRequestRef = useRef(0);
@@ -47,6 +53,7 @@ export function useChatWorkbench() {
 
   useEffect(() => () => {
     activeIdRef.current = undefined;
+    ++selectionRef.current;
     ++detailRequestRef.current;
     ++translateRequestRef.current;
     ++suggestionRequestRef.current;
@@ -66,6 +73,7 @@ export function useChatWorkbench() {
     const requestId = detailRequestRef.current + 1;
     detailRequestRef.current = requestId;
     activeIdRef.current = id;
+    ++selectionRef.current;
     ++translateRequestRef.current;
     ++suggestionRequestRef.current;
     ++analysisRequestRef.current;
@@ -84,7 +92,7 @@ export function useChatWorkbench() {
       const detail = await backend.getConversation(id);
       if (detailRequestRef.current !== requestId || activeIdRef.current !== id) return;
       setActiveConversation(detail);
-      acknowledge(true);
+      acknowledge(true, detail.isOverdue ? null : detail.dueAt);
     } catch {
       acknowledge(false);
       if (detailRequestRef.current === requestId && activeIdRef.current === id) {
@@ -127,7 +135,7 @@ export function useChatWorkbench() {
           }),
         };
       });
-      acknowledge(true);
+      acknowledge(true, detail.isOverdue ? null : detail.dueAt);
     } catch {
       acknowledge(false);
     } finally {
@@ -142,7 +150,7 @@ export function useChatWorkbench() {
       return;
     }
     void refreshActiveDetail();
-  }, [revision, refreshActiveDetail]);
+  }, [detailRevision, refreshActiveDetail]);
 
   const translate = useCallback(async (messageItem: ChatMessage, regenerate = false) => {
     const conversationId = activeConversation?.id;
@@ -280,7 +288,33 @@ export function useChatWorkbench() {
 
   const activeCard = useMemo(() => activeConversation?.messages.find((item) => item.card?.id === activeCardId)?.card, [activeCardId, activeConversation]);
 
+  async function markRead() {
+    const displayed = activeConversation;
+    if (!displayed?.readSnapshot || readBusy.current) return;
+    const selection = selectionRef.current;
+    readBusy.current = true;
+    setMarkingRead(true);
+    // Capture the token belonging to the messages displayed at the click.
+    const token = displayed.readSnapshot;
+    try {
+      const receipt = await backend.markConversationRead(displayed.id, token);
+      if (activeIdRef.current === displayed.id && selection === selectionRef.current) {
+        ++detailRequestRef.current;
+        setActiveConversation((current) => current?.id === displayed.id ? { ...current, ...adaptInboxState(receipt.state) } : current);
+      }
+      refreshReads();
+    } catch (error) {
+      if (!(error instanceof AccountChangedError)) message.error("标记工作台已读失败，请重试");
+    } finally {
+      readBusy.current = false;
+      setMarkingRead(false);
+    }
+  }
+
   return {
+    ...summaries,
+    markingRead,
+    markRead,
     conversations,
     activeConversation,
     loading,

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, type ReactNode, type ButtonHTMLAttributes } from "react";
+import { act, useEffect, type ReactNode, type ButtonHTMLAttributes } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountProvider, useAccount } from "@/features/account/AccountProvider";
@@ -11,9 +11,10 @@ import { adaptConversationDetail } from "@/services/chatAdapter";
 import type { OutboxTask, SendMessageInput } from "@/types/chatOperations";
 import { outboxTask, screenshotPng } from "@/test/support/outboxFixture";
 import { ApiError } from "@/services/httpAdapter";
+import { useChatWorkbench } from "@/features/chat/hooks/useChatWorkbench";
 
 const mocks = vi.hoisted(() => ({
-  backend: { getConnection: vi.fn(), listOutbox: vi.fn(), getOutbox: vi.fn(), sendMessage: vi.fn(), confirmOutbox: vi.fn(), cancelOutbox: vi.fn(), retryOutbox: vi.fn(), getOutboxScreenshot: vi.fn() },
+  backend: { getConnection: vi.fn(), listOutbox: vi.fn(), getOutbox: vi.fn(), sendMessage: vi.fn(), confirmOutbox: vi.fn(), cancelOutbox: vi.fn(), retryOutbox: vi.fn(), getOutboxScreenshot: vi.fn(), listConversations: vi.fn(), getConversation: vi.fn(), getConversationRevision: vi.fn(), markConversationRead: vi.fn() },
 }));
 vi.mock("@/services/client", () => ({ backend: mocks.backend }));
 vi.mock("antd", () => {
@@ -33,16 +34,30 @@ let container: HTMLDivElement;
 let store: OutboxTask[];
 let createUrl: ReturnType<typeof vi.fn>;
 let revokeUrl: ReturnType<typeof vi.fn>;
+let chat: ReturnType<typeof useChatWorkbench>;
 const readySnapshot = () => ({ ...structuredClone(connectionSnapshot), client: { ...connectionSnapshot.client, connected: true, confirmed: true }, capabilities: { read_chat: true, use_ai: true, operate_client: true } });
 const awaiting = (overrides: Partial<OutboxTask> = {}) => outboxTask({ status: "awaiting_confirmation", version: 3, screenshot_id: "frame-1", screenshot_at: Date.now() / 1000, ...overrides });
 
 function Harness({ sid = "42", draft = "submitted text" }: { sid?: string; draft?: string }) {
   const account = useAccount();
   if (!account.snapshot || (account.blocked && !account.suspended)) return null;
-  const conversation = adaptConversationDetail({ sid: Number(sid), name: "Buyer", participants: [], messages: [], latest: { content: "", updated_at: null }, unread_count: 0, status: "following", priority: "medium" });
+  const conversation = adaptConversationDetail({ sid: Number(sid), name: "Buyer", participants: [], messages: [], latest: { content: "", updated_at: null }, unread_count: 0, reply_state: "waiting_customer", pending_since: null, due_at: null, is_overdue: false, history_pending: false, uncertain: false, read_snapshot: "outbox-snapshot" });
   conversation.customer.name = "Recipient Name";
   conversation.customer.loginId = "buyer-login";
   return <OutboxWorkspace key={`${account.generation}:${sid}`} conversation={conversation} value={draft} onChange={() => {}} translationVisible onToggleTranslation={() => {}} onRetranslate={() => {}} onOpenSuggestions={() => {}} onOpenIntentAnalysis={() => {}} onOpenStageAnalysis={() => {}} />;
+}
+
+function InboxHarness() {
+  const account = useAccount();
+  if (!account.snapshot || (account.blocked && !account.suspended)) return null;
+  return <InboxWorkspace key={`${account.snapshot.account.epoch}:${account.generation}`} />;
+}
+
+function InboxWorkspace() {
+  const current = useChatWorkbench();
+  useEffect(() => { chat = current; }, [current]);
+  const conversation = current.activeConversation;
+  return conversation ? <OutboxWorkspace key={conversation.id} conversation={conversation} value={current.draft} onChange={current.setDraft} translationVisible onToggleTranslation={() => {}} onRetranslate={() => {}} onOpenSuggestions={() => {}} onOpenIntentAnalysis={() => {}} onOpenStageAnalysis={() => {}} /> : null;
 }
 
 beforeEach(() => {
@@ -101,6 +116,39 @@ const recentTasks = () => structuredClone([...store].sort((a, b) => b.created_at
 const addRecentTasks = () => store.push(...Array.from({ length: 101 }, (_, i) => outboxTask({ id: `recent-${i}`, idempotency_key: `recent-key-${i}`, content: `recent text ${i}`, created_at: 1000 + i, status: "observed" })));
 
 describe("outbox workbench", () => {
+  it("keeps the active screenshot confirmation mounted when a filtered list observes a newer inbox revision", async () => {
+    vi.useFakeTimers();
+    const original = adaptConversationDetail({ sid: 42, name: "Buyer", participants: [], messages: [], latest: { content: "", updated_at: null }, unread_count: 3, reply_state: "needs_reply", pending_since: 100, due_at: 86500, is_overdue: true, history_pending: false, uncertain: false, read_snapshot: "original-token" });
+    const firstPage = { items: [original], total: 1, offset: 0, limit: 50, inbox_revision: 1, pagination_revision: "page-1" };
+    mocks.backend.listConversations.mockResolvedValue(firstPage);
+    mocks.backend.getConversation.mockResolvedValue(original);
+    store.push(awaiting());
+    await act(async () => root.render(<AccountProvider><InboxHarness /></AccountProvider>));
+    await act(async () => chat.setDraft("keep this unsent reply"));
+    await click("查看截图并确认联系人");
+    await loadImage();
+    const dialog = container.querySelector('[role="dialog"]');
+    const image = container.querySelector("img");
+    const composer = container.querySelector("textarea");
+    const nextPage = { ...firstPage, items: [{ ...original, id: "99" }], inbox_revision: 2, pagination_revision: "page-2" };
+    mocks.backend.listConversations.mockResolvedValue(nextPage);
+    mocks.backend.getConversation.mockResolvedValue({ ...original, unreadCount: 0, readSnapshot: "updated-token" });
+    await act(async () => chat.changeQuery({ country: "ES" }));
+    expect(chat.activeConversation).toMatchObject({ id: "42", unreadCount: 0, readSnapshot: "updated-token" });
+    expect(chat.page).toEqual(nextPage);
+    expect(chat.draft).toBe("keep this unsent reply");
+    expect(container.querySelector('[role="dialog"]')).toBe(dialog);
+    expect(container.querySelector("img")).toBe(image);
+    expect(container.querySelector("textarea")).toBe(composer);
+    expect(button("确认该联系人，发送").disabled).toBe(false);
+    expect(mocks.backend.listConversations).toHaveBeenCalledTimes(2);
+    expect(mocks.backend.getConversation).toHaveBeenCalledTimes(2);
+    expect(mocks.backend.getOutboxScreenshot).toHaveBeenCalledTimes(1);
+    expect(mocks.backend.markConversationRead).not.toHaveBeenCalled();
+    expect(mocks.backend.sendMessage).not.toHaveBeenCalled();
+    expect(mocks.backend.confirmOutbox).not.toHaveBeenCalled();
+  });
+
   it.each(["send", "test"] as const)("freezes %s content, persists before POST, coalesces double clicks and requires a loaded PNG before confirming", async (action) => {
     await render();
     await click("发送入口");

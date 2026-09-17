@@ -17,8 +17,7 @@ const aggregate: ConversationAggregateDto = {
   messages: [],
   latest: { content: "latest", updated_at: "2026-09-08 10:00" },
   unread_count: 0,
-  status: "following",
-  priority: "medium",
+  reply_state: "waiting_customer", pending_since: null, due_at: null, is_overdue: false, history_pending: false, uncertain: false, read_snapshot: "snapshot-42",
 };
 
 afterEach(() => {
@@ -27,6 +26,52 @@ afterEach(() => {
 });
 
 describe("http adapter contract", () => {
+  it("encodes literal search text and adapts the page with its revision token", async () => {
+    const data = { items: [aggregate], total: 123, offset: 50, limit: 50, inbox_revision: 7, pagination_revision: "opaque-next" };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data })));
+    globalThis.fetch = fetchMock;
+    const query = { q: "客户%_ &?", search_scope: "messages" as const, country: "ES", tag: "A&B", unread: false, overdue: true, offset: 50, limit: 50, pagination_revision: "opaque/+=" };
+    const result = await httpBackend.listConversations(query);
+    const [path, init] = fetchMock.mock.calls[0];
+    const params = new URL(path, "http://localhost").searchParams;
+    for (const [key, value] of Object.entries(query)) expect(params.get(key)).toBe(String(value));
+    expect(new Headers(init.headers).get("X-Account-Epoch")).toBe("mock-1");
+    expect(result).toMatchObject({ total: 123, offset: 50, pagination_revision: "opaque-next", items: [{ id: "42", replyState: "waiting_customer" }] });
+  });
+
+  it.each([
+    () => httpBackend.listConversations({ q: "%_" }),
+    () => httpBackend.getInboxOverview(),
+    () => httpBackend.getInboxSettings(),
+    () => httpBackend.saveInboxSettings(3600),
+    () => httpBackend.markConversationRead("42", "opaque-token"),
+  ])("rejects late inbox responses across epochs, including paths with queries", async (call) => {
+    let respond!: (response: Response) => void;
+    const fetchMock = vi.fn<typeof fetch>(() => new Promise<Response>((resolve) => { respond = resolve; }));
+    globalThis.fetch = fetchMock;
+    const pending = call();
+    expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("X-Account-Epoch")).toBe("mock-1");
+    accountSession.accept({ ...connectionSnapshot, account: { ...connectionSnapshot.account, epoch: "other" } });
+    respond(new Response(JSON.stringify({ code: 0, msg: "ok", data: {} })));
+    await expect(pending).rejects.toThrow("账号状态已变化");
+  });
+
+  it("posts only the captured read token and writes timeout_seconds under the current epoch", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ code: 0, msg: "ok", data: {} }))));
+    globalThis.fetch = fetchMock;
+    await httpBackend.markConversationRead("sid/42", "opaque/+==");
+    await httpBackend.saveInboxSettings(604800);
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init.method, JSON.parse(init.body)])).toEqual([
+      ["/api/conversations/sid%2F42/read", "POST", { read_snapshot: "opaque/+==" }],
+      ["/api/inbox/settings", "PUT", { timeout_seconds: 604800 }],
+    ]);
+  });
+
+  it("exposes a pagination 409 for the workspace to reset instead of adapting it as a page", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 1, msg: "pagination expired", data: null }), { status: 409, headers: { "X-Account-Epoch": "mock-1" } }));
+    await expect(httpBackend.listConversations({ offset: 50, pagination_revision: "old" })).rejects.toMatchObject({ status: 409 });
+  });
+
   it.each([
     ["/api/settings/alibaba-data-dir", "PUT", { path: "E:\\Data" }, (epoch: string) => httpBackend.saveDataDirPath("E:\\Data", epoch)],
     ["/api/settings/ali-id", "PUT", { ali_id: "seller-b" }, (epoch: string) => httpBackend.saveAliId("seller-b", epoch)],
@@ -91,7 +136,7 @@ describe("http adapter contract", () => {
     () => httpBackend.exportConversations({ conversationIds: ["42"] }),
     () => httpBackend.resetCache(),
   ])("attaches the expected epoch to account data requests", async (call) => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: [] })));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: { items: [], total: 0, offset: 0, limit: 50, inbox_revision: 1, pagination_revision: "page-1" } })));
     globalThis.fetch = fetchMock;
     await call();
     expect(new Headers(fetchMock.mock.calls[0][1].headers).get("X-Account-Epoch")).toBe("mock-1");

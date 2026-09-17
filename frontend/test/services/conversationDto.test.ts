@@ -43,8 +43,7 @@ const aggregate: ConversationAggregateDto = {
   },
   latest: { content: "hello", updated_at: "2026-09-01 10:00:00" },
   unread_count: 0,
-  status: "following",
-  priority: "medium",
+  reply_state: "waiting_customer", pending_since: null, due_at: null, is_overdue: false, history_pending: false, uncertain: false, read_snapshot: "snapshot-7",
   business_cards: [
     { id: "P123", title: "Lamp", type: "product", summary: "$1 · MOQ 10pcs", tags: ["产品卡"], coverTone: "#e6f4ff", details: [{ label: "价格", value: "$1" }] },
   ],

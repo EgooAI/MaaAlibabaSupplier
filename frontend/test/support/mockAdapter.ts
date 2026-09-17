@@ -18,6 +18,8 @@ import type { SelfInfo } from "@/types/home";
 import type { AliIdList, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskSnapshot } from "@/types/status";
 import type { OperationsBackend } from "@/services/interfaces";
 import { connectionSnapshot } from "@/mock/connectionData";
+import { ApiError } from "@/services/httpAdapter";
+import type { InboxSettings } from "@/types/inbox";
 
 const delay = <T,>(value: T, ms = 280) => new Promise<T>((resolve) => setTimeout(() => resolve(value), ms));
 
@@ -52,6 +54,12 @@ const translationStore = new Map<string, string>();
 let connectionStore = structuredClone(connectionSnapshot);
 const outboxStore = new Map<string, { scope: string; task: OutboxTask }>();
 const outboxScope = () => JSON.stringify([connectionStore.account.data_dir, connectionStore.account.self_ali_id]);
+const inboxSettings = new Map<string, InboxSettings>();
+function mockInboxSettings() {
+  let value = inboxSettings.get(outboxScope());
+  if (!value) { value = { timeout_seconds: 86400, inbox_revision: 1 }; inboxSettings.set(outboxScope(), value); }
+  return value;
+}
 
 function getMockOutbox(id: string, version?: number) {
   const record = outboxStore.get(id);
@@ -121,6 +129,7 @@ export const mockBackend: OperationsBackend = {
     statusStore = buildStatusSnapshot();
     translationStore.clear();
     outboxStore.clear();
+    inboxSettings.clear();
     return delay(undefined);
   },
 
@@ -143,9 +152,54 @@ export const mockBackend: OperationsBackend = {
 
   getTranslation: (text) => delay(translationStore.get(text) ?? null),
 
-  listConversations: () => delay(conversationStore.map((conversation) => adaptConversationSummary(conversation))),
+  listConversations: async (query = {}) => {
+    const settings = mockInboxSettings();
+    const token = `mock-page-${settings.inbox_revision}`;
+    if ((query.offset ?? 0) > 0 && query.pagination_revision !== token) throw new ApiError("分页已过期", "/api/conversations", { status: 409 });
+    const q = query.q?.toLowerCase();
+    const items = conversationStore.filter((item) => {
+      const customer = adaptConversationSummary(item).customer;
+      const customerMatch = [customer.name, customer.company, customer.aliId, customer.loginId].some((text) => text?.toLowerCase().includes(q ?? ""));
+      const messageMatch = item.messages.some((message) => JSON.stringify(message.message.content).toLowerCase().includes(q ?? ""));
+      return (!q || (query.search_scope === "customer" ? customerMatch : query.search_scope === "messages" ? messageMatch : customerMatch || messageMatch))
+        && (!query.country || customer.country === query.country) && (!query.tag || customer.tags.includes(query.tag))
+        && (!query.reply_state || item.reply_state === query.reply_state)
+        && (query.unread === undefined || (item.unread_count > 0) === query.unread)
+        && (query.overdue === undefined || item.is_overdue === query.overdue);
+    }).sort((a, b) => (b.latest.updated_at ?? "").localeCompare(a.latest.updated_at ?? "") || b.sid - a.sid);
+    const offset = query.offset ?? 0;
+    const limit = query.limit ?? 50;
+    return delay({ items: items.slice(offset, offset + limit).map(adaptConversationSummary), total: items.length, offset, limit, inbox_revision: settings.inbox_revision, pagination_revision: token });
+  },
 
-  getConversationRevision: () => delay({ ...structuredClone(connectionStore.source), ready: connectionStore.capabilities.read_chat }),
+  getInboxSettings: () => delay({ ...mockInboxSettings() }),
+  saveInboxSettings: async (timeout_seconds) => {
+    if (timeout_seconds < 3600 || timeout_seconds > 604800) throw new Error("超时范围无效");
+    const settings = mockInboxSettings();
+    settings.timeout_seconds = timeout_seconds;
+    ++settings.inbox_revision;
+    return delay({ ...settings });
+  },
+  getInboxOverview: () => delay({
+    ...mockInboxSettings(), updated_at: Date.now() / 1000,
+    counts: {
+      total: conversationStore.length,
+      unread: conversationStore.filter((item) => item.unread_count > 0).length,
+      needs_reply: conversationStore.filter((item) => item.reply_state === "needs_reply").length,
+      overdue: conversationStore.filter((item) => item.is_overdue).length,
+      history_pending: conversationStore.filter((item) => item.history_pending).length,
+      waiting_customer: conversationStore.filter((item) => item.reply_state === "waiting_customer").length,
+    },
+  }),
+  markConversationRead: async (id, token) => {
+    const conversation = conversationStore.find((item) => String(item.sid) === id);
+    if (!conversation || token !== conversation.read_snapshot) throw new Error("已读快照无效");
+    conversation.unread_count = 0;
+    const { unread_count, reply_state, pending_since, due_at, is_overdue, history_pending, uncertain } = conversation;
+    return delay({ state: { unread_count, reply_state, pending_since, due_at, is_overdue, history_pending, uncertain, read_seq: 1, snapshot_seq: 1 }, inbox_revision: ++mockInboxSettings().inbox_revision });
+  },
+
+  getConversationRevision: () => delay({ ...structuredClone(connectionStore.source), ready: connectionStore.capabilities.read_chat, inbox_revision: mockInboxSettings().inbox_revision, next_due_at: null }),
 
   getConversation: async (id) => delay(buildConversationDetail(id)),
 

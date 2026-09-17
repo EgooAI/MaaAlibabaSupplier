@@ -1,7 +1,7 @@
 import type { BusinessCard } from "@/types/cards";
 import type { ID } from "@/types/common";
+import type { ReplyState } from "./inbox";
 
-export type ConversationStatus = "unread" | "following" | "waiting" | "closed";
 export type CustomerStage = "unknown" | "new" | "interested" | "negotiating" | "risk" | "done";
 export type MessageRole = "unknown" | "buyer" | "seller" | "system" | "card";
 
@@ -65,8 +65,12 @@ export interface Conversation {
   latestMessage: string;
   updatedAt: string;
   unreadCount: number;
-  status: ConversationStatus;
-  priority: "high" | "medium" | "low";
+  replyState: ReplyState;
+  pendingSince: number | null;
+  dueAt: number | null;
+  isOverdue: boolean;
+  historyPending: boolean;
+  uncertain: boolean;
   dialogueCount?: number;
 }
 
@@ -82,6 +86,7 @@ export interface ConversationAnalysis {
 }
 
 export interface ConversationDetail extends Conversation {
+  readSnapshot?: string;
   messages: ChatMessage[];
   analysis?: ConversationAnalysis;
 }

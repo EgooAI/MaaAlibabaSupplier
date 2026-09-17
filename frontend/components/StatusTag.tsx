@@ -1,16 +1,11 @@
 import { Badge, Tag } from "antd";
 import type { AgentConfig } from "@/types/agent";
 import type { BusinessCardStatus } from "@/types/cards";
-import type { ConversationStatus } from "@/types/chatCanonical";
 import type { HealthStatus, TaskStatus } from "@/types/status";
 
-type StatusValue = ConversationStatus | BusinessCardStatus | HealthStatus | TaskStatus | AgentConfig["category"] | "enabled" | "disabled" | "high" | "medium" | "low";
+type StatusValue = BusinessCardStatus | HealthStatus | TaskStatus | AgentConfig["category"] | "enabled" | "disabled" | "high" | "medium" | "low";
 
 const statusMap: Record<StatusValue, { label: string; color: string; badge?: "success" | "processing" | "warning" | "error" | "default" }> = {
-  unread: { label: "未读", color: "red", badge: "error" },
-  following: { label: "跟进中", color: "blue", badge: "processing" },
-  waiting: { label: "等待客户", color: "gold", badge: "warning" },
-  closed: { label: "已关闭", color: "default", badge: "default" },
   published: { label: "已发布", color: "green", badge: "success" },
   draft: { label: "草稿", color: "default", badge: "default" },
   reviewing: { label: "待审核", color: "purple", badge: "processing" },

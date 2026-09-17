@@ -21,6 +21,7 @@ function useAccountController() {
   const request = useRef(0);
   const mutation = useRef(false);
   const mounted = useRef(true);
+  const refreshReads = useCallback(() => setReadRefreshSequence((value) => value + 1), []);
 
   const notify = useCallback(() => {
     try {
@@ -119,7 +120,7 @@ function useAccountController() {
     };
   }, [refresh]);
 
-  return { ...session, error, refreshing, mutating, syncBusy, readRefreshSequence, refresh, mutate, requestSync };
+  return { ...session, error, refreshing, mutating, syncBusy, readRefreshSequence, refreshReads, refresh, mutate, requestSync };
 }
 
 const AccountContext = createContext<ReturnType<typeof useAccountController> | null>(null);
