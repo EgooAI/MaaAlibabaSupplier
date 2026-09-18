@@ -20,7 +20,7 @@ const revisionOf = (revision: number) => ({ ready: true, revision, inbox_revisio
 
 const mocks = vi.hoisted(() => ({
   message: { warning: vi.fn(), error: vi.fn(), success: vi.fn(), info: vi.fn() },
-  backend: { getConnection: vi.fn(), getConversationRevision: vi.fn(), listConversations: vi.fn(), getConversation: vi.fn(), retryConnection: vi.fn(), translateMessage: vi.fn(), analyzeConversation: vi.fn() },
+  backend: { getConnection: vi.fn(), getConversationRevision: vi.fn(), listConversations: vi.fn(), getConversation: vi.fn(), retryConnection: vi.fn(), requestTranslations: vi.fn(), queryTranslations: vi.fn(), getTranslationJob: vi.fn(), analyzeConversation: vi.fn() },
 }));
 vi.mock("antd", () => ({
   App: { useApp: () => ({ message: mocks.message }) },
@@ -74,7 +74,9 @@ beforeEach(() => {
   mocks.backend.getConversation.mockReset().mockResolvedValue(adaptConversationDetail(aggregate));
   mocks.backend.getConversationRevision.mockReset().mockResolvedValue(revisionOf(connectionSnapshot.source.revision));
   mocks.backend.retryConnection.mockReset().mockResolvedValue(connectionSnapshot);
-  mocks.backend.translateMessage.mockReset();
+  mocks.backend.requestTranslations.mockReset().mockResolvedValue({ task_id: "", status: "succeeded", message: "没有需要翻译的内容" });
+  mocks.backend.queryTranslations.mockReset().mockResolvedValue({ translations: {} });
+  mocks.backend.getTranslationJob.mockReset().mockResolvedValue(null);
   mocks.backend.analyzeConversation.mockReset();
   Object.defineProperty(document, "hidden", { configurable: true, value: false });
   container = document.createElement("div");
@@ -440,7 +442,7 @@ describe("chat synchronization boundaries", () => {
     expect(account.snapshot?.source.revision).toBe(connectionSnapshot.source.revision);
     expect(container.querySelector("textarea")).toBe(before);
     expect(before.scrollTop).toBe(80);
-    expect(mocks.backend.translateMessage).not.toHaveBeenCalled();
+    expect(mocks.backend.requestTranslations).not.toHaveBeenCalled();
     expect(mocks.backend.analyzeConversation).not.toHaveBeenCalled();
     await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
     expect(mocks.backend.listConversations).toHaveBeenCalledTimes(listCalls + 1);
@@ -488,7 +490,7 @@ describe("chat synchronization boundaries", () => {
     expect(mocks.backend.retryConnection).toHaveBeenCalledExactlyOnceWith(connectionSnapshot.account.epoch);
   });
 
-  it("merges translations by ID and original text and preserves AI results completed during a quiet read", async () => {
+  it("merges job translations by original text and preserves AI results completed during a quiet read", async () => {
     vi.useFakeTimers();
     const original = adaptConversationDetail(aggregate);
     original.messages = [
@@ -503,12 +505,16 @@ describe("chat synchronization boundaries", () => {
     mocks.backend.getConversationRevision.mockResolvedValue(revisionOf(2));
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     expect(workbench.detailLoading).toBe(false);
-    expect(mocks.backend.translateMessage).not.toHaveBeenCalled();
+    expect(mocks.backend.requestTranslations).not.toHaveBeenCalled();
     expect(mocks.backend.analyzeConversation).not.toHaveBeenCalled();
-    mocks.backend.translateMessage.mockResolvedValue({ messageId: "one", translatedContent: "just translated" });
+    mocks.backend.requestTranslations.mockResolvedValueOnce({ task_id: "job-1", status: "pending", message: "等待执行" });
+    mocks.backend.getTranslationJob.mockResolvedValueOnce({ task_id: "job-1", status: "succeeded", message: "已翻译 1 条" });
+    mocks.backend.queryTranslations.mockResolvedValueOnce({ translations: { hello: "just translated" } });
     const analysis = { intent: "intent", stage: "new", score: 80, risks: [], nextActions: [], summary: "just analyzed" };
     mocks.backend.analyzeConversation.mockResolvedValue(analysis);
-    await act(async () => { await workbench.translate(original.messages[0]); await workbench.analyzeConversation(); });
+    await act(async () => { await workbench.translateMessages([original.messages[0]], { force: true }); await workbench.analyzeConversation(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(workbench.activeConversation?.messages[0].translatedContent).toBe("just translated");
     const incoming = structuredClone(original);
     incoming.messages[0].translatedContent = "stale server translation";
     incoming.messages[1] = { ...incoming.messages[1], content: "changed", translatedContent: undefined };
@@ -517,7 +523,7 @@ describe("chat synchronization boundaries", () => {
     expect(workbench.activeConversation?.messages.map((item) => item.translatedContent)).toEqual(["just translated", undefined, undefined]);
     expect(workbench.activeConversation?.analysis).toEqual(analysis);
     expect(container.querySelector("textarea")).toBe(before);
-    expect(mocks.backend.translateMessage).toHaveBeenCalledTimes(1);
+    expect(mocks.backend.requestTranslations).toHaveBeenCalledTimes(1);
     expect(mocks.backend.analyzeConversation).toHaveBeenCalledTimes(1);
   });
 
@@ -538,17 +544,19 @@ describe("chat synchronization boundaries", () => {
   });
 
   it("does not apply a late translation when a quiet refresh changed the original text", async () => {
+    vi.useFakeTimers();
     const original = adaptConversationDetail(aggregate);
     original.messages = [{ id: "one", role: "buyer", content: "before", createdAt: "now" }];
     mocks.backend.getConversation.mockResolvedValue(original);
     await mount();
-    let resolve!: (value: { messageId: string; translatedContent: string }) => void;
-    mocks.backend.translateMessage.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
-    let translating!: Promise<void>;
-    await act(async () => { translating = workbench.translate(original.messages[0]); });
+    mocks.backend.requestTranslations.mockResolvedValueOnce({ task_id: "job-late", status: "pending", message: "等待执行" });
+    mocks.backend.getTranslationJob.mockResolvedValueOnce({ task_id: "job-late", status: "succeeded", message: "已翻译 1 条" });
+    // Cache holds a translation keyed by the OLD text; the message text changed meanwhile.
+    mocks.backend.queryTranslations.mockResolvedValue({ translations: { before: "translation of before" } });
+    await act(async () => { await workbench.translateMessages([original.messages[0]]); });
     mocks.backend.getConversation.mockResolvedValue({ ...original, messages: [{ ...original.messages[0], content: "after" }] });
     await observe({ ...connectionSnapshot, source: { ...connectionSnapshot.source, revision: 2 } });
-    await act(async () => { resolve({ messageId: "one", translatedContent: "translation of before" }); await translating; });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
     expect(workbench.activeConversation?.messages[0]).toMatchObject({ content: "after" });
     expect(workbench.activeConversation?.messages[0].translatedContent).toBeUndefined();
   });
@@ -558,18 +566,18 @@ describe("chat synchronization boundaries", () => {
     original.messages = [{ id: "one", role: "buyer", content: "hello", createdAt: "now" }];
     mocks.backend.getConversation.mockImplementation(async (id: string) => ({ ...original, id }));
     await mount();
-    let resolveTranslation!: (value: { messageId: string; translatedContent: string }) => void;
+    let resolveSubmission!: (value: { task_id: string; status: string; message: string }) => void;
     let resolveAnalysis!: (value: ConversationDetail["analysis"]) => void;
-    mocks.backend.translateMessage.mockReturnValueOnce(new Promise((done) => { resolveTranslation = done; }));
+    mocks.backend.requestTranslations.mockReturnValueOnce(new Promise((done) => { resolveSubmission = done; }));
     mocks.backend.analyzeConversation.mockReturnValueOnce(new Promise((done) => { resolveAnalysis = done; }));
     let translating!: Promise<void>;
     let analyzing!: Promise<void>;
-    await act(async () => { translating = workbench.translate(original.messages[0]); analyzing = workbench.analyzeConversation(); });
+    await act(async () => { translating = workbench.translateMessages([original.messages[0]]); analyzing = workbench.analyzeConversation(); });
     await act(async () => { await workbench.selectConversation("other"); });
     await act(async () => { await workbench.selectConversation("42"); });
     const current = workbench.activeConversation;
     await act(async () => {
-      resolveTranslation({ messageId: "one", translatedContent: "obsolete translation" });
+      resolveSubmission({ task_id: "job-obsolete", status: "pending", message: "" });
       resolveAnalysis({ intent: "old", stage: "new", score: 20, risks: [], nextActions: [], summary: "obsolete analysis" });
       await translating;
       await analyzing;

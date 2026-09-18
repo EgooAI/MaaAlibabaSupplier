@@ -2,8 +2,8 @@
 
 import { App } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { mergeMessageTranslations } from "@/domain/chat/chatModel";
 import type { ConversationGroupMode } from "@/domain/chat/chatModel";
+import { mergeMessageTextTranslations } from "@/domain/chat/chatModel";
 import { AccountChangedError, useAccount, useAccountBackend } from "@/features/account/AccountProvider";
 import { loadDraft, saveDraft } from "@/features/account/draftStorage";
 import type { AssistantSuggestion, ChatMessage, ConversationDetail } from "@/types/chatCanonical";
@@ -15,6 +15,17 @@ type AnalysisState = {
   loading: boolean;
   error?: string;
 };
+
+type TranslationJobState = {
+  conversationId: string;
+  taskId: string;
+  messageIds: string[];
+  texts: string[];
+};
+
+const TRANSLATION_POLL_INTERVAL_MS = 2000;
+const TRANSLATION_POLL_MAX_TICKS = 150;
+const TRANSLATION_QUERY_CHUNK = 500;
 
 export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
   const { message } = App.useApp();
@@ -40,24 +51,33 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [analysisState, setAnalysisState] = useState<AnalysisState>({ loading: false });
   const [translationVisible, setTranslationVisible] = useState(true);
+  const [translationJob, setTranslationJob] = useState<TranslationJobState>();
+  const [translationPendingIds, setTranslationPendingIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [translationFailedIds, setTranslationFailedIds] = useState<ReadonlySet<string>>(() => new Set());
   const [groupMode, setGroupMode] = useState<ConversationGroupMode>("time");
   const [activeCardId, setActiveCardId] = useState<string>();
   // 并发守卫：快速切换会话时丢弃旧请求回包，各请求域独立计数。
   const activeIdRef = useRef<string | undefined>(undefined);
+  const activeConversationRef = useRef<ConversationDetail | undefined>(undefined);
   const selectionRef = useRef(0);
   const detailRequestRef = useRef(0);
-  const translateRequestRef = useRef(0);
   const suggestionRequestRef = useRef(0);
   const analysisRequestRef = useRef(0);
-  const translationVisibleRef = useRef(true);
 
   useEffect(() => () => {
     activeIdRef.current = undefined;
+    activeConversationRef.current = undefined;
     ++selectionRef.current;
     ++detailRequestRef.current;
-    ++translateRequestRef.current;
     ++suggestionRequestRef.current;
     ++analysisRequestRef.current;
+  }, []);
+
+  // The ref is the synchronous source of truth so async continuations (job
+  // polling, cache absorbs) never read a pre-commit snapshot; state mirrors it.
+  const commitConversation = useCallback((next: ConversationDetail | undefined) => {
+    activeConversationRef.current = next;
+    setActiveConversation(next);
   }, []);
 
   const draft = activeConversationId ? drafts[activeConversationId] ?? "" : "";
@@ -69,20 +89,193 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
     try { saveDraft(() => localStorage, account, id, value); } catch { warnStorage(); }
   }, [account, warnStorage]);
 
+  const applyTextTranslations = useCallback((conversationId: string, sourceMessages: ChatMessage[], translations: Record<string, string | null>) => {
+    const resolvedIds = sourceMessages
+      .filter((item) => item.role !== "card" && typeof translations[item.content] === "string" && translations[item.content]?.trim())
+      .map((item) => item.id);
+    const current = activeConversationRef.current;
+    if (current && current.id === conversationId) {
+      commitConversation({ ...current, messages: mergeMessageTextTranslations(current.messages, translations) });
+    }
+    if (!resolvedIds.length) return;
+    setTranslationPendingIds((current2) => {
+      const next = new Set(current2);
+      for (const id of resolvedIds) next.delete(id);
+      return next.size === current2.size ? current2 : next;
+    });
+    setTranslationFailedIds((current2) => {
+      const next = new Set(current2);
+      for (const id of resolvedIds) next.delete(id);
+      return next.size === current2.size ? current2 : next;
+    });
+  }, [commitConversation]);
+
+  /** Fetch cached translations for explicit texts and merge them into the conversation. */
+  const queryAndApplyTranslations = useCallback(async (conversationId: string, sourceMessages: ChatMessage[], texts: string[]) => {
+    let translations: Record<string, string | null> = {};
+    const chunks: string[][] = [];
+    for (let index = 0; index < texts.length; index += TRANSLATION_QUERY_CHUNK) chunks.push(texts.slice(index, index + TRANSLATION_QUERY_CHUNK));
+    // Partial failures only drop their own chunk; later refreshes retry.
+    const settled = await Promise.allSettled(chunks.map((chunk) => backend.queryTranslations({ texts: chunk })));
+    for (const result of settled) {
+      if (result.status === "fulfilled") translations = { ...translations, ...result.value.translations };
+    }
+    if (activeIdRef.current !== conversationId) return;
+    applyTextTranslations(conversationId, sourceMessages, translations);
+  }, [applyTextTranslations, backend]);
+
+  /** Pull cached translations for messages without one and merge them in. */
+  const absorbTranslations = useCallback(async (conversationId: string, sourceMessages?: ChatMessage[]) => {
+    const messages = sourceMessages ?? (activeConversationRef.current?.id === conversationId ? activeConversationRef.current.messages : undefined);
+    if (!messages) return;
+    const texts = [...new Set(messages.filter((item) => item.role !== "card" && !item.translatedContent && item.content.trim()).map((item) => item.content.trim()))];
+    if (!texts.length) return;
+    await queryAndApplyTranslations(conversationId, messages, texts);
+  }, [queryAndApplyTranslations]);
+
+  /** Re-read explicit texts after a job completes; force retranslations replace old values. */
+  const absorbTranslationTexts = useCallback(async (conversationId: string, texts: string[]) => {
+    if (!texts.length) return;
+    const conversation = activeConversationRef.current;
+    const messages = conversation?.id === conversationId ? conversation.messages : undefined;
+    if (!messages) return;
+    await queryAndApplyTranslations(conversationId, messages, texts);
+  }, [queryAndApplyTranslations]);
+
+  const finishTranslationJob = useCallback(async (job: TranslationJobState, outcome: "succeeded" | "failed" | "timeout" | "aborted") => {
+    setTranslationJob((current) => current && current.taskId === job.taskId ? undefined : current);
+    if (outcome === "aborted") return;
+    await absorbTranslationTexts(job.conversationId, job.texts);
+    if (activeIdRef.current !== job.conversationId) return;
+    const conversation = activeConversationRef.current;
+    const translatedNow = new Set(
+      (conversation?.messages ?? [])
+        .filter((item) => item.translatedContent)
+        .map((item) => item.id),
+    );
+    const unresolved = job.messageIds.filter((id) => !translatedNow.has(id));
+    setTranslationPendingIds(new Set());
+    if (unresolved.length && outcome !== "timeout") {
+      setTranslationFailedIds((current) => new Set([...current, ...unresolved]));
+      if (outcome === "failed") message.error("翻译失败，可点击消息重试");
+      else message.warning(`有 ${unresolved.length} 条消息未返回译文，可重试`);
+    }
+    if (outcome === "timeout") message.info("翻译仍在后台进行，稍后刷新会自动显示");
+  }, [absorbTranslationTexts, message]);
+
+  // Poll the active translation job; pauses while the tab is hidden.
+  useEffect(() => {
+    const job = translationJob;
+    if (!job) return;
+    let ticks = 0;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      if (cancelled || document.hidden) return;
+      ticks += 1;
+      if (ticks > TRANSLATION_POLL_MAX_TICKS) {
+        void finishTranslationJob(job, "timeout");
+        return;
+      }
+      void (async () => {
+        try {
+          const snapshot = await backend.getTranslationJob(job.taskId);
+          if (cancelled) return;
+          if (snapshot && (snapshot.status === "succeeded" || snapshot.status === "failed")) {
+            void finishTranslationJob(job, snapshot.status);
+          }
+        } catch (error) {
+          if (cancelled) return;
+          if (error instanceof AccountChangedError) {
+            void finishTranslationJob(job, "aborted");
+            return;
+          }
+          // transient poll failure: keep polling until the tick cap
+        }
+      })();
+    }, TRANSLATION_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [translationJob, backend, finishTranslationJob]);
+
+  const translateMessages = useCallback(async (targets: ChatMessage[], options?: { force?: boolean }) => {
+    const conversationId = activeIdRef.current;
+    if (!conversationId) return;
+    const force = options?.force ?? false;
+    // Any party's textual message is translatable; card bubbles carry no text.
+    const eligible = targets.filter((item) => item.role !== "card" && item.content.trim());
+    if (!eligible.length) {
+      if (force) message.info("没有可重新翻译的消息");
+      return;
+    }
+    const texts = [...new Set(eligible.map((item) => item.content.trim()))];
+    try {
+      const job = await backend.requestTranslations({ texts, force });
+      if (activeIdRef.current !== conversationId) return;
+      const ids = eligible.map((item) => item.id);
+      setTranslationFailedIds((current) => {
+        if (!current.size) return current;
+        const next = new Set(current);
+        for (const id of ids) next.delete(id);
+        return next.size === current.size ? current : next;
+      });
+      if (!job.task_id) {
+        void absorbTranslations(conversationId);
+        return;
+      }
+      setTranslationPendingIds((current) => new Set([...current, ...ids]));
+      setTranslationJob({ conversationId, taskId: job.task_id, messageIds: ids, texts });
+    } catch (error) {
+      if (!(error instanceof AccountChangedError)) message.error(force ? "重新翻译提交失败" : "翻译提交失败");
+    }
+  }, [absorbTranslations, backend, message]);
+
+  const translatableMessages = useMemo(() => activeConversation?.messages.filter((item) => item.role !== "card" && item.content.trim()) ?? [], [activeConversation?.messages]);
+
+  const translationStats = useMemo(() => {
+    const translated = translatableMessages.filter((item) => item.translatedContent).length;
+    return {
+      total: translatableMessages.length,
+      translated,
+      untranslated: translatableMessages.length - translated,
+      pending: translationPendingIds.size,
+    };
+  }, [translatableMessages, translationPendingIds]);
+
+  const translateMissing = useCallback(() => {
+    const targets = translatableMessages.filter((item) => !item.translatedContent);
+    if (!targets.length) {
+      message.info("译文已齐全");
+      return;
+    }
+    void translateMessages(targets);
+  }, [translatableMessages, message, translateMessages]);
+
+  const retranslateConversation = useCallback(() => {
+    void translateMessages(translatableMessages, { force: true });
+  }, [translatableMessages, translateMessages]);
+
+  const toggleTranslation = useCallback(() => {
+    setTranslationVisible((current) => !current);
+  }, []);
+
   const selectConversation = useCallback(async (id: string) => {
     const requestId = detailRequestRef.current + 1;
     detailRequestRef.current = requestId;
     activeIdRef.current = id;
     ++selectionRef.current;
-    ++translateRequestRef.current;
     ++suggestionRequestRef.current;
     ++analysisRequestRef.current;
     setActiveConversationId(id);
+    setTranslationJob(undefined);
+    setTranslationPendingIds(new Set());
+    setTranslationFailedIds(new Set());
     try {
       const saved = loadDraft(() => localStorage, account, id, warnStorage);
       setDrafts((current) => ({ ...current, [id]: current[id] ?? saved }));
     } catch { warnStorage(); }
-    setActiveConversation(undefined);
+    commitConversation(undefined);
     setActiveCardId(undefined);
     setAnalysisState({ loading: false });
     setDetailLoading(true);
@@ -91,8 +284,9 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
     try {
       const detail = await backend.getConversation(id);
       if (detailRequestRef.current !== requestId || activeIdRef.current !== id) return;
-      setActiveConversation(detail);
+      commitConversation(detail);
       acknowledge(true, detail.isOverdue ? null : detail.dueAt);
+      void absorbTranslations(id, detail.messages);
     } catch {
       acknowledge(false);
       if (detailRequestRef.current === requestId && activeIdRef.current === id) {
@@ -103,7 +297,7 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
         setDetailLoading(false);
       }
     }
-  }, [account, backend, message, warnStorage, beginRead]);
+  }, [account, absorbTranslations, backend, commitConversation, message, warnStorage, beginRead]);
 
   useEffect(() => {
     if (!activeConversationId && conversations[0]) {
@@ -121,27 +315,26 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
     try {
       const detail = await backend.getConversation(id);
       if (detailRequestRef.current !== requestId || activeIdRef.current !== id) return;
-      setActiveConversation((current) => {
-        if (!current || current.id !== detail.id) return detail;
-        const previous = new Map(current.messages.map((item) => [item.id, item]));
-        return {
-          ...detail,
-          analysis: current.analysis ?? detail.analysis,
-          messages: detail.messages.map((item) => {
-            const old = previous.get(item.id);
-            return old?.content === item.content && old.translatedContent
-              ? { ...item, translatedContent: old.translatedContent }
-              : item;
-          }),
-        };
-      });
+      const current = activeConversationRef.current;
+      const merged: ConversationDetail = current && current.id === detail.id
+        ? {
+            ...detail,
+            analysis: current.analysis ?? detail.analysis,
+            messages: detail.messages.map((item) => {
+              const old = current.messages.find((candidate) => candidate.id === item.id);
+              return old?.content === item.content && old.translatedContent ? { ...item, translatedContent: old.translatedContent } : item;
+            }),
+          }
+        : detail;
+      commitConversation(merged);
       acknowledge(true, detail.isOverdue ? null : detail.dueAt);
+      void absorbTranslations(id, merged.messages);
     } catch {
       acknowledge(false);
     } finally {
       if (detailRequestRef.current === requestId && activeIdRef.current === id) setDetailLoading(false);
     }
-  }, [backend, beginRead]);
+  }, [absorbTranslations, backend, beginRead, commitConversation]);
 
   const revisionSeenRef = useRef(false);
   useEffect(() => {
@@ -151,83 +344,6 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
     }
     void refreshActiveDetail();
   }, [detailRevision, refreshActiveDetail]);
-
-  const translate = useCallback(async (messageItem: ChatMessage, regenerate = false) => {
-    const conversationId = activeConversation?.id;
-    if (!conversationId) return;
-    const requestId = translateRequestRef.current + 1;
-    translateRequestRef.current = requestId;
-    translationVisibleRef.current = true;
-
-    try {
-      const result = regenerate
-        ? await backend.regenerateTranslation({ conversationId, messageId: messageItem.id, targetLanguage: "zh-CN" })
-        : await backend.translateMessage({ conversationId, messageId: messageItem.id, targetLanguage: "zh-CN" });
-      if (translateRequestRef.current !== requestId || activeIdRef.current !== conversationId) return;
-
-      setActiveConversation((current) => {
-        if (!current || current.id !== conversationId) return current;
-        const unchanged = current.messages.some((item) => item.id === messageItem.id && item.content === messageItem.content);
-        return unchanged ? { ...current, messages: mergeMessageTranslations(current.messages, [result]) } : current;
-      });
-      if (translationVisibleRef.current) setTranslationVisible(true);
-      message.success(regenerate ? "已重新翻译" : "已翻译消息");
-    } catch {
-      if (translateRequestRef.current === requestId && activeIdRef.current === conversationId) message.error(regenerate ? "重新翻译失败" : "消息翻译失败");
-    }
-  }, [activeConversation?.id, backend, message]);
-
-  const translateConversation = useCallback(async (options?: { force?: boolean }) => {
-    const force = options?.force ?? false;
-    const conversationId = activeConversation?.id;
-    const messages = activeConversation?.messages ?? [];
-    if (!conversationId) return;
-    const requestId = translateRequestRef.current + 1;
-    translateRequestRef.current = requestId;
-    translationVisibleRef.current = true;
-
-    const buyerMessages = force
-      ? messages.filter((item) => item.role === "buyer")
-      : messages.filter((item) => item.role === "buyer" && !item.translatedContent);
-    if (!buyerMessages.length) {
-      setTranslationVisible(true);
-      return;
-    }
-
-    try {
-      if (force) {
-        const texts = buyerMessages.map((item) => item.content).filter((text) => text.trim());
-        if (texts.length) await backend.requestTranslations({ texts, force: true });
-      }
-      const translatedMessages = await Promise.all(
-        buyerMessages.map((item) => force
-          ? backend.regenerateTranslation({ conversationId, messageId: item.id, targetLanguage: "zh-CN" })
-          : backend.translateMessage({ conversationId, messageId: item.id, targetLanguage: "zh-CN" })),
-      );
-      if (translateRequestRef.current !== requestId || activeIdRef.current !== conversationId) return;
-      setActiveConversation((current) => {
-        if (!current || current.id !== conversationId) return current;
-        const originals = new Map(buyerMessages.map((item) => [item.id, item.content]));
-        const unchanged = new Set(current.messages.filter((item) => originals.get(item.id) === item.content).map((item) => item.id));
-        return { ...current, messages: mergeMessageTranslations(current.messages, translatedMessages.filter((result) => unchanged.has(result.messageId))) };
-      });
-      if (translationVisibleRef.current) setTranslationVisible(true);
-      message.success(force ? "已重新翻译当前会话" : "已翻译当前会话");
-    } catch {
-      if (translateRequestRef.current === requestId && activeIdRef.current === conversationId) message.error(force ? "重新翻译失败" : "会话翻译失败");
-    }
-  }, [activeConversation?.id, activeConversation?.messages, backend, message]);
-
-  const retranslateConversation = useCallback(() => translateConversation({ force: true }), [translateConversation]);
-
-  const toggleTranslation = useCallback(() => {
-    if (translationVisible) {
-      translationVisibleRef.current = false;
-      setTranslationVisible(false);
-      return;
-    }
-    void translateConversation();
-  }, [translationVisible, translateConversation]);
 
   const openSuggestions = useCallback(async () => {
     const conversationId = activeConversation?.id;
@@ -276,7 +392,8 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
     try {
       const analysis = await backend.analyzeConversation(conversationId);
       if (analysisRequestRef.current !== requestId || activeIdRef.current !== conversationId) return;
-      setActiveConversation((current) => current?.id === conversationId ? { ...current, analysis } : current);
+      const current = activeConversationRef.current;
+      if (current?.id === conversationId) commitConversation({ ...current, analysis });
       setAnalysisState({ loading: false });
     } catch {
       if (analysisRequestRef.current === requestId && activeIdRef.current === conversationId) {
@@ -284,7 +401,7 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
         message.error("会话分析失败");
       }
     }
-  }, [activeConversation?.id, backend, message]);
+  }, [activeConversation?.id, backend, commitConversation, message]);
 
   const activeCard = useMemo(() => activeConversation?.messages.find((item) => item.card?.id === activeCardId)?.card, [activeCardId, activeConversation]);
 
@@ -300,7 +417,8 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
       const receipt = await backend.markConversationRead(displayed.id, token);
       if (activeIdRef.current === displayed.id && selection === selectionRef.current) {
         ++detailRequestRef.current;
-        setActiveConversation((current) => current?.id === displayed.id ? { ...current, ...adaptInboxState(receipt.state) } : current);
+        const current = activeConversationRef.current;
+        if (current?.id === displayed.id) commitConversation({ ...current, ...adaptInboxState(receipt.state) });
       }
       refreshReads();
     } catch (error) {
@@ -324,11 +442,14 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
     draft,
     setDraft,
     selectConversation,
-    translate,
-    translateConversation,
+    translateMessages,
+    translateMissing,
     retranslateConversation,
     translationVisible,
     toggleTranslation,
+    translationStats,
+    translationPendingIds,
+    translationFailedIds,
     gotoContact,
     suggestions,
     suggestionOpen,

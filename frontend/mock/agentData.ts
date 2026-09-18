@@ -8,7 +8,7 @@ const systemAgentSources = [
     description: "翻译",
     prompt: `你是聊天消息翻译助手。
 
-请把用户输入 JSON 中每个 items[].text 翻译成简体中文。
+对话中任意一方（买家、卖家、自动接待系统）发送的外文消息都可能出现待翻译条目，请把用户输入 JSON 中每个 items[].text 翻译成简体中文。
 
 输出要求：
 1) 只输出 JSON，不要输出解释性文字。

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildConversationExport, dateGroup, dialogueCountGroup, dialogueCountOf, groupConversations, mergeConversationDetail, mergeMessageTranslations, sortConversations } from "@/domain/chat/chatModel";
+import { buildConversationExport, dateGroup, dialogueCountGroup, dialogueCountOf, groupConversations, mergeConversationDetail, mergeMessageTranslations, mergeMessageTextTranslations, sortConversations } from "@/domain/chat/chatModel";
 import type { ChatMessage, Conversation, ConversationDetail } from "@/types/chatCanonical";
 
 const summary = (id: string, updatedAt: string, replyState: Conversation["replyState"] = "waiting_customer"): Conversation => ({
@@ -73,10 +73,35 @@ describe("conversation domain model", () => {
     expect(dateGroup("未知时间", now)).toBe("更早");
   });
 
-  it("merges message translations by message id", () => {
-    const merged = mergeMessageTranslations(messages, [{ messageId: "message-1", translatedContent: "Quote needed" }]);
+  it("merges message translations by message id, ignoring null and empty values", () => {
+    const merged = mergeMessageTranslations(messages, [
+      { messageId: "message-1", translatedContent: "Quote needed" },
+      { messageId: "message-2", translatedContent: null },
+    ]);
     expect(merged[0]).toMatchObject({ id: "message-1", translatedContent: "Quote needed" });
     expect(merged[1]).toBe(messages[1]);
+    const cleared = mergeMessageTranslations([{ ...messages[0], translatedContent: "Quote needed" }, messages[1]], [{ messageId: "message-1", translatedContent: null }]);
+    expect(cleared[0].translatedContent).toBe("Quote needed");
+    expect(mergeMessageTranslations(messages, [{ messageId: "message-1", translatedContent: "  " }])[0].translatedContent).toBeUndefined();
+  });
+
+  it("merges text-keyed translations for every party, keyed strictly by content", () => {
+    const allParties: ChatMessage[] = [
+      messages[0],
+      messages[1],
+      { ...messages[0], id: "message-3", role: "system", content: "auto reply", createdAt: "now" },
+    ];
+    const merged = mergeMessageTextTranslations(allParties, { "需要报价": "Quote needed", "已收到": "Received", "auto reply": "自动回复" });
+    expect(merged[0]).toMatchObject({ id: "message-1", translatedContent: "Quote needed" });
+    expect(merged[1]).toMatchObject({ id: "message-2", translatedContent: "Received" });
+    expect(merged[2]).toMatchObject({ id: "message-3", translatedContent: "自动回复" });
+    expect(mergeMessageTextTranslations(allParties, { "需要报价": null })[0].translatedContent).toBeUndefined();
+    expect(mergeMessageTextTranslations(allParties, {})).toBe(allParties);
+    const source = [{ ...messages[0], translatedContent: "Quote needed" }, messages[1]];
+    expect(mergeMessageTextTranslations(source, { "需要报价": "Quote needed" })).toBe(source);
+    const replaced = mergeMessageTextTranslations(source, { "需要报价": "Refreshed" });
+    expect(replaced).not.toBe(source);
+    expect(replaced[0].translatedContent).toBe("Refreshed");
   });
 
   it("merges incoming conversation details without dropping local translations or analysis", () => {

@@ -73,8 +73,11 @@ def _cleanup_runtime():
         coordinator.stop_sync_service()
 
     tasks = sys.modules.get("backend.app.task_queue")
-    if tasks is not None and tasks.TaskQueue._instance is not None:
-        tasks.TaskQueue._instance.shutdown()
+    if tasks is not None:
+        with tasks.TaskQueue._instance_lock:
+            instances = list(tasks.TaskQueue._instances.values())
+        for instance in instances:
+            instance.shutdown()
 
     sync = sys.modules.get("backend.app.shared.crm.sync")
     if sync is not None:

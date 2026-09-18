@@ -14,7 +14,7 @@ import { ApiError } from "@/services/httpAdapter";
 import { useChatWorkbench } from "@/features/chat/hooks/useChatWorkbench";
 
 const mocks = vi.hoisted(() => ({
-  backend: { getConnection: vi.fn(), listOutbox: vi.fn(), getOutbox: vi.fn(), sendMessage: vi.fn(), confirmOutbox: vi.fn(), cancelOutbox: vi.fn(), retryOutbox: vi.fn(), getOutboxScreenshot: vi.fn(), listConversations: vi.fn(), getConversation: vi.fn(), getConversationRevision: vi.fn(), markConversationRead: vi.fn() },
+  backend: { getConnection: vi.fn(), listOutbox: vi.fn(), getOutbox: vi.fn(), sendMessage: vi.fn(), confirmOutbox: vi.fn(), cancelOutbox: vi.fn(), retryOutbox: vi.fn(), getOutboxScreenshot: vi.fn(), listConversations: vi.fn(), getConversation: vi.fn(), getConversationRevision: vi.fn(), markConversationRead: vi.fn(), queryTranslations: vi.fn(), requestTranslations: vi.fn(), getTranslationJob: vi.fn() },
 }));
 vi.mock("@/services/client", () => ({ backend: mocks.backend }));
 vi.mock("antd", () => {
@@ -45,7 +45,7 @@ function Harness({ sid = "42", draft = "submitted text" }: { sid?: string; draft
   const conversation = adaptConversationDetail({ sid: Number(sid), name: "Buyer", participants: [], messages: [], latest: { content: "", updated_at: null }, unread_count: 0, reply_state: "waiting_customer", pending_since: null, due_at: null, is_overdue: false, history_pending: false, uncertain: false, read_snapshot: "outbox-snapshot" });
   conversation.customer.name = "Recipient Name";
   conversation.customer.loginId = "buyer-login";
-  return <OutboxWorkspace key={`${account.generation}:${sid}`} conversation={conversation} value={draft} onChange={() => {}} translationVisible onToggleTranslation={() => {}} onRetranslate={() => {}} onOpenSuggestions={() => {}} onOpenIntentAnalysis={() => {}} onOpenStageAnalysis={() => {}} />;
+  return <OutboxWorkspace key={`${account.generation}:${sid}`} conversation={conversation} value={draft} onChange={() => {}} onOpenSuggestions={() => {}} onOpenIntentAnalysis={() => {}} onOpenStageAnalysis={() => {}} />;
 }
 
 function InboxHarness() {
@@ -58,7 +58,7 @@ function InboxWorkspace() {
   const current = useChatWorkbench();
   useEffect(() => { chat = current; }, [current]);
   const conversation = current.activeConversation;
-  return conversation ? <OutboxWorkspace key={conversation.id} conversation={conversation} value={current.draft} onChange={current.setDraft} translationVisible onToggleTranslation={() => {}} onRetranslate={() => {}} onOpenSuggestions={() => {}} onOpenIntentAnalysis={() => {}} onOpenStageAnalysis={() => {}} /> : null;
+  return conversation ? <OutboxWorkspace key={conversation.id} conversation={conversation} value={current.draft} onChange={current.setDraft} onOpenSuggestions={() => {}} onOpenIntentAnalysis={() => {}} onOpenStageAnalysis={() => {}} /> : null;
 }
 
 beforeEach(() => {
@@ -69,6 +69,9 @@ beforeEach(() => {
   store = [];
   Object.defineProperty(document, "hidden", { configurable: true, value: false });
   mocks.backend.getConnection.mockResolvedValue(readySnapshot());
+  mocks.backend.queryTranslations.mockResolvedValue({ translations: {} });
+  mocks.backend.requestTranslations.mockResolvedValue({ task_id: "", status: "succeeded", message: "没有需要翻译的内容" });
+  mocks.backend.getTranslationJob.mockResolvedValue(null);
   mocks.backend.listOutbox.mockImplementation(async (sid: string) => structuredClone(store.filter((task) => String(task.conversation_id) === sid)));
   mocks.backend.getOutbox.mockImplementation(async (id: string) => structuredClone(store.find((task) => task.id === id)!));
   mocks.backend.getOutboxScreenshot.mockImplementation(async () => screenshotPng());

@@ -13,6 +13,9 @@ from loguru import logger
 TASK_QUEUE_MAXSIZE = 500
 TASK_RETENTION_S = 3600.0
 
+DEFAULT_QUEUE_NAME = "maafw"
+TRANSLATION_QUEUE_NAME = "translation"
+
 
 class TaskStatus(StrEnum):
     PENDING = "pending"
@@ -59,13 +62,15 @@ class _TaskRequest:
 
 
 class TaskQueue:
-    _instance: TaskQueue | None = None
+    _instances: dict[str, TaskQueue] = {}
     _instance_lock = threading.Lock()
 
-    def __new__(cls) -> TaskQueue:
+    def __new__(cls, name: str = DEFAULT_QUEUE_NAME) -> TaskQueue:
         with cls._instance_lock:
-            if cls._instance is None:
+            instance = cls._instances.get(name)
+            if instance is None:
                 instance = super().__new__(cls)
+                instance._name = name
                 instance._lock = threading.Lock()
                 instance._condition = threading.Condition(instance._lock)
                 instance._requests: dict[str, _TaskRequest] = {}
@@ -74,11 +79,11 @@ class TaskQueue:
                 instance._worker = threading.Thread(
                     target=instance._work,
                     daemon=True,
-                    name="maafw-task-queue",
+                    name=f"{name}-task-queue",
                 )
                 instance._worker.start()
-                cls._instance = instance
-            return cls._instance
+                cls._instances[name] = instance
+            return instance
 
     def enqueue(self, fn: Callable[[], tuple[bool, str]], *, description: str) -> TaskSnapshot:
         now = time.time()
@@ -115,16 +120,15 @@ class TaskQueue:
             return [r.snapshot() for r in self._requests.values()]
 
     def shutdown(self, timeout: float = 5.0) -> None:
-        """Drain accepted work before releasing the singleton and worker."""
+        """Drain accepted work before releasing the instance and worker."""
         with self._condition:
             self._closing = True
             self._condition.notify_all()
         self._worker.join(timeout)
         if self._worker.is_alive():
             raise TimeoutError("任务队列尚未停止")
-        with self._instance_lock:
-            if type(self)._instance is self:
-                type(self)._instance = None
+        with type(self)._instance_lock:
+            type(self)._instances.pop(self._name, None)
 
     def _evict_locked(self, now: float) -> None:
         expired = [
@@ -170,8 +174,17 @@ def get_task_queue() -> TaskQueue:
     return TaskQueue()
 
 
+def get_translation_queue() -> TaskQueue:
+    """Dedicated worker so long LLM translation jobs never block GUI tasks."""
+    return TaskQueue(TRANSLATION_QUEUE_NAME)
+
+
 def shutdown_task_queue(timeout: float = 5.0) -> None:
-    """Drain and release the process-wide queue, if one was ever created."""
-    instance = TaskQueue._instance
-    if instance is not None:
-        instance.shutdown(timeout)
+    """Drain and release every named queue created in this process."""
+    with TaskQueue._instance_lock:
+        instances = list(TaskQueue._instances.values())
+    for instance in instances:
+        try:
+            instance.shutdown(timeout)
+        except TimeoutError:
+            logger.warning("Task queue '{}' did not stop within {}s", instance._name, timeout)

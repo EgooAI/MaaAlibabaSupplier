@@ -1,7 +1,7 @@
 import type { AgentConsoleState, AgentTestInput, AgentTestResult, AgentTestSession, DbAgentPreset, DocumentLlmConfig, SystemAgentDefinition } from "@/types/agent";
 import type { AssistantSuggestion, ConversationAnalysis, ConversationDetail } from "@/types/chatCanonical";
 import type { ConversationPage, ConversationQuery, InboxOverview, InboxSettings, ReadReceipt } from "@/types/inbox";
-import type { ExportConversationsInput, ExportConversationsResult, OutboxTask, RequestTranslationsInput, RequestTranslationsResult, SendMessageInput, SendMessageResult, TranslateMessageInput, TranslateMessageResult, ConversationRevision } from "@/types/chatOperations";
+import type { ExportConversationsInput, ExportConversationsResult, OutboxTask, RequestTranslationsInput, RequestTranslationsResult, TranslationQueryInput, TranslationQueryResult, TranslationJobSnapshot, SendMessageInput, SendMessageResult, ConversationRevision } from "@/types/chatOperations";
 import type { SelfInfo } from "@/types/home";
 import type { AccountEpoch, ConnectionSnapshot } from "@/types/connection";
 import type { AliIdList, CreateTestTaskInput, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestEntry, NodeTestSubmission, SystemStatusSnapshot, TaskItem, TaskSnapshot } from "@/types/status";
@@ -17,7 +17,8 @@ export interface OperationsBackend {
   shutdownApp(): Promise<void>;
 
   requestTranslations(input: RequestTranslationsInput): Promise<RequestTranslationsResult>;
-  getTranslation(text: string): Promise<string | null>;
+  queryTranslations(input: TranslationQueryInput): Promise<TranslationQueryResult>;
+  getTranslationJob(taskId: string): Promise<TranslationJobSnapshot | null>;
 
   listConversations(query?: ConversationQuery): Promise<ConversationPage>;
   markConversationRead(id: string, readSnapshot: string): Promise<ReadReceipt>;
@@ -27,8 +28,6 @@ export interface OperationsBackend {
   // Pure read of committed revision and sync status, including stale archives.
   getConversationRevision(): Promise<ConversationRevision>;
   getConversation(id: string): Promise<ConversationDetail>;
-  translateMessage(input: TranslateMessageInput): Promise<TranslateMessageResult>;
-  regenerateTranslation(input: TranslateMessageInput): Promise<TranslateMessageResult>;
   getAssistantSuggestions(conversationId: string): Promise<AssistantSuggestion[]>;
   analyzeConversation(conversationId: string): Promise<ConversationAnalysis>;
   sendMessage(input: SendMessageInput): Promise<SendMessageResult>;

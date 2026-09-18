@@ -16,7 +16,7 @@ import type { ConversationPage, ReadReceipt } from "@/types/inbox";
 
 const mocks = vi.hoisted(() => ({
   message: { error: vi.fn(), warning: vi.fn(), success: vi.fn() },
-  backend: { getConnection: vi.fn(), getConversationRevision: vi.fn(), listConversations: vi.fn(), getConversation: vi.fn(), markConversationRead: vi.fn(), translateMessage: vi.fn(), exportConversations: vi.fn() },
+  backend: { getConnection: vi.fn(), getConversationRevision: vi.fn(), listConversations: vi.fn(), getConversation: vi.fn(), markConversationRead: vi.fn(), requestTranslations: vi.fn(), queryTranslations: vi.fn(), getTranslationJob: vi.fn(), exportConversations: vi.fn() },
 }));
 vi.mock("@/services/client", () => ({ backend: mocks.backend }));
 vi.mock("antd", () => ({
@@ -88,7 +88,9 @@ beforeEach(() => {
   mocks.backend.listConversations.mockResolvedValue(page());
   mocks.backend.getConversation.mockResolvedValue(detail());
   mocks.backend.getConversationRevision.mockResolvedValue(revision);
-  mocks.backend.translateMessage.mockResolvedValue({ messageId: "message-1", translatedContent: "你好" });
+  mocks.backend.queryTranslations.mockResolvedValue({ translations: {} });
+  mocks.backend.requestTranslations.mockResolvedValue({ task_id: "", status: "succeeded", message: "没有需要翻译的内容" });
+  mocks.backend.getTranslationJob.mockResolvedValue(null);
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -107,7 +109,7 @@ describe("inbox workspace", () => {
     await act(async () => {
       chat.setDraft("keep reply");
       window.dispatchEvent(new Event("focus"));
-      await chat.translate({ id: "message-1", content: "hello", role: "buyer", createdAt: "now" });
+      await chat.translateMessages([{ id: "message-1", content: "hello", role: "buyer", createdAt: "now" }]);
     });
     expect(mocks.backend.markConversationRead).not.toHaveBeenCalled();
     const receipt = deferred<ReadReceipt>();
@@ -117,7 +119,7 @@ describe("inbox workspace", () => {
     mocks.backend.getConversation.mockResolvedValue(detail("42", { readSnapshot: "later-token", unreadCount: 5 }));
     await act(async () => account.refreshReads());
     expect(chat.activeConversation?.readSnapshot).toBe("later-token");
-    await act(async () => chat.translate({ id: "message-1", content: "hello", role: "buyer", createdAt: "now" }));
+    await act(async () => chat.translateMessages([{ id: "message-1", content: "hello", role: "buyer", createdAt: "now" }]));
     const pendingDetail = deferred<ConversationDetail>();
     mocks.backend.getConversation.mockReturnValueOnce(pendingDetail.promise);
     await act(async () => receipt.resolve({ state: { unread_count: 2, reply_state: "needs_reply", pending_since: 100, due_at: 86500, is_overdue: true, history_pending: false, uncertain: false, read_seq: 3, snapshot_seq: 3 }, inbox_revision: 2 }));

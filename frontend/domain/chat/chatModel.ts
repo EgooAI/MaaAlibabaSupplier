@@ -65,12 +65,40 @@ export function conversationTimeLabel(value: string) {
   return formatMonthDay(value);
 }
 
-export function mergeMessageTranslations(messages: ChatMessage[], translations: Array<{ messageId: string; translatedContent: string }>) {
-  const translationMap = new Map(translations.map((item) => [item.messageId, item.translatedContent]));
+export function mergeMessageTranslations(messages: ChatMessage[], translations: Array<{ messageId: string; translatedContent: string | null }>) {
+  const translationMap = new Map(
+    translations
+      .filter((item) => typeof item.translatedContent === "string" && item.translatedContent.trim())
+      .map((item) => [item.messageId, item.translatedContent as string]),
+  );
+  if (!translationMap.size) return messages;
   return messages.map((message) => {
     const translatedContent = translationMap.get(message.id);
     return translatedContent === undefined ? message : { ...message, translatedContent };
   });
+}
+
+/**
+ * Merge text-keyed cache lookups into messages.
+ *
+ * Keyed by content, so stale responses for edited messages never apply;
+ * null/empty values are ignored instead of clearing existing translations.
+ */
+export function mergeMessageTextTranslations(messages: ChatMessage[], translations: Record<string, string | null>) {
+  const byText = new Map(
+    Object.entries(translations)
+      .filter(([, value]) => typeof value === "string" && value.trim())
+      .map(([text, value]) => [text, value as string]),
+  );
+  if (!byText.size) return messages;
+  let changed = false;
+  const merged = messages.map((message) => {
+    const translatedContent = byText.get(message.content);
+    if (translatedContent === undefined || translatedContent === message.translatedContent) return message;
+    changed = true;
+    return { ...message, translatedContent };
+  });
+  return changed ? merged : messages;
 }
 
 export function mergeConversationDetail(current: ConversationDetail, incoming: ConversationDetail): ConversationDetail {

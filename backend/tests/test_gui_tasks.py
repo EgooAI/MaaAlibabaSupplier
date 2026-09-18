@@ -4,7 +4,7 @@ from unittest.mock import Mock
 import pytest
 from backend.app.api.routers import conversations, status
 from backend.app.shared.backend import outbox_service
-from backend.app.task_queue import TaskQueue, TaskStatus
+from backend.app.task_queue import DEFAULT_QUEUE_NAME, TaskQueue, TaskStatus
 from backend.tests.test_connection_api import client as base_client, chat, connect, sdk
 from backend.tests.test_outbox_api import outbox
 
@@ -131,7 +131,7 @@ def test_diagnostic_rejects_action_entries(client, monkeypatch, entry):
     monkeypatch.setattr(status, "run_node", run)
     response = client.post("/api/status/node-test", json={"entry": entry})
     assert response.status_code == 422
-    assert TaskQueue._instance is None
+    assert TaskQueue._instances.get(DEFAULT_QUEUE_NAME) is None
     run.assert_not_called()
 
 
@@ -157,6 +157,6 @@ def test_shutdown_drains_work_rejects_new_work_and_releases_worker():
     queue.shutdown()
     assert calls == ["first", "second"]
     assert not queue._worker.is_alive()
-    assert TaskQueue._instance is None
+    assert TaskQueue._instances.get(DEFAULT_QUEUE_NAME) is None
     with pytest.raises(RuntimeError):
         queue.enqueue(lambda: (True, "unexpected"), description="late")

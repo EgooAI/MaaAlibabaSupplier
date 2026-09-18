@@ -12,7 +12,7 @@ import type { AgentConsoleState, AgentPreset, AgentTestSession, DbAgentPreset } 
 import type { BusinessCard } from "@/types/cards";
 import type { ConversationDetail } from "@/types/chatCanonical";
 import type { ConversationAggregateDto } from "@/types/chatTransport";
-import type { OutboxTask } from "@/types/chatOperations";
+import type { OutboxTask, TranslationJobSnapshot } from "@/types/chatOperations";
 import { canCancel, canRetry, frameFresh } from "@/features/chat/outbox/outboxModel";
 import type { SelfInfo } from "@/types/home";
 import type { AliIdList, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskSnapshot } from "@/types/status";
@@ -51,6 +51,8 @@ let taskSnapshotStore: TaskSnapshot[] = structuredClone(initialState.taskSnapsho
 let consoleStore: AgentConsoleState = structuredClone(initialState.console);
 let agentPresetStore: AgentPreset[] = structuredClone(initialState.agentPresets);
 const translationStore = new Map<string, string>();
+const translationJobs = new Map<string, TranslationJobSnapshot>();
+const TRANSLATION_JOB_DELAY_MS = 400;
 let connectionStore = structuredClone(connectionSnapshot);
 const outboxStore = new Map<string, { scope: string; task: OutboxTask }>();
 const outboxScope = () => JSON.stringify([connectionStore.account.data_dir, connectionStore.account.self_ali_id]);
@@ -128,6 +130,7 @@ export const mockBackend: OperationsBackend = {
     consoleStore = structuredClone(initialState.console);
     statusStore = buildStatusSnapshot();
     translationStore.clear();
+    translationJobs.clear();
     outboxStore.clear();
     inboxSettings.clear();
     return delay(undefined);
@@ -137,20 +140,34 @@ export const mockBackend: OperationsBackend = {
 
   requestTranslations: async ({ texts, force = false }) => {
     requireSystemAgent(SYSTEM_AGENT_APIDS.translation);
-    const targets = texts.map((text) => text.trim()).filter(Boolean);
-    let savedCount = 0;
-
-    for (const text of targets) {
-      if (force || !translationStore.has(text)) {
-        translationStore.set(text, mockTranslate(text));
-        savedCount += 1;
-      }
+    const targets = [...new Set(texts.map((text) => text.trim()).filter(Boolean))];
+    if (!targets.length) {
+      return delay({ task_id: "", status: "succeeded", message: "没有需要翻译的内容" });
     }
-
-    return delay({ saved_count: savedCount, translated_text: targets[0] ? translationStore.get(targets[0]) ?? null : null, cached: Boolean(targets[0] && savedCount === 0) });
+    const task_id = `translation-${crypto.randomUUID()}`;
+    const pending: TranslationJobSnapshot = { task_id, status: "pending", message: "等待执行" };
+    translationJobs.set(task_id, pending);
+    setTimeout(() => {
+      if (!translationJobs.has(task_id)) return;
+      for (const text of targets) {
+        if (force || !translationStore.has(text)) translationStore.set(text, mockTranslate(text, force));
+      }
+      translationJobs.set(task_id, { task_id, status: "succeeded", message: `已翻译 ${targets.length} 条` });
+    }, TRANSLATION_JOB_DELAY_MS);
+    return delay(pending);
   },
 
-  getTranslation: (text) => delay(translationStore.get(text) ?? null),
+  queryTranslations: async ({ texts }) => {
+    const translations: Record<string, string | null> = {};
+    for (const raw of texts) {
+      const text = (raw ?? "").trim();
+      if (!text || text in translations) continue;
+      translations[text] = translationStore.get(text) ?? null;
+    }
+    return delay({ translations });
+  },
+
+  getTranslationJob: (taskId) => delay(translationJobs.get(taskId) ? { ...translationJobs.get(taskId)! } : null, 120),
 
   listConversations: async (query = {}) => {
     const settings = mockInboxSettings();
@@ -202,26 +219,6 @@ export const mockBackend: OperationsBackend = {
   getConversationRevision: () => delay({ ...structuredClone(connectionStore.source), ready: connectionStore.capabilities.read_chat, inbox_revision: mockInboxSettings().inbox_revision, next_due_at: null }),
 
   getConversation: async (id) => delay(buildConversationDetail(id)),
-
-  translateMessage: async ({ conversationId, messageId, targetLanguage }) => {
-    requireSystemAgent(SYSTEM_AGENT_APIDS.translation);
-    const detail = buildConversationDetail(conversationId);
-    const message = detail.messages.find((item) => item.id === messageId);
-    if (!message) throw new Error("消息不存在");
-    const translatedContent = targetLanguage === "zh-CN" ? mockTranslate(message.content) : `Mock translation: ${message.content}`;
-    translationStore.set(`${conversationId}:${messageId}:${targetLanguage}`, translatedContent);
-    return delay({ messageId, translatedContent });
-  },
-
-  regenerateTranslation: async ({ conversationId, messageId, targetLanguage }) => {
-    requireSystemAgent(SYSTEM_AGENT_APIDS.translation);
-    const detail = buildConversationDetail(conversationId);
-    const message = detail.messages.find((item) => item.id === messageId);
-    if (!message) throw new Error("消息不存在");
-    const translatedContent = targetLanguage === "zh-CN" ? `重新翻译：${mockTranslate(message.content)}` : `Regenerated mock translation: ${message.content}`;
-    translationStore.set(`${conversationId}:${messageId}:${targetLanguage}`, translatedContent);
-    return delay({ messageId, translatedContent });
-  },
 
   getAssistantSuggestions: async (conversationId) => {
     requireSystemAgent(SYSTEM_AGENT_APIDS.replySuggestion);
@@ -538,7 +535,7 @@ function syncConsoleAgents() {
   };
 }
 
-function mockTranslate(text: string) {
+function mockTranslate(text: string, force = false) {
   if (!text) return "";
-  return `这是 mock 译文：${text}`;
+  return force ? `重新翻译 mock 译文：${text}` : `这是 mock 译文：${text}`;
 }

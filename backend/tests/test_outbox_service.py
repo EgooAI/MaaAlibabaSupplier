@@ -965,7 +965,6 @@ def test_shutdown_db_errors_still_signal_join_and_never_resume_pending_jobs(env,
 ])
 def test_main_attempts_every_cleanup_despite_errors(monkeypatch, failures):
     from backend.app import main
-    from backend.app.task_queue import TaskQueue
 
     calls, errors = [], []
 
@@ -986,7 +985,7 @@ def test_main_attempts_every_cleanup_despite_errors(monkeypatch, failures):
     ))
     monkeypatch.setattr(main, "stop_outbox_service", cleanup("outbox"))
     monkeypatch.setattr(main, "stop_sync_service", cleanup("sync"))
-    monkeypatch.setattr(TaskQueue, "_instance", SimpleNamespace(shutdown=cleanup("queue")))
+    monkeypatch.setattr("backend.app.task_queue.shutdown_task_queue", cleanup("queue"))
     monkeypatch.setattr(main, "logger", SimpleNamespace(info=lambda *args: None, exception=lambda text: errors.append(text)))
 
     def api_error():

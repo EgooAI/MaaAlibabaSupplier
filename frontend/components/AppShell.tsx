@@ -89,7 +89,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const screens = Grid.useBreakpoint();
   const isSmallScreen = screens.sm === false;
-  const isCustomerChat = pathname === "/chat/customer-sessions";
+  // Static export serves trailing-slash URLs; dev does not. Normalize before matching.
+  const normalizedPathname = pathname !== "/" && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+  const isCustomerChat = normalizedPathname === "/chat/customer-sessions";
   const { snapshot, blocked, generation } = useAccount();
 
   const selectedKey = resolveSelectedKey(pathname);

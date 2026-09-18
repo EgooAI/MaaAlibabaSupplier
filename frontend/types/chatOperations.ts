@@ -1,14 +1,11 @@
 import type { SourceSyncStatus } from "./connection";
 
-export interface TranslateMessageInput {
-  conversationId: string;
-  messageId: string;
-  targetLanguage: "zh-CN" | "en-US";
-}
+export type TranslationJobStatus = "pending" | "running" | "succeeded" | "failed";
 
-export interface TranslateMessageResult {
-  messageId: string;
-  translatedContent: string;
+export interface TranslationJobSnapshot {
+  task_id: string;
+  status: TranslationJobStatus;
+  message: string;
 }
 
 export interface RequestTranslationsInput {
@@ -16,10 +13,16 @@ export interface RequestTranslationsInput {
   force?: boolean;
 }
 
-export interface RequestTranslationsResult {
-  saved_count: number;
-  translated_text: string | null;
-  cached: boolean;
+/** 提交翻译任务后立即返回的任务快照；空 task_id 表示无事可做。 */
+export type RequestTranslationsResult = TranslationJobSnapshot;
+
+export interface TranslationQueryInput {
+  texts: string[];
+}
+
+/** 批量缓存查询结果：text -> 译文（null 表示尚未缓存）。 */
+export interface TranslationQueryResult {
+  translations: Record<string, string | null>;
 }
 
 export interface SendMessageInput {

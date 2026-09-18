@@ -1,7 +1,7 @@
 import type { DbAgentPreset, DocumentLlmConfig } from "@/types/agent";
 import { adaptConversationDetail, adaptConversationSummary } from "@/services/chatAdapter";
 import type { ConversationAggregateDto } from "@/types/chatTransport";
-import type { ConversationRevision } from "@/types/chatOperations";
+import type { ConversationRevision, TranslationJobSnapshot } from "@/types/chatOperations";
 import type { ConversationPage } from "@/types/inbox";
 import type { ApiResponse } from "@/types/common";
 import type { OperationsBackend } from "./interfaces";
@@ -141,7 +141,15 @@ export const httpBackend: OperationsBackend = {
   shutdownApp: () => requestVoid("/api/app/shutdown", { method: "POST" }),
 
   requestTranslations: (input) => requestJson("/api/messages/translations", { method: "POST", body: JSON.stringify(input) }),
-  getTranslation: (text) => requestJson(`/api/messages/translations/${encodeURIComponent(text)}`),
+  queryTranslations: (input) => requestJson("/api/messages/translations/query", { method: "POST", body: JSON.stringify(input) }),
+  getTranslationJob: async (taskId) => {
+    try {
+      return await requestJson<TranslationJobSnapshot>(`/api/messages/translations/jobs/${encodeURIComponent(taskId)}`);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return null;
+      throw error;
+    }
+  },
 
   listConversations: async (query = {}) => {
     const params = new URLSearchParams();
@@ -160,8 +168,6 @@ export const httpBackend: OperationsBackend = {
     const aggregate = await requestJson<ConversationAggregateDto>(`/api/conversations/${encodeURIComponent(id)}`);
     return adaptConversationDetail(aggregate);
   },
-  translateMessage: (input) => requestJson("/api/messages/translate", { method: "POST", body: JSON.stringify(input) }),
-  regenerateTranslation: (input) => requestJson("/api/messages/retranslate", { method: "POST", body: JSON.stringify(input) }),
   getAssistantSuggestions: (conversationId) => requestJson(`/api/conversations/${encodeURIComponent(conversationId)}/suggestions`),
   analyzeConversation: (conversationId) => requestJson(`/api/conversations/${encodeURIComponent(conversationId)}/analysis`),
   sendMessage: async ({ conversationId, ...input }) => {

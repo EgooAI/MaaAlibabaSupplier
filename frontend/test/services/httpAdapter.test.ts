@@ -131,8 +131,9 @@ describe("http adapter contract", () => {
   it.each([
     () => httpBackend.getSelfInfo(),
     () => httpBackend.listConversations(),
-    () => httpBackend.getTranslation("hello"),
     () => httpBackend.requestTranslations({ texts: ["hello"] }),
+    () => httpBackend.queryTranslations({ texts: ["hello"] }),
+    () => httpBackend.getTranslationJob("task-1"),
     () => httpBackend.exportConversations({ conversationIds: ["42"] }),
     () => httpBackend.resetCache(),
   ])("attaches the expected epoch to account data requests", async (call) => {

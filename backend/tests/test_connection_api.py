@@ -27,7 +27,7 @@ from backend.app.shared.crm.sdk import LLMApiConfig, LLMApiConfigManager
 from backend.app.shared.crm.sync import CRMAdapter
 from backend.app.shared.mitm.pool import SelfInfo
 from backend.app.shared.utils import app_config
-from backend.app.task_queue import TaskQueue, TaskStatus
+from backend.app.task_queue import DEFAULT_QUEUE_NAME, TaskQueue, TaskSnapshot, TaskStatus
 from backend.tests.test_maafw_runner import sdk, window
 
 
@@ -514,7 +514,7 @@ def test_gui_writes_require_manual_confirmation(client, sdk, chat, path, body):
         assert "人工确认" in task["reason"]
     else:
         assert response.status_code == 409
-    assert TaskQueue._instance is None
+    assert TaskQueue._instances.get(DEFAULT_QUEUE_NAME) is None
     assert not sdk.calls
 
 
@@ -525,7 +525,7 @@ def test_send_rejects_missing_login_and_goto_rejects_unrelated_target(client, sd
     monkeypatch.setattr(conversations, "crm_get_user_info", lambda *args: SimpleNamespace(login_id=""))
     response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": "send", "idempotency_key": "key"})
     assert response.status_code == 503
-    assert TaskQueue._instance is None
+    assert TaskQueue._instances.get(DEFAULT_QUEUE_NAME) is None
     assert not sdk.calls
 
 
@@ -600,8 +600,17 @@ def test_settings_conflict_immediately_during_guarded_gui(client, sdk, operation
 
 
 def test_account_reads_allow_legacy_header_but_writes_require_epoch(client, monkeypatch):
-    translate = Mock(return_value=1)
-    monkeypatch.setattr(messages, "request_translations", translate)
+    submitted = []
+    pending = TaskSnapshot(
+        task_id="t1", description="Translation texts", status=TaskStatus.PENDING,
+        message="等待执行", result=None, created_at=1.0, started_at=None, completed_at=None,
+    )
+
+    def submit(texts, *, force, expected_epoch):
+        submitted.append((texts, force, expected_epoch))
+        return pending
+
+    monkeypatch.setattr(messages, "submit_translation_job", submit)
     client.headers.pop("X-Account-Epoch")
     response = client.get("/api/self-info")
     assert response.status_code == 200
@@ -610,11 +619,12 @@ def test_account_reads_allow_legacy_header_but_writes_require_epoch(client, monk
         response = client.post("/api/messages/translations", json={"texts": ["hello"]}, headers=headers)
         assert response.status_code == 409
         assert response.headers["X-Account-Epoch"] == epoch
-    translate.assert_not_called()
-    response = client.post("/api/messages/translations", json={"texts": ["hello"]}, headers={"X-Account-Epoch": epoch})
+    assert submitted == []
+    response = client.post("/api/messages/translations", json={"texts": ["hello"], "force": True}, headers={"X-Account-Epoch": epoch})
     assert response.status_code == 200
     assert response.headers["X-Account-Epoch"] == epoch
-    translate.assert_called_once()
+    assert submitted == [(["hello"], True, epoch)]
+    assert response.json()["data"]["status"] == "pending"
 
 
 def test_long_account_write_holds_lock_through_endpoint(client, monkeypatch):
@@ -627,7 +637,7 @@ def test_long_account_write_holds_lock_through_endpoint(client, monkeypatch):
 
     monkeypatch.setattr(messages, "request_translations", translate)
     with ThreadPoolExecutor(max_workers=2) as executor:
-        request = executor.submit(client.post, "/api/messages/translations", json={"texts": ["hello"]})
+        request = executor.submit(client.post, "/api/messages/translate", json={"text": "hello"})
         assert entered.wait(2)
         try:
             switching = executor.submit(client.put, "/api/settings/ali-id", json={"ali_id": "seller-b"})
@@ -641,7 +651,7 @@ def test_long_account_write_holds_lock_through_endpoint(client, monkeypatch):
 
 def test_app_error_is_preserved_by_existing_translation_handler(client, monkeypatch):
     monkeypatch.setattr(messages, "request_translations", Mock(side_effect=AppError("stale", status_code=409)))
-    assert client.post("/api/messages/translations", json={"texts": ["hello"]}).status_code == 409
+    assert client.post("/api/messages/translate", json={"text": "hello"}).status_code == 409
 
 
 def test_unhandled_account_error_still_marks_epoch(client, monkeypatch):
@@ -740,7 +750,7 @@ def test_diagnostic_is_read_only_without_confirmation(client, sdk):
     response = client.post("/api/status/node-test", json={})
     assert response.status_code == 200, response.text
     task_id = response.json()["data"]["task_snapshot"]["task_id"]
-    queue = TaskQueue._instance
+    queue = TaskQueue()
     queue.shutdown()
     assert queue.get(task_id).status == TaskStatus.SUCCEEDED
     assert sdk.calls == [("Diagnostics_ChatInput", {})]
@@ -781,7 +791,7 @@ def test_confirmed_submission_only_navigates_with_fake_sdk(client, sdk, chat, mo
     response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": action, "idempotency_key": "key"})
     assert response.status_code == 200, response.text
     task_id = response.json()["data"]["outbox"]["id"]
-    queue = TaskQueue._instance
+    queue = TaskQueue()
     queue.shutdown()
     task = client.get(f"/api/outbox/{task_id}").json()["data"]
     assert task["status"] == "awaiting_confirmation" and not task["may_have_sent"]

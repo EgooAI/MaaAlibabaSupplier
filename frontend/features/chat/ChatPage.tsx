@@ -15,6 +15,7 @@ import { useStickToBottom } from "@/components/useStickToBottom";
 import { ConversationList } from "./conversation/ConversationList";
 import { CustomerInfo } from "./conversation/CustomerInfo";
 import { MessageTimeline } from "./conversation/MessageTimeline";
+import { TranslationToolbar } from "./conversation/TranslationToolbar";
 import { useChatWorkbench } from "./hooks/useChatWorkbench";
 import { DataDirBanner } from "@/features/settings/DataDirBanner";
 import { AssistantSuggestionModal } from "./modals/AssistantSuggestionModal";
@@ -110,6 +111,18 @@ function ChatWorkspace() {
     >
       {active ? (
         <div className="flex min-h-0 flex-1 flex-col">
+          {workbench.translationStats.total > 0 ? (
+            <TranslationToolbar
+              visible={workbench.translationVisible}
+              onToggleVisible={workbench.toggleTranslation}
+              translatedCount={workbench.translationStats.translated}
+              untranslatedCount={workbench.translationStats.untranslated}
+              pendingCount={workbench.translationStats.pending}
+              canTranslate={!blocked && Boolean(snapshot?.capabilities.use_ai)}
+              onTranslateMissing={workbench.translateMissing}
+              onRetranslateAll={workbench.retranslateConversation}
+            />
+          ) : null}
           <div className="relative flex min-h-0 flex-1 flex-col">
             {workbench.detailLoading ? (
               <div className="flex flex-1 items-center justify-center"><Spin /></div>
@@ -121,7 +134,9 @@ function ChatWorkspace() {
                   buyerId={active.customer.id}
                   buyerName={active.customer.name}
                   showTranslations={workbench.translationVisible}
-                  onRegenerate={!blocked && snapshot?.capabilities.use_ai ? (item) => workbench.translate(item, true) : undefined}
+                  pendingIds={workbench.translationPendingIds}
+                  failedIds={workbench.translationFailedIds}
+                  onTranslate={!blocked && snapshot?.capabilities.use_ai ? (item, force) => void workbench.translateMessages([item], { force }) : undefined}
                   onOpenCard={workbench.setActiveCardId}
                 />
               </div>
@@ -146,9 +161,6 @@ function ChatWorkspace() {
               conversation={active}
               value={workbench.draft}
               onChange={workbench.setDraft}
-              translationVisible={workbench.translationVisible}
-              onToggleTranslation={workbench.toggleTranslation}
-              onRetranslate={() => void workbench.retranslateConversation()}
               onOpenSuggestions={workbench.openSuggestions}
               onOpenIntentAnalysis={() => void openAnalysis("intent")}
               onOpenStageAnalysis={() => void openAnalysis("stage")}

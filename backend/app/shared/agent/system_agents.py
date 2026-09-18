@@ -21,7 +21,7 @@ SYSTEM_AGENT_APIDS = frozenset(
 )
 
 SYSTEM_AGENT_DEFINITIONS: tuple[tuple[str, str, str], ...] = (
-    ("翻译", CHAT_TRANSLATION_AGENT_APID, "Chat 页面买家消息翻译工具绑定的系统 Agent。"),
+    ("翻译", CHAT_TRANSLATION_AGENT_APID, "Chat 页面消息翻译工具绑定的系统 Agent。"),
     ("建议", CHAT_REPLY_SUGGESTION_AGENT_APID, "Chat 页面 AI 回复建议工具绑定的系统 Agent。"),
     ("客户意图分析", CHAT_CUSTOMER_INTENT_AGENT_APID, "Chat 页面客户意图分析工具绑定的系统 Agent。"),
     ("客户所处阶段分析", CHAT_CUSTOMER_STAGE_AGENT_APID, "Chat 页面客户阶段分析工具绑定的系统 Agent。"),
