@@ -1,6 +1,6 @@
 "use client";
 
-import { AppstoreOutlined, CommentOutlined, DashboardOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PoweroffOutlined, RobotOutlined, SelectOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
+import { AppstoreOutlined, CommentOutlined, DashboardOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PoweroffOutlined, RobotOutlined, SelectOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
 import { Avatar, Button, Grid, Layout, Menu, Tooltip, Typography } from "antd";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -10,6 +10,7 @@ import { ProfileDrawer } from "./ProfileDrawer";
 import { PAGE_TITLES, resolveOpenKeys, resolveSelectedKey } from "./routes.config";
 import { useSelfInfo } from "./useSelfInfo";
 import { useAccount } from "@/features/account/AccountProvider";
+import { useAuth } from "@/features/auth/AuthProvider";
 
 const { Header, Sider, Content } = Layout;
 
@@ -93,6 +94,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const normalizedPathname = pathname !== "/" && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
   const isCustomerChat = normalizedPathname === "/chat/customer-sessions";
   const { snapshot, blocked, generation } = useAccount();
+  const { logout, temporary } = useAuth();
 
   const selectedKey = resolveSelectedKey(pathname);
   const openKeys = resolveOpenKeys(pathname);
@@ -146,7 +148,12 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Typography.Title level={4} className="!mb-0 truncate">
             {pageTitles[selectedKey] ?? "阿里国际站运营助手"}
           </Typography.Title>
-          {!blocked && snapshot?.capabilities.read_chat ? <AccountProfile key={`${snapshot.account.epoch}:${generation}`} /> : <Typography.Text type="secondary">{snapshot?.account.self_ali_id || "尚未选择账号"}</Typography.Text>}
+          <div className="flex min-w-0 items-center gap-2">
+            {!blocked && snapshot?.capabilities.read_chat ? <AccountProfile key={`${snapshot.account.epoch}:${generation}`} /> : <Typography.Text type="secondary">{snapshot?.account.self_ali_id || "尚未选择账号"}</Typography.Text>}
+            <Tooltip title={temporary ? "临时登录，刷新后需重新登录" : "退出登录"}>
+              <Button icon={<LogoutOutlined />} aria-label="退出登录" onClick={() => void logout()}><span className="hidden sm:inline">{temporary ? "退出临时登录" : "退出登录"}</span></Button>
+            </Tooltip>
+          </div>
         </Header>
         <Content className={isCustomerChat ? "min-h-0 overflow-hidden p-2 sm:p-4" : "min-h-0 overflow-y-auto p-6"}>
           <div className={`mx-auto max-w-[1480px] ${isCustomerChat ? "h-full min-h-0" : ""}`}>{children}</div>

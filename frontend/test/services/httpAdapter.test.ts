@@ -3,10 +3,12 @@ import { httpBackend, requestInit } from "@/services/httpAdapter";
 import type { ConversationAggregateDto } from "@/types/chatTransport";
 import { accountSession } from "@/services/accountSession";
 import { connectionSnapshot } from "@/mock/connectionData";
+import { authenticatedSession } from "@/test/support/authFixture";
 
 const originalFetch = globalThis.fetch;
 
-beforeEach(() => {
+beforeEach(async () => {
+  await authenticatedSession();
   accountSession.accept({ ...structuredClone(connectionSnapshot), client: { ...connectionSnapshot.client, connected: true }, capabilities: { read_chat: true, use_ai: true, operate_client: true } });
 });
 

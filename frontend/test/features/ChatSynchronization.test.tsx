@@ -14,6 +14,7 @@ import type { ConversationAggregateDto } from "@/types/chatTransport";
 import type { ConversationDetail } from "@/types/chatCanonical";
 import { draftKey } from "@/features/account/draftStorage";
 import type { ConversationPage } from "@/types/inbox";
+import { authenticatedSession } from "@/test/support/authFixture";
 
 const pageOf = (items = [adaptConversationSummary(aggregate)]): ConversationPage => ({ items, total: items.length, offset: 0, limit: 50, inbox_revision: 1, pagination_revision: "page-1" });
 const revisionOf = (revision: number) => ({ ready: true, revision, inbox_revision: 1, next_due_at: null });
@@ -64,11 +65,12 @@ function ReadableWorkspace({ isBatch = false }: { isBatch?: boolean }) {
   return <Component key={`${current.snapshot.account.epoch}:${current.generation}`} />;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   accountSession.invalidate();
   localStorage.clear();
+  await authenticatedSession();
   mocks.backend.getConnection.mockReset().mockResolvedValue(structuredClone(connectionSnapshot));
   mocks.backend.listConversations.mockReset().mockResolvedValue(pageOf());
   mocks.backend.getConversation.mockReset().mockResolvedValue(adaptConversationDetail(aggregate));

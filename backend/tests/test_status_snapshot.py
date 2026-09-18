@@ -3,14 +3,15 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from backend.app.api.main import app
+from backend.app.api.main import create_app
+from backend.tests.auth_client import authenticate
 from backend.app.api.routers import status as status_router
 from backend.app.shared.backend import status as status_mod
 
 
 class StatusSnapshotTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.client = TestClient(app, raise_server_exceptions=False)
+        self.client = authenticate(TestClient(create_app(), raise_server_exceptions=False))
         self.addCleanup(self.client.close)
         queue = mock.Mock()
         queue.all_snapshots.return_value = []

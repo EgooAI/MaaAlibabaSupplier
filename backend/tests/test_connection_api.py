@@ -29,6 +29,7 @@ from backend.app.shared.mitm.pool import SelfInfo
 from backend.app.shared.utils import app_config
 from backend.app.task_queue import DEFAULT_QUEUE_NAME, TaskQueue, TaskSnapshot, TaskStatus
 from backend.tests.test_maafw_runner import sdk, window
+from backend.tests.auth_client import authenticate
 
 
 @pytest.fixture
@@ -42,6 +43,7 @@ def client(sdk, monkeypatch, tmp_path):
     monkeypatch.setattr(account_context, "read_app_config", app_config.read_app_config)
     monkeypatch.setattr(status, "_last_node_result", None)
     with TestClient(main.create_app(), raise_server_exceptions=False) as client:
+        authenticate(client)
         client.headers["X-Account-Epoch"] = account_context.get_account_context().epoch
         yield client
 

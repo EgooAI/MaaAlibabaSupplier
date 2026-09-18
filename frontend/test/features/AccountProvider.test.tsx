@@ -9,6 +9,7 @@ import type { ConnectionSnapshot } from "@/types/connection";
 import type { OperationsBackend } from "@/services/interfaces";
 import { httpBackend } from "@/services/httpAdapter";
 import { useDataDirSettings } from "@/features/settings/hooks/useDataDirSettings";
+import { authenticatedSession } from "@/test/support/authFixture";
 
 const mocks = vi.hoisted(() => ({
   message: { warning: vi.fn(), error: vi.fn() },
@@ -44,12 +45,13 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.useFakeTimers();
   vi.clearAllMocks();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   accountSession.invalidate();
   localStorage.clear();
+  await authenticatedSession();
   Object.defineProperty(document, "hidden", { configurable: true, value: false });
   mocks.backend.getConnection.mockReset().mockResolvedValue(structuredClone(connectionSnapshot));
   mocks.backend.getSelfInfo.mockReset().mockResolvedValue(null);
@@ -244,6 +246,21 @@ describe("shared account provider", () => {
     expect(container.querySelector("input")).toBeNull();
     await act(async () => { await account.refresh(); });
     expect(account.blocked).toBe(false);
+  });
+
+  it("does not reconcile an old settings mutation into a new authentication lifetime", async () => {
+    await mount();
+    const oldAccount = account;
+    const write = deferred<void>();
+    let mutation!: Promise<void>;
+    await act(async () => { mutation = oldAccount.mutate(() => write.promise); });
+    await act(async () => { await authenticatedSession("new-login"); });
+    await act(async () => { write.resolve(); await mutation; });
+    expect(mocks.backend.getConnection).toHaveBeenCalledTimes(1);
+    expect(accountSession.get().snapshot).toBeNull();
+    const operation = vi.fn();
+    await expect(oldAccount.mutate(operation)).rejects.toThrow("账号状态已变化");
+    expect(operation).not.toHaveBeenCalled();
   });
 
   it("uses storage only as a notification and reads the authoritative account", async () => {

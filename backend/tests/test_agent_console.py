@@ -6,7 +6,8 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from backend.app.api.main import app
+from backend.app.api.main import create_app
+from backend.tests.auth_client import authenticate
 from backend.app.shared.agent.chat_history_content import build_history_content
 from backend.app.shared.crm.sdk import AgentPreset, AgentPresetManager, ChatHistory, ChatHistoryManager
 
@@ -37,7 +38,7 @@ class AgentConsoleTestCase(unittest.TestCase):
         self.enterContext(mock.patch.dict(os.environ, {
             "MAA_CRM_DB_PATH": str(Path(self.temp_dir.name) / "crm.sqlite"),
         }))
-        self.client = TestClient(app, raise_server_exceptions=False)
+        self.client = authenticate(TestClient(create_app(), raise_server_exceptions=False))
         self.addCleanup(self.client.close)
 
     def tearDown(self) -> None:

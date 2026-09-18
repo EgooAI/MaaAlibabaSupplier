@@ -4,11 +4,6 @@ import sys
 import tempfile
 import argparse
 from pathlib import Path
-from jsonschema import Draft7Validator, Draft202012Validator
-from jsonschema.exceptions import ValidationError
-from referencing import Registry, Resource
-from referencing.jsonschema import DRAFT202012, DRAFT7
-import referencing.retrieval
 
 
 def strip_jsonc_comments(text):
@@ -83,6 +78,9 @@ def load_jsonc(file_path):
 
 def get_validator_class(schema):
     """根据 schema 的 $schema 字段选择合适的验证器"""
+    # 延迟导入：jsonschema 仅在 CLI 验证路径需要，保持模块可作为纯 JSONC 解析器被导入
+    from jsonschema import Draft7Validator, Draft202012Validator
+
     schema_uri = schema.get("$schema", "")
 
     if "draft-07" in schema_uri or "draft/07" in schema_uri:
@@ -165,6 +163,10 @@ def validate_file(file_path, validator):
 
 def create_validator(schema, schema_store):
     """创建 validator，使用新的 referencing API"""
+    from jsonschema import Draft202012Validator, Draft7Validator
+    from referencing import Registry, Resource
+    from referencing.jsonschema import DRAFT202012, DRAFT7
+
     ValidatorClass = get_validator_class(schema)
 
     registry = Registry()

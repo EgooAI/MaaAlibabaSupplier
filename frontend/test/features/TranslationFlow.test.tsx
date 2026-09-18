@@ -10,6 +10,7 @@ import { connectionSnapshot } from "@/mock/connectionData";
 import type { ConversationAggregateDto } from "@/types/chatTransport";
 import type { ConversationDetail } from "@/types/chatCanonical";
 import type { ConversationPage } from "@/types/inbox";
+import { authenticatedSession } from "@/test/support/authFixture";
 
 const mocks = vi.hoisted(() => ({
   message: { warning: vi.fn(), error: vi.fn(), success: vi.fn(), info: vi.fn() },
@@ -54,13 +55,14 @@ const detailWith = (messages: ConversationDetail["messages"]): ConversationDetai
   return { ...detail, messages };
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.useFakeTimers();
   vi.clearAllMocks();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   Object.defineProperty(document, "hidden", { configurable: true, value: false });
   accountSession.invalidate();
   localStorage.clear();
+  await authenticatedSession();
   mocks.backend.getConnection.mockReset().mockResolvedValue(structuredClone(connectionSnapshot));
   mocks.backend.listConversations.mockReset().mockResolvedValue(pageOf());
   mocks.backend.getConversation.mockReset().mockResolvedValue(detailWith([]));

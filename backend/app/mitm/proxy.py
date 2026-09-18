@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ipaddress
 import json
+import os
+import re
+import secrets
+import socket
 
 from loguru import logger
 from dataclasses import dataclass
@@ -25,6 +30,30 @@ from backend.app.shared.mitm.pool import UserInfo, get_generic_card_pool, get_in
 from backend.app.shared.crm import sync_self_info, sync_user_info
 from backend.app.shared.utils.app_config import get_configured_self_ali_id
 from backend.app.shared.utils.logging import configure_logging
+from backend.app.shared.utils.env import get_env_int, get_env_str
+from backend.app.shared.utils.settings import MITM_RECEIVER_HOST_DEFAULT, MITM_RECEIVER_PORT_DEFAULT
+
+
+def validate_receiver_config(host: str, port: int, internal_token: str | None) -> str:
+    if not internal_token:
+        raise ValueError("MAA_MITM_INTERNAL_TOKEN is required; set the same private token for the receiver and Yak")
+    if re.fullmatch(r"[A-Za-z0-9._~+/-]+=*", internal_token) is None or internal_token.startswith("maa_"):
+        raise ValueError("MAA_MITM_INTERNAL_TOKEN must be an ASCII bearer token distinct from browser session tokens (maa_)")
+    host = host.strip()
+    if host.lower() == "localhost":
+        host = "127.0.0.1"
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        raise ValueError("MITM_RECEIVER_HOST must be a loopback IP address or localhost") from None
+    if not address.is_loopback or "%" in host:
+        raise ValueError("MITM_RECEIVER_HOST must be a loopback IP address or localhost")
+    if not 1 <= port <= 65535:
+        raise ValueError("MITM_RECEIVER_PORT must be between 1 and 65535")
+    return str(address)
+
 
 @dataclass(frozen=True)
 class _TrafficEvent:
@@ -71,6 +100,8 @@ def _body_bytes(body: Any) -> bytes:
 class ReusableThreadingHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
+    internal_token: bytes
+    router: TrafficRouter
 
 
 class TrafficRouter:
@@ -179,12 +210,27 @@ class TrafficRouter:
 
 
 class TrafficHandler(BaseHTTPRequestHandler):
-    router: TrafficRouter = TrafficRouter()
-
     def do_POST(self) -> None:
+        values = self.headers.get_all("Authorization", [])
+        parts = values[0].split(" ") if len(values) == 1 else []
+        if (len(parts) != 2 or parts[0].lower() != "bearer"
+                or not secrets.compare_digest(parts[1].encode("utf-8"), self.server.internal_token)):
+            self._respond(401)
+            return
+        # BaseHTTPRequestHandler normalizes a leading //; check the original target.
+        if self.requestline.split()[1] != "/internal/traffic":
+            self._respond(404)
+            return
+        lengths = self.headers.get_all("Content-Length", [])
+        if self.headers.get("Transfer-Encoding") is not None or len(lengths) > 1:
+            self._respond(400)
+            return
         try:
             content_length = int(self.headers.get("Content-Length", 0))
         except (TypeError, ValueError):
+            self._respond(400)
+            return
+        if content_length < 0:
             self._respond(400)
             return
         if content_length == 0:
@@ -197,14 +243,14 @@ class TrafficHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(content_length)
         try:
             data = json.loads(raw)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             self._respond(400)
             return
 
         if isinstance(data, dict):
             url = _normalize_url(data.get("url", ""), bool(data.get("is_https", True)))
             try:
-                self.router.process(data)
+                self.server.router.process(data)
             except Exception:
                 logger.exception("Failed to process Yak MITM event")
                 self._respond(500, url)
@@ -218,7 +264,12 @@ class TrafficHandler(BaseHTTPRequestHandler):
         self._respond(405, self.path)
 
     def _respond(self, code: int, url: str = "") -> None:
+        self.close_connection = True
         self.send_response(code)
+        self.send_header("Content-Length", "0")
+        self.send_header("Connection", "close")
+        if code == 401:
+            self.send_header("WWW-Authenticate", "Bearer")
         self.end_headers()
         clean = url.split("?")[0] if url else "(no url)"
         logger.debug("{} [{}] {}", self.command, code, clean)
@@ -227,13 +278,35 @@ class TrafficHandler(BaseHTTPRequestHandler):
         pass  # suppressed — _respond handles logging
 
 
-def run_receiver(
-    host: str = "127.0.0.1",
-    port: int = 8085,
+def create_receiver(
+    host: str,
+    port: int,
     url_filters: list[str] | None = None,
+    *,
+    internal_token: str,
+) -> ReusableThreadingHTTPServer:
+    host = validate_receiver_config(host, port, internal_token)
+
+    class ReceiverServer(ReusableThreadingHTTPServer):
+        address_family = socket.AF_INET6 if ":" in host else socket.AF_INET
+
+    # Bind synchronously so startup cannot continue after a receiver bind failure.
+    server = ReceiverServer((host, port), TrafficHandler)
+    server.internal_token = internal_token.encode("ascii")
+    server.router = TrafficRouter(url_filters)
+    return server
+
+
+def run_receiver(
+    host: str = MITM_RECEIVER_HOST_DEFAULT,
+    port: int = MITM_RECEIVER_PORT_DEFAULT,
+    url_filters: list[str] | None = None,
+    *,
+    internal_token: str | None = None,
 ) -> None:
-    TrafficHandler.router = TrafficRouter(url_filters)
-    server = ReusableThreadingHTTPServer((host, port), TrafficHandler)
+    if internal_token is None:
+        internal_token = os.environ.get("MAA_MITM_INTERNAL_TOKEN", "")
+    server = create_receiver(host, port, url_filters, internal_token=internal_token)
     logger.info("MITM v4 receiver listening on {}:{}", host, port)
     try:
         server.serve_forever()
@@ -247,23 +320,30 @@ async def start_proxy(
     host: str = "127.0.0.1",
     port: int = 8085,
     url_filters: list[str] | None = None,
+    *,
+    internal_token: str | None = None,
 ) -> None:
-    await asyncio.to_thread(run_receiver, host, port, url_filters)
+    await asyncio.to_thread(run_receiver, host, port, url_filters, internal_token=internal_token)
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="MITM v4 receiver — accepts Yak/Yakit traffic events")
-    p.add_argument("--host", default="127.0.0.1", help="Listen address (default: 127.0.0.1)")
-    p.add_argument("--port", type=int, default=8085, help="Listen port (default: 8085)")
+    p.add_argument("--host", default=get_env_str("MITM_RECEIVER_HOST", MITM_RECEIVER_HOST_DEFAULT),
+                   help="Loopback listen address (default: MITM_RECEIVER_HOST or 127.0.0.1)")
+    p.add_argument("--port", type=int, default=get_env_int("MITM_RECEIVER_PORT", MITM_RECEIVER_PORT_DEFAULT),
+                   help="Listen port (default: MITM_RECEIVER_PORT or 8085)")
     p.add_argument("--url", action="append", default=None,
                    help="URL keyword filter; may be specified multiple times")
     return p.parse_args(argv)
 
 
 def main() -> None:
-    configure_logging()
     args = _parse_args()
-    run_receiver(args.host, args.port, args.url or [])
+    # Standalone operation requires an explicit process environment, never dotenv.
+    internal_token = os.environ.get("MAA_MITM_INTERNAL_TOKEN", "")
+    host = validate_receiver_config(args.host, args.port, internal_token)
+    configure_logging()
+    run_receiver(host, args.port, args.url or [], internal_token=internal_token)
 
 
 if __name__ == "__main__":

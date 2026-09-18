@@ -13,6 +13,7 @@ import { connectionSnapshot } from "@/mock/connectionData";
 import { adaptConversationDetail } from "@/services/chatAdapter";
 import type { ConversationDetail } from "@/types/chatCanonical";
 import type { ConversationPage, ReadReceipt } from "@/types/inbox";
+import { authenticatedSession } from "@/test/support/authFixture";
 
 const mocks = vi.hoisted(() => ({
   message: { error: vi.fn(), warning: vi.fn(), success: vi.fn() },
@@ -77,13 +78,14 @@ async function mount(isBatch = false) {
   await act(async () => root.render(<AccountProvider><Workspace isBatch={isBatch} /></AccountProvider>));
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.useFakeTimers();
   vi.resetAllMocks();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   Object.defineProperty(document, "hidden", { configurable: true, value: false });
   accountSession.invalidate();
   localStorage.clear();
+  await authenticatedSession();
   mocks.backend.getConnection.mockResolvedValue(structuredClone(connectionSnapshot));
   mocks.backend.listConversations.mockResolvedValue(page());
   mocks.backend.getConversation.mockResolvedValue(detail());

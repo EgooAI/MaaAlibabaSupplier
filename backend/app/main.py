@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import secrets
 import shutil
 import socket
 import subprocess
@@ -26,10 +28,11 @@ from backend.app.shared.utils.settings import (
 CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 from backend.app.maafw_process import MaaFWProcess, MaaFWProcessError
-from backend.app.mitm.proxy import run_receiver
+from backend.app.mitm.proxy import ReusableThreadingHTTPServer, create_receiver, validate_receiver_config
 from backend.app.shared.agent.system_presets import ensure_system_agents_seeded
 from backend.app.shared.agent.default_llm_levels import ensure_default_llm_levels_seeded
 from backend.app.api.server import run as run_api
+from backend.app.api.auth import validate_auth_config
 from backend.app.shared.utils.env import load_workdir_env
 from backend.app.shared.utils.logging import configure_logging
 from backend.app.shared.backend.sync_coordinator import start_sync_service, stop_sync_service
@@ -50,17 +53,23 @@ def _register_agent_runtime() -> None:
     register_system_output_normalizers()
 
 
-def _start_mitm_receiver() -> threading.Thread:
-    host = get_env_str("MITM_RECEIVER_HOST", MITM_RECEIVER_HOST_DEFAULT)
-    port = get_env_int("MITM_RECEIVER_PORT", MITM_RECEIVER_PORT_DEFAULT)
+def _start_mitm_receiver(*, host: str, port: int, internal_token: str) -> ReusableThreadingHTTPServer:
+    server = create_receiver(host, port, internal_token=internal_token)
 
     def _run() -> None:
-        run_receiver(host=host, port=port)
+        try:
+            server.serve_forever()
+        finally:
+            server.server_close()
 
     thread = threading.Thread(target=_run, daemon=True, name="mitm-receiver")
-    thread.start()
+    try:
+        thread.start()
+    except BaseException:
+        server.server_close()
+        raise
     logger.info("MITM receiver thread started on {}:{}", host, port)
-    return thread
+    return server
 
 
 def _resolve_yak_executable(backend_root: Path) -> str:
@@ -85,8 +94,15 @@ def _wait_for_port(host: str, port: int, *, timeout_s: float = 5.0) -> bool:
     return False
 
 
-def _start_yak_mitm(backend_root: Path) -> subprocess.Popen | None:
+def _start_yak_mitm(
+    backend_root: Path, *, host: str, port: int, internal_token: str,
+) -> subprocess.Popen | None:
     """Start the Yak MITM proxy via ``yak yak_mitm.yak`` in a subprocess."""
+    host = validate_receiver_config(host, port, internal_token)
+    child_env = os.environ.copy()
+    child_env["MAA_MITM_INTERNAL_TOKEN"] = internal_token
+    child_env["MITM_RECEIVER_HOST"] = host
+    child_env["MITM_RECEIVER_PORT"] = str(port)
     yak_exe = _resolve_yak_executable(backend_root)
     yak_script = backend_root / "yak_mitm.yak"
     log_dir = backend_root / "data" / "logs"
@@ -104,6 +120,7 @@ def _start_yak_mitm(backend_root: Path) -> subprocess.Popen | None:
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 creationflags=CREATE_NO_WINDOW,
+                env=child_env,
             )
     except FileNotFoundError:
         logger.error("'{}' not found — is Yak installed?", yak_exe)
@@ -125,6 +142,12 @@ def _start_yak_mitm(backend_root: Path) -> subprocess.Popen | None:
 
 def main() -> None:
     load_workdir_env()
+    validate_auth_config()
+    internal_token = "mitm_" + secrets.token_urlsafe(32)
+    receiver_port = get_env_int("MITM_RECEIVER_PORT", MITM_RECEIVER_PORT_DEFAULT)
+    receiver_host = validate_receiver_config(
+        get_env_str("MITM_RECEIVER_HOST", MITM_RECEIVER_HOST_DEFAULT), receiver_port, internal_token,
+    )
     configure_logging()
 
     backend_root = resolve_backend_root()
@@ -133,12 +156,15 @@ def main() -> None:
     _register_agent_runtime()
     maafw = MaaFWProcess(backend_root)
     yak_proc: subprocess.Popen | None = None
+    receiver = None
 
     try:
+        receiver = _start_mitm_receiver(host=receiver_host, port=receiver_port, internal_token=internal_token)
         maafw.start()
         logger.info("MaaFW process started")
-        _start_mitm_receiver()
-        yak_proc = _start_yak_mitm(backend_root)
+        yak_proc = _start_yak_mitm(
+            backend_root, host=receiver_host, port=receiver_port, internal_token=internal_token,
+        )
         start_sync_service()
         start_outbox_service()
         run_api()
@@ -178,6 +204,12 @@ def main() -> None:
                                 logger.info("Yak MITM proxy terminated")
                         except Exception:
                             logger.exception("Yak MITM shutdown failed")
+                        finally:
+                            if receiver is not None:
+                                try:
+                                    receiver.shutdown()
+                                except Exception:
+                                    logger.exception("MITM receiver shutdown failed")
 
 
 if __name__ == "__main__":

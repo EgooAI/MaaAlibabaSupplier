@@ -4,6 +4,7 @@ import { App } from "antd";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { backend } from "@/services/client";
 import { accountSession, AccountChangedError, captureAccount, scopeBackend } from "@/services/accountSession";
+import { authSession } from "@/services/authSession";
 import type { AccountEpoch } from "@/types/connection";
 import { flushDrafts } from "./draftStorage";
 
@@ -21,37 +22,41 @@ function useAccountController() {
   const request = useRef(0);
   const mutation = useRef(false);
   const mounted = useRef(true);
+  const [authGeneration] = useState(() => authSession.get().generation);
+  const isCurrent = useCallback(() => mounted.current && authSession.get().generation === authGeneration, [authGeneration]);
   const refreshReads = useCallback(() => setReadRefreshSequence((value) => value + 1), []);
 
   const notify = useCallback(() => {
+    if (!isCurrent()) return;
     try {
       localStorage.setItem(STORAGE_EVENT_KEY, crypto.randomUUID());
     } catch {
       message.warning("无法通知其他标签页，请手动刷新其他已打开的页面");
     }
-  }, [message]);
+  }, [message, isCurrent]);
 
   const refresh = useCallback(async () => {
-    if (mutation.current) return;
+    if (mutation.current || !isCurrent()) return;
     const id = ++request.current;
     setRefreshing(true);
     try {
       const snapshot = await backend.getConnection();
-      if (!mounted.current || id !== request.current) return;
+      if (!isCurrent() || id !== request.current) return;
       flushDrafts(() => localStorage);
       accountSession.accept(snapshot);
       setError(undefined);
       return snapshot;
     } catch (err) {
-      if (!mounted.current || id !== request.current) return;
+      if (!isCurrent() || id !== request.current) return;
       accountSession.suspend();
       setError(err instanceof Error ? err.message : "接入状态加载失败");
     } finally {
-      if (mounted.current && id === request.current) setRefreshing(false);
+      if (isCurrent() && id === request.current) setRefreshing(false);
     }
-  }, []);
+  }, [isCurrent]);
 
   const mutate = useCallback(async <T,>(operation: (epoch: AccountEpoch) => Promise<T>): Promise<T> => {
+    if (!isCurrent()) throw new AccountChangedError();
     if (mutation.current) throw new Error("账号设置正在更新，请稍候");
     const { epoch } = captureAccount();
     mutation.current = true;
@@ -68,29 +73,30 @@ function useAccountController() {
       setMutating(false);
       notify();
     }
-  }, [notify, refresh]);
+  }, [notify, refresh, isCurrent]);
 
   const requestSync = useCallback(async () => {
+    if (!isCurrent()) throw new AccountChangedError();
     if (syncRequest.current) throw new Error("同步请求正在提交，请稍候");
     const ticket = captureAccount();
     syncRequest.current = true;
     setSyncBusy(true);
     try {
       const submitted = await backend.retryConnection(ticket.epoch);
-      if (!mounted.current) throw new AccountChangedError();
+      if (!isCurrent()) throw new AccountChangedError();
       ticket.assertCurrent(submitted.account.epoch);
       // Profile writes can change CRM without advancing the IM commit revision.
       setReadRefreshSequence((value) => value + 1);
       // The POST only submits work. Polling observes its eventual commit.
     } catch (error) {
-      if (!mounted.current) throw new AccountChangedError();
+      if (!isCurrent()) throw new AccountChangedError();
       ticket.assertCurrent();
       throw error;
     } finally {
       syncRequest.current = false;
       if (mounted.current) setSyncBusy(false);
     }
-  }, []);
+  }, [isCurrent]);
 
   useEffect(() => {
     mounted.current = true;
@@ -99,7 +105,8 @@ function useAccountController() {
     void refresh();
     const visibleRefresh = () => { if (!document.hidden) void refresh(); };
     const onStorage = (event: StorageEvent) => {
-      if (event.key !== STORAGE_EVENT_KEY && event.key !== null) return;
+      // AuthProvider handles clear events, unmounting this account lifetime.
+      if (event.key !== STORAGE_EVENT_KEY || !isCurrent()) return;
       ++request.current;
       accountSession.invalidate();
       void refresh();
@@ -118,7 +125,7 @@ function useAccountController() {
       window.removeEventListener("storage", onStorage);
       document.removeEventListener("visibilitychange", visibleRefresh);
     };
-  }, [refresh]);
+  }, [refresh, isCurrent]);
 
   return { ...session, error, refreshing, mutating, syncBusy, readRefreshSequence, refreshReads, refresh, mutate, requestSync };
 }

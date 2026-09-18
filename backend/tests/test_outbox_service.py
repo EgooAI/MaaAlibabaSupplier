@@ -978,9 +978,9 @@ def test_main_attempts_every_cleanup_despite_errors(monkeypatch, failures):
     for name in ("load_workdir_env", "configure_logging", "ensure_system_agents_seeded",
                  "ensure_default_llm_levels_seeded", "_register_agent_runtime", "_start_mitm_receiver",
                  "start_sync_service", "start_outbox_service"):
-        monkeypatch.setattr(main, name, lambda: None)
+        monkeypatch.setattr(main, name, lambda **kwargs: None)
     monkeypatch.setattr(main, "MaaFWProcess", lambda root: SimpleNamespace(start=lambda: None, stop=cleanup("maafw")))
-    monkeypatch.setattr(main, "_start_yak_mitm", lambda root: SimpleNamespace(
+    monkeypatch.setattr(main, "_start_yak_mitm", lambda root, **kwargs: SimpleNamespace(
         poll=lambda: None, terminate=cleanup("yak"), wait=lambda **kwargs: None,
     ))
     monkeypatch.setattr(main, "stop_outbox_service", cleanup("outbox"))

@@ -3,9 +3,10 @@ import { httpBackend } from "@/services/httpAdapter";
 import { accountSession, scopeBackend } from "@/services/accountSession";
 import { connectionSnapshot } from "@/mock/connectionData";
 import { outboxTask, screenshotPng } from "@/test/support/outboxFixture";
+import { authenticatedSession } from "@/test/support/authFixture";
 
 const ready = () => ({ ...structuredClone(connectionSnapshot), capabilities: { read_chat: true, use_ai: true, operate_client: true } });
-beforeEach(() => { accountSession.accept(ready()); });
+beforeEach(async () => { await authenticatedSession(); accountSession.accept(ready()); });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const response = (data: unknown, epoch = "mock-1") => new Response(JSON.stringify({ code: 0, msg: "ok", data }), { headers: { "X-Account-Epoch": epoch } });
 

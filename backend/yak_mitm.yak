@@ -2,19 +2,48 @@
 
 YAK_MITM_HOST = "127.0.0.1"
 MITM_PORT = 8084  // 监听该端口的流量
-PYTHON_RECEIVER = "http://127.0.0.1:8085"  // 流量将会转发到这里进行处理
+INTERNAL_TOKEN = os.Getenv("MAA_MITM_INTERNAL_TOKEN")
+if INTERNAL_TOKEN == "" {
+    println("[!] MAA_MITM_INTERNAL_TOKEN is required; set the same private token for Yak and the receiver")
+    os.Exit(1)
+}
+if !re.Match("^[A-Za-z0-9._~+/-]+=*$", INTERNAL_TOKEN) || str.StartsWith(INTERNAL_TOKEN, "maa_") {
+    println("[!] MAA_MITM_INTERNAL_TOKEN must be an ASCII bearer token distinct from browser session tokens (maa_)")
+    os.Exit(1)
+}
+RECEIVER_HOST = str.TrimSpace(os.Getenv("MITM_RECEIVER_HOST"))
+if RECEIVER_HOST == "" {
+    RECEIVER_HOST = "127.0.0.1"
+}
+if str.ToLower(RECEIVER_HOST) == "localhost" {
+    RECEIVER_HOST = "127.0.0.1"
+}
+RECEIVER_PORT = str.TrimSpace(os.Getenv("MITM_RECEIVER_PORT"))
+if RECEIVER_PORT == "" {
+    RECEIVER_PORT = "8085"
+}
+if str.Contains(RECEIVER_HOST, ":") && !str.Contains(RECEIVER_HOST, "[") {
+    RECEIVER_HOST = "[" + RECEIVER_HOST + "]"
+}
+PYTHON_RECEIVER = "http://" + RECEIVER_HOST + ":" + RECEIVER_PORT + "/internal/traffic"
 
 // Known API keywords — capture body for these
 API_KEYWORDS = ["queryCustomerInfo", "getuserinfobyparams", "icbu.im.id.get", "contact.extinfo.get", "fetchcard"]
 
 postToPython = fn(payload) {
-    _, err = http.Post(
+    rsp, err = http.Post(
         PYTHON_RECEIVER,
         http.header("Content-Type", "application/json"),
+        http.header("Authorization", "Bearer " + INTERNAL_TOKEN),
         http.body(payload),
+        http.noredirect(),
     )
     if err != nil {
-        println("[!] 转发到 Python 失败: " + string(err))
+        println("[!] Forwarding to Python failed (transport error)")
+        return
+    }
+    if rsp.StatusCode < 200 || rsp.StatusCode >= 300 {
+        println("[!] Forwarding to Python failed: HTTP " + string(rsp.StatusCode))
     }
 }
 

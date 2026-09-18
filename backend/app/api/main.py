@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -12,19 +12,28 @@ from starlette.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from backend.app.api.account_scope import is_account_path, request_epoch, response_epoch
+from backend.app.api.auth import LOGIN_LIMITER, AuthMiddleware, SessionStore, validate_auth_config
 from backend.app.api.envelope import AppError, err, user_message
 from backend.app.shared.backend.account_context import get_account_context
 from backend.app.shared.utils.settings import FRONTEND_DEV_ORIGINS, resolve_repo_root
 
-from backend.app.api.routers import agent, app as app_router, conversations, messages, outbox, self, settings, status
+from backend.app.api.routers import agent, app as app_router, auth, conversations, messages, outbox, self, settings, status
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="MaaAlibabaSupplier API")
+    store = SessionStore(validate_auth_config())
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        await run_in_threadpool(store.initialize)
+        yield
+
+    app = FastAPI(title="MaaAlibabaSupplier API", docs_url=None, redoc_url=None,
+                  openapi_url=None, lifespan=lifespan)
+    app.state.auth_store = store
     @app.middleware("http")
     async def add_request_id(request: Request, call_next):  # type: ignore[no-untyped-def]
-        request_id = uuid.uuid4().hex[:12]
-        request.state.request_id = request_id
+        request_id = request.state.request_id
         if is_account_path(request.url.path):
             context = await run_in_threadpool(get_account_context)
             supplied = request.headers.get("X-Account-Epoch")
@@ -40,7 +49,7 @@ def create_app() -> FastAPI:
                     try:
                         response = await call_next(request)
                     except Exception:
-                        logger.exception("Unhandled account API error [{}] {}:", request_id, request.url.path)
+                        logger.error("Unhandled account API error [{}]", request_id)
                         response = JSONResponse(status_code=500, content=err("服务器内部错误", 1))
                     current = await run_in_threadpool(get_account_context)
                     if current.epoch != marker[0]:
@@ -57,11 +66,12 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=FRONTEND_DEV_ORIGINS,
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["X-Account-Epoch", "X-Request-ID"],
+        expose_headers=["X-Account-Epoch", "X-Request-ID", "Retry-After"],
     )
+    app.add_middleware(AuthMiddleware, store=store, limiter=LOGIN_LIMITER)
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
@@ -70,11 +80,11 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-        return JSONResponse(status_code=422, content=err(f"请求参数错误: {exc.errors()}", 1))
+        return JSONResponse(status_code=422, content=err("请求参数错误", 1))
 
     @app.exception_handler(StarletteHTTPException)
     async def http_error_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-        return JSONResponse(status_code=exc.status_code, content=err(str(exc.detail), 1))
+        return JSONResponse(status_code=exc.status_code, content=err(str(exc.detail), 1), headers=exc.headers)
 
     @app.exception_handler(OverflowError)
     async def overflow_error_handler(request: Request, exc: OverflowError) -> JSONResponse:
@@ -83,9 +93,10 @@ def create_app() -> FastAPI:
     @app.exception_handler(Exception)
     async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
         request_id = getattr(request.state, "request_id", "-")
-        logger.exception("Unhandled API error [{}] {}:", request_id, request.url.path)
+        logger.error("Unhandled API error [{}]", request_id)
         return JSONResponse(status_code=500, content=err("服务器内部错误", 1))
 
+    app.include_router(auth.router, tags=["auth"])
     app.include_router(self.router, tags=["self"])
     app.include_router(status.router, tags=["status"])
     app.include_router(conversations.router, tags=["conversations"])

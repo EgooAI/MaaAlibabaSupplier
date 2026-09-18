@@ -6,6 +6,7 @@ import type { ConversationPage } from "@/types/inbox";
 import type { ApiResponse } from "@/types/common";
 import type { OperationsBackend } from "./interfaces";
 import { accountSession, AccountChangedError, captureAccount } from "./accountSession";
+import { authSession, captureAuth } from "./authSession";
 
 const REQUEST_TIMEOUT_MS = 8000;
 
@@ -44,33 +45,46 @@ function parseJsonPayload(text: string, path: string): unknown {
   }
 }
 
-function timeoutSignal(init?: RequestInit): RequestInit {
-  if (init?.signal) return init;
-  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
-    return { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) };
-  }
-  return init ?? {};
-}
-
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, mode: "json" | "void" | "png", init?: RequestInit): Promise<T> {
+  const auth = captureAuth();
   const account = prepareAccountRequest(path, init);
-  let response: Response;
+  const headers = new Headers(account.init?.headers);
+  headers.set("Authorization", `Bearer ${auth.token}`);
+  const signal = AbortSignal.any([auth.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS), ...(init?.signal ? [init.signal] : [])]);
   try {
-    response = await fetch(path, requestInit(timeoutSignal(account.init)));
+    const response = await fetch(path, requestInit({ ...account.init, headers, signal, cache: "no-store", credentials: "omit" }));
+    auth.assertCurrent();
+    // Authentication failures need no account epoch (including screenshot failures).
+    if (response.status === 401) {
+      void authSession.unauthorized(auth.generation);
+      auth.assertCurrent();
+    }
+    const body = mode === "png" && response.ok ? await response.blob() : await response.text();
+    auth.assertCurrent();
+    account.ticket?.assertCurrent(response.headers.get("X-Account-Epoch"));
+    if (!response.ok) throw new ApiError(envelopeMessage(body as string, path), path, { status: response.status });
+    if (mode === "png") {
+      if (response.headers.get("X-Account-Epoch") !== account.ticket!.epoch) throw new AccountChangedError();
+      if (response.headers.get("Content-Type")?.split(";")[0] !== "image/png") throw new ApiError("截图格式无效", path);
+      return body as T;
+    }
+    const text = body as string;
+    if (!text.trim()) {
+      if (mode === "void") return undefined as T;
+      throw new ApiError(`API response body is empty: ${path}`, path);
+    }
+    const data = parseApiResponse<T>(parseJsonPayload(text, path), path);
+    return mode === "void" ? undefined as T : data;
   } catch (error) {
+    auth.assertCurrent();
     account.ticket?.assertCurrent();
+    if (error instanceof ApiError || error instanceof AccountChangedError) throw error;
     throw new ApiError(`API request failed: ${path}`, path, { cause: error });
   }
-
-  const text = await response.text();
-  account.ticket?.assertCurrent(response.headers.get("X-Account-Epoch"));
-  if (!response.ok) {
-    throw new ApiError(envelopeMessage(text, path), path, { status: response.status });
-  }
-
-  if (!text.trim()) throw new ApiError(`API response body is empty: ${path}`, path);
-  return parseApiResponse<T>(parseJsonPayload(text, path), path);
 }
+
+const requestJson = <T,>(path: string, init?: RequestInit) => request<T>(path, "json", init);
+const requestVoid = (path: string, init?: RequestInit) => request<void>(path, "void", init);
 
 function envelopeMessage(text: string, path: string): string {
   try {
@@ -80,24 +94,6 @@ function envelopeMessage(text: string, path: string): string {
     // fall through
   }
   return `API request failed: ${path}`;
-}
-
-async function requestVoid(path: string, init?: RequestInit): Promise<void> {
-  const account = prepareAccountRequest(path, init);
-  let response: Response;
-  try {
-    response = await fetch(path, requestInit(timeoutSignal(account.init)));
-  } catch (error) {
-    account.ticket?.assertCurrent();
-    throw new ApiError(`API request failed: ${path}`, path, { cause: error });
-  }
-  const text = await response.text();
-  account.ticket?.assertCurrent(response.headers.get("X-Account-Epoch"));
-  if (!response.ok) {
-    throw new ApiError(envelopeMessage(text, path), path, { status: response.status });
-  }
-  if (!text.trim()) return;
-  parseApiResponse<unknown>(parseJsonPayload(text, path), path);
 }
 
 export function requestInit(init?: RequestInit): RequestInit {
@@ -181,21 +177,7 @@ export const httpBackend: OperationsBackend = {
   retryOutbox: (id, version) => requestJson(`/api/outbox/${encodeURIComponent(id)}/retry`, { method: "POST", body: JSON.stringify({ version }) }),
   getOutboxScreenshot: async (id, screenshotId, version) => {
     const path = `/api/outbox/${encodeURIComponent(id)}/screenshot/${encodeURIComponent(screenshotId)}?version=${encodeURIComponent(version)}`;
-    const account = prepareAccountRequest(path, { cache: "no-store" });
-    try {
-      const response = await fetch(path, timeoutSignal(account.init));
-      // Frames require an explicit matching epoch, including on cached/proxied responses.
-      if (response.headers.get("X-Account-Epoch") !== account.ticket!.epoch) throw new AccountChangedError();
-      account.ticket!.assertCurrent();
-      if (!response.ok) throw new ApiError("截图不可用，请刷新任务", path, { status: response.status });
-      if (response.headers.get("Content-Type")?.split(";")[0] !== "image/png") throw new ApiError("截图格式无效", path);
-      const blob = await response.blob();
-      account.ticket!.assertCurrent();
-      return blob;
-    } catch (error) {
-      account.ticket!.assertCurrent();
-      throw error;
-    }
+    return request<Blob>(path, "png", { cache: "no-store" });
   },
   exportConversations: (input) => requestJson("/api/conversations/export", { method: "POST", body: JSON.stringify(input) }),
   gotoContact: (conversationId, loginId) => requestJson(`/api/conversations/${encodeURIComponent(conversationId)}/goto-contact`, { method: "POST", body: JSON.stringify({ login_id: loginId }) }),

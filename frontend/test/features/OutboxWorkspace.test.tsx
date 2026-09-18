@@ -12,6 +12,7 @@ import type { OutboxTask, SendMessageInput } from "@/types/chatOperations";
 import { outboxTask, screenshotPng } from "@/test/support/outboxFixture";
 import { ApiError } from "@/services/httpAdapter";
 import { useChatWorkbench } from "@/features/chat/hooks/useChatWorkbench";
+import { authenticatedSession } from "@/test/support/authFixture";
 
 const mocks = vi.hoisted(() => ({
   backend: { getConnection: vi.fn(), listOutbox: vi.fn(), getOutbox: vi.fn(), sendMessage: vi.fn(), confirmOutbox: vi.fn(), cancelOutbox: vi.fn(), retryOutbox: vi.fn(), getOutboxScreenshot: vi.fn(), listConversations: vi.fn(), getConversation: vi.fn(), getConversationRevision: vi.fn(), markConversationRead: vi.fn(), queryTranslations: vi.fn(), requestTranslations: vi.fn(), getTranslationJob: vi.fn() },
@@ -61,11 +62,12 @@ function InboxWorkspace() {
   return conversation ? <OutboxWorkspace key={conversation.id} conversation={conversation} value={current.draft} onChange={current.setDraft} onOpenSuggestions={() => {}} onOpenIntentAnalysis={() => {}} onOpenStageAnalysis={() => {}} /> : null;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetAllMocks();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   accountSession.invalidate();
   localStorage.clear();
+  await authenticatedSession();
   store = [];
   Object.defineProperty(document, "hidden", { configurable: true, value: false });
   mocks.backend.getConnection.mockResolvedValue(readySnapshot());

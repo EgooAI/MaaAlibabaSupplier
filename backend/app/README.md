@@ -20,10 +20,10 @@
 后端唯一启动方式：仓库根运行 `python -m backend.app.main`。启动时依次：
 
 1. 加载 `.env`（`load_workdir_env()`，从 cwd 向上查找，兜底仓库根）；
-2. 配置日志（`configure_logging()`）；
+2. 验证必填的固定密钥摘要 `MAA_AUTH_SECRET_SHA256` 和 MITM 回环地址，生成本次启动的内部凭据，再配置日志（`configure_logging()`）；
 3. 播种系统 Agent（`ensure_system_agents_seeded()`）与默认 LLM 层级（`ensure_default_llm_levels_seeded()`，仅补缺失的 Level 0 空行）并注册 LLM/工具/输出归一化（幂等，仅启动时一次）；
-4. 启动 MaaFW 子进程：可执行文件固定为 `backend/deps/bin/MaaPiCli.exe`（由 `tools/install_3_maafw.py` 安装），workdir 固定为 `backend/assets`（约定目录，无环境变量）；
-5. 启动 MITM Python receiver 线程（`MITM_RECEIVER_HOST/PORT`，默认 `127.0.0.1:8085`）；
+4. 绑定并启动 MITM Python receiver 线程（`MITM_RECEIVER_HOST/PORT`，默认 `127.0.0.1:8085`，仅允许回环地址），绑定失败时不启动 GUI；
+5. 启动 MaaFW 子进程：可执行文件固定为 `backend/deps/bin/MaaPiCli.exe`（由 `tools/install_3_maafw.py` 安装），workdir 固定为 `backend/assets`（约定目录，无环境变量）；
 6. 启动 Yak MITM 代理（脚本 `backend/yak_mitm.yak`，默认 `127.0.0.1:8084`）。Yak 发现顺序：`YAK_EXECUTABLE` → PATH 上的 `yak` → `backend/.portable/yak/yak.exe`（`tools/install_4_yak.py` 的产物）；
 7. 启动 IM 同步协调服务，再启动 HTTP API（主线程阻塞，uvicorn，`MAA_API_HOST/PORT` 默认 `127.0.0.1:8000`，供 `frontend/` Next.js 反代 `/api/*`）。退出时停止同步服务并等待已提交的 CRM 工作完成。
 
@@ -119,3 +119,9 @@ UI/业务以 `app.shared.crm` 为稳定入口：
 ## 环境变量
 
 参见 `.env.example`。
+
+## 应用认证
+
+启动前必须配置固定密钥的 SHA-256 摘要。登录只传输摘要，成功后签发永久 Bearer 令牌；浏览器将令牌保存在 `localStorage`，后端只在独立 `backend/data/auth.sqlite` 中保存令牌哈希。全部业务 API 都要求认证，静态登录页面公开；API 文档入口默认关闭。更换密钥并重启会撤销旧令牌，退出登录撤销当前令牌。
+
+登录接口在单 API 进程内全局每两秒最多接受一次尝试；普通请求、会话验证和 MITM 上报不占用登录额度。MITM 接收端口使用每次启动独立生成的内部凭据，仅接受 `POST /internal/traffic`。完整配置、API 契约、凭据撤销和部署限制见 [认证说明](api/AUTH.md)。

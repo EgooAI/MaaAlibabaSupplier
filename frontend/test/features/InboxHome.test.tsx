@@ -10,6 +10,7 @@ import { inboxQueryFromUrl } from "@/domain/chat/inboxModel";
 import { connectionSnapshot } from "@/mock/connectionData";
 import { accountSession } from "@/services/accountSession";
 import type { InboxOverview } from "@/types/inbox";
+import { authenticatedSession } from "@/test/support/authFixture";
 
 const mocks = vi.hoisted(() => ({
   message: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
@@ -57,13 +58,14 @@ async function setHours(value: string) {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
-beforeEach(() => {
+beforeEach(async () => {
   vi.useFakeTimers();
   vi.resetAllMocks();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   Object.defineProperty(document, "hidden", { configurable: true, value: false });
   accountSession.invalidate();
   localStorage.clear();
+  await authenticatedSession();
   mocks.backend.getConnection.mockResolvedValue(structuredClone(connectionSnapshot));
   mocks.backend.getInboxOverview.mockResolvedValue(structuredClone(overview));
   mocks.backend.getInboxSettings.mockResolvedValue({ timeout_seconds: 86400, inbox_revision: 1 });

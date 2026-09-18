@@ -18,6 +18,10 @@ export const accountSession = {
     listeners.add(listener);
     return () => { listeners.delete(listener); };
   },
+  clear() {
+    state = { ...initial, generation: state.generation + 1 };
+    listeners.forEach((listener) => listener());
+  },
   invalidate() {
     state = { ...state, generation: state.generation + 1, blocked: true, suspended: false };
     listeners.forEach((listener) => listener());
