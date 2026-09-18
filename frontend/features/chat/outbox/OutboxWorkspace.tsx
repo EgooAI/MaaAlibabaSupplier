@@ -1,6 +1,7 @@
 "use client";
 
-import { Alert, Button, Modal, Space, Tag, Typography } from "antd";
+import { Alert, Button, Drawer, Modal, Space, Tag, Typography } from "antd";
+import { HistoryOutlined, RightOutlined } from "@ant-design/icons";
 import { useState } from "react";
 import { useAccount } from "@/features/account/AccountProvider";
 import type { ConversationDetail } from "@/types/chatCanonical";
@@ -17,9 +18,16 @@ export function OutboxWorkspace({ conversation, ...composer }: Omit<ChatComposer
   const [submission, setSubmission] = useState<{ content: string; action?: "send" | "test"; newIntent?: boolean; intent?: PendingIntent }>();
   const [reviewId, setReviewId] = useState<string>();
   const [retry, setRetry] = useState<OutboxTask>();
+  const [tasksOpen, setTasksOpen] = useState(false);
   const canOperate = !blocked && Boolean(snapshot?.capabilities.operate_client);
   const review = outbox.tasks.find((task) => task.id === reviewId);
   const missing = outbox.intents.filter((intent) => !outbox.tasks.some((task) => task.idempotency_key === intent.key));
+  const awaiting = outbox.tasks.filter((task) => task.status === "awaiting_confirmation");
+  const needsAttention = outbox.tasks.filter((task) => task.status === "failed" || task.status === "unknown");
+  const running = outbox.tasks.filter((task) => !isTerminal(task) && task.status !== "awaiting_confirmation");
+  const unknownCount = needsAttention.filter((task) => task.status === "unknown").length;
+  const summary = missing.length ? `${missing.length} 条提交待核对` : awaiting.length ? `${awaiting.length} 个任务待确认联系人` : needsAttention.length ? [unknownCount ? `${unknownCount} 个结果未知` : "", needsAttention.length > unknownCount ? `${needsAttention.length - unknownCount} 个任务失败` : ""].filter(Boolean).join(" · ") : running.length ? outboxLabels[running[0].status] : outbox.tasks.length ? outboxLabels[outbox.tasks[0].status] : "暂无发送任务";
+  const attention = Boolean(missing.length || awaiting.length || needsAttention.length || outbox.error || outbox.storageError);
 
   async function submit(action: "send" | "test") {
     if (!submission) return;
@@ -27,10 +35,13 @@ export function OutboxWorkspace({ conversation, ...composer }: Omit<ChatComposer
   }
 
   return <>
-    <section aria-label="会话发送任务" className="mb-3 max-h-64 overflow-y-auto rounded border border-slate-200 p-3">
-      <Space wrap><Typography.Text strong>发送任务</Typography.Text><Button size="small" disabled={blocked} onClick={() => void outbox.refresh(true)}>刷新任务</Button></Space>
-      <Typography.Paragraph type="secondary">任务由后台保存；切换会话或刷新页面后可继续查看。草稿始终保留。</Typography.Paragraph>
-      <Typography.Paragraph type="secondary">相同内容会恢复已有任务；需要再次发送请点击“新建发送”。</Typography.Paragraph>
+    <div className="flex min-w-0 items-center justify-between gap-2 py-2">
+      <span role="status" className={`truncate text-xs ${attention ? "text-amber-700" : "text-slate-500"}`}>{outbox.storageError ? "提交记录异常，已暂停新提交" : outbox.error ? "发送任务读取或提交异常" : summary}</span>
+      <Button type="text" size="small" icon={<HistoryOutlined />} onClick={() => setTasksOpen(true)}>发送记录<RightOutlined /></Button>
+    </div>
+    <Drawer title="发送记录" open={tasksOpen} onClose={() => setTasksOpen(false)} size={480} zIndex={900} extra={<Button size="small" disabled={blocked} onClick={() => void outbox.refresh(true)}>刷新任务</Button>}>
+    <section aria-label="会话发送任务">
+      <Typography.Paragraph type="secondary">任务和草稿会保留。相同内容会恢复已有任务；再次发送相同内容，请选择“新建发送”。</Typography.Paragraph>
       {outbox.error && <Alert type="warning" title={outbox.error} />}
       {outbox.storageError && <Alert type="error" title="浏览器提交记录不可读或不可写，已禁止新提交。请恢复存储后刷新任务；草稿仍保留。" />}
       {blocked && <Alert type="warning" title="账号状态暂不可用，已保留任务记录，暂停操作。" />}
@@ -55,6 +66,7 @@ export function OutboxWorkspace({ conversation, ...composer }: Omit<ChatComposer
         </Space>
       </article>)}
     </section>
+    </Drawer>
     <ChatComposer {...composer} loading={outbox.busy} onSend={() => setSubmission({ content: composer.value.trim() })} />
     <Modal title={submission?.newIntent ? "新建发送：再次确认" : "确认收件人与提交内容"} open={Boolean(submission)} onCancel={() => setSubmission(undefined)} footer={<Space wrap>
       <Button onClick={() => setSubmission(undefined)}>返回编辑</Button>

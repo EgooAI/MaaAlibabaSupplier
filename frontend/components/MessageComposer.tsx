@@ -3,7 +3,7 @@
 import { SendOutlined, ToolOutlined } from "@ant-design/icons";
 import { Button, Dropdown, Input, Space } from "antd";
 import type { MenuProps } from "antd";
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 
 export type MessageComposerTool = {
   key: string;
@@ -22,6 +22,8 @@ type MessageComposerProps = {
   disabled?: boolean;
   sendDisabled?: boolean;
   onSend: () => void;
+  compact?: boolean;
+  footer?: ReactNode;
 };
 
 export function MessageComposer({
@@ -35,6 +37,8 @@ export function MessageComposer({
   disabled = false,
   sendDisabled = false,
   onSend,
+  compact = false,
+  footer,
 }: MessageComposerProps) {
   const menuItems: MenuProps["items"] = useMemo(
     () => tools.map((tool) => ({ key: tool.key, label: tool.label, disabled: tool.disabled })),
@@ -43,9 +47,11 @@ export function MessageComposer({
   const canSend = !disabled && !sendDisabled && !loading && Boolean(value.trim());
 
   return (
-    <Space.Compact className="w-full" orientation="vertical">
+    <Space.Compact className={`w-full ${compact ? "overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-blue-400" : ""}`} orientation="vertical">
       <Input.TextArea
-        autoSize={{ minRows: 3, maxRows: 8 }}
+        autoSize={{ minRows: compact ? 2 : 3, maxRows: compact ? 4 : 8 }}
+        variant={compact ? "borderless" : "outlined"}
+        aria-label="消息内容"
         value={value}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
@@ -57,13 +63,19 @@ export function MessageComposer({
         placeholder={placeholder}
         disabled={disabled}
       />
-      <div className="flex justify-between rounded-b-lg border border-t-0 border-slate-200 bg-slate-50 p-3">
-        {tools.length ? (
-          <Dropdown menu={{ items: menuItems, onClick: ({ key }) => onToolClick?.(key) }} trigger={["click"]}>
-            <Button icon={<ToolOutlined />}>工具栏</Button>
-          </Dropdown>
-        ) : <span />}
-        <Button type="primary" icon={<SendOutlined />} onClick={onSend} loading={loading} disabled={!canSend}>{sendLabel}</Button>
+      <div className={compact ? "flex items-center justify-between gap-2 px-2 pb-2" : "flex justify-between rounded-b-lg border border-t-0 border-slate-200 bg-slate-50 p-3"}>
+        <div className="flex items-center gap-1">
+          {footer}
+          {tools.length ? (
+            <Dropdown menu={{ items: menuItems, onClick: ({ key }) => onToolClick?.(key) }} trigger={["click"]}>
+              <Button type={compact ? "text" : "default"} size={compact ? "small" : "middle"} icon={<ToolOutlined />}>{compact ? "更多" : "工具栏"}</Button>
+            </Dropdown>
+          ) : <span />}
+        </div>
+        <div className="flex items-center gap-3">
+          {compact ? <span className="hidden text-[11px] text-slate-400 2xl:inline">Ctrl / ⌘ + Enter</span> : null}
+          <Button type="primary" icon={<SendOutlined />} onClick={onSend} loading={loading} disabled={!canSend}>{sendLabel}</Button>
+        </div>
       </div>
     </Space.Compact>
   );

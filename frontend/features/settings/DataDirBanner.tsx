@@ -1,12 +1,12 @@
 "use client";
 
-import { Alert } from "antd";
+import { Alert, Tooltip } from "antd";
 import Link from "next/link";
 import { useAccount } from "@/features/account/AccountProvider";
 
 // Margin-free by design: the surrounding layout owns all spacing, so the same
 // banner collapses cleanly in cards, Space stacks and bare page fallbacks.
-export function DataDirBanner() {
+export function DataDirBanner({ compact = false }: { compact?: boolean }) {
   const { snapshot, blocked, error } = useAccount();
   if (!blocked && snapshot?.capabilities.operate_client) return null;
   if (error) {
@@ -27,12 +27,13 @@ export function DataDirBanner() {
     );
   }
   if (!snapshot.client.confirmed) {
+    const description = "当前可以阅读聊天、编辑草稿；发送、填入测试和跳转联系人不可用。在设置中核对并确认卖家后解除。";
     return (
       <Alert
         type="warning"
         showIcon
-        title="只读模式：卖家身份尚未人工确认"
-        description="当前可以阅读聊天、编辑草稿；发送、填入测试和跳转联系人不可用。在设置中核对并确认卖家后解除。"
+        title={compact ? <Tooltip title={description}>只读模式：卖家身份尚未人工确认</Tooltip> : "只读模式：卖家身份尚未人工确认"}
+        description={compact ? undefined : description}
         action={<Link href="/settings">前往接入设置</Link>}
       />
     );

@@ -1,7 +1,7 @@
 "use client";
 
 import { AppstoreOutlined, CommentOutlined, DashboardOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PoweroffOutlined, RobotOutlined, SelectOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
-import { Avatar, Button, Layout, Menu, Tooltip, Typography } from "antd";
+import { Avatar, Button, Grid, Layout, Menu, Tooltip, Typography } from "antd";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -48,8 +48,9 @@ const navItems = [
 
 const pageTitles = PAGE_TITLES;
 
-function NavigationMenu({ selectedKey, routeOpenKeys }: { selectedKey: string; routeOpenKeys: string[] }) {
+function NavigationMenu({ selectedKey, routeOpenKeys, collapsed, onNavigate }: { selectedKey: string; routeOpenKeys: string[]; collapsed: boolean; onNavigate: () => void }) {
   const [openKeys, setOpenKeys] = useState(routeOpenKeys);
+  const [popupKeys, setPopupKeys] = useState<string[]>([]);
 
   // Intentional route -> menu sync: follow route group while preserving user toggles.
   useEffect(() => {
@@ -74,8 +75,9 @@ function NavigationMenu({ selectedKey, routeOpenKeys }: { selectedKey: string; r
       theme="dark"
       mode="inline"
       selectedKeys={[selectedKey]}
-      openKeys={openKeys}
-      onOpenChange={setOpenKeys}
+      openKeys={collapsed ? popupKeys : openKeys}
+      onOpenChange={collapsed ? setPopupKeys : setOpenKeys}
+      onClick={onNavigate}
       items={navItems}
       className="flex-1 border-0"
     />
@@ -85,6 +87,9 @@ function NavigationMenu({ selectedKey, routeOpenKeys }: { selectedKey: string; r
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  const screens = Grid.useBreakpoint();
+  const isSmallScreen = screens.sm === false;
+  const isCustomerChat = pathname === "/chat/customer-sessions";
   const { snapshot, blocked, generation } = useAccount();
 
   const selectedKey = resolveSelectedKey(pathname);
@@ -95,11 +100,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         width={232}
         breakpoint="lg"
         collapsed={collapsed}
-        collapsedWidth={72}
+        collapsedWidth={isSmallScreen ? 0 : 72}
         trigger={null}
         onCollapse={setCollapsed}
         onBreakpoint={setCollapsed}
-        className="h-full overflow-y-auto shadow-xl"
+        className="z-30 h-full overflow-y-auto shadow-xl max-[576px]:!absolute max-[576px]:inset-y-0 max-[576px]:left-0"
       >
         <div className="flex h-full min-h-0 flex-col">
           <div className={`flex h-16 items-center text-white ${collapsed ? "justify-center" : "gap-3 px-5"}`}>
@@ -129,18 +134,20 @@ export function AppShell({ children }: { children: ReactNode }) {
               </>
             )}
           </div>
-          <NavigationMenu selectedKey={selectedKey} routeOpenKeys={openKeys} />
+          {!isSmallScreen || !collapsed ? <NavigationMenu selectedKey={selectedKey} routeOpenKeys={openKeys} collapsed={collapsed} onNavigate={() => { if (isSmallScreen) setCollapsed(true); }} /> : null}
         </div>
       </Sider>
-      <Layout className="min-h-0">
-        <Header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b border-slate-100 px-6 shadow-sm">
+      {isSmallScreen && !collapsed ? <button aria-label="关闭导航" className="absolute inset-0 z-20 bg-black/30" onClick={() => setCollapsed(true)} /> : null}
+      <Layout className="min-h-0 min-w-0">
+        <Header className="sticky top-0 z-10 flex h-16 shrink-0 items-center justify-between gap-2 border-b border-slate-100 !px-4 shadow-sm sm:!px-6">
+          {isSmallScreen ? <Button type="text" aria-label="打开导航" icon={<MenuUnfoldOutlined />} onClick={() => setCollapsed(false)} /> : null}
           <Typography.Title level={4} className="!mb-0 truncate">
             {pageTitles[selectedKey] ?? "阿里国际站运营助手"}
           </Typography.Title>
           {!blocked && snapshot?.capabilities.read_chat ? <AccountProfile key={`${snapshot.account.epoch}:${generation}`} /> : <Typography.Text type="secondary">{snapshot?.account.self_ali_id || "尚未选择账号"}</Typography.Text>}
         </Header>
-        <Content className="min-h-0 overflow-y-auto p-6">
-          <div className="mx-auto max-w-[1480px]">{children}</div>
+        <Content className={isCustomerChat ? "min-h-0 overflow-hidden p-2 sm:p-4" : "min-h-0 overflow-y-auto p-6"}>
+          <div className={`mx-auto max-w-[1480px] ${isCustomerChat ? "h-full min-h-0" : ""}`}>{children}</div>
         </Content>
       </Layout>
     </Layout>

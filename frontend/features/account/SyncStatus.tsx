@@ -1,14 +1,14 @@
 "use client";
 
 import { ReloadOutlined } from "@ant-design/icons";
-import { App, Button, Space, Tag, Typography } from "antd";
+import { App, Button, Space, Tag, Tooltip, Typography } from "antd";
 import { AccountChangedError, useAccount } from "./AccountProvider";
 
 function time(value: number | null) {
   return value == null ? "尚无记录" : new Date(value * 1000).toLocaleString();
 }
 
-export function SyncStatus({ refreshError = false, refreshPending = false, buttonLabel = "刷新聊天" }: { refreshError?: boolean; refreshPending?: boolean; buttonLabel?: string }) {
+export function SyncStatus({ refreshError = false, refreshPending = false, buttonLabel = "刷新聊天", compact = false }: { refreshError?: boolean; refreshPending?: boolean; buttonLabel?: string; compact?: boolean }) {
   const { snapshot, blocked, syncBusy, requestSync } = useAccount();
   const { message } = App.useApp();
   if (!snapshot) return null;
@@ -29,8 +29,8 @@ export function SyncStatus({ refreshError = false, refreshPending = false, butto
       <Tag color={blocked || failed || refreshError ? "error" : syncing || refreshPending ? "processing" : source.freshness === "stale" ? "warning" : "success"}>{label}</Tag>
       {failed && syncing ? <Tag color="processing">正在重试同步</Tag> : null}
       {(failed || syncing) && source.stale ? <Typography.Text type="secondary">存档可能过期</Typography.Text> : null}
-      <Typography.Text type="secondary">上次成功：{time(source.last_success)}</Typography.Text>
-      <Button size="small" icon={<ReloadOutlined />} loading={syncBusy} disabled={blocked || !snapshot.account.self_ali_id || snapshot.data_dir.state !== "ok"} onClick={() => void submit()}>{buttonLabel}</Button>
+      <Typography.Text type="secondary" className={compact ? "hidden text-xs sm:inline" : undefined}>上次成功：{time(source.last_success)}</Typography.Text>
+      <Tooltip title={compact ? `${buttonLabel} · 上次成功：${time(source.last_success)}` : buttonLabel}><Button type={compact ? "text" : "default"} size="small" aria-label={buttonLabel} icon={<ReloadOutlined />} loading={syncBusy} disabled={blocked || !snapshot.account.self_ali_id || snapshot.data_dir.state !== "ok"} onClick={() => void submit()}>{compact ? null : buttonLabel}</Button></Tooltip>
     </Space>
   );
 }

@@ -1,6 +1,8 @@
 "use client";
 
 import { MessageComposer } from "@/components/MessageComposer";
+import { BulbOutlined } from "@ant-design/icons";
+import { Button } from "antd";
 import { useAccount } from "@/features/account/AccountProvider";
 
 type ChatToolKey = "translation" | "retranslate" | "suggestions" | "intent-analysis" | "stage-analysis";
@@ -36,7 +38,6 @@ export function ChatComposer({
   const tools: Array<{ key: ChatToolKey; label: string }> = [
     { key: "translation", label: translationVisible ? "关闭翻译" : "翻译" },
     { key: "retranslate", label: "重新翻译" },
-    { key: "suggestions", label: "AI 回复建议" },
     { key: "intent-analysis", label: "客户意图分析" },
     { key: "stage-analysis", label: "客户所处阶段分析" },
   ];
@@ -54,6 +55,8 @@ export function ChatComposer({
   return (
     <>
       <MessageComposer
+        compact
+        footer={<Button type="text" size="small" icon={<BulbOutlined />} disabled={!canUseAi} onClick={onOpenSuggestions}>AI 建议</Button>}
         value={value}
         onChange={onChange}
         tools={tools.map((tool) => ({ ...tool, disabled: !canUseAi && !(tool.key === "translation" && translationVisible) }))}

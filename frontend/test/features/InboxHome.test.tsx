@@ -25,14 +25,15 @@ vi.mock("antd", () => {
   return {
     App: { useApp: () => ({ message: mocks.message }) },
     Space: Object.assign(Group, { Compact: Group }),
-    Input,
+    Input: Object.assign(Input, { Search: ({ onSearch, ...props }: InputHTMLAttributes<HTMLInputElement> & { onSearch: (value: string) => void }) => <><Input {...props} /><button onClick={() => onSearch(String(props.value ?? ""))}>搜索</button></> }),
+    Popover: ({ open, onOpenChange, content, children }: { open: boolean; onOpenChange: (open: boolean) => void; content: ReactNode; children: ReactNode }) => <><div onClick={() => onOpenChange(!open)}>{children}</div>{open ? content : null}</>,
     Checkbox: ({ children, onChange, ...props }: InputHTMLAttributes<HTMLInputElement>) => <label><input type="checkbox" {...props} onChange={onChange} />{children}</label>,
     Select: ({ value, onChange, options, "aria-label": label }: { value?: string; onChange: (value: string) => void; options: { value: string; label: string }[]; "aria-label": string }) => <select aria-label={label} value={value ?? ""} onChange={(event) => onChange(event.target.value)}><option value="" />{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>,
     Typography: { Text: Group, Title: Group },
     Card: ({ title, children }: { title?: string; children: ReactNode }) => <section>{title}{children}</section>,
     Statistic: ({ title, value }: { title: string; value: ReactNode }) => <p>{title}: <output>{value}</output></p>,
     Alert: ({ title, action }: { title: string; action: ReactNode }) => <aside>{title}{action}</aside>,
-    Button: ({ children, disabled, loading, onClick, htmlType }: ButtonHTMLAttributes<HTMLButtonElement> & { loading?: boolean; htmlType?: "button" | "submit" }) => <button type={htmlType ?? "button"} disabled={disabled || loading} onClick={onClick}>{children}</button>,
+    Button: ({ children, disabled, loading, onClick, htmlType, "aria-label": label }: ButtonHTMLAttributes<HTMLButtonElement> & { loading?: boolean; htmlType?: "button" | "submit" }) => <button type={htmlType ?? "button"} aria-label={label} disabled={disabled || loading} onClick={onClick}>{children}</button>,
     InputNumber: ({ value, onChange, disabled, min, max, "aria-label": label }: { value: number | null; onChange: (value: number | null) => void; disabled: boolean; min: number; max: number; "aria-label": string }) => <input type="number" aria-label={label} value={value ?? ""} disabled={disabled} min={min} max={max} onInput={(event) => onChange(event.currentTarget.value === "" ? null : Number(event.currentTarget.value))} />,
   };
 });
@@ -94,6 +95,8 @@ describe("inbox home and settings", () => {
       const query = inboxQueryFromUrl(new URL(href, "http://localhost").searchParams);
       const apply = vi.fn();
       await act(async () => root.render(<ConversationFilters key={href} query={query} onChange={apply} />));
+      expect(container.querySelector("form")).toBeNull();
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label^="筛选会话"]')!.click());
       expect(container.querySelector<HTMLSelectElement>('[aria-label="回复状态"]')!.value).toBe(query.reply_state ?? "");
       expect(container.querySelectorAll<HTMLInputElement>('[type="checkbox"]')[0].checked).toBe(query.unread === true);
       expect(container.querySelectorAll<HTMLInputElement>('[type="checkbox"]')[1].checked).toBe(query.overdue === true);
@@ -137,7 +140,7 @@ describe("inbox home and settings", () => {
     expect(container.querySelector("output")?.textContent).toBe("2");
   });
 
-  it("submits search only on apply, preserving literal percent and underscore text", async () => {
+  it("submits search explicitly, preserving literal percent and underscore text", async () => {
     const apply = vi.fn();
     await act(async () => root.render(<ConversationFilters query={{ search_scope: "messages" }} onChange={apply} />));
     await act(async () => {
@@ -146,8 +149,28 @@ describe("inbox home and settings", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     expect(apply).not.toHaveBeenCalled();
-    await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    await act(async () => [...container.querySelectorAll("button")].find((button) => button.textContent === "搜索")!.click());
     expect(apply).toHaveBeenCalledExactlyOnceWith({ search_scope: "messages", q: "quote%_ &客户" });
+  });
+
+  it("discards unapplied filters when reopening and clears applied filters on reset", async () => {
+    const apply = vi.fn();
+    await act(async () => root.render(<ConversationFilters query={{ country: "ES", unread: true }} onChange={apply} />));
+    const toggle = async () => { await act(async () => container.querySelector<HTMLButtonElement>('[aria-label^="筛选会话"]')!.click()); };
+    await toggle();
+    await act(async () => {
+      const input = container.querySelector<HTMLInputElement>('[aria-label="国家"]')!;
+      input.value = "US";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await toggle();
+    expect(apply).not.toHaveBeenCalled();
+    await toggle();
+    expect(container.querySelector<HTMLInputElement>('[aria-label="国家"]')!.value).toBe("ES");
+    await act(async () => [...container.querySelectorAll("button")].find((button) => button.textContent === "重置")!.click());
+    expect(apply).toHaveBeenCalledExactlyOnceWith({ search_scope: "all" });
+    expect(container.querySelector("form")).toBeNull();
+    expect(container.querySelector('[aria-label="筛选会话"]')).not.toBeNull();
   });
 
   it("reads and saves 1..168 hours without invalidating the epoch, remounting, or changing drafts", async () => {

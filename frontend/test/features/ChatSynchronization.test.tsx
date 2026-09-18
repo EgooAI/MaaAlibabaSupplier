@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("antd", () => ({
   App: { useApp: () => ({ message: mocks.message }) },
   Space: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
   Tag: ({ children }: { children: ReactNode }) => <span>{children}</span>,
   Typography: { Text: ({ children }: { children: ReactNode }) => <span>{children}</span> },
   Button: ({ children, disabled, loading, onClick }: ButtonHTMLAttributes<HTMLButtonElement> & { loading?: boolean }) => <button disabled={disabled || loading} onClick={onClick}>{children}</button>,

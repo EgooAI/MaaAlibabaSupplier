@@ -24,6 +24,7 @@ vi.mock("antd", () => {
     App: { useApp: () => ({ message: { warning: vi.fn() } }) },
     Space: Text, Tag: Text, Typography: { Text, Paragraph: Text }, Button,
     Alert: ({ title }: { title: ReactNode }) => <div role="alert">{title}</div>,
+    Drawer: ({ open, children, extra, onClose }: { open: boolean; children: ReactNode; extra: ReactNode; onClose: () => void }) => open ? <aside aria-label="发送记录侧栏">{extra}{children}<button onClick={onClose}>关闭发送记录</button></aside> : null,
     Modal: ({ open, title, children, footer, onCancel, onOk, okText, okButtonProps }: { open: boolean; title: string; children: ReactNode; footer?: ReactNode; onCancel: () => void; onOk?: () => void; okText?: string; okButtonProps?: { disabled: boolean } }) => open ? <section role="dialog" aria-label={title}>{children}<button onClick={onCancel}>关闭弹窗</button>{footer ?? <button disabled={okButtonProps?.disabled} onClick={onOk}>{okText}</button>}</section> : null,
   };
 });
@@ -107,7 +108,10 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-const render = async (props: { sid?: string; draft?: string } = {}) => { await act(async () => root.render(<AccountProvider><Harness {...props} /></AccountProvider>)); };
+const render = async (props: { sid?: string; draft?: string } = {}) => {
+  await act(async () => root.render(<AccountProvider><Harness {...props} /></AccountProvider>));
+  if (!container.querySelector("aside")) await click("发送记录");
+};
 const button = (text: string) => [...container.querySelectorAll("button")].find((item) => item.textContent === text)!;
 const click = async (text: string) => { await act(async () => button(text).click()); };
 const loadImage = async () => { await act(async () => container.querySelector("img")!.dispatchEvent(new Event("load"))); };
@@ -116,6 +120,25 @@ const recentTasks = () => structuredClone([...store].sort((a, b) => b.created_at
 const addRecentTasks = () => store.push(...Array.from({ length: 101 }, (_, i) => outboxTask({ id: `recent-${i}`, idempotency_key: `recent-key-${i}`, content: `recent text ${i}`, created_at: 1000 + i, status: "observed" })));
 
 describe("outbox workbench", () => {
+  it("keeps confirmation and uncertain results visible with history closed, and preserves the composer when toggling history", async () => {
+    vi.useFakeTimers();
+    store = [awaiting()];
+    await act(async () => root.render(<AccountProvider><Harness /></AccountProvider>));
+    const composer = container.querySelector("textarea");
+    expect(container.querySelector("article")).toBeNull();
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("待确认联系人");
+    await click("发送记录");
+    expect(button("查看截图并确认联系人")).toBeDefined();
+    await click("关闭发送记录");
+    store[0] = outboxTask({ status: "unknown", version: 4 });
+    await tick();
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("结果未知");
+    expect(container.querySelector("textarea")).toBe(composer);
+    expect(composer?.value).toBe("submitted text");
+    expect(mocks.backend.sendMessage).not.toHaveBeenCalled();
+    expect(mocks.backend.confirmOutbox).not.toHaveBeenCalled();
+  });
+
   it("keeps the active screenshot confirmation mounted when a filtered list observes a newer inbox revision", async () => {
     vi.useFakeTimers();
     const original = adaptConversationDetail({ sid: 42, name: "Buyer", participants: [], messages: [], latest: { content: "", updated_at: null }, unread_count: 3, reply_state: "needs_reply", pending_since: 100, due_at: 86500, is_overdue: true, history_pending: false, uncertain: false, read_snapshot: "original-token" });
@@ -124,6 +147,7 @@ describe("outbox workbench", () => {
     mocks.backend.getConversation.mockResolvedValue(original);
     store.push(awaiting());
     await act(async () => root.render(<AccountProvider><InboxHarness /></AccountProvider>));
+    await click("发送记录");
     await act(async () => chat.setDraft("keep this unsent reply"));
     await click("查看截图并确认联系人");
     await loadImage();
@@ -416,6 +440,7 @@ describe("outbox workbench", () => {
     await click("确认收件人，开始搜索（发送）");
     expect(mocks.backend.sendMessage.mock.calls[1][0].idempotency_key).not.toBe(original.idempotency_key);
     await act(async () => accountSession.accept({ ...readySnapshot(), account: { ...connectionSnapshot.account, epoch: "a-returned" } }));
+    await click("发送记录");
     await click("恢复原提交");
     await click("确认收件人，开始搜索（发送）");
     expect(mocks.backend.sendMessage.mock.calls[2][0]).toEqual(original);

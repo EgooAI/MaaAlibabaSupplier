@@ -61,7 +61,16 @@ export function ConversationList({
                 <div
                   key={item.id}
                   aria-current={isActive ? "true" : undefined}
-                  className={`cursor-pointer rounded-lg border px-1.5 py-1.5 ${isActive ? "border-blue-300 bg-blue-100 shadow-sm" : "border-transparent hover:border-slate-200 hover:bg-slate-50"}`}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`打开会话：${item.customer.name}`}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+                    event.preventDefault();
+                    if (selectable) onToggleSelected?.(item.id);
+                    else onSelect?.(item.id);
+                  }}
+                  className={`cursor-pointer rounded-lg border p-2.5 outline-offset-2 focus-visible:outline-blue-500 ${isActive ? "border-blue-100 bg-blue-50" : "border-transparent hover:bg-slate-50"}`}
                   onClick={() => {
                     if (selectable) onToggleSelected?.(item.id);
                     else onSelect?.(item.id);
@@ -69,20 +78,18 @@ export function ConversationList({
                 >
                   <div className="flex w-full gap-2">
                     {selectable ? <Checkbox checked={selectedIds.includes(item.id)} onClick={(event) => event.stopPropagation()} onChange={() => onToggleSelected?.(item.id)} /> : null}
-                    <Avatar size={40} className="shrink-0" style={{ backgroundColor: avatarColorOf(item.customer.id) }}>
+                    <Avatar size={36} className="shrink-0" style={{ backgroundColor: avatarColorOf(item.customer.id) }}>
                       {avatarInitialOf(item.customer.name)}
                     </Avatar>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
-                        <Typography.Text strong ellipsis>{item.customer.name}</Typography.Text>
+                         <Typography.Text strong ellipsis>{item.customer.name}</Typography.Text>
+                         <span className="shrink-0 text-[11px] text-slate-400">{groupMode === "count" ? `${dialogueCountOf(item)} 条` : conversationTimeLabel(item.updatedAt)}</span>
                       </div>
-                      <InboxBadges conversation={item} />
-                      {item.customer.country ? <Typography.Text ellipsis className="block text-xs">{item.customer.country}</Typography.Text> : null}
-                      {item.latestMessage ? <Typography.Text ellipsis className="block text-xs">{item.latestMessage}</Typography.Text> : null}
-                      <div className="mt-2 flex items-center justify-end">
-                        <Typography.Text className="text-xs">
-                          {groupMode === "count" ? `对话 ${dialogueCountOf(item)} 条` : conversationTimeLabel(item.updatedAt)}
-                        </Typography.Text>
+                      {item.latestMessage ? <div className="mt-1 truncate text-xs text-slate-500">{item.latestMessage}</div> : null}
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                        <InboxBadges conversation={item} compact={!selectable} />
+                        {item.customer.country ? <span className="text-[11px] text-slate-400">{item.customer.country}</span> : null}
                       </div>
                     </div>
                   </div>
