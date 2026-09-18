@@ -15,8 +15,8 @@ export const ROUTES: RouteInfo[] = [
   { path: "/agent/llm", title: "LLM", navParent: "/agent" },
   { path: "/agent/system-agents", title: "系统 Agent", navParent: "/agent" },
   { path: "/agent/regular-agents", title: "普通 Agent", navParent: "/agent" },
-  { path: "/status", title: "系统状态", navParent: "/settings" },
-  { path: "/settings", title: "系统设置", navParent: "/settings" },
+  { path: "/status", title: "系统状态", navParent: "settings" },
+  { path: "/settings", title: "系统设置", navParent: "settings" },
 ];
 
 export const PAGE_TITLES: Record<string, string> = Object.fromEntries(
@@ -40,6 +40,6 @@ export function resolveSelectedKey(pathname: string): string {
 export function resolveOpenKeys(pathname: string): string[] {
   if (pathname === "/chat" || pathname.startsWith("/chat/")) return ["/chat"];
   if (pathname.startsWith("/agent/") || pathname === "/agent") return ["/agent"];
-  if (pathname.startsWith("/status") || pathname.startsWith("/settings")) return ["/settings"];
+  if (pathname.startsWith("/status") || pathname.startsWith("/settings")) return ["settings"];
   return [];
 }

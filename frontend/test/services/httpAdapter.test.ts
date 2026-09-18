@@ -131,7 +131,7 @@ describe("http adapter contract", () => {
   it.each([
     () => httpBackend.getSelfInfo(),
     () => httpBackend.listConversations(),
-    () => httpBackend.requestTranslations({ texts: ["hello"] }),
+    () => httpBackend.requestTranslations({ texts: ["hello"], force: false, conversationId: 42 }),
     () => httpBackend.queryTranslations({ texts: ["hello"] }),
     () => httpBackend.getTranslationJob("task-1"),
     () => httpBackend.exportConversations({ conversationIds: ["42"] }),

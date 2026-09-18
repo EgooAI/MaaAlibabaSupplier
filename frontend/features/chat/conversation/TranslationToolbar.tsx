@@ -1,6 +1,6 @@
 "use client";
 
-import { EyeInvisibleOutlined, EyeOutlined, ReloadOutlined, TranslationOutlined } from "@ant-design/icons";
+import { EyeInvisibleOutlined, EyeOutlined, FileExclamationOutlined, ReloadOutlined, TranslationOutlined } from "@ant-design/icons";
 import { Button, Popconfirm, Space, Tooltip } from "antd";
 
 export type TranslationToolbarProps = {
@@ -38,11 +38,11 @@ export function TranslationToolbar({ visible, onToggleVisible, translatedCount, 
       </Space>
       <Space size={4}>
         {untranslatedCount > 0 ? (
-          <Button size="small" disabled={!canTranslate || busy} onClick={onTranslateMissing}>
+          <Button size="small" icon={<FileExclamationOutlined />} disabled={!canTranslate || busy} onClick={onTranslateMissing}>
             翻译缺失{untranslatedCount > 0 ? ` (${untranslatedCount})` : ""}
           </Button>
         ) : null}
-        <Popconfirm title="重新翻译全部买家消息？" description="会重新调用翻译模型，可能耗时较长。" okText="重新翻译" cancelText="取消" disabled={!canTranslate || busy} onConfirm={onRetranslateAll}>
+        <Popconfirm title="重新翻译全部消息？" description="会重新调用翻译模型，可能耗时较长。" okText="重新翻译" cancelText="取消" disabled={!canTranslate || busy} onConfirm={onRetranslateAll}>
           <Button size="small" icon={<ReloadOutlined />} disabled={!canTranslate || busy}>重新翻译全部</Button>
         </Popconfirm>
       </Space>

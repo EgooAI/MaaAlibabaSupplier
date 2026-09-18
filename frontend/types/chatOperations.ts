@@ -11,6 +11,8 @@ export interface TranslationJobSnapshot {
 export interface RequestTranslationsInput {
   texts: string[];
   force?: boolean;
+  /** 提供会话 ID 时后端加载全量历史作为翻译上下文。 */
+  conversationId?: number;
 }
 
 /** 提交翻译任务后立即返回的任务快照；空 task_id 表示无事可做。 */

@@ -18,7 +18,7 @@ export function ConnectionFlowCard() {
         {!snapshot ? (
           <Typography.Text type="secondary">正在读取接入状态，请稍候。</Typography.Text>
         ) : (
-          <Steps size="small" current={current} items={items.map(({ key, title, description, status }) => ({ key, title, description, status }))} />
+          <Steps size="small" current={current} items={items.map(({ key, title, content, status }) => ({ key, title, content, status }))} />
         )}
       </Space>
     </Card>

@@ -16,7 +16,7 @@ describe("routes single source", () => {
   it("resolves open keys to a single nav group", () => {
     expect(resolveOpenKeys("/chat/customer-sessions")).toEqual(["/chat"]);
     expect(resolveOpenKeys("/agent/llm")).toEqual(["/agent"]);
-    expect(resolveOpenKeys("/status")).toEqual(["/settings"]);
+    expect(resolveOpenKeys("/status")).toEqual(["settings"]);
     expect(resolveOpenKeys("/")).toEqual([]);
   });
 });

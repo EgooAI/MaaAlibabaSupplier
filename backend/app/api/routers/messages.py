@@ -18,6 +18,8 @@ TRANSLATION_TEXTS_MAX = 500
 class RequestTranslationsInput(BaseModel):
     texts: list[str] = Field(default_factory=list, max_length=TRANSLATION_TEXTS_MAX)
     force: bool = False
+    # 提供会话 ID 时，后端加载全量历史作为翻译上下文（已翻译消息也纳入）。
+    conversationId: int | None = None
 
 
 class TranslationQueryInput(BaseModel):
@@ -49,7 +51,12 @@ def post_translations(body: RequestTranslationsInput) -> dict:
     """
     expected = request_epoch.get()
     try:
-        snapshot = submit_translation_job(body.texts, force=bool(body.force), expected_epoch=expected)
+        snapshot = submit_translation_job(
+            body.texts,
+            force=bool(body.force),
+            expected_epoch=expected,
+            conversation_id=body.conversationId,
+        )
     except AppError:
         raise
     except OverflowError:

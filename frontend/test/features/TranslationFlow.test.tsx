@@ -120,7 +120,7 @@ describe("translation flow", () => {
     mocks.backend.requestTranslations.mockResolvedValueOnce({ task_id: "job-1", status: "pending", message: "等待执行" });
     mocks.backend.getTranslationJob.mockResolvedValueOnce({ task_id: "job-1", status: "running", message: "正在执行" });
     await act(async () => { await workbench.translateMissing(); });
-    expect(mocks.backend.requestTranslations).toHaveBeenCalledExactlyOnceWith({ texts: ["hello"], force: false });
+    expect(mocks.backend.requestTranslations).toHaveBeenCalledExactlyOnceWith({ texts: ["hello"], force: false, conversationId: 42 });
     expect(workbench.translationPendingIds.has("one")).toBe(true);
     expect(workbench.translationStats.pending).toBe(1);
     // First tick still running; second tick observes success and absorbs from the cache.
@@ -144,14 +144,14 @@ describe("translation flow", () => {
     await act(async () => { await workbench.translateMissing(); });
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
     // Card bubbles carry no text: only the textual message is submitted.
-    expect(mocks.backend.requestTranslations).toHaveBeenCalledExactlyOnceWith({ texts: ["hello"], force: false });
+    expect(mocks.backend.requestTranslations).toHaveBeenCalledExactlyOnceWith({ texts: ["hello"], force: false, conversationId: 42 });
     expect(workbench.translationFailedIds.has("one")).toBe(true);
     expect(workbench.translationPendingIds.size).toBe(0);
     expect(mocks.message.error).toHaveBeenCalledWith("翻译失败，可点击消息重试");
     // Retrying submits a fresh job and clears the failed marker.
     mocks.backend.requestTranslations.mockResolvedValueOnce({ task_id: "job-2", status: "pending", message: "等待执行" });
     await act(async () => { await workbench.translateMessages(workbench.activeConversation!.messages); });
-    expect(mocks.backend.requestTranslations).toHaveBeenLastCalledWith({ texts: ["hello"], force: false });
+    expect(mocks.backend.requestTranslations).toHaveBeenLastCalledWith({ texts: ["hello"], force: false, conversationId: 42 });
     expect(workbench.translationFailedIds.size).toBe(0);
     expect(workbench.translationPendingIds.has("one")).toBe(true);
   });
@@ -165,7 +165,7 @@ describe("translation flow", () => {
     mocks.backend.getTranslationJob.mockResolvedValueOnce({ task_id: "job-force", status: "succeeded", message: "已翻译 1 条" });
     mocks.backend.queryTranslations.mockResolvedValueOnce({ translations: { hello: "新译文" } });
     await act(async () => { await workbench.translateMessages(workbench.activeConversation!.messages, { force: true }); });
-    expect(mocks.backend.requestTranslations).toHaveBeenCalledWith({ texts: ["hello"], force: true });
+    expect(mocks.backend.requestTranslations).toHaveBeenCalledWith({ texts: ["hello"], force: true, conversationId: 42 });
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
     expect(workbench.activeConversation?.messages[0].translatedContent).toBe("新译文");
   });

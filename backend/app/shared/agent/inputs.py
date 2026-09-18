@@ -16,45 +16,69 @@ def strip_html(text: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+# 稳定的输出协议说明（放在用户输入的稳定前缀区，配合 LLM 前缀缓存）。
+_TRANSLATION_RULES = (
+    "翻译规则：\n"
+    "- 只翻译【待翻译条目】中列出的 text_hash 对应文本；"
+    "对话记录中没有 text_hash 标记的行仅作上下文，不要翻译。\n"
+    '- 输出 JSON：{"translations": {"<text_hash>": "<value>"}}，'
+    "逐条对应，不要遗漏、不要新增。\n"
+    "- value 只能是以下三种之一：\n"
+    "  - 翻译后的简体中文文本；\n"
+    '  - "NO_NEED_TO_TRANSLATE"：原文已经是简体中文，无需翻译；\n'
+    '  - "ABNORMAL_MESSAGE"：原文是非常规消息（如纯占位符、乱码、无实义内容），无法翻译。\n'
+    "- 译文必须保留原文中的 HTML 标签与换行格式，只翻译文本部分。"
+)
+
+
 def build_translation_input(
     items: list[dict[str, str]],
     *,
     conversation: list[tuple[str, str, str]] | None = None,
+    annotate: dict[str, str] | None = None,
 ) -> str:
-    """Build translation user input with optional dialog context.
+    """Build translation user input ordered for LLM prompt prefix caching.
 
-    *items* entries are ``{"text_hash", "text"}`` for buyer lines that must be translated.
-    *conversation* is ``(timestamp, speaker, text)`` rows; buyer lines present in *items*
-    are annotated with ``text_hash=...`` so the model can use seller/system context.
+    Stable blocks come first (full transcript, output rules) and the volatile
+    per-request target list goes last, so chunked calls of one job — and later
+    jobs for the same conversation — share a long common prefix.
+
+    *items* entries are ``{"text_hash", "text"}`` for the texts this call must
+    translate. *conversation* is the ``(timestamp, speaker, text)`` transcript
+    (raw text, HTML kept); lines whose text appears in *annotate* get a
+    ``text_hash=`` marker (pending translation, any speaker), lines without the
+    marker are context only — notably messages already translated.
     """
     if not items:
         return ""
 
-    text_to_hash = {item["text"]: item["text_hash"] for item in items}
+    text_to_hash = dict(annotate or {})
     parts: list[str] = []
 
     if conversation:
         lines: list[str] = []
         for timestamp, speaker, text in conversation:
-            safe = strip_html(text)
-            if not safe:
+            line = (text or "").strip()
+            if not line:
                 continue
-            if speaker == "买家" and safe in text_to_hash:
-                lines.append(f"[{timestamp}] 买家: text_hash={text_to_hash[safe]}: {safe}")
+            short = text_to_hash.get(line)
+            if short is not None:
+                lines.append(f"[{timestamp}] {speaker}: text_hash={short}: {line}")
             else:
-                lines.append(f"[{timestamp}] {speaker}: {safe}")
+                lines.append(f"[{timestamp}] {speaker}: {line}")
         parts.append("对话记录：")
         parts.append("```")
         parts.append("\n".join(lines) if lines else "(empty)")
         parts.append("```")
         parts.append("")
 
-    hash_list = ", ".join(item["text_hash"] for item in items)
-    parts.append(f"请翻译以下 text_hash：{hash_list}")
+    parts.append(_TRANSLATION_RULES)
+    parts.append("")
     parts.append("待翻译条目：")
     parts.append("```json")
     parts.append(json.dumps({"items": items}, ensure_ascii=False))
     parts.append("```")
+    parts.append("请只翻译以上列出的 text_hash。")
     return "\n".join(parts)
 
 

@@ -36,7 +36,7 @@ const navItems = [
     ],
   },
   {
-    key: "/settings",
+    key: "settings",
     icon: <SettingOutlined />,
     label: "设置",
     children: [

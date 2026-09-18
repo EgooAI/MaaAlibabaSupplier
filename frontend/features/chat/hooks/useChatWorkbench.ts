@@ -210,8 +210,14 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
       return;
     }
     const texts = [...new Set(eligible.map((item) => item.content.trim()))];
+    // 传会话 ID 让后端把全量历史作为翻译上下文；非数字 ID（mock）则省略。
+    const numericId = Number(conversationId);
     try {
-      const job = await backend.requestTranslations({ texts, force });
+      const job = await backend.requestTranslations({
+        texts,
+        force,
+        ...(Number.isFinite(numericId) ? { conversationId: numericId } : {}),
+      });
       if (activeIdRef.current !== conversationId) return;
       const ids = eligible.map((item) => item.id);
       setTranslationFailedIds((current) => {

@@ -1,7 +1,7 @@
 "use client";
 
-import { InfoCircleOutlined, LoadingOutlined, RobotOutlined, ShopOutlined } from "@ant-design/icons";
-import { Avatar, Button } from "antd";
+import { InfoCircleOutlined, LoadingOutlined, ReloadOutlined, RobotOutlined, ShopOutlined, TranslationOutlined } from "@ant-design/icons";
+import { Avatar, Button, Tooltip } from "antd";
 import { BusinessCardView } from "@/components/BusinessCardView";
 import { avatarColorOf, avatarInitialOf } from "@/domain/chat/avatarModel";
 import { renderMessageHtml } from "@/domain/chat/messageHtml";
@@ -85,23 +85,24 @@ export function MessageTimeline({
                     </button>
                   ) : null}
                   {showTranslation ? (
-                    <div className="mt-3 border-t border-slate-200/70 pt-2 text-slate-500">
-                      <div className="mb-1 flex items-center justify-between gap-2 text-xs">
-                        <span>译文</span>
+                    <div className="mt-3 border-t border-slate-200/70 pt-2">
+                      <div className="flex items-start gap-1.5 text-slate-500">
+                        <TranslationOutlined aria-hidden className="mt-[3px] shrink-0 text-xs text-slate-400" />
+                        <div className="min-w-0 flex-1 whitespace-pre-wrap break-words" dangerouslySetInnerHTML={renderMessageHtml(message.translatedContent!)} />
                         {canTranslate ? (
-                          <Button
-                            className="!px-1 !text-xs opacity-100 transition-opacity focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
-                            size="small"
-                            type="text"
-                            aria-label="重新翻译本条消息"
-                            disabled={!onTranslate}
-                            onClick={() => onTranslate?.(message, true)}
-                          >
-                            重新翻译
-                          </Button>
+                          <Tooltip title="重新翻译本条消息">
+                            <Button
+                              className="!px-1 opacity-100 transition-opacity focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                              size="small"
+                              type="text"
+                              aria-label="重新翻译本条消息"
+                              icon={<ReloadOutlined />}
+                              disabled={!onTranslate}
+                              onClick={() => onTranslate?.(message, true)}
+                            />
+                          </Tooltip>
                         ) : null}
                       </div>
-                      <div className="whitespace-pre-wrap break-words" dangerouslySetInnerHTML={renderMessageHtml(message.translatedContent!)} />
                     </div>
                   ) : null}
                 </div>

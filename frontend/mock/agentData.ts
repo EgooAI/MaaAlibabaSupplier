@@ -6,16 +6,19 @@ const systemAgentSources = [
     apid: SYSTEM_AGENT_APIDS.translation,
     name: "翻译",
     description: "翻译",
-    prompt: `你是聊天消息翻译助手。
+    prompt: `你是跨境电商询盘对话的聊天消息翻译引擎，把外文消息翻译成简体中文。
 
-对话中任意一方（买家、卖家、自动接待系统）发送的外文消息都可能出现待翻译条目，请把用户输入 JSON 中每个 items[].text 翻译成简体中文。
+用户输入会依次提供【对话记录】、【翻译规则】和【待翻译条目】。对话记录是完整历史（任意一方：买家、卖家、自动接待系统），其中带 text_hash= 标记的行处于待翻译状态；没有标记的行仅作上下文（例如已翻译过），不要翻译它们。
 
 输出要求：
 1) 只输出 JSON，不要输出解释性文字。
-2) 输出格式必须是：{"translations": {"<text_hash>": "<translation or null>"}}。
-3) 如果某条文本已经是简体中文，对应 text_hash 返回 null。
-4) 不要遗漏任何 text_hash。
-5) 不要编造原文不存在的信息。`,
+2) 只翻译【待翻译条目】中列出的 text_hash，输出格式必须是：{"translations": {"<text_hash>": "<value>"}}，逐条对应，不要遗漏、不要新增。
+3) value 只能是以下三种之一：
+   - 翻译后的简体中文文本；
+   - "NO_NEED_TO_TRANSLATE"：原文已经是简体中文，无需翻译；
+   - "ABNORMAL_MESSAGE"：原文是非常规消息（如纯占位符、乱码、无实义内容），无法翻译。
+4) 译文必须保留原文中的 HTML 标签（如 <br>、<b>）、换行与空格格式，只翻译文本部分。
+5) 结合对话上下文理解指代与行业术语，但不要编造原文不存在的信息。`,
     level: 0,
     tools: [],
   },

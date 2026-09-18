@@ -28,17 +28,25 @@ def _wait_terminal(task_id: str, timeout: float = 10.0):
     raise AssertionError(f"translation job {task_id} did not finish in time")
 
 
+def _recorder(calls):
+    def fake(texts, force=False, conversation=None, annotate=None):
+        calls.append({"texts": list(texts), "force": force, "conversation": conversation, "annotate": annotate})
+        return 1
+    return fake
+
+
 def test_translation_job_lifecycle_and_dedupe(client, monkeypatch):
     calls = []
-    monkeypatch.setattr(translation_jobs, "request_translations",
-                        lambda texts, force=False: calls.append((texts, force)) or 1)
+    monkeypatch.setattr(translation_jobs, "request_translations", _recorder(calls))
     response = client.post("/api/messages/translations", json={"texts": ["hello", " hello ", "", "hello"]})
     assert response.status_code == 200, response.text
     payload = response.json()["data"]
     assert payload["status"] in {"pending", "running"}
     snapshot = _wait_terminal(payload["task_id"])
     assert snapshot.status == TaskStatus.SUCCEEDED
-    assert calls == [(["hello"], False)]
+    assert [call["texts"] for call in calls] == [["hello"]]
+    assert calls[0]["conversation"] is None
+    assert calls[0]["annotate"] is not None
 
     job = client.get(f"/api/messages/translations/jobs/{payload['task_id']}")
     assert job.status_code == 200
@@ -47,12 +55,11 @@ def test_translation_job_lifecycle_and_dedupe(client, monkeypatch):
 
 def test_translation_force_flag_is_forwarded(client, monkeypatch):
     calls = []
-    monkeypatch.setattr(translation_jobs, "request_translations",
-                        lambda texts, force=False: calls.append((texts, force)) or 1)
+    monkeypatch.setattr(translation_jobs, "request_translations", _recorder(calls))
     response = client.post("/api/messages/translations", json={"texts": ["a", "b"], "force": True})
     snapshot = _wait_terminal(response.json()["data"]["task_id"])
     assert snapshot.status == TaskStatus.SUCCEEDED
-    assert calls == [(["a", "b"], True)]
+    assert [call["force"] for call in calls] == [True]
 
 
 def test_empty_submission_completes_immediately(client, monkeypatch):
@@ -68,7 +75,7 @@ def test_empty_submission_completes_immediately(client, monkeypatch):
 def test_chunks_of_fifty_and_partial_failure(client, monkeypatch):
     calls = []
 
-    def flaky(texts, force=False):
+    def flaky(texts, force=False, conversation=None, annotate=None):
         calls.append(list(texts))
         if len(texts) <= 5:
             raise RuntimeError("chunk boom")
@@ -81,6 +88,55 @@ def test_chunks_of_fifty_and_partial_failure(client, monkeypatch):
     assert [len(chunk) for chunk in calls] == [50, 5]
     assert snapshot.status == TaskStatus.FAILED
     assert snapshot.message == "5/55 条翻译失败，可重试"
+
+
+def test_conversation_id_loads_full_context_shared_across_chunks(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(translation_jobs, "request_translations", _recorder(calls))
+    rows = [("10:00", "买家", "hello"), ("10:01", "买家", "cached")]
+    loaded = []
+
+    def fake_context(conversation_id):
+        loaded.append(conversation_id)
+        return rows
+
+    monkeypatch.setattr(translation_jobs, "_conversation_context", fake_context)
+    response = client.post(
+        "/api/messages/translations",
+        json={"texts": [f"t{i}" for i in range(55)], "conversationId": 17},
+    )
+    snapshot = _wait_terminal(response.json()["data"]["task_id"])
+    assert snapshot.status == TaskStatus.SUCCEEDED
+    assert loaded == [17]
+    assert len(calls) == 2
+    # 每个分片共享同一份全量上下文与同一张 job 级短哈希表（稳定前缀）。
+    assert all(call["conversation"] is rows for call in calls)
+    annotate = calls[0]["annotate"]
+    assert annotate is not None and calls[1]["annotate"] == annotate
+    assert set(annotate) == {f"t{i}" for i in range(55)}
+    assert all(len(value) <= 5 for value in annotate.values())
+
+
+def test_context_load_failure_degrades_to_contextless_job(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(translation_jobs, "request_translations", _recorder(calls))
+    monkeypatch.setattr(
+        "backend.app.shared.crm.queries.get_conversation_detail",
+        Mock(side_effect=RuntimeError("db boom")),
+    )
+    response = client.post("/api/messages/translations", json={"texts": ["hello"], "conversationId": 17})
+    snapshot = _wait_terminal(response.json()["data"]["task_id"])
+    assert snapshot.status == TaskStatus.SUCCEEDED
+    assert calls[0]["conversation"] is None
+
+
+def test_missing_conversation_id_keeps_context_none(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(translation_jobs, "request_translations", _recorder(calls))
+    response = client.post("/api/messages/translations", json={"texts": ["hello"]})
+    snapshot = _wait_terminal(response.json()["data"]["task_id"])
+    assert snapshot.status == TaskStatus.SUCCEEDED
+    assert calls[0]["conversation"] is None
 
 
 def test_job_aborts_when_account_epoch_changed(client):

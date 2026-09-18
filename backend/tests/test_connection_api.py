@@ -606,7 +606,7 @@ def test_account_reads_allow_legacy_header_but_writes_require_epoch(client, monk
         message="等待执行", result=None, created_at=1.0, started_at=None, completed_at=None,
     )
 
-    def submit(texts, *, force, expected_epoch):
+    def submit(texts, *, force, expected_epoch, conversation_id=None):
         submitted.append((texts, force, expected_epoch))
         return pending
 

@@ -59,8 +59,8 @@ describe("message timeline", () => {
     expect(rowOf("unknown origin text").className).toContain("justify-start");
   });
 
-  it("offers translation affordances for every textual message and skips cards", () => {
-    render({
+  it("offers translation affordances for every textual message and skips cards", async () => {
+    await render({
       messages: [
         message({ id: "buyer", role: "buyer", content: "buyer text" }),
         message({ id: "seller", role: "seller", content: "seller text" }),
@@ -75,21 +75,21 @@ describe("message timeline", () => {
     expect([...container.querySelectorAll("button")].some(button => button.textContent?.includes("卡片"))).toBe(false);
   });
 
-  it("renders the translation block for any party and hides it via showTranslations", () => {
+  it("renders the translation block for any party and hides it via showTranslations", async () => {
     const messages = [
       message({ id: "seller", role: "seller", content: "seller text", translatedContent: "卖家消息译文" }),
       message({ id: "auto", role: "system", content: "auto text", translatedContent: "自动接待译文" }),
     ];
-    render({ messages, showTranslations: true, onOpenCard: vi.fn() });
+    await render({ messages, showTranslations: true, onOpenCard: vi.fn() });
     expect(container.textContent).toContain("卖家消息译文");
     expect(container.textContent).toContain("自动接待译文");
     expect(container.querySelectorAll('button[aria-label="重新翻译本条消息"]')).toHaveLength(2);
-    render({ messages, showTranslations: false, onOpenCard: vi.fn() });
+    await render({ messages, showTranslations: false, onOpenCard: vi.fn() });
     expect(container.textContent).not.toContain("卖家消息译文");
   });
 
-  it("shows inline pending and failed translation states", () => {
-    render({
+  it("shows inline pending and failed translation states", async () => {
+    await render({
       messages: [
         message({ id: "pending", content: "in flight" }),
         message({ id: "failed", content: "broken" }),
