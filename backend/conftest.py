@@ -22,6 +22,7 @@ def _set_test_paths(patch, root):
     patch.setenv("MAA_POOLS_DB_PATH", str(backend_root / "data" / "pools.db"))
     patch.setenv("MAA_AUTH_SECRET_SHA256", "a1" * 32)
     patch.setenv("MAA_AUTH_DB_PATH", str(backend_root / "data" / "auth.sqlite"))
+    patch.setenv("LOCALAPPDATA", str(root / "localappdata"))
     patch.chdir(root)
 
 
@@ -121,8 +122,10 @@ def isolated_backend():
         with pytest.MonkeyPatch.context() as patch:
             _set_test_paths(patch, Path(temporary))
             from backend.app.api import auth, main
+            from backend.app import updater
 
             patch.setattr(main, "LOGIN_LIMITER", auth.LoginLimiter())
+            patch.setattr(updater, "_instance", None)
             try:
                 yield
             finally:

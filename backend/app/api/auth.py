@@ -148,16 +148,35 @@ class AuthMiddleware:
         request_id = uuid.uuid4().hex[:12]
         scope.setdefault("state", {})["request_id"] = request_id
         started = False
+        status = None
+        complete = False
+        disconnected = False
+        send_failed = False
+        app_returned = False
+
+        async def receive_request() -> Message:
+            nonlocal disconnected
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                disconnected = True
+            return message
 
         async def send_response(message: Message) -> None:
-            nonlocal started
+            nonlocal started, status, complete, send_failed
             if message["type"] == "http.response.start":
                 started = True
+                status = message["status"]
                 headers = MutableHeaders(scope=message)
                 headers["X-Request-ID"] = request_id
                 if protected:
                     headers["Cache-Control"] = "no-store"
-            await send(message)
+            try:
+                await send(message)
+            except BaseException:
+                send_failed = True
+                raise
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                complete = True
 
         async def reject(status: int, message: str, headers: dict | None = None) -> None:
             response = JSONResponse(err(message), status_code=status, headers=headers)
@@ -200,9 +219,26 @@ class AuthMiddleware:
                         await reject(401, "Authentication required", {"WWW-Authenticate": "Bearer"})
                         return
                     scope["state"]["auth_token_hash"] = token_hash
-            await self.app(scope, receive, send_response)
+                if scope["method"] not in {"GET", "HEAD", "OPTIONS"}:
+                    from backend.app.updater import get_updater
+
+                    if get_updater().writes_blocked():
+                        await reject(409, "Application update handoff is active; new writes are unavailable.")
+                        return
+            await self.app(scope, receive_request, send_response)
+            app_returned = True
         except Exception:
             if started:
                 raise
             # Do not log exception locals: login bodies and bearer tokens are secrets.
             await reject(500, "Internal server error")
+        finally:
+            pending = scope["state"].pop("update_handoff", None)
+            if pending is not None:
+                updater, operation_id = pending
+                # This is outside BaseHTTPMiddleware's inner response stream.
+                # Synchronous local transitions also run if this task is cancelled.
+                if app_returned and complete and status is not None and 200 <= status < 300 and not send_failed and not disconnected:
+                    updater.arm(operation_id)
+                else:
+                    updater.cancel_install(operation_id)

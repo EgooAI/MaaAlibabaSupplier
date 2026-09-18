@@ -9,6 +9,7 @@ import { useShutdownApp } from "./hooks/useShutdownApp";
 import { useAccount } from "@/features/account/AccountProvider";
 import { ClientCard, ConnectionFlowCard, SyncCard } from "@/features/account/AccountFlow";
 import { InboxSettingsCard } from "./InboxSettingsCard";
+import { UpdateCard } from "./UpdateCard";
 
 type DataDirControls = ReturnType<typeof useDataDirSettings>;
 
@@ -99,6 +100,7 @@ export function SettingsPage() {
     <Space orientation="vertical" size="large" className="w-full">
       <AccountSetup />
       <InboxSettingsCard />
+      <UpdateCard />
 
       <Card title="程序控制">
         <Space orientation="vertical" size="middle" className="w-full">

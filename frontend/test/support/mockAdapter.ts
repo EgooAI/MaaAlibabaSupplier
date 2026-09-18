@@ -137,6 +137,15 @@ export const mockBackend: OperationsBackend = {
   },
 
   shutdownApp: () => delay(undefined),
+  getAppUpdate: () => delay({
+    supported: false, reason: "Mock environment does not support application updates", phase: "idle",
+    current: { version: "mock", sha: null },
+    source: { repository: "", branch: "", workflow: "", artifact: "" },
+    candidate: null, downloaded_bytes: 0, total_bytes: null, error: null, last_result: null,
+  }),
+  checkAppUpdate: async () => { throw new Error("Application updates are unavailable in mocks"); },
+  downloadAppUpdate: async () => { throw new Error("Application updates are unavailable in mocks"); },
+  installAppUpdate: async () => { throw new Error("Application updates are unavailable in mocks"); },
 
   requestTranslations: async ({ texts, force = false, conversationId }) => {
     void conversationId;

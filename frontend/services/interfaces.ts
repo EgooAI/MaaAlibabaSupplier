@@ -4,6 +4,7 @@ import type { ConversationPage, ConversationQuery, InboxOverview, InboxSettings,
 import type { ExportConversationsInput, ExportConversationsResult, OutboxTask, RequestTranslationsInput, RequestTranslationsResult, TranslationQueryInput, TranslationQueryResult, TranslationJobSnapshot, SendMessageInput, SendMessageResult, ConversationRevision } from "@/types/chatOperations";
 import type { SelfInfo } from "@/types/home";
 import type { AccountEpoch, ConnectionSnapshot } from "@/types/connection";
+import type { UpdateState } from "@/types/update";
 import type { AliIdList, CreateTestTaskInput, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestEntry, NodeTestSubmission, SystemStatusSnapshot, TaskItem, TaskSnapshot } from "@/types/status";
 
 export interface OperationsBackend {
@@ -15,6 +16,10 @@ export interface OperationsBackend {
   getSelfInfo(): Promise<SelfInfo | null>;
   resetCache(): Promise<void>;
   shutdownApp(): Promise<void>;
+  getAppUpdate(): Promise<UpdateState>;
+  checkAppUpdate(): Promise<UpdateState>;
+  downloadAppUpdate(candidateId: string): Promise<UpdateState>;
+  installAppUpdate(candidateId: string): Promise<{ accepted: true }>;
 
   requestTranslations(input: RequestTranslationsInput): Promise<RequestTranslationsResult>;
   queryTranslations(input: TranslationQueryInput): Promise<TranslationQueryResult>;

@@ -4,6 +4,7 @@ import type { ConversationAggregateDto } from "@/types/chatTransport";
 import { accountSession } from "@/services/accountSession";
 import { connectionSnapshot } from "@/mock/connectionData";
 import { authenticatedSession } from "@/test/support/authFixture";
+import { authSession } from "@/services/authSession";
 
 const originalFetch = globalThis.fetch;
 
@@ -28,6 +29,48 @@ afterEach(() => {
 });
 
 describe("http adapter contract", () => {
+  it("sends authenticated update requests with exact payloads and no account epoch", async () => {
+    accountSession.invalidate();
+    const data = { supported: false, phase: "idle", reason: "source build" };
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ code: 0, msg: "ok", data }))));
+    globalThis.fetch = fetchMock;
+    await expect(httpBackend.getAppUpdate()).resolves.toEqual(data);
+    await httpBackend.checkAppUpdate();
+    await httpBackend.downloadAppUpdate("run/42:attempt/2");
+    await httpBackend.installAppUpdate("run/42:attempt/2");
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method ?? "GET", init.body && JSON.parse(init.body)])).toEqual([
+      ["/api/app/update", "GET", undefined],
+      ["/api/app/update/check", "POST", {}],
+      ["/api/app/update/download", "POST", { candidate_id: "run/42:attempt/2" }],
+      ["/api/app/update/install", "POST", { candidate_id: "run/42:attempt/2", confirm: true }],
+    ]);
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(new Headers(init.headers).get("Authorization")).toBe("Bearer test-session");
+      expect(new Headers(init.headers).has("X-Account-Epoch")).toBe(false);
+      expect(init.cache).toBe("no-store");
+      expect(init.credentials).toBe("omit");
+    }
+  });
+
+  it.each([
+    () => httpBackend.getAppUpdate(),
+    () => httpBackend.checkAppUpdate(),
+    () => httpBackend.downloadAppUpdate("candidate"),
+    () => httpBackend.installAppUpdate("candidate"),
+  ])("aborts update requests on auth teardown and rejects late responses without retrying", async (call) => {
+    let resolve!: (value: Response) => void;
+    const fetchMock = vi.fn<typeof fetch>(() => new Promise<Response>((done) => { resolve = done; }));
+    globalThis.fetch = fetchMock;
+    const pending = call();
+    const rejected = expect(pending).rejects.toThrow("登录状态已变化");
+    await authSession.unauthorized(authSession.get().generation);
+    expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    resolve(new Response(JSON.stringify({ code: 0, msg: "ok", data: { accepted: true } })));
+    await rejected;
+    await expect(call()).rejects.toThrow("登录状态已变化");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("encodes literal search text and adapts the page with its revision token", async () => {
     const data = { items: [aggregate], total: 123, offset: 50, limit: 50, inbox_revision: 7, pagination_revision: "opaque-next" };
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data })));

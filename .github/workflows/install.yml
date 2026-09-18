@@ -138,6 +138,14 @@ jobs:
         shell: bash
         run: choco install innosetup --no-progress
 
+      - name: Test packaging contracts
+        shell: pwsh
+        run: |
+          if (Test-Path -LiteralPath 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe') {
+            $env:ISCC_EXECUTABLE = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          }
+          python -m unittest discover -s tools/tests -v
+
       - name: Compile installer
         if: ${{ steps.dotenv.outputs.has_dotenv == 'true' }}
         shell: bash
@@ -148,6 +156,11 @@ jobs:
           ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
           [ -f "$ISCC" ] || ISCC="$(command -v ISCC.exe)"
           "$ISCC" tools/packaging/Setup.iss "-DMyAppVersion=$VERSION"
+          INSTALLER="dist/MaaAlibabaSupplier-v${VERSION}-Setup.exe"
+          if [ ! -f "$INSTALLER" ] || [ ! -s "$INSTALLER" ]; then
+            echo "::error::Installer is missing or empty: $INSTALLER"
+            exit 1
+          fi
 
       - name: Upload installer
         if: ${{ steps.dotenv.outputs.has_dotenv == 'true' }}
@@ -155,6 +168,7 @@ jobs:
         with:
           name: MaaAlibabaSupplier-Setup
           path: dist/*.exe
+          if-no-files-found: error
           retention-days: 7
 
   release:

@@ -135,6 +135,10 @@ export const httpBackend: OperationsBackend = {
   getSelfInfo: () => requestJson("/api/self-info"),
   resetCache: () => requestVoid("/api/cache/reset", { method: "POST" }),
   shutdownApp: () => requestVoid("/api/app/shutdown", { method: "POST" }),
+  getAppUpdate: () => requestJson("/api/app/update"),
+  checkAppUpdate: () => requestJson("/api/app/update/check", { method: "POST", body: JSON.stringify({}) }),
+  downloadAppUpdate: (candidateId) => requestJson("/api/app/update/download", { method: "POST", body: JSON.stringify({ candidate_id: candidateId }) }),
+  installAppUpdate: (candidateId) => requestJson("/api/app/update/install", { method: "POST", body: JSON.stringify({ candidate_id: candidateId, confirm: true }) }),
 
   requestTranslations: (input) => requestJson("/api/messages/translations", { method: "POST", body: JSON.stringify(input) }),
   queryTranslations: (input) => requestJson("/api/messages/translations/query", { method: "POST", body: JSON.stringify(input) }),

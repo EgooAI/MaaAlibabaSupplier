@@ -13,7 +13,7 @@ backend/yak_mitm.yak, frontend/out):
     │   ├── .portable/yak/yak.exe       # Yak CLI (matches main.py discovery)
     │   └── python/                     # bundled CPython with requirements
     ├── frontend/out/                   # exported frontend (NEXT_EXPORT=1)
-    └── .env.example + README.md + LICENSE + Start-Debug.bat
+    └── build-info.json + .env.example + README.md + LICENSE + Start-Debug.bat
 
 Usage:
   python tools/install.py [VERSION] [--bundled-python-dir DIR]
@@ -24,6 +24,8 @@ bundled Python runtime (local dev) and no agent child_exec override.
 """
 
 import argparse
+import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -31,6 +33,7 @@ from pathlib import Path
 import jsonc
 
 DEFAULT_VERSION = "v0.0.0-local"
+APP_ID = "580868F7-B96A-4214-829A-609D552F2C3A"
 
 working_dir = (Path(__file__).parent.parent / "backend").resolve()
 repo_root = working_dir.parent
@@ -189,6 +192,22 @@ def install_chores():
     )
 
 
+def install_build_info(version: str) -> None:
+    build_info = {
+        "schema_version": 1,
+        "app_id": APP_ID,
+        "version": version,
+        "repository": os.environ.get("GITHUB_REPOSITORY") or None,
+        "sha": os.environ.get("GITHUB_SHA") or None,
+        "run_id": int(os.environ.get("GITHUB_RUN_ID") or 0),
+        "run_number": int(os.environ.get("GITHUB_RUN_NUMBER") or 0),
+        "run_attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT") or 0),
+    }
+    (install_path / "build-info.json").write_text(
+        json.dumps(build_info, indent=2) + "\n", encoding="utf-8"
+    )
+
+
 def main():
     args = parse_args()
     payload_backend.mkdir(parents=True, exist_ok=True)
@@ -199,6 +218,7 @@ def main():
     install_resource(args.version, args.bundled_python_exec_relpath)
     install_frontend()
     install_chores()
+    install_build_info(args.version)
     print(f"Install to {install_path} successfully.")
 
 

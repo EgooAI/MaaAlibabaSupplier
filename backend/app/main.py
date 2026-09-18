@@ -37,6 +37,7 @@ from backend.app.shared.utils.env import load_workdir_env
 from backend.app.shared.utils.logging import configure_logging
 from backend.app.shared.backend.sync_coordinator import start_sync_service, stop_sync_service
 from backend.app.shared.backend.outbox_service import start_outbox_service, stop_outbox_service
+from backend.app.updater import register_update_runtime
 
 
 def _register_agent_runtime() -> None:
@@ -149,6 +150,10 @@ def main() -> None:
         get_env_str("MITM_RECEIVER_HOST", MITM_RECEIVER_HOST_DEFAULT), receiver_port, internal_token,
     )
     configure_logging()
+
+    # Must precede every application child: the updater contains descendants in
+    # a non-breakaway job while its independent PowerShell broker stays outside.
+    register_update_runtime()
 
     backend_root = resolve_backend_root()
     ensure_system_agents_seeded()
