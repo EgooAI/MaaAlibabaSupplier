@@ -1,10 +1,11 @@
 "use client";
 
-import { ExperimentOutlined, ReloadOutlined } from "@ant-design/icons";
-import { Button, Card, Col, Empty, Row, Space, Typography } from "antd";
+import { ExperimentOutlined } from "@ant-design/icons";
+import { Alert, Button, Card, Col, Empty, Row, Space, Typography } from "antd";
 import { AppTable } from "@/components/AppTable";
 import { StatusTag } from "@/components/StatusTag";
-import { HEALTH_MODULE_IDS, HEALTH_MODULE_TITLES } from "@/domain/status/statusModel";
+import { formatDateTime } from "@/domain/time";
+import type { SourceSyncStatus } from "@/types/connection";
 import type { HealthModule, TaskItem } from "@/types/status";
 import { useStatusWorkbench } from "./hooks/useStatusWorkbench";
 import { useAccount } from "@/features/account/AccountProvider";
@@ -14,7 +15,7 @@ import { SyncStatus } from "@/features/account/SyncStatus";
 export function StatusPage() {
   const account = useAccount();
   const canDiagnose = !account.blocked && Boolean(account.snapshot?.client.connected);
-  const { snapshot, loading, refreshing, creatingTask, testingNode, refresh, createTestTask, runNodeTest } = useStatusWorkbench();
+  const { snapshot, loading, creatingTask, testingNode, createTestTask, runNodeTest } = useStatusWorkbench();
 
   if (!snapshot) {
     return (
@@ -26,21 +27,19 @@ export function StatusPage() {
     );
   }
 
-  const modules = HEALTH_MODULE_IDS.map((id) => snapshot.modules.find((module) => module.id === id)).filter((module): module is HealthModule => Boolean(module));
-
   return (
     <Space orientation="vertical" size="large" className="w-full">
-      <Card title="聊天同步"><SyncStatus details /></Card>
-      <Card loading={loading}>
+      <ChatSyncCard />
+
+      <Card title="模块状态" extra={<Typography.Text type="secondary">更新于 {snapshot.updatedAt}（每 2 秒）</Typography.Text>} loading={loading}>
         <Row gutter={[16, 16]}>
-          {modules.map((module) => <Col xs={24} md={8} key={module.id}><HealthModulePanel module={module} /></Col>)}
+          {snapshot.modules.map((module) => <Col xs={24} md={8} key={module.id}><HealthModulePanel module={module} /></Col>)}
         </Row>
       </Card>
 
-      <Card title="快捷测试动作">
+      <Card title="诊断动作">
         <DataDirBanner />
         <Space wrap>
-          <Button icon={<ReloadOutlined />} loading={refreshing} onClick={refresh}>刷新运行状态</Button>
           <Button type="primary" icon={<ExperimentOutlined />} loading={creatingTask} onClick={createTestTask}>创建测试任务</Button>
           <Button disabled={!canDiagnose} loading={testingNode === "ChatInput_GoToInput"} onClick={() => void runNodeTest("ChatInput_GoToInput")}>检查聊天输入框</Button>
           <Button disabled={!canDiagnose} loading={testingNode === "ContactSearch_GoToSearch"} onClick={() => void runNodeTest("ContactSearch_GoToSearch")}>检查联系人搜索框</Button>
@@ -71,20 +70,51 @@ export function StatusPage() {
 }
 
 function HealthModulePanel({ module }: { module: HealthModule }) {
-  const title = HEALTH_MODULE_TITLES[module.id];
-  const statusText = module.status === "healthy" ? "在线" : module.status === "warning" ? "注意" : "离线";
-
   return (
     <div className="h-full rounded-lg border border-slate-200 bg-white p-4">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <Typography.Text strong>{title}</Typography.Text>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <Typography.Text strong>{module.name}</Typography.Text>
         <StatusTag status={module.status} />
       </div>
-      <div className="mb-2"><Typography.Text strong className="text-lg">{statusText}</Typography.Text></div>
-      <Space orientation="vertical" size={4}>
+      <Space orientation="vertical" size={2}>
         <Typography.Text>{module.description}</Typography.Text>
-        <Typography.Text>延迟：{module.latency === null ? "未知" : `${module.latency}ms`}</Typography.Text>
+        <Typography.Text type="secondary">延迟：{module.latency === null ? "未知" : `${module.latency}ms`}</Typography.Text>
       </Space>
     </div>
+  );
+}
+
+function SyncDetailTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="h-full rounded-lg border border-slate-200 bg-white p-3">
+      <Typography.Text type="secondary" className="block text-xs">{label}</Typography.Text>
+      <Typography.Text strong className="break-all">{value}</Typography.Text>
+    </div>
+  );
+}
+
+function ChatSyncCard() {
+  const { snapshot, blocked } = useAccount();
+  const source: SourceSyncStatus | null = blocked ? null : snapshot?.source ?? null;
+  const time = (value: number | null) => (value == null ? "尚无记录" : formatDateTime(value));
+  return (
+    <Card title="聊天同步">
+      <Space orientation="vertical" size="middle" className="w-full">
+        <SyncStatus />
+        {source ? (
+          <>
+            <Row gutter={[12, 12]}>
+              <Col xs={12} md={8}><SyncDetailTile label="最近检查" value={time(source.last_checked)} /></Col>
+              <Col xs={12} md={8}><SyncDetailTile label="最近尝试" value={time(source.last_attempt)} /></Col>
+              <Col xs={12} md={8}><SyncDetailTile label="计划重试" value={source.retry_at == null ? "无" : time(source.retry_at)} /></Col>
+              <Col xs={12} md={8}><SyncDetailTile label="最近提交" value={`新增 ${source.counts.inserted} · 更新 ${source.counts.updated} · 未变 ${source.counts.unchanged}`} /></Col>
+              <Col xs={12} md={8}><SyncDetailTile label="同步版本" value={`已提交 ${source.revision} · 数据源 ${source.source_revision} · 已应用 ${source.applied_source_revision}`} /></Col>
+              <Col xs={12} md={8}><SyncDetailTile label="后台检查" value={`${source.auto_enabled ? "已启用" : "未启用"}${source.source_dirty ? " · 数据源有变化" : ""}${source.pending ? " · 等待同步" : ""}`} /></Col>
+            </Row>
+            {source.last_error ? <Alert type="error" showIcon title={source.last_error} /> : null}
+          </>
+        ) : null}
+      </Space>
+    </Card>
   );
 }

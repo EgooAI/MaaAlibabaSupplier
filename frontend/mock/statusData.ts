@@ -1,4 +1,4 @@
-import { buildSystemStatusSnapshot, taskSnapshotToTaskItem } from "@/domain/status/statusModel";
+import { buildSystemStatusSnapshot } from "@/domain/status/statusModel";
 import type { DataDirStatus, KeyStatus, NetworkStatus, NodeTestResult, TaskSnapshot } from "@/types/status";
 
 export const keyStatus: KeyStatus = {
@@ -71,8 +71,6 @@ export const taskSnapshots: TaskSnapshot[] = [
     completed_at: 1788749822,
   },
 ];
-
-export const tasks = taskSnapshots.map(taskSnapshotToTaskItem);
 
 export const systemStatus = buildSystemStatusSnapshot({
   userStatus: keyStatus,

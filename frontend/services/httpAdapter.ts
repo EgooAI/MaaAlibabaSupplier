@@ -200,7 +200,6 @@ export const httpBackend: OperationsBackend = {
   runNodeTest: (entry) => requestJson("/api/status/node-test", { method: "POST", body: JSON.stringify({ entry: entry ?? "ChatInput_GoToInput" }) }),
   listTaskSnapshots: () => requestJson("/api/status/tasks"),
   getSystemStatus: () => requestJson("/api/status"),
-  refreshSystemStatus: () => requestJson("/api/status/refresh", { method: "POST" }),
   createTestTask: (input) => requestJson("/api/status/test-tasks", { method: "POST", body: JSON.stringify(input) }),
 
   getDataDirStatus: () => requestJson("/api/settings/alibaba-data-dir"),

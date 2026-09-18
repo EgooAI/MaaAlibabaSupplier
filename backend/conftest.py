@@ -30,7 +30,10 @@ def _unexpected_external_access(*args, **kwargs):
 def pytest_configure(config):
     # Fixtures run after collection, but imports can already resolve data paths.
     source_root = Path(__file__).resolve().parent
-    if config.inipath != source_root.parent / "pytest.ini":
+    # The invocation cwd may reach pytest in 8.3 short form (CI TEMP dirs), while
+    # resolve() always expands it; compare normalized paths, never text.
+    expected_config = source_root.parent / "pytest.ini"
+    if config.inipath is None or config.inipath.resolve() != expected_config:
         raise pytest.UsageError("Backend tests require the repository config: python -m pytest -c pytest.ini")
     temporary = TemporaryDirectory(prefix="maa-pytest-")
     config.add_cleanup(temporary.cleanup)

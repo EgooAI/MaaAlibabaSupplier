@@ -79,10 +79,8 @@ describe("mock adapter", () => {
     submitted.task_snapshot.message = "mutated by caller";
 
     const after = await mockBackend.getSystemStatus();
-    expect(after.nodeResult).toEqual(before.nodeResult);
-    expect(after.taskSnapshots[0]).toMatchObject({ task_id: taskId, status: "pending", started_at: null, completed_at: null });
-    expect(after.taskSnapshots[0].message).not.toBe("mutated by caller");
-    expect(after.tasks[0]).toMatchObject({ id: taskId, status: "queued" });
+    expect(after.modules.find((module) => module.id === "health-node")).toEqual(before.modules.find((module) => module.id === "health-node"));
+    expect(after.tasks[0]).toMatchObject({ id: taskId, status: "queued", message: expect.not.stringContaining("mutated by caller") });
   });
 
   it("returns cloned status snapshots instead of exposing the store", async () => {

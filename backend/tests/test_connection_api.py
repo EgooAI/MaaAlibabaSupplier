@@ -86,8 +86,7 @@ def test_connection_poll_is_observation_only(client, sdk, monkeypatch):
         assert snapshot["source"]["last_success"] is None
         assert snapshot["source"]["error_code"] is None
         assert snapshot["capabilities"] == {"read_chat": False, "use_ai": False, "operate_client": False}
-        assert snapshot["model"] == {"configured": False, "verified": False}
-        assert {step["id"] for step in snapshot["steps"]} == {"data_dir", "identity", "key", "crm", "client", "model"}
+        assert snapshot["model"] == {"configured": False}
     retry.assert_not_called()
     extract.assert_not_called()
     assert not Path(os.environ["MAA_CRM_DB_PATH"]).exists()
@@ -108,7 +107,7 @@ def test_connection_and_revision_polls_do_not_migrate_existing_crm(client, monke
     migrate.assert_not_called()
 
 
-def test_connection_reports_broken_crm_as_a_step_error(client):
+def test_connection_reports_broken_crm_as_unreadable(client):
     database = Path(os.environ["MAA_CRM_DB_PATH"])
     database.parent.mkdir(parents=True, exist_ok=True)
     database.write_bytes(b"not a database")
@@ -116,9 +115,8 @@ def test_connection_reports_broken_crm_as_a_step_error(client):
     assert response.status_code == 200, response.text
     snapshot = response.json()["data"]
     assert not snapshot["capabilities"]["read_chat"]
+    assert not snapshot["capabilities"]["use_ai"]
     assert not snapshot["model"]["configured"]
-    steps = {step["id"]: step for step in snapshot["steps"]}
-    assert steps["crm"]["state"] == steps["model"]["state"] == "error"
     assert database.read_bytes() == b"not a database"
 
 
@@ -187,8 +185,7 @@ def test_only_selected_seller_archive_is_readable_offline(client, archive_seller
 def test_model_flag_checks_configuration_without_invocation(client, url, key, model, context, configured):
     LLMApiConfigManager().upsert_config(LLMApiConfig(level=0, base_url=url, api_key=key, model_name=model, context=context))
     snapshot = client.get("/api/settings/connection").json()["data"]
-    assert snapshot["model"] == {"configured": configured, "verified": False}
-    assert "尚未验证" in next(step["detail"] for step in snapshot["steps"] if step["id"] == "model")
+    assert snapshot["model"] == {"configured": configured}
     if key.strip():
         assert key not in str(snapshot)
 
@@ -280,7 +277,7 @@ def test_revision_poll_100_calls_never_reads_source_or_submits_sync(client, revi
         assert source["phase"] == "syncing" and not source["ready"]
         assert source["key_validation"] == "valid" and source["auto_enabled"]
         assert source["revision"] == source["applied_source_revision"] == 0
-        assert source["source_revision"] > 0 and source["source_mtime"] > 0
+        assert source["source_revision"] > 0
         assert source["last_success"] is None
         assert source["last_checked"] > 0 and source["last_attempt"] > 0
         assert source["counts"] == {"inserted": 0, "updated": 0, "unchanged": 0}
@@ -1028,12 +1025,9 @@ def test_connection_actions_continue_to_use_body_epoch_without_header(client):
 
 def test_connection_details_and_guard_errors_are_chinese(client, sdk, chat):
     snapshot = connect(client)
-    steps = {step["id"]: step for step in snapshot["steps"]}
-    assert "人工确认" in steps["client"]["detail"]
-    assert "自动核验登录身份" in steps["client"]["detail"]
-    assert "尚未验证" in steps["model"]["detail"]
-    assert "密钥" in steps["key"]["detail"]
-    assert "存档" in steps["crm"]["detail"]
+    assert "人工确认" in snapshot["client"]["detail"]
+    assert "自动核验登录身份" in snapshot["client"]["detail"]
+    assert snapshot["source"]["key_validation"] == "unverified"
     response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": "send", "idempotency_key": "key"})
     assert response.status_code == 200
     assert response.json()["data"]["outbox"]["status"] == "failed"

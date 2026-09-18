@@ -102,13 +102,10 @@ describe("chat synchronization boundaries", () => {
   it("shows worker status and submits the manual refresh button without replacing the workspace", async () => {
     const source = { ...connectionSnapshot.source, syncing: true, pending: true, freshness: "syncing" as const, stale: true, last_error: "source offline", retry_at: 1_789_600_300 };
     mocks.backend.getConnection.mockResolvedValue({ ...connectionSnapshot, source });
-    await act(async () => root.render(<AccountProvider><ReadableWorkspace /><SyncStatus details /></AccountProvider>));
+    await act(async () => root.render(<AccountProvider><ReadableWorkspace /><SyncStatus /></AccountProvider>));
     expect(container.textContent).toContain("同步失败");
     expect(container.textContent).toContain("正在重试同步");
     expect(container.textContent).toContain("存档可能过期");
-    expect(container.textContent).toContain("最近检查");
-    expect(container.textContent).toContain("计划重试");
-    expect(container.textContent).toContain("新增 10 / 更新 0 / 未变 0");
     const before = container.querySelector("textarea");
     const generation = account.generation;
     await act(async () => container.querySelector("button")!.click());

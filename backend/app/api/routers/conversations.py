@@ -14,7 +14,7 @@ from sqlmodel import Session, select
 
 from backend.app.api.envelope import AppError, api_error, ok, user_message
 from backend.app.api.account_scope import AccountRoute, request_epoch
-from backend.app.api.connection import safe_has_selected_archive
+from backend.app.api.connection import _INTERNAL_SOURCE_FIELDS, safe_has_selected_archive
 from backend.app.api.routers.outbox import public_task
 from backend.app.shared.backend.account_context import AccountContext, get_account_context
 from backend.app.shared.backend.outbox_service import get_outbox_service
@@ -515,7 +515,7 @@ def conversation_revision() -> dict:
     if get_account_context() != context or status["epoch"] != context.epoch or status["self_ali_id"] != context.self_ali_id:
         raise AppError("读取同步状态期间账号已切换，请刷新后重试。", status_code=409)
     payload = {
-        **status,
+        **{k: v for k, v in status.items() if k not in _INTERNAL_SOURCE_FIELDS},
         **observe_inbox(InboxStore(), context.self_ali_id, context.data_dir),
         "ready": bool(status["ready"] or archive),
         "stale": bool(status["stale"] or (archive and not status["ready"])),

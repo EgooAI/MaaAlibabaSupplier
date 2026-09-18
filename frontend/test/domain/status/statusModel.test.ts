@@ -51,7 +51,7 @@ describe("status model adapters", () => {
     expect(snapshot.modules.map((module) => module.status)).toEqual(["healthy", "healthy", "offline", "healthy", "healthy"]);
     expect(snapshot.modules.map((module) => module.latency)).toEqual([null, 50, null, null, null]);
     expect(snapshot.tasks[0].status).toBe("queued");
-    expect(snapshot.receiverStatus.error).toBe("closed");
+    expect(snapshot.modules.find((module) => module.id === "health-receiver")?.description).toContain("closed");
   });
 
   it("only warns for reachable networks with measured high latency", () => {

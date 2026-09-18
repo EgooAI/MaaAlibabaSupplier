@@ -1,46 +1,34 @@
 "use client";
 
 import { PoweroffOutlined } from "@ant-design/icons";
-import { Alert, App, Button, Card, Input, List, Result, Space, Spin, Tag, Typography } from "antd";
+import { Alert, App, Button, Card, Col, Input, List, Result, Row, Space, Spin, Typography } from "antd";
 import { ActionConfirmModal } from "@/components/ActionConfirmModal";
 import { AliIdentityCard } from "./AliIdentityCard";
 import { useDataDirSettings } from "./hooks/useDataDirSettings";
 import { useShutdownApp } from "./hooks/useShutdownApp";
 import { useAccount } from "@/features/account/AccountProvider";
-import { ConnectionCard } from "@/features/account/ConnectionCard";
+import { ClientCard, ConnectionFlowCard, SyncCard } from "@/features/account/AccountFlow";
 import { InboxSettingsCard } from "./InboxSettingsCard";
 
 type DataDirControls = ReturnType<typeof useDataDirSettings>;
 
 function DataDirCard({ controls }: { controls: DataDirControls }) {
   const { message } = App.useApp();
-  const { status, candidates, path, setPath, loading, scanning, saving, canSave, error, scan, save } = controls;
+  const { candidates, path, setPath, loading, scanning, saving, canSave, error, scan, save } = controls;
 
   const handleSave = async () => {
     if (await save()) message.success("数据目录已保存，即时生效");
   };
 
-  const stateTag = (state: string) => {
-    if (state === "ok") return <Tag color="success">有效</Tag>;
-    if (state === "invalid") return <Tag color="error">无效</Tag>;
-    return <Tag color="warning">未配置</Tag>;
-  };
-
   return (
-    <Card title="阿里客户端数据目录">
+    <Card title="数据目录">
       {loading ? (
         <Spin />
       ) : (
         <Space orientation="vertical" size="middle" className="w-full">
           <Typography.Text type="secondary">
-            各用户安装位置不同（如 D:\AlibabaSupplierData），请配置本机阿里客户端数据目录。程序会在各盘符根目录自动探测，也可手动填写。保存后即时生效，无需重启。
+            配置本机阿里客户端数据目录，可自动探测各盘符根目录或手动填写；保存后即时生效，无需重启。
           </Typography.Text>
-          <Space wrap>
-            <Typography.Text>当前状态：</Typography.Text>
-            {stateTag(status?.state ?? "unconfigured")}
-            {status?.path ? <Typography.Text code className="break-all">{status.path}</Typography.Text> : null}
-          </Space>
-          {status?.detail ? <Alert type={status.state === "ok" ? "success" : "warning"} showIcon title={status.detail} /> : null}
           {error ? <Alert type="error" showIcon title={error} /> : null}
           <Space.Compact className="w-full">
             <Input value={path} onChange={(event) => setPath(event.target.value)} placeholder="例如 D:\AlibabaSupplierData" />
@@ -48,16 +36,12 @@ function DataDirCard({ controls }: { controls: DataDirControls }) {
               保存
             </Button>
           </Space.Compact>
-          <Space>
-            <Button loading={scanning} onClick={() => void scan()}>
-              自动探测
-            </Button>
-            {candidates.length > 0 ? <Typography.Text type="secondary">点击候选可直接填入：</Typography.Text> : null}
-          </Space>
+          <Button loading={scanning} onClick={() => void scan()}>自动探测</Button>
           {candidates.length > 0 ? (
             <List
               size="small"
               bordered
+              header={<Typography.Text type="secondary">探测到以下候选目录，点击填入：</Typography.Text>}
               dataSource={candidates}
               renderItem={(item) => (
                 <List.Item actions={[<Button key="use" type="link" size="small" onClick={() => setPath(item)}>填入</Button>]}>
@@ -75,11 +59,23 @@ function DataDirCard({ controls }: { controls: DataDirControls }) {
 export function AccountSetup() {
   const { snapshot } = useAccount();
   const dataDirControls = useDataDirSettings();
-  return <Space orientation="vertical" size="large" className="w-full">
-    <ConnectionCard />
-    <DataDirCard controls={dataDirControls} />
-    <AliIdentityCard key={JSON.stringify([snapshot?.data_dir.path, snapshot?.account.epoch])} dataDirOk={snapshot?.data_dir.state === "ok"} />
-  </Space>;
+  return (
+    <Row gutter={[16, 16]} className="w-full">
+      <Col span={24}><ConnectionFlowCard /></Col>
+      <Col xs={24} xl={12}>
+        <Space orientation="vertical" size="large" className="w-full">
+          <DataDirCard controls={dataDirControls} />
+          <AliIdentityCard key={JSON.stringify([snapshot?.data_dir.path, snapshot?.account.epoch])} dataDirOk={snapshot?.data_dir.state === "ok"} />
+        </Space>
+      </Col>
+      <Col xs={24} xl={12}>
+        <Space orientation="vertical" size="large" className="w-full">
+          <SyncCard />
+          <ClientCard />
+        </Space>
+      </Col>
+    </Row>
+  );
 }
 
 export function SettingsPage() {

@@ -11,7 +11,6 @@ export function useStatusWorkbench() {
   const { message } = App.useApp();
   const [snapshot, setSnapshot] = useState<SystemStatusSnapshot>();
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
   const [testingNode, setTestingNode] = useState<NodeTestEntry>();
   const snapshotRequestRef = useRef(0);
@@ -45,23 +44,6 @@ export function useStatusWorkbench() {
     return () => clearInterval(timer);
   }, [loadSnapshot]);
 
-  async function refresh() {
-    if (refreshing) return;
-    const requestId = snapshotRequestRef.current + 1;
-    snapshotRequestRef.current = requestId;
-    setRefreshing(true);
-    try {
-      const nextSnapshot = await backend.refreshSystemStatus();
-      if (snapshotRequestRef.current !== requestId) return;
-      setSnapshot(nextSnapshot);
-      message.success("系统状态已刷新");
-    } catch (error: unknown) {
-      if (snapshotRequestRef.current === requestId) message.error(error instanceof Error ? error.message : "系统状态刷新失败");
-    } finally {
-      setRefreshing(false);
-    }
-  }
-
   async function createTestTask() {
     if (creatingTask) return;
     setCreatingTask(true);
@@ -90,5 +72,5 @@ export function useStatusWorkbench() {
     }
   }
 
-  return { snapshot, loading, refreshing, creatingTask, testingNode, refresh, createTestTask, runNodeTest };
+  return { snapshot, loading, creatingTask, testingNode, createTestTask, runNodeTest };
 }

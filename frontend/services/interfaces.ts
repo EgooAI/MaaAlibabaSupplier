@@ -47,7 +47,6 @@ export interface OperationsBackend {
   runNodeTest(entry?: NodeTestEntry): Promise<NodeTestSubmission>;
   listTaskSnapshots(): Promise<TaskSnapshot[]>;
   getSystemStatus(): Promise<SystemStatusSnapshot>;
-  refreshSystemStatus(): Promise<SystemStatusSnapshot>;
   createTestTask(input: CreateTestTaskInput): Promise<TaskItem>;
 
   getDataDirStatus(): Promise<DataDirStatus>;

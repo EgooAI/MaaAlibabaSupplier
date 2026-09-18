@@ -69,6 +69,9 @@ def main():
         child_env.pop(key, None)
     child_env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     child_env["PYTHONDONTWRITEBYTECODE"] = "1"
+    # Each case spawns a fresh pytest; CI Windows runners are an order of
+    # magnitude slower than local runs (cold caches, real-time scanning).
+    case_timeout = 120
 
     for label, cwd, args, allowed, execute in cases:
         with TemporaryDirectory(prefix="maa-entry-proof-") as temporary:
@@ -108,7 +111,7 @@ def main():
                 command += ["--collect-only", "--trace-config"]
             result = subprocess.run(
                 command + args, cwd=root / cwd, env=child_env,
-                capture_output=True, text=True, encoding="utf-8", timeout=30,
+                capture_output=True, text=True, encoding="utf8", timeout=case_timeout,
             )
             output = result.stdout + result.stderr
             imported = list(root.rglob("*.imported"))

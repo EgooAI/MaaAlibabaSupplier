@@ -70,12 +70,6 @@ export interface SystemStatusSnapshot {
   updatedAt: string;
   modules: HealthModule[];
   tasks: TaskItem[];
-  userStatus: KeyStatus;
-  proxyStatus: NetworkStatus;
-  receiverStatus: NetworkStatus;
-  dataDirStatus: DataDirStatus;
-  nodeResult: NodeTestResult | null;
-  taskSnapshots: TaskSnapshot[];
 }
 
 export type DataDirState = "unconfigured" | "invalid" | "ok";

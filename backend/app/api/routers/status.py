@@ -111,21 +111,15 @@ def _build_system_snapshot() -> dict:
     proxy = asdict(status_mod.check_mitm_proxy())
     receiver = asdict(status_mod.check_mitm_receiver())
     data_dir = status_mod.check_data_dir_status()
-    im_sync = status_mod.check_im_sync_status()
     snaps = [s for s in get_task_queue().all_snapshots() if not s.description.startswith("Outbox ")]
     node = _last_node_result
     if get_account_context() != context:
         raise AppError("读取系统状态期间账号已切换，请刷新后重试。", status_code=409)
+    # Modules are the UI contract; raw observations stay server-side so the
+    # payload does not carry the same state twice.
     return {
         "updatedAt": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S"),
         "modules": [
-            {
-                "id": "health-datadir",
-                "name": "数据源目录",
-                "status": "healthy" if data_dir["state"] == "ok" else "warning",
-                "latency": None,
-                "description": data_dir["path"] or "尚未配置阿里客户端数据目录，请前往设置页配置",
-            },
             {
                 "id": "health-identity",
                 "name": "身份服务",
@@ -135,7 +129,7 @@ def _build_system_snapshot() -> dict:
             },
             {
                 "id": "health-proxy",
-                "name": "代理服务",
+                "name": "MITM 代理",
                 "status": _network_health(proxy),
                 "latency": proxy.get("latency_ms"),
                 "description": f"{proxy.get('host')}:{proxy.get('port')}"
@@ -143,7 +137,7 @@ def _build_system_snapshot() -> dict:
             },
             {
                 "id": "health-receiver",
-                "name": "Receiver",
+                "name": "MITM Receiver",
                 "status": _network_health(receiver),
                 "latency": receiver.get("latency_ms"),
                 "description": f"{receiver.get('host')}:{receiver.get('port')}"
@@ -156,15 +150,15 @@ def _build_system_snapshot() -> dict:
                 "latency": None,
                 "description": node.get("message") if node else "尚未测试，请点击下方节点测试按钮",
             },
+            {
+                "id": "health-datadir",
+                "name": "数据源目录",
+                "status": "healthy" if data_dir["state"] == "ok" else "warning",
+                "latency": None,
+                "description": data_dir["path"] or "尚未配置阿里客户端数据目录，请前往设置页配置",
+            },
         ],
         "tasks": [_snapshot_to_task_item(s) for s in snaps],
-        "userStatus": user,
-        "proxyStatus": proxy,
-        "receiverStatus": receiver,
-        "dataDirStatus": data_dir,
-        "imSyncStatus": im_sync,
-        "nodeResult": node,
-        "taskSnapshots": [_snapshot_to_task_snapshot(s) for s in snaps],
     }
 
 

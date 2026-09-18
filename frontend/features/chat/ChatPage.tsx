@@ -144,8 +144,10 @@ function ChatWorkspace() {
 
   return (
     <>
-      <DataDirBanner />
-      <div className="mb-2"><SyncStatus refreshError={workbench.refreshError} refreshPending={workbench.refreshPending} /></div>
+      <Space orientation="vertical" size="middle" className="w-full">
+        <DataDirBanner />
+        <SyncStatus refreshError={workbench.refreshError} refreshPending={workbench.refreshPending} />
+      </Space>
       <SplitSessionLayout list={sessionList} detail={sessionDetail} mobileView={mobileView} />
 
       <AssistantSuggestionModal open={workbench.suggestionOpen} suggestions={workbench.suggestions} onClose={() => workbench.setSuggestionOpen(false)} onInsert={workbench.insertSuggestion} />

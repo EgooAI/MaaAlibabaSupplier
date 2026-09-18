@@ -342,13 +342,6 @@ export const mockBackend: OperationsBackend = {
 
   getSystemStatus: () => delay(structuredClone(statusStore)),
 
-  refreshSystemStatus: async () => {
-    proxyStatusStore = { ...proxyStatusStore, latency_ms: Math.max(48, (proxyStatusStore.latency_ms ?? 180) - 12) };
-    receiverStatusStore = { ...receiverStatusStore, latency_ms: Math.max(48, (receiverStatusStore.latency_ms ?? 90) + 7) };
-    statusStore = buildStatusSnapshot();
-    return delay(structuredClone(statusStore), 420);
-  },
-
   createTestTask: async ({ type, target }) => {
     const timestamp = Math.floor(Date.now() / 1000);
     const snapshot: TaskSnapshot = {

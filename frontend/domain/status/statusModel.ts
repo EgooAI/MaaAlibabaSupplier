@@ -1,15 +1,5 @@
 import { formatDateTime, nowText } from "@/domain/time";
-import type { DataDirStatus, HealthModuleId, HealthStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskItem, TaskSnapshot, TaskStatus } from "@/types/status";
-
-export const HEALTH_MODULE_TITLES: Record<HealthModuleId, string> = {
-  "health-identity": "用户状态",
-  "health-proxy": "MITM 代理",
-  "health-receiver": "MITM Receiver",
-  "health-node": "MaaFW 节点",
-  "health-datadir": "数据源目录",
-};
-
-export const HEALTH_MODULE_IDS: HealthModuleId[] = ["health-identity", "health-proxy", "health-receiver", "health-node", "health-datadir"];
+import type { DataDirStatus, HealthStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskItem, TaskSnapshot, TaskStatus } from "@/types/status";
 
 export function taskSnapshotToTaskItem(snapshot: TaskSnapshot): TaskItem {
   const result = snapshot.result ?? undefined;
@@ -30,6 +20,7 @@ function documentTaskStatusToUi(status: TaskSnapshot["status"]): TaskStatus {
   return status === "pending" ? "queued" : status;
 }
 
+// Mirrors the backend module derivation; the payload carries modules and tasks only.
 export function buildSystemStatusSnapshot({
   userStatus,
   proxyStatus,
@@ -59,14 +50,14 @@ export function buildSystemStatusSnapshot({
       },
       {
         id: "health-proxy",
-        name: "代理服务",
+        name: "MITM 代理",
         status: networkToHealth(proxyStatus),
         latency: proxyStatus.latency_ms,
         description: `${proxyStatus.host}:${proxyStatus.port}${proxyStatus.error ? ` · ${proxyStatus.error}` : ""}`,
       },
       {
         id: "health-receiver",
-        name: "Receiver",
+        name: "MITM Receiver",
         status: networkToHealth(receiverStatus),
         latency: receiverStatus.latency_ms,
         description: `${receiverStatus.host}:${receiverStatus.port}${receiverStatus.error ? ` · ${receiverStatus.error}` : ""}`,
@@ -87,12 +78,6 @@ export function buildSystemStatusSnapshot({
       },
     ],
     tasks: taskSnapshots.map(taskSnapshotToTaskItem),
-    userStatus,
-    proxyStatus,
-    receiverStatus,
-    dataDirStatus,
-    nodeResult,
-    taskSnapshots,
   };
 }
 

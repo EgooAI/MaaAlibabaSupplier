@@ -11,6 +11,7 @@ const isExport = process.env.NEXT_EXPORT === "1";
 const backendOrigin = process.env.BACKEND_ORIGIN ?? "http://127.0.0.1:8000";
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ["127.0.0.1"],
   turbopack: {
     root: projectRoot,
   },

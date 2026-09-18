@@ -9,6 +9,12 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 
+# Locally the suite finishes in ~15s; CI Windows runners run an order of
+# magnitude slower (cold caches plus real-time scanning of every SQLite
+# scratch file). The timeout only exists to bound a genuine hang, so keep it
+# far above the slowest expected CI run.
+SDK_TEST_TIMEOUT = 600
+
 
 def main() -> int:
     source = Path(__file__).resolve().parents[1] / "backend/app/crm_sdk"
@@ -44,10 +50,18 @@ import pytest
 raise SystemExit(pytest.main(['-c', 'pyproject.toml', '--rootdir=.', '--confcutdir=.',
                              '--noconftest', '-p', 'no:cacheprovider', '-q', 'tests']))
 """
-        return subprocess.run(
-            [sys.executable, "-I", "-B", "-X", "utf8", "-c", code],
-            cwd=root, env=environment, timeout=120,
-        ).returncode
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-I", "-B", "-X", "utf8", "-c", code],
+                cwd=root, env=environment, timeout=SDK_TEST_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            print(
+                f"SDK standalone verification exceeded {SDK_TEST_TIMEOUT}s; child terminated.",
+                file=sys.stderr,
+            )
+            return 1
+        return completed.returncode
 
 
 if __name__ == "__main__":

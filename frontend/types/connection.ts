@@ -14,8 +14,6 @@ export interface SourceSyncStatus {
   revision: number;
   source_revision: number;
   applied_source_revision: number;
-  source_mtime: number | null;
-  cache_time: number;
   stale: boolean;
   last_checked: number | null;
   last_attempt: number | null;
@@ -26,9 +24,6 @@ export interface SourceSyncStatus {
   freshness: "fresh" | "syncing" | "stale";
   auto_enabled: boolean;
   source_dirty: boolean;
-  wal_frames_applied: number;
-  last_refresh_ms: number;
-  wal_pipeline: boolean;
 }
 
 export interface ConnectionSnapshot {
@@ -37,6 +32,5 @@ export interface ConnectionSnapshot {
   source: SourceSyncStatus;
   client: { connected: boolean; window_generation: string; confirmed: boolean; detail: string };
   capabilities: { read_chat: boolean; use_ai: boolean; operate_client: boolean };
-  model: { configured: boolean; verified: false };
-  steps: Array<{ id: string; state: "ready" | "pending" | "error"; detail: string }>;
+  model: { configured: boolean };
 }
