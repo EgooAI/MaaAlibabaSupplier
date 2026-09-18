@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from backend.app.api.envelope import AppError, api_error, ok, user_message
 from backend.app.api.account_scope import AccountRoute, request_epoch
-from backend.app.shared.crm import get_translation, request_translations
+from backend.app.shared.crm import get_translation
 from backend.app.task_queue import TaskSnapshot
 from backend.app.translation_jobs import submit_translation_job, translation_job
 
@@ -24,13 +24,6 @@ class RequestTranslationsInput(BaseModel):
 
 class TranslationQueryInput(BaseModel):
     texts: list[str] = Field(default_factory=list, max_length=TRANSLATION_TEXTS_MAX)
-
-
-class TranslateInput(BaseModel):
-    conversationId: str = ""
-    messageId: str = ""
-    targetLanguage: str = "zh-CN"
-    text: str = Field(default="", max_length=5000)
 
 
 def _job_payload(snapshot: TaskSnapshot) -> dict:
@@ -69,7 +62,11 @@ def post_translations(body: RequestTranslationsInput) -> dict:
 
 @router.post("/api/messages/translations/query")
 def query_translations(body: TranslationQueryInput) -> dict:
-    """Batch cache lookup: text -> translation (null when not cached yet)."""
+    """Batch cache lookup: text -> translation.
+
+    null 表示尚未缓存（或 Agent 判定为非常规消息）；空串是 NO_NEED 哨兵
+    （已缓存、无需翻译）。
+    """
     translations: dict[str, str | None] = {}
     try:
         for raw in body.texts:
@@ -95,22 +92,4 @@ def get_translation_job(task_id: str) -> dict:
 
 @router.get("/api/messages/translations/{text}")
 def fetch_translation(text: str) -> dict:
-    return ok(get_translation(text))
-
-
-def _single_translate(body: TranslateInput, *, force: bool) -> dict:
-    text = (body.text or "").strip()
-    if not text:
-        return {"messageId": body.messageId, "translatedContent": None}
-    request_translations([text], force=force)
-    return {"messageId": body.messageId or text, "translatedContent": get_translation(text)}
-
-
-@router.post("/api/messages/translate")
-def translate_message(body: TranslateInput) -> dict:
-    return ok(_single_translate(body, force=False))
-
-
-@router.post("/api/messages/retranslate")
-def retranslate_message(body: TranslateInput) -> dict:
-    return ok(_single_translate(body, force=True))
+    return ok(get_translation((text or "").strip()))

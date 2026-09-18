@@ -629,33 +629,6 @@ def test_account_reads_allow_legacy_header_but_writes_require_epoch(client, monk
     assert response.json()["data"]["status"] == "pending"
 
 
-def test_long_account_write_holds_lock_through_endpoint(client, monkeypatch):
-    entered, release = Event(), Event()
-
-    def translate(*args, **kwargs):
-        entered.set()
-        assert release.wait(5)
-        return 1
-
-    monkeypatch.setattr(messages, "request_translations", translate)
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        request = executor.submit(client.post, "/api/messages/translate", json={"text": "hello"})
-        assert entered.wait(2)
-        try:
-            switching = executor.submit(client.put, "/api/settings/ali-id", json={"ali_id": "seller-b"})
-            assert switching.result(timeout=2).status_code == 409
-        finally:
-            release.set()
-        response = request.result(timeout=2)
-    assert response.status_code == 200
-    assert response.headers["X-Account-Epoch"] == client.headers["X-Account-Epoch"]
-
-
-def test_app_error_is_preserved_by_existing_translation_handler(client, monkeypatch):
-    monkeypatch.setattr(messages, "request_translations", Mock(side_effect=AppError("stale", status_code=409)))
-    assert client.post("/api/messages/translate", json={"text": "hello"}).status_code == 409
-
-
 def test_unhandled_account_error_still_marks_epoch(client, monkeypatch):
     monkeypatch.setattr(messages, "get_translation", Mock(side_effect=RuntimeError("test failure")))
     response = client.get("/api/messages/translations/hello")

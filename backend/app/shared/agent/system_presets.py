@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from loguru import logger
 
+from backend.app.shared.agent.inputs import TRANSLATION_PROTOCOL_RULES
 from backend.app.shared.agent.system_agents import (
     CHAT_CUSTOMER_INTENT_AGENT_APID,
     CHAT_CUSTOMER_STAGE_AGENT_APID,
@@ -26,14 +27,11 @@ _SYSTEM_AGENT_PROMPTS: dict[str, str] = {
         "没有标记的行仅作上下文（例如已翻译过），不要翻译它们。\n\n"
         "输出要求：\n"
         "1) 只输出 JSON，不要输出解释性文字。\n"
-        "2) 只翻译【待翻译条目】中列出的 text_hash，输出格式必须是："
-        "{\"translations\": {\"<text_hash>\": \"<value>\"}}，逐条对应，不要遗漏、不要新增。\n"
-        "3) value 只能是以下三种之一：\n"
-        "   - 翻译后的简体中文文本；\n"
-        "   - \"NO_NEED_TO_TRANSLATE\"：原文已经是简体中文，无需翻译；\n"
-        "   - \"ABNORMAL_MESSAGE\"：原文是非常规消息（如纯占位符、乱码、无实义内容），无法翻译。\n"
-        "4) 译文必须保留原文中的 HTML 标签（如 <br>、<b>）、换行与空格格式，只翻译文本部分。\n"
-        "5) 结合对话上下文理解指代与行业术语，但不要编造原文不存在的信息。"
+        + "".join(
+            f"{index}) {rule}\n"
+            for index, rule in enumerate(TRANSLATION_PROTOCOL_RULES, start=2)
+        )
+        + f"{len(TRANSLATION_PROTOCOL_RULES) + 2}) 结合对话上下文理解指代与行业术语，但不要编造原文不存在的信息。"
     ),
     CHAT_REPLY_SUGGESTION_AGENT_APID: (
         "你是一名阿里巴巴国际站供应商客服，正在处理买家的询盘对话。\n"

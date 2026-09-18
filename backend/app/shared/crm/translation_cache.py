@@ -7,31 +7,25 @@ import hashlib
 from backend.app.shared.crm.sdk import TranslateManager
 
 
-def text_hash(text: str) -> str:
+def md5_text_key(text: str) -> str:
+    """32 位 MD5 主键；与 LLM 输入中的 ≤5 字符短哈希标记是两个概念。"""
     return hashlib.md5(text.encode("utf-8")).hexdigest()
 
 
-def _manager():
-    return TranslateManager()
-
-
-def translation_cached(text: str, manager=None) -> bool:
+def translation_cached(text: str) -> bool:
     if not text:
         return False
-    if manager is None:
-        manager = _manager()
-    return manager.get_translate(text_hash(text)) is not None
+    return TranslateManager().get_translate(md5_text_key(text)) is not None
 
 
-def get_translation(text: str, manager=None) -> str | None:
+def get_translation(text: str) -> str | None:
+    """None 表示未缓存；空串是 NO_NEED 哨兵（已缓存、无需翻译）。"""
     if not text:
         return None
-    if manager is None:
-        manager = _manager()
-    record = manager.get_translate(text_hash(text))
+    record = TranslateManager().get_translate(md5_text_key(text))
     if record is None:
         return None
-    return record.translation or None
+    return record.translation
 
 
-__all__ = ["get_translation", "text_hash", "translation_cached"]
+__all__ = ["get_translation", "md5_text_key", "translation_cached"]

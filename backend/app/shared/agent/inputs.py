@@ -16,19 +16,19 @@ def strip_html(text: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
-# 稳定的输出协议说明（放在用户输入的稳定前缀区，配合 LLM 前缀缓存）。
-_TRANSLATION_RULES = (
-    "翻译规则：\n"
-    "- 只翻译【待翻译条目】中列出的 text_hash 对应文本；"
-    "对话记录中没有 text_hash 标记的行仅作上下文，不要翻译。\n"
-    '- 输出 JSON：{"translations": {"<text_hash>": "<value>"}}，'
-    "逐条对应，不要遗漏、不要新增。\n"
-    "- value 只能是以下三种之一：\n"
-    "  - 翻译后的简体中文文本；\n"
-    '  - "NO_NEED_TO_TRANSLATE"：原文已经是简体中文，无需翻译；\n'
-    '  - "ABNORMAL_MESSAGE"：原文是非常规消息（如纯占位符、乱码、无实义内容），无法翻译。\n'
-    "- 译文必须保留原文中的 HTML 标签与换行格式，只翻译文本部分。"
+# 输出协议正文（system_presets 的提示词与这里的用户输入规则共享同一份，避免两处漂移）。
+TRANSLATION_PROTOCOL_RULES = (
+    "只翻译【待翻译条目】中列出的 text_hash；"
+    "对话记录中没有 text_hash 标记的行仅作上下文，不要翻译。",
+    '输出 JSON：{"translations": {"<text_hash>": "<value>"}}，逐条对应，不要遗漏、不要新增。',
+    "value 只能是以下三种之一：翻译后的简体中文文本；"
+    '"NO_NEED_TO_TRANSLATE"：原文已经是简体中文，无需翻译；'
+    '"ABNORMAL_MESSAGE"：原文是非常规消息（如纯占位符、乱码、无实义内容），无法翻译。',
+    "译文必须保留原文中的 HTML 标签（如 <br>、<b>）、换行与空格格式，只翻译文本部分。",
 )
+
+# 稳定的输出协议说明（放在用户输入的稳定前缀区，配合 LLM 前缀缓存）。
+_TRANSLATION_RULES = "翻译规则：\n" + "\n".join(f"- {line}" for line in TRANSLATION_PROTOCOL_RULES)
 
 
 def build_translation_input(
@@ -112,6 +112,7 @@ def build_chat_dialog_input(messages: list[dict[str, str]]) -> str:
 
 
 __all__ = [
+    "TRANSLATION_PROTOCOL_RULES",
     "build_analysis_input",
     "build_chat_dialog_input",
     "build_reply_suggestion_input",

@@ -2,14 +2,13 @@
 
 提交侧只入队并立即返回任务快照；LLM 调用由 ``translation`` 专用 worker 执行，
 期间不持有 ``account_lock``（长翻译不再阻塞账号路径请求和 GUI 任务）。译文写入
-全局 translate 缓存（text_hash 主键，不按账号 scope，跨 epoch 无数据串扰），因此
-入队时捕获的账号 epoch 仅用于任务开始前的取消判断，省去账号已切换后的无效 LLM
-开销。
+全局 translate 缓存（md5 主键，不按账号 scope，跨 epoch 无数据串扰），因此入队
+时捕获的账号 epoch 仅用于任务开始前的取消判断，省去账号已切换后的无效 LLM 开销。
 
 带 conversationId 提交的 job 会先加载该会话的**全量**历史记录作为 LLM 上下文
-（已翻译与未翻译消息一律纳入），并为全部待翻译文本一次性分配短哈希。每个分片
-的 LLM 调用复用同一份上下文与哈希表，稳定前缀（对话记录 + 规则）一致，利于
-LLM 提示词前缀缓存命中。
+（已翻译与未翻译消息一律纳入），并为真正待翻译的文本一次性分配短哈希（已缓存
+文本的上下文行不带标记）。每个分片的 LLM 调用复用同一份上下文与哈希表，稳定
+前缀（对话记录 + 规则）一致，利于 LLM 提示词前缀缓存命中。
 """
 
 from __future__ import annotations
@@ -19,9 +18,9 @@ from typing import Any
 
 from loguru import logger
 
-from backend.app.shared.agent.translation import assign_short_hashes
+from backend.app.shared.agent.translation import assign_short_hashes, clean_texts, translate_texts_to_crm
 from backend.app.shared.backend.account_context import account_lock, get_account_context
-from backend.app.shared.crm import request_translations
+from backend.app.shared.crm.translation_cache import translation_cached
 from backend.app.task_queue import TaskSnapshot, TaskStatus, get_translation_queue
 
 # Each LLM call carries at most this many texts; larger submissions are chunked.
@@ -40,7 +39,7 @@ def submit_translation_job(
     Trims, drops empties and dedupes while preserving order. Empty submissions
     return an already-completed snapshot so callers can treat it uniformly.
     """
-    ordered = list(dict.fromkeys(text.strip() for text in texts if text and text.strip()))
+    ordered = clean_texts(texts)
     if not ordered:
         return _completed_snapshot("没有需要翻译的内容")
 
@@ -48,21 +47,27 @@ def submit_translation_job(
         if not _epoch_matches(expected_epoch):
             return False, "账号已切换，翻译任务已取消"
         conversation = _conversation_context(conversation_id)
-        annotate = assign_short_hashes(ordered)
+        # 只为真正待翻译的文本分配短哈希：已缓存文本的上下文行不带标记。
+        pending = [text for text in ordered if force or not translation_cached(text)]
+        if not pending:
+            return True, "没有需要翻译的内容"
+        annotate = assign_short_hashes(pending)
         failed = 0
-        for start in range(0, len(ordered), TRANSLATION_CHUNK_SIZE):
-            chunk = ordered[start : start + TRANSLATION_CHUNK_SIZE]
+        for start in range(0, len(pending), TRANSLATION_CHUNK_SIZE):
+            chunk = pending[start : start + TRANSLATION_CHUNK_SIZE]
             try:
-                request_translations(
+                outcome = translate_texts_to_crm(
                     chunk, force=force, conversation=conversation, annotate=annotate
                 )
+                # Agent 遗漏条目按协议违约计为失败，可通过重试补齐。
+                failed += outcome.omitted
             except Exception:
                 # Partial success: chunks already written stay in the cache.
                 logger.exception("translation chunk failed ({} texts)", len(chunk))
                 failed += len(chunk)
         if failed:
-            return False, f"{failed}/{len(ordered)} 条翻译失败，可重试"
-        return True, f"已翻译 {len(ordered)} 条"
+            return False, f"{failed}/{len(pending)} 条翻译失败，可重试"
+        return True, f"已翻译 {len(pending)} 条"
 
     return get_translation_queue().enqueue(_run, description="Translation texts")
 

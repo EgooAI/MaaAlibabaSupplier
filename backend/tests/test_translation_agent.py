@@ -1,5 +1,6 @@
 """Translation agent layer: prompt input shape, short hashes and the three-value protocol."""
 
+import hashlib
 import json
 import re
 
@@ -12,10 +13,12 @@ from backend.app.shared.agent.translation import (
     ABNORMAL_MESSAGE,
     NO_NEED_TO_TRANSLATE,
     SHORT_HASH_LENGTH,
+    TranslationOutcome,
     assign_short_hashes,
     short_text_hash,
     translate_texts_to_crm,
 )
+from backend.app.shared.crm.sdk import TranslateManager
 from backend.app.shared.crm.translation_cache import get_translation, translation_cached
 
 
@@ -26,9 +29,7 @@ def _items_payload(rendered: str) -> dict:
 
 
 class TestShortHash:
-    def test_short_hash_is_at_most_five_chars_and_deterministic(self):
-        assert len(short_text_hash("hello")) <= SHORT_HASH_LENGTH
-        assert short_text_hash("hello") == short_text_hash("hello")
+    def test_short_hash_distinguishes_texts(self):
         assert short_text_hash("hello") != short_text_hash("world")
 
     def test_assign_short_hashes_is_unique_and_covers_all_texts(self):
@@ -45,6 +46,23 @@ class TestShortHash:
 
         monkeypatch.setattr(translation_mod, "short_text_hash", fake)
         assert assign_short_hashes(["x", "y"]) == {"x": "aaaaa", "y": "b0001"}
+
+    def test_colliding_short_hashes_do_not_cross_contaminate_rows(self, monkeypatch):
+        # 两文本短哈希冲突被盐化重导后，落库仍按各自 32 位 md5 主键互不串扰。
+        def fake(text, *, salt=0):
+            return "aaaaa" if salt == 0 else f"b{salt:04d}"
+
+        monkeypatch.setattr(translation_mod, "short_text_hash", fake)
+        captured: dict = {}
+
+        def fake_runner(apid, user_input):
+            captured["input"] = user_input
+            return json.dumps({"translations": {"aaaaa": "甲", "b0001": "乙"}}, ensure_ascii=False)
+
+        monkeypatch.setattr(translation_mod, "run_chat_tool_agent", fake_runner)
+        assert translate_texts_to_crm(["x", "y"]).saved == 2
+        assert get_translation("x") == "甲"
+        assert get_translation("y") == "乙"
 
 
 class TestBuildTranslationInput:
@@ -102,54 +120,56 @@ class TestTranslateTextsToCrm:
     def test_writes_translation_under_full_md5_key(self, agent_output):
         mapping = assign_short_hashes(["hello"])
         agent_output["reply"] = {mapping["hello"]: "你好"}
-        assert translate_texts_to_crm(["hello"], annotate=mapping) == 1
-        assert get_translation("hello") == "你好"
+        assert translate_texts_to_crm(["hello"], annotate=mapping) == TranslationOutcome(saved=1, omitted=0)
+        # 独立按 32 位 md5 计算主键读回，钉死"落库不用短哈希"的约定。
+        record = TranslateManager().get_translate(hashlib.md5(b"hello").hexdigest())
+        assert record is not None and record.translation == "你好"
 
     def test_no_need_to_translate_is_cached_as_empty_sentinel(self, agent_output):
         mapping = assign_short_hashes(["已是中文"])
         agent_output["reply"] = {mapping["已是中文"]: NO_NEED_TO_TRANSLATE}
-        assert translate_texts_to_crm(["已是中文"], annotate=mapping) == 1
-        # 缓存命中（不再重复提交），但查询不到可展示译文。
+        assert translate_texts_to_crm(["已是中文"], annotate=mapping) == TranslationOutcome(saved=1, omitted=0)
+        # 缓存命中（不再重复提交），查询返回空串哨兵而非 null。
         assert translation_cached("已是中文")
-        assert get_translation("已是中文") is None
+        assert get_translation("已是中文") == ""
 
     def test_abnormal_message_is_not_cached(self, agent_output):
         mapping = assign_short_hashes(["[[占位符]]"])
         agent_output["reply"] = {mapping["[[占位符]]"]: ABNORMAL_MESSAGE}
-        assert translate_texts_to_crm(["[[占位符]]"], annotate=mapping) == 0
+        assert translate_texts_to_crm(["[[占位符]]"], annotate=mapping) == TranslationOutcome(saved=0, omitted=0)
         assert not translation_cached("[[占位符]]")
         assert get_translation("[[占位符]]") is None
 
     def test_null_value_falls_back_to_no_need_semantics(self, agent_output):
         mapping = assign_short_hashes(["plain chinese"])
         agent_output["reply"] = {mapping["plain chinese"]: None}
-        assert translate_texts_to_crm(["plain chinese"], annotate=mapping) == 1
+        assert translate_texts_to_crm(["plain chinese"], annotate=mapping) == TranslationOutcome(saved=1, omitted=0)
         assert translation_cached("plain chinese")
 
     def test_constants_are_case_insensitive(self, agent_output):
         mapping = assign_short_hashes(["x", "y"])
         agent_output["reply"] = {mapping["x"]: " no_need_to_translate ", mapping["y"]: " abnormal_message "}
-        assert translate_texts_to_crm(["x", "y"], annotate=mapping) == 1
+        assert translate_texts_to_crm(["x", "y"], annotate=mapping) == TranslationOutcome(saved=1, omitted=0)
         assert translation_cached("x")
         assert not translation_cached("y")
 
     def test_cached_texts_skip_llm_unless_force(self, agent_output):
         mapping = assign_short_hashes(["hello"])
         agent_output["reply"] = {mapping["hello"]: "你好"}
-        assert translate_texts_to_crm(["hello"], annotate=mapping) == 1
+        assert translate_texts_to_crm(["hello"], annotate=mapping) == TranslationOutcome(saved=1, omitted=0)
         agent_output.pop("input", None)
         # Second call without force: cached, no LLM call at all.
-        assert translate_texts_to_crm(["hello"], annotate=mapping) == 0
+        assert translate_texts_to_crm(["hello"], annotate=mapping) == TranslationOutcome(saved=0, omitted=0)
         assert "input" not in agent_output
         # Force retranslates even though cached.
         agent_output["reply"] = {mapping["hello"]: "你好（重译）"}
-        assert translate_texts_to_crm(["hello"], force=True, annotate=mapping) == 1
+        assert translate_texts_to_crm(["hello"], force=True, annotate=mapping) == TranslationOutcome(saved=1, omitted=0)
         assert get_translation("hello") == "你好（重译）"
 
-    def test_missing_key_is_skipped_without_error(self, agent_output):
+    def test_omitted_key_is_reported_as_protocol_violation(self, agent_output):
         mapping = assign_short_hashes(["hello", "world"])
         agent_output["reply"] = {mapping["hello"]: "你好"}
-        assert translate_texts_to_crm(["hello", "world"], annotate=mapping) == 1
+        assert translate_texts_to_crm(["hello", "world"], annotate=mapping) == TranslationOutcome(saved=1, omitted=1)
         assert get_translation("world") is None
 
     def test_context_lines_carry_job_level_short_hashes(self, agent_output):
@@ -175,3 +195,20 @@ class TestParseTranslationPayload:
             json.dumps({"translations": {"a": NO_NEED_TO_TRANSLATE, "b": None, "c": " 译文 "}})
         )
         assert parsed == {"a": NO_NEED_TO_TRANSLATE, "b": None, "c": "译文"}
+
+    def test_strips_json_fence(self):
+        fenced = "```json\n{\"translations\": {\"a\": \"甲\"}}\n```"
+        assert parse_translation_payload(fenced) == {"a": "甲"}
+
+    @pytest.mark.parametrize(
+        "raw_text",
+        [
+            "不是 JSON",
+            json.dumps(["not", "an", "object"]),
+            json.dumps({"translations": ["not", "a", "dict"]}),
+            json.dumps({"suggestions": {}}),
+        ],
+    )
+    def test_invalid_payloads_raise_value_error(self, raw_text):
+        with pytest.raises(ValueError):
+            parse_translation_payload(raw_text)

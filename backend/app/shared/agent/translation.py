@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from typing import NamedTuple
 
 from loguru import logger
 
@@ -9,7 +10,7 @@ from backend.app.shared.agent.runner import run_chat_tool_agent
 from backend.app.shared.agent.system_agents import CHAT_TRANSLATION_AGENT_APID
 from backend.app.shared.agent.output_normalizers import parse_translation_payload
 from backend.app.shared.crm.sdk import Translate, TranslateManager
-from backend.app.shared.crm.translation_cache import text_hash, translation_cached
+from backend.app.shared.crm.translation_cache import md5_text_key, translation_cached
 
 # Agent 输出协议常量：区分“无需翻译”与“非常规消息”两种无译文情形。
 NO_NEED_TO_TRANSLATE = "NO_NEED_TO_TRANSLATE"
@@ -31,85 +32,6 @@ def short_text_hash(text: str, *, salt: int = 0) -> str:
     return "".join(reversed(chars))
 
 
-def assign_short_hashes(texts: list[str]) -> dict[str, str]:
-    """Deterministic text -> short-hash map; in-set collisions get salted re-derivation."""
-    mapping: dict[str, str] = {}
-    used: set[str] = set()
-    for text in dict.fromkeys(texts):
-        salt = 0
-        candidate = short_text_hash(text)
-        while candidate in used:
-            salt += 1
-            candidate = short_text_hash(text, salt=salt)
-        mapping[text] = candidate
-        used.add(candidate)
-    return mapping
-
-
-def translate_texts_to_crm(
-    texts: list[str],
-    *,
-    force: bool = False,
-    conversation: list[tuple[str, str, str]] | None = None,
-    annotate: dict[str, str] | None = None,
-) -> int:
-    """Translate chat texts via the translation agent and upsert CRM Translate rows.
-
-    *conversation* is the full ``(timestamp, speaker, text)`` transcript used as LLM
-    context: every historical line is included, translated or not. *annotate* maps the
-    job-level target texts to short hashes — transcript lines carrying ``text_hash=``
-    are pending translation, lines without the marker are context only. When omitted it
-    is derived from *texts* (e.g. the single-message endpoints).
-
-    Already-cached texts are skipped unless *force* (retranslation is the exception).
-    Agent protocol values: translation text / NO_NEED_TO_TRANSLATE (already Chinese,
-    cached as an empty sentinel) / ABNORMAL_MESSAGE (non-textual noise, never cached).
-    """
-    cleaned = list(dict.fromkeys(text.strip() for text in texts if text and text.strip()))
-    targets = [text for text in cleaned if force or not translation_cached(text)]
-    if not targets:
-        return 0
-
-    if annotate is None:
-        mapping = assign_short_hashes(targets)
-    else:
-        # Top up missing keys (e.g. texts the caller did not pre-assign) collision-safe.
-        mapping = dict(annotate)
-        used = set(mapping.values())
-        for text in targets:
-            if text in mapping:
-                continue
-            mapping[text] = _fresh_short_hash(text, used)
-    items = [{"text_hash": mapping[text], "text": text} for text in targets]
-
-    user_input = build_translation_input(items, conversation=conversation, annotate=mapping)
-    if not user_input:
-        return 0
-
-    translations = parse_translation_payload(
-        run_chat_tool_agent(CHAT_TRANSLATION_AGENT_APID, user_input)
-    )
-    manager = TranslateManager()
-    saved = 0
-    for item in items:
-        short = item["text_hash"]
-        if short not in translations:
-            logger.warning("Translation agent omitted text_hash={}", short)
-            continue
-        raw = translations[short]
-        value = NO_NEED_TO_TRANSLATE if raw is None else raw.strip()
-        normalized = value.upper()
-        if normalized == ABNORMAL_MESSAGE:
-            # 非常规消息不写缓存，保持未翻译态，下次仍由 Agent 判定。
-            continue
-        no_need = normalized == NO_NEED_TO_TRANSLATE
-        manager.upsert_translate(
-            Translate(text_hash=text_hash(item["text"]), translation="" if no_need else value)
-        )
-        saved += 1
-    return saved
-
-
 def _fresh_short_hash(text: str, used: set[str]) -> str:
     salt = 0
     candidate = short_text_hash(text)
@@ -120,11 +42,92 @@ def _fresh_short_hash(text: str, used: set[str]) -> str:
     return candidate
 
 
+def assign_short_hashes(texts: list[str]) -> dict[str, str]:
+    """Deterministic text -> short-hash map; in-set collisions get salted re-derivation."""
+    mapping: dict[str, str] = {}
+    used: set[str] = set()
+    for text in dict.fromkeys(texts):
+        mapping[text] = _fresh_short_hash(text, used)
+    return mapping
+
+
+def clean_texts(texts: list[str]) -> list[str]:
+    """Trim, drop empties, dedupe preserving order."""
+    return list(dict.fromkeys(text.strip() for text in texts if text and text.strip()))
+
+
+class TranslationOutcome(NamedTuple):
+    saved: int
+    omitted: int
+
+
+def translate_texts_to_crm(
+    texts: list[str],
+    *,
+    force: bool = False,
+    conversation: list[tuple[str, str, str]] | None = None,
+    annotate: dict[str, str] | None = None,
+) -> TranslationOutcome:
+    """Translate chat texts via the translation agent and upsert CRM Translate rows.
+
+    *conversation* is the full ``(timestamp, speaker, text)`` transcript used as LLM
+    context: every historical line is included, translated or not. *annotate* maps the
+    job-level pending texts to short hashes — transcript lines carrying ``text_hash=``
+    are pending translation, lines without the marker are context only. When omitted it
+    is derived from *texts*.
+
+    Already-cached texts are skipped unless *force* (retranslation is the exception).
+    Agent protocol values: translation text / NO_NEED_TO_TRANSLATE (already Chinese,
+    cached as an empty sentinel) / ABNORMAL_MESSAGE (non-textual noise, never cached).
+    Omitted keys count as protocol violations and surface in the outcome.
+    """
+    targets = [text for text in clean_texts(texts) if force or not translation_cached(text)]
+    if not targets:
+        return TranslationOutcome(saved=0, omitted=0)
+
+    # Top up missing keys (e.g. texts the caller did not pre-assign) collision-safe.
+    mapping = dict(annotate or {})
+    used = set(mapping.values())
+    for text in targets:
+        if text not in mapping:
+            mapping[text] = _fresh_short_hash(text, used)
+    items = [{"text_hash": mapping[text], "text": text} for text in targets]
+
+    user_input = build_translation_input(items, conversation=conversation, annotate=mapping)
+
+    translations = parse_translation_payload(
+        run_chat_tool_agent(CHAT_TRANSLATION_AGENT_APID, user_input)
+    )
+    manager = TranslateManager()
+    saved = 0
+    omitted = 0
+    for item in items:
+        short = item["text_hash"]
+        if short not in translations:
+            logger.warning("Translation agent omitted text_hash={} text={!r}", short, item["text"])
+            omitted += 1
+            continue
+        raw = translations[short]
+        value = NO_NEED_TO_TRANSLATE if raw is None else raw.strip()
+        normalized = value.upper()
+        if normalized == ABNORMAL_MESSAGE:
+            # 非常规消息不写缓存，保持未翻译态，下次仍由 Agent 判定。
+            continue
+        no_need = normalized == NO_NEED_TO_TRANSLATE
+        manager.upsert_translate(
+            Translate(text_hash=md5_text_key(item["text"]), translation="" if no_need else value)
+        )
+        saved += 1
+    return TranslationOutcome(saved=saved, omitted=omitted)
+
+
 __all__ = [
     "ABNORMAL_MESSAGE",
     "NO_NEED_TO_TRANSLATE",
     "SHORT_HASH_LENGTH",
+    "TranslationOutcome",
     "assign_short_hashes",
+    "clean_texts",
     "short_text_hash",
     "translate_texts_to_crm",
 ]
