@@ -10,7 +10,8 @@ import { SyncStatus } from "./SyncStatus";
 export function ConnectionFlowCard() {
   const { snapshot, error, refreshing, refresh } = useAccount();
   const items = snapshot ? flowSteps(snapshot) : [];
-  const current = Math.max(0, items.findIndex((step) => step.status !== "finish"));
+  const firstUnfinished = items.findIndex((step) => step.status !== "finish");
+  const current = firstUnfinished === -1 ? items.length : firstUnfinished;
   return (
     <Card title="接入进度" extra={<Button loading={refreshing} onClick={() => void refresh()}>刷新状态</Button>}>
       <Space orientation="vertical" size="middle" className="w-full">

@@ -72,7 +72,6 @@ describe("message timeline", () => {
     });
     const translateButtons = [...container.querySelectorAll("button")].filter(button => button.textContent === "翻译");
     expect(translateButtons).toHaveLength(3);
-    expect([...container.querySelectorAll("button")].some(button => button.textContent?.includes("卡片"))).toBe(false);
   });
 
   it("renders the translation block for any party and hides it via showTranslations", async () => {

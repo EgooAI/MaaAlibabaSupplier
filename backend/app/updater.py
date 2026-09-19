@@ -230,7 +230,7 @@ class Updater:
             pass
         self.state = {"supported": False, "reason": "Manual updates require the installed Windows main launcher.",
                       "phase": "idle", "current": {"version": self.build.get("version", "development"),
-                                                    "sha": self.build.get("sha")},
+                                                    "sha": self.build.get("sha"), "run_id": self.build.get("run_id")},
                       "source": source, "candidate": None, "downloaded_bytes": 0, "total_bytes": None,
                       "error": None, "last_result": None}
         try:

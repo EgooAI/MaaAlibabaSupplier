@@ -2,7 +2,7 @@ export interface UpdateState {
   supported: boolean;
   reason: string | null;
   phase: "idle" | "checking" | "available" | "downloading" | "ready" | "installing" | "error";
-  current: { version: string; sha: string | null };
+  current: { version: string; sha: string | null; run_id?: number | null };
   source: { repository: string; branch: string; workflow: string; artifact: string };
   candidate: {
     id: string;

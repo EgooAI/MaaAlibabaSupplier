@@ -87,8 +87,8 @@ function HealthModulePanel({ module }: { module: HealthModule }) {
 function SyncDetailTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="h-full rounded-lg border border-slate-200 bg-white p-3">
-      <Typography.Text type="secondary" className="block text-xs">{label}</Typography.Text>
-      <Typography.Text strong className="break-all">{value}</Typography.Text>
+      <Typography.Text strong className="block">{label}</Typography.Text>
+      <Typography.Text className="break-all">{value}</Typography.Text>
     </div>
   );
 }

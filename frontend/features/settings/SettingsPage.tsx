@@ -63,18 +63,13 @@ export function AccountSetup() {
   return (
     <Row gutter={[16, 16]} className="w-full">
       <Col span={24}><ConnectionFlowCard /></Col>
-      <Col xs={24} xl={12}>
-        <Space orientation="vertical" size="large" className="w-full">
-          <DataDirCard controls={dataDirControls} />
-          <AliIdentityCard key={JSON.stringify([snapshot?.data_dir.path, snapshot?.account.epoch])} dataDirOk={snapshot?.data_dir.state === "ok"} />
-        </Space>
+      <Col xs={24} xl={12}><DataDirCard controls={dataDirControls} /></Col>
+      <Col xs={24} xl={12}><SyncCard /></Col>
+      <Col span={24}>
+        <AliIdentityCard key={JSON.stringify([snapshot?.data_dir.path, snapshot?.account.epoch])} dataDirOk={snapshot?.data_dir.state === "ok"} />
       </Col>
-      <Col xs={24} xl={12}>
-        <Space orientation="vertical" size="large" className="w-full">
-          <SyncCard />
-          <ClientCard />
-        </Space>
-      </Col>
+      <Col xs={24} xl={12}><ClientCard /></Col>
+      <Col xs={24} xl={12}><InboxSettingsCard /></Col>
     </Row>
   );
 }
@@ -99,7 +94,6 @@ export function SettingsPage() {
   return (
     <Space orientation="vertical" size="large" className="w-full">
       <AccountSetup />
-      <InboxSettingsCard />
       <UpdateCard />
 
       <Card title="程序控制">

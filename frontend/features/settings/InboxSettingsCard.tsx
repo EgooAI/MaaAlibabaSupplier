@@ -58,7 +58,7 @@ function InboxSettingsEditor() {
     }
   }
 
-  return <Card title="回复超时" className="w-full max-w-md">
+  return <Card title="回复超时">
     <Space orientation="vertical" className="w-full">
       <Typography.Text type="secondary">默认 24 小时，可设 1 至 168 小时。设置按当前账号和数据目录保存；历史待确认不计超时。</Typography.Text>
       {error ? <Alert type="warning" title="设置读取失败" action={<Button onClick={() => setRetry((value) => value + 1)}>重试</Button>} /> : null}

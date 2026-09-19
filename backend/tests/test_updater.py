@@ -83,7 +83,7 @@ def test_observation_is_offline_and_development_unsupported(monkeypatch, tmp_pat
     manager.register_runtime()
     state = manager.snapshot()
     assert state["supported"] is False and state["reason"]
-    assert state["phase"] == "idle" and state["current"] == {"version": "development", "sha": None}
+    assert state["phase"] == "idle" and state["current"] == {"version": "development", "sha": None, "run_id": None}
     assert state["source"]["branch"] == "main"
     with pytest.raises(AppError):
         manager.check()

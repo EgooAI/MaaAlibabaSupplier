@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { CloudDownloadOutlined, ReloadOutlined, SyncOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, Descriptions, Progress, Space, Spin, Tag, Typography } from "antd";
+import { CloudDownloadOutlined, InfoCircleOutlined, ReloadOutlined, SyncOutlined } from "@ant-design/icons";
+import { Alert, Button, Card, Descriptions, Progress, Space, Spin, Tag, Tooltip, Typography } from "antd";
 import { ActionConfirmModal } from "@/components/ActionConfirmModal";
 import { useAuth } from "@/features/auth/AuthProvider";
 import type { UpdateState } from "@/types/update";
@@ -12,6 +12,27 @@ const phaseLabels: Record<UpdateState["phase"], string> = {
   idle: "待检查", checking: "正在检查", available: "有可用版本", downloading: "正在下载",
   ready: "可安装", installing: "正在更新", error: "更新出错",
 };
+
+function githubLink(repository: string, path: string, children: string) {
+  return repository
+    ? <Typography.Link href={`https://github.com/${repository}${path}`} target="_blank" rel="noopener noreferrer">{children}</Typography.Link>
+    : children;
+}
+
+function commitLink(repository: string, sha: string | null) {
+  return sha ? githubLink(repository, `/commit/${sha}`, sha) : "未知";
+}
+
+function SourceDetails({ source }: { source: UpdateState["source"] }) {
+  return (
+    <div className="space-y-1">
+      <div>仓库：{source.repository || "未配置"}</div>
+      <div>分支名称：{source.branch || "未配置"}</div>
+      <div>工作流：{source.workflow || "未配置"}</div>
+      <div>构建产物：{source.artifact || "未配置"}</div>
+    </div>
+  );
+}
 
 export function UpdateCard() {
   const { phase, generation } = useAuth();
@@ -27,25 +48,33 @@ function UpdateControls() {
   const canDownload = candidate && (state.phase === "available" || state.phase === "error");
   const progress = state?.total_bytes && state.total_bytes > 0
     ? Math.min(100, Math.max(0, Math.round(state.downloaded_bytes / state.total_bytes * 100))) : null;
+  const repository = state?.source.repository ?? "";
+  const branch = state?.source.branch ?? "";
+  const title = state ? (
+    <Space size={4} wrap>
+      <span>目标分支：</span>
+      {branch ? githubLink(repository, `/tree/${branch}`, branch) : "未配置"}
+      <span>（{repository || "未配置"}）</span>
+      <Tooltip title={<SourceDetails source={state.source} />}>
+        <InfoCircleOutlined aria-label="更新来源详情" className="cursor-help text-slate-400" />
+      </Tooltip>
+    </Space>
+  ) : "应用更新";
 
-  return <Card title="应用更新" extra={<Tag color={restarting ? "processing" : state?.phase === "ready" ? "success" : "default"}>{restarting ? "等待重新连接" : state ? phaseLabels[state.phase] : error ? "状态不可用" : "读取状态"}</Tag>}>
+  return <Card title={title} extra={<Tag color={restarting ? "processing" : state?.phase === "ready" ? "success" : "default"}>{restarting ? "等待重新连接" : state ? phaseLabels[state.phase] : error ? "状态不可用" : "读取状态"}</Tag>}>
     <Space orientation="vertical" size="middle" className="w-full">
       <Typography.Text type="secondary">手动检查指定 GitHub Actions 来源并下载构建产物。页面不会自动检查新版本；安装后将立即重启程序。</Typography.Text>
       {!state && pending ? <Spin size="small" aria-label="读取更新状态" /> : null}
       {state ? <>
         <Descriptions size="small" column={{ xs: 1, sm: 2, lg: 3 }} styles={{ content: { overflowWrap: "anywhere", minWidth: 0 } }} items={[
-          { key: "version", label: "当前版本", children: state.current.version },
-          { key: "sha", label: "当前提交", children: state.current.sha ?? "未知" },
-          { key: "repo", label: "仓库", children: state.source.repository || "未配置" },
-          { key: "branch", label: "分支", children: state.source.branch || "未配置" },
-          { key: "workflow", label: "工作流", children: state.source.workflow || "未配置" },
-          { key: "artifact", label: "构建产物", children: state.source.artifact || "未配置" },
+          { key: "version", label: "当前版本", children: state.current.run_id ? githubLink(repository, `/actions/runs/${state.current.run_id}`, state.current.version) : state.current.version },
+          { key: "sha", label: "当前提交", children: commitLink(repository, state.current.sha) },
         ]} />
         {!state.supported ? <Alert type="info" showIcon title="此运行环境不支持应用更新" description={state.reason || "请使用支持更新的打包版本；源码开发环境无法安装更新。"} /> : null}
         {candidate ? <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
           <Descriptions title="候选版本" size="small" column={{ xs: 1, sm: 2 }} styles={{ content: { overflowWrap: "anywhere", minWidth: 0 } }} items={[
             { key: "version", label: "版本", children: candidate.version },
-            { key: "sha", label: "提交", children: candidate.sha },
+            { key: "sha", label: "提交", children: commitLink(repository, candidate.sha) },
             { key: "date", label: "构建时间", children: candidate.created_at },
             { key: "run", label: "构建记录", children: /^https:\/\//i.test(candidate.url) ? <Typography.Link href={candidate.url} target="_blank" rel="noopener noreferrer">#{candidate.run_id} · 第 {candidate.run_attempt} 次</Typography.Link> : `#${candidate.run_id} · 第 ${candidate.run_attempt} 次` },
           ]} />

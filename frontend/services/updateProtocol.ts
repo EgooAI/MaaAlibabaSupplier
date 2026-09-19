@@ -21,6 +21,7 @@ export function parseUpdateState(value: unknown): UpdateState {
     || !isRecord(value.current)
     || typeof value.current.version !== "string"
     || !isNullableString(value.current.sha)
+    || (value.current.run_id !== undefined && value.current.run_id !== null && !isCount(value.current.run_id))
     || !isRecord(value.source)
     || typeof value.source.repository !== "string"
     || typeof value.source.branch !== "string"

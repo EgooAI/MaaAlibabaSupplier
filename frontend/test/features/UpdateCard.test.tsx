@@ -16,6 +16,7 @@ vi.mock("antd", () => {
   const Group = ({ children }: { children?: ReactNode }) => <div>{children}</div>;
   return {
     Space: Group, Tag: Group,
+    Tooltip: ({ title, children }: { title?: ReactNode; children?: ReactNode }) => <div>{title}{children}</div>,
     Typography: { Text: Group, Paragraph: Group, Link: ({ children, ...props }: { children: ReactNode; href: string }) => <a {...props}>{children}</a> },
     Card: ({ title, extra, children }: { title: string; extra?: ReactNode; children: ReactNode }) => <section>{title}{extra}{children}</section>,
     Alert: ({ title, description }: { title: ReactNode; description?: ReactNode }) => <aside>{title}{description}</aside>,

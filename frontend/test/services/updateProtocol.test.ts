@@ -4,7 +4,7 @@ import type { UpdateState } from "@/types/update";
 
 const snapshot: UpdateState = {
   supported: true, reason: null, phase: "available",
-  current: { version: "v1", sha: null },
+  current: { version: "v1", sha: null, run_id: 7 },
   source: { repository: "example/app", branch: "main", workflow: "build.yml", artifact: "app" },
   candidate: { id: "42:2", version: "v2", sha: "abc123", run_id: 42, run_attempt: 2, created_at: "2026-09-18T10:00:00Z", url: "https://github.com/example/app/actions/runs/42" },
   downloaded_bytes: 0, total_bytes: null, error: null,
@@ -50,5 +50,6 @@ describe("update protocol", () => {
     for (const field of ["run_id", "run_attempt"]) {
       expect(() => parseUpdateState({ ...snapshot, candidate: { ...snapshot.candidate, [field]: count } })).toThrow("更新状态响应无效");
     }
+    expect(() => parseUpdateState({ ...snapshot, current: { ...snapshot.current, run_id: count } })).toThrow("更新状态响应无效");
   });
 });

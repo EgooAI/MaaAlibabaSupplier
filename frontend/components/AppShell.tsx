@@ -150,8 +150,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           </Typography.Title>
           <div className="flex min-w-0 items-center gap-2">
             {!blocked && snapshot?.capabilities.read_chat ? <AccountProfile key={`${snapshot.account.epoch}:${generation}`} /> : <Typography.Text type="secondary">{snapshot?.account.self_ali_id || "尚未选择账号"}</Typography.Text>}
-            <Tooltip title={temporary ? "临时登录，刷新后需重新登录" : "退出登录"}>
-              <Button icon={<LogoutOutlined />} aria-label="退出登录" onClick={() => void logout()}><span className="hidden sm:inline">{temporary ? "退出临时登录" : "退出登录"}</span></Button>
+            <Tooltip title={temporary ? "临时登录，刷新后需重新登录" : "本机注销"}>
+              <Button icon={<LogoutOutlined />} aria-label={temporary ? "退出临时登录" : "本机注销"} onClick={() => void logout()}><span className="hidden sm:inline">{temporary ? "退出临时登录" : "本机注销"}</span></Button>
             </Tooltip>
           </div>
         </Header>
