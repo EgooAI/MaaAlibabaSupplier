@@ -65,24 +65,23 @@ export function conversationTimeLabel(value: string) {
   return formatMonthDay(value);
 }
 
-export function mergeMessageTranslations(messages: ChatMessage[], translations: Array<{ messageId: string; translatedContent: string | null }>) {
-  const translationMap = new Map(
-    translations
-      .filter((item) => typeof item.translatedContent === "string" && item.translatedContent.trim())
-      .map((item) => [item.messageId, item.translatedContent as string]),
-  );
-  if (!translationMap.size) return messages;
-  return messages.map((message) => {
-    const translatedContent = translationMap.get(message.id);
-    return translatedContent === undefined ? message : { ...message, translatedContent };
-  });
+/** 可翻译消息：非卡片、不携带卡片、内容非空（文本气泡）。 */
+export function isTranslatableMessage(message: ChatMessage) {
+  return message.role !== "card" && !message.card && message.content.trim().length > 0;
+}
+
+/** 已解决 = 已缓存：非空译文，或空串 NO_NEED 哨兵（无需翻译）。null 表示尚未缓存。 */
+export function isResolvedTranslation(value: string | null | undefined): value is string {
+  return typeof value === "string";
 }
 
 /**
  * Merge text-keyed cache lookups into messages.
  *
- * Keyed by content, so stale responses for edited messages never apply;
- * null/empty values are ignored instead of clearing existing translations.
+ * Keyed by trimmed content, so stale responses for edited messages never apply;
+ * null values are ignored instead of clearing existing translations. The empty
+ * NO_NEED sentinel is resolved but carries no renderable translation, so it is
+ * ignored here too (the caller tracks it via isResolvedTranslation).
  */
 export function mergeMessageTextTranslations(messages: ChatMessage[], translations: Record<string, string | null>) {
   const byText = new Map(
@@ -93,7 +92,7 @@ export function mergeMessageTextTranslations(messages: ChatMessage[], translatio
   if (!byText.size) return messages;
   let changed = false;
   const merged = messages.map((message) => {
-    const translatedContent = byText.get(message.content);
+    const translatedContent = byText.get(message.content.trim());
     if (translatedContent === undefined || translatedContent === message.translatedContent) return message;
     changed = true;
     return { ...message, translatedContent };
@@ -102,13 +101,12 @@ export function mergeMessageTextTranslations(messages: ChatMessage[], translatio
 }
 
 export function mergeConversationDetail(current: ConversationDetail, incoming: ConversationDetail): ConversationDetail {
-  const translationMap = new Map(current.messages.flatMap((item) => item.translatedContent ? [[item.id, item.translatedContent] as const] : []));
   return {
     ...incoming,
-    analysis: incoming.analysis ?? current.analysis,
+    analysis: current.analysis ?? incoming.analysis,
     messages: incoming.messages.map((item) => {
-      const translatedContent = translationMap.get(item.id);
-      return translatedContent === undefined ? item : { ...item, translatedContent };
+      const old = current.messages.find((candidate) => candidate.id === item.id);
+      return old?.content === item.content && old.translatedContent ? { ...item, translatedContent: old.translatedContent } : item;
     }),
   };
 }

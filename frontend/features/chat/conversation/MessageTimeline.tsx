@@ -35,10 +35,13 @@ export function MessageTimeline({
         const isSystem = message.role === "system" || message.role === "unknown";
         const card = message.card;
         const canTranslate = message.role !== "card" && !card && Boolean(message.content.trim());
+        const translation = canTranslate ? message.translatedContent : undefined;
         const pending = canTranslate && Boolean(pendingIds?.has(message.id));
         const failed = canTranslate && Boolean(failedIds?.has(message.id));
-        const showTranslation = canTranslate && showTranslations && Boolean(message.translatedContent);
-        const showTranslateAction = canTranslate && !showTranslation && !pending && !message.translatedContent && onTranslate;
+        // 行内翻译操作与工具栏一致：任一翻译任务在途时禁用，避免覆盖在途 job。
+        const jobBusy = (pendingIds?.size ?? 0) > 0;
+        const showTranslation = showTranslations && Boolean(translation);
+        const showTranslateAction = canTranslate && !pending && !message.translatedContent && onTranslate;
         return (
           <div key={message.id} className={`flex ${isSelfSide ? "justify-end" : "justify-start"}`}>
             <div className={`flex min-w-0 max-w-full items-start gap-2 sm:max-w-[88%] sm:gap-3 ${isSelfSide ? "flex-row-reverse" : ""}`}>
@@ -70,7 +73,7 @@ export function MessageTimeline({
                     <button
                       type="button"
                       className="mt-2 text-xs text-red-500 underline-offset-2 hover:underline"
-                      disabled={!onTranslate}
+                      disabled={jobBusy || !onTranslate}
                       onClick={() => onTranslate?.(message)}
                     >
                       翻译失败，点击重试
@@ -79,16 +82,17 @@ export function MessageTimeline({
                     <button
                       type="button"
                       className="mt-2 text-xs text-blue-500 underline-offset-2 hover:underline"
+                      disabled={jobBusy || !onTranslate}
                       onClick={() => onTranslate?.(message)}
                     >
                       翻译
                     </button>
                   ) : null}
-                  {showTranslation ? (
+                  {showTranslation && translation ? (
                     <div className="mt-3 border-t border-slate-200/70 pt-2">
                       <div className="flex items-start gap-1.5 text-slate-500">
                         <TranslationOutlined aria-hidden className="mt-[3px] shrink-0 text-xs text-slate-400" />
-                        <div className="min-w-0 flex-1 whitespace-pre-wrap break-words" dangerouslySetInnerHTML={renderMessageHtml(message.translatedContent!)} />
+                        <div className="min-w-0 flex-1 whitespace-pre-wrap break-words" dangerouslySetInnerHTML={renderMessageHtml(translation)} />
                         {canTranslate ? (
                           <Tooltip title="重新翻译本条消息">
                             <Button
@@ -97,7 +101,7 @@ export function MessageTimeline({
                               type="text"
                               aria-label="重新翻译本条消息"
                               icon={<ReloadOutlined />}
-                              disabled={!onTranslate}
+                              disabled={jobBusy || !onTranslate}
                               onClick={() => onTranslate?.(message, true)}
                             />
                           </Tooltip>

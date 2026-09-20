@@ -115,7 +115,7 @@ function prepareAccountRequest(path: string, init?: RequestInit) {
   const ticket = captureAccount();
   const { capabilities, client } = accountSession.get().snapshot!;
   const operates = /\/goto-contact$/.test(path) || (/\/conversations\/[^/]+\/messages$/.test(path) && init?.method === "POST") || /\/outbox\/[^/]+\/(confirm|retry)$/.test(path);
-  const usesAi = /\/(suggestions|analysis|translate|retranslate)$/.test(path) || (path === "/api/messages/translations" && init?.method === "POST");
+  const usesAi = /\/(suggestions|analysis)$/.test(path) || (path === "/api/messages/translations" && init?.method === "POST");
   if (operates && !capabilities.operate_client) throw new Error("请先在设置中接入客户端并人工确认卖家身份");
   if (path === "/api/status/node-test" && !client.connected) throw new Error("请先在设置中接入客户端，再运行只读界面检查");
   if (usesAi && !capabilities.use_ai) throw new Error("AI 暂不可用，请检查账号数据和模型配置");

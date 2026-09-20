@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildConversationExport, dateGroup, dialogueCountGroup, dialogueCountOf, groupConversations, mergeConversationDetail, mergeMessageTranslations, mergeMessageTextTranslations, sortConversations } from "@/domain/chat/chatModel";
+import { buildConversationExport, dateGroup, dialogueCountGroup, dialogueCountOf, groupConversations, isTranslatableMessage, mergeConversationDetail, mergeMessageTextTranslations, sortConversations } from "@/domain/chat/chatModel";
 import type { ChatMessage, Conversation, ConversationDetail } from "@/types/chatCanonical";
 
 const summary = (id: string, updatedAt: string, replyState: Conversation["replyState"] = "waiting_customer"): Conversation => ({
@@ -73,18 +73,6 @@ describe("conversation domain model", () => {
     expect(dateGroup("未知时间", now)).toBe("更早");
   });
 
-  it("merges message translations by message id, ignoring null and empty values", () => {
-    const merged = mergeMessageTranslations(messages, [
-      { messageId: "message-1", translatedContent: "Quote needed" },
-      { messageId: "message-2", translatedContent: null },
-    ]);
-    expect(merged[0]).toMatchObject({ id: "message-1", translatedContent: "Quote needed" });
-    expect(merged[1]).toBe(messages[1]);
-    const cleared = mergeMessageTranslations([{ ...messages[0], translatedContent: "Quote needed" }, messages[1]], [{ messageId: "message-1", translatedContent: null }]);
-    expect(cleared[0].translatedContent).toBe("Quote needed");
-    expect(mergeMessageTranslations(messages, [{ messageId: "message-1", translatedContent: "  " }])[0].translatedContent).toBeUndefined();
-  });
-
   it("merges text-keyed translations for every party, keyed strictly by content", () => {
     const allParties: ChatMessage[] = [
       messages[0],
@@ -102,6 +90,17 @@ describe("conversation domain model", () => {
     const replaced = mergeMessageTextTranslations(source, { "需要报价": "Refreshed" });
     expect(replaced).not.toBe(source);
     expect(replaced[0].translatedContent).toBe("Refreshed");
+    // 查询键来自 trim 后的文本：首尾带空白的消息也能命中。
+    const padded = [{ ...messages[0], content: " 需要报价 " }];
+    expect(mergeMessageTextTranslations(padded, { "需要报价": "Quote needed" })[0].translatedContent).toBe("Quote needed");
+  });
+
+  it("treats only textual, card-free messages as translatable", () => {
+    expect(isTranslatableMessage(messages[0])).toBe(true);
+    expect(isTranslatableMessage({ ...messages[0], role: "card" })).toBe(false);
+    // 携带卡片载荷的消息即使角色不是卡片也不可翻译（UI 不渲染其译文）。
+    expect(isTranslatableMessage({ ...messages[0], card: { id: "card-1" } as ChatMessage["card"] })).toBe(false);
+    expect(isTranslatableMessage({ ...messages[0], content: "   " })).toBe(false);
   });
 
   it("merges incoming conversation details without dropping local translations or analysis", () => {
@@ -114,9 +113,30 @@ describe("conversation domain model", () => {
     expect(merged.messages[0]).toMatchObject({ id: "message-1", translatedContent: "Quote needed" });
   });
 
+  it("keeps local analysis and drops translations for edited messages on refresh", () => {
+    const incoming: ConversationDetail = {
+      ...detail,
+      messages: [{ ...messages[0], content: "需要报价（已编辑）" }, messages[1]],
+      analysis: { ...detail.analysis!, summary: "服务端新分析" },
+    };
+    const current: ConversationDetail = { ...detail, messages: [{ ...messages[0], translatedContent: "Quote needed" }, messages[1]] };
+
+    const merged = mergeConversationDetail(current, incoming);
+
+    // 本地已有人工/异步结果时优先保留，同时防止旧译文套用到已编辑内容。
+    expect(merged.analysis).toBe(detail.analysis);
+    expect(merged.messages[0].translatedContent).toBeUndefined();
+    expect(merged.messages[0].content).toBe("需要报价（已编辑）");
+  });
+
   it("exports canonical details", () => {
     expect(buildConversationExport([detail]).content).toContain("客户：Buyer 42");
     expect(buildConversationExport([detail]).content).toContain("[2026-09-08 10:10] buyer: 需要报价");
     expect(buildConversationExport([detail])).not.toHaveProperty("archiveName");
+    const translated: ConversationDetail = {
+      ...detail,
+      messages: [{ ...messages[0], translatedContent: "Quote needed" }, messages[1]],
+    };
+    expect(buildConversationExport([translated]).content).toContain("译文：Quote needed");
   });
 });

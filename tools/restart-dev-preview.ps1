@@ -9,8 +9,11 @@
   2. Tree-kills (taskkill /T /F) every process listening on those ports,
      which also takes down backend-spawned children (MaaFW, Yak).
   3. Starts `python -m backend.app.main` (repo root) and `pnpm dev`
-     (frontend/), detached with logs under debug/, then waits until both
-     ports accept connections and prints the preview URLs.
+     (frontend/), detached with logs under debug/. The dev server's /api
+     proxy is pinned to the just-started backend via BACKEND_ORIGIN
+     (next.config.ts defaults it to 127.0.0.1:8000, which may be a stale
+     leftover process when MAA_API_PORT differs).
+  4. Waits until both ports accept connections and prints the preview URLs.
 
   Assumes project init + env setup are done (see tools/install_all.py).
   Prefers the portable toolchain in .portable/, falls back to PATH.
@@ -147,6 +150,11 @@ function Wait-PortOpen {
 $dotEnv = Read-DotEnv -Path (Join-Path $RepoRoot ".env")
 $backendPort = Resolve-Port -Override $BackendPort -Names @("MAA_API_PORT") -DotEnv $dotEnv -Default 8000
 $frontendPort = Resolve-Port -Override $FrontendPort -Names @("PORT", "FRONTEND_PORT", "MAA_WEB_PORT") -DotEnv $dotEnv -Default 3000
+# Proxy origin follows the backend binding host (MAA_API_HOST, default loopback).
+$backendHost = [Environment]::GetEnvironmentVariable("MAA_API_HOST")
+if (-not $backendHost) { $backendHost = $dotEnv["MAA_API_HOST"] }
+if (-not $backendHost) { $backendHost = "127.0.0.1" }
+$proxyHost = if ($backendHost -eq "0.0.0.0") { "127.0.0.1" } else { $backendHost }
 
 $pythonExe = Join-Path $RepoRoot ".portable/python/python.exe"
 if (-not (Test-Path -LiteralPath $pythonExe)) {
@@ -206,6 +214,10 @@ if ($startFrontend) {
     $frontendLog = Join-Path $DebugDir "dev-preview-frontend.log"
     Write-Host "[frontend] starting: pnpm dev --port $frontendPort (log: debug/dev-preview-frontend.log)"
     $env:PORT = "$frontendPort"  # inherited by the child; Start-Process -Environment is PS7-only
+    # Pin the /api proxy to the backend this script started; the next.config
+    # default (127.0.0.1:8000) would otherwise follow MAA_API_PORT-independent
+    # history and may hit a stale leftover process.
+    $env:BACKEND_ORIGIN = "http://${proxyHost}:$backendPort"
     $frontendProc = Start-Process -FilePath $pnpmCmd -ArgumentList "dev", "--port", "$frontendPort" `
         -WorkingDirectory (Join-Path $RepoRoot "frontend") -WindowStyle Hidden -PassThru `
         -RedirectStandardOutput $frontendLog -RedirectStandardError ($frontendLog + ".err")
@@ -215,6 +227,6 @@ if ($startFrontend) {
 
 Write-Host ""
 Write-Host "Dev preview is up from this checkout:"
-if ($startFrontend) { Write-Host "  frontend: http://127.0.0.1:$frontendPort" }
+if ($startFrontend) { Write-Host "  frontend: http://127.0.0.1:$frontendPort (proxies /api -> ${proxyHost}:$backendPort)" }
 if ($startBackend) { Write-Host "  backend:  http://127.0.0.1:$backendPort/api/status" }
 Write-Host "Logs: debug/dev-preview-backend.log[.err], debug/dev-preview-frontend.log[.err]"

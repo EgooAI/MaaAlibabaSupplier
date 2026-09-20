@@ -22,7 +22,7 @@ export interface TranslationQueryInput {
   texts: string[];
 }
 
-/** 批量缓存查询结果：text -> 译文（null 表示尚未缓存）。 */
+/** 批量缓存查询结果：text -> 译文（null=尚未缓存；空串=NO_NEED 哨兵，已缓存、无需翻译）。 */
 export interface TranslationQueryResult {
   translations: Record<string, string | null>;
 }

@@ -39,7 +39,7 @@ export function TranslationToolbar({ visible, onToggleVisible, translatedCount, 
       <Space size={4}>
         {untranslatedCount > 0 ? (
           <Button size="small" icon={<FileExclamationOutlined />} disabled={!canTranslate || busy} onClick={onTranslateMissing}>
-            翻译缺失{untranslatedCount > 0 ? ` (${untranslatedCount})` : ""}
+            翻译缺失 ({untranslatedCount})
           </Button>
         ) : null}
         <Popconfirm title="重新翻译全部消息？" description="会重新调用翻译模型，可能耗时较长。" okText="重新翻译" cancelText="取消" disabled={!canTranslate || busy} onConfirm={onRetranslateAll}>

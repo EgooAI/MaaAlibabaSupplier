@@ -111,7 +111,6 @@ describe("inbox workspace", () => {
     await act(async () => {
       chat.setDraft("keep reply");
       window.dispatchEvent(new Event("focus"));
-      await chat.translateMessages([{ id: "message-1", content: "hello", role: "buyer", createdAt: "now" }]);
     });
     expect(mocks.backend.markConversationRead).not.toHaveBeenCalled();
     const receipt = deferred<ReadReceipt>();
@@ -121,7 +120,6 @@ describe("inbox workspace", () => {
     mocks.backend.getConversation.mockResolvedValue(detail("42", { readSnapshot: "later-token", unreadCount: 5 }));
     await act(async () => account.refreshReads());
     expect(chat.activeConversation?.readSnapshot).toBe("later-token");
-    await act(async () => chat.translateMessages([{ id: "message-1", content: "hello", role: "buyer", createdAt: "now" }]));
     const pendingDetail = deferred<ConversationDetail>();
     mocks.backend.getConversation.mockReturnValueOnce(pendingDetail.promise);
     await act(async () => receipt.resolve({ state: { unread_count: 2, reply_state: "needs_reply", pending_since: 100, due_at: 86500, is_overdue: true, history_pending: false, uncertain: false, read_seq: 3, snapshot_seq: 3 }, inbox_revision: 2 }));

@@ -180,3 +180,22 @@ The response contract and initialization limits are documented in
 `backend/app/api/INBOX.md`. Inbox labels describe local workspace state, not
 platform unread counts or verified delivery acknowledgements. Tests use temporary
 archives, synthetic messages and mocked model calls, not real customer data.
+
+## Translation Coverage
+
+- `test_translation_agent.py` covers the LLM input shape (full-history context
+  with `text_hash=` markers for any speaker, stable blocks before the volatile
+  target list), short-hash uniqueness with salted re-derivation, the three-value
+  protocol (translation / NO_NEED empty sentinel / ABNORMAL uncached), cache and
+  force semantics, and the output parser including fenced JSON and invalid
+  payloads.
+- `test_translation_api.py` covers the async job lifecycle: order-preserving
+  dedupe, empty and all-cached submissions, chunking at 50 with partial
+  failures, agent omissions reported as job failures, conversation context
+  loading shared across chunks, epoch cancellation, account-lock-free workers,
+  and the query contract distinguishing null (uncached) from the empty NO_NEED
+  sentinel.
+- `test_connection_api.py` verifies the epoch guard on submissions; `test_auth.py`
+  uses the translation POST as a representative guarded route. The SDK's
+  `test_translate_manager.py` covers the SQLite round-trip and idempotent
+  upserts.

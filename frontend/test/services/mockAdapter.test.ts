@@ -91,6 +91,23 @@ describe("mock adapter", () => {
     expect(second.tasks[0].message).not.toBe("mutated by caller");
   });
 
+  it("runs the translation job lifecycle with the three-value protocol", async () => {
+    const submitted = await mockBackend.requestTranslations({ texts: ["hello", "已经是中文", "[[占位符]]"], force: false, conversationId: 42 });
+    expect(submitted).toMatchObject({ status: "pending" });
+    await expect.poll(() => mockBackend.getTranslationJob(submitted.task_id), { timeout: 2000 }).toMatchObject({ status: "succeeded", message: "已翻译 3 条" });
+
+    const cached = await mockBackend.queryTranslations({ texts: ["hello", "已经是中文", "[[占位符]]"] });
+    // 非空=译文；空串=NO_NEED 哨兵；null=ABNORMAL 未缓存。
+    expect(cached.translations).toEqual({ hello: "这是 mock 译文：hello", "已经是中文": "", "[[占位符]]": null });
+
+    const forced = await mockBackend.requestTranslations({ texts: ["hello"], force: true });
+    await expect.poll(() => mockBackend.getTranslationJob(forced.task_id), { timeout: 2000 }).toMatchObject({ status: "succeeded" });
+    expect((await mockBackend.queryTranslations({ texts: ["hello"] })).translations).toEqual({ hello: "重新翻译 mock 译文：hello" });
+
+    const empty = await mockBackend.requestTranslations({ texts: ["  "] });
+    expect(empty).toMatchObject({ task_id: "", status: "succeeded" });
+  });
+
   it("checks system agent enabled state before translation", async () => {
     const state = await mockBackend.getAgentConsole();
     const preset = state.agentPresets?.find((item) => item.id === SYSTEM_AGENT_APIDS.translation);

@@ -38,6 +38,7 @@ function ChatWorkspace() {
   const { isMobile, mobileView, setMobileView } = useSplitSessionMobile();
   const params = useSearchParams().toString();
   const workbench = useChatWorkbench(inboxQueryFromUrl(new URLSearchParams(params)));
+  const canUseAi = !blocked && Boolean(snapshot?.capabilities.use_ai);
   const { changeQuery } = workbench;
   const previousParams = useRef(params);
   useEffect(() => {
@@ -118,7 +119,7 @@ function ChatWorkspace() {
               translatedCount={workbench.translationStats.translated}
               untranslatedCount={workbench.translationStats.untranslated}
               pendingCount={workbench.translationStats.pending}
-              canTranslate={!blocked && Boolean(snapshot?.capabilities.use_ai)}
+              canTranslate={canUseAi}
               onTranslateMissing={workbench.translateMissing}
               onRetranslateAll={workbench.retranslateConversation}
             />
@@ -136,7 +137,7 @@ function ChatWorkspace() {
                   showTranslations={workbench.translationVisible}
                   pendingIds={workbench.translationPendingIds}
                   failedIds={workbench.translationFailedIds}
-                  onTranslate={!blocked && snapshot?.capabilities.use_ai ? (item, force) => void workbench.translateMessages([item], { force }) : undefined}
+                  onTranslate={canUseAi ? (item, force) => void workbench.translateMessages([item], { force }) : undefined}
                   onOpenCard={workbench.setActiveCardId}
                 />
               </div>

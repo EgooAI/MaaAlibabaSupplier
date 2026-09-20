@@ -1,13 +1,9 @@
 import type { AgentConfig, AgentEditValues, AgentPreset, DbAgentPreset } from "@/types/agent";
+import { SYSTEM_AGENT_APIDS } from "./agentModel";
 import { normalizeAgentLevel } from "./llmModel";
 import { normalizeAgentTools } from "./toolModel";
 
-export const SYSTEM_AGENT_APIDS = {
-  translation: "agent-1bad27aabaac439da678f31d53855b5d",
-  replySuggestion: "agent-5a43bda9e1304108a1a78a3575a44e27",
-  stageAnalysis: "agent-f6fb1e0ddff44d27bb3e19e243a70584",
-  intentAnalysis: "agent-c9b80fdfad234392b55d84de93a186ae",
-} as const;
+export { SYSTEM_AGENT_APIDS };
 
 export function isSystemAgentApid(apid: string) {
   return Object.values(SYSTEM_AGENT_APIDS).includes(apid as (typeof SYSTEM_AGENT_APIDS)[keyof typeof SYSTEM_AGENT_APIDS]);

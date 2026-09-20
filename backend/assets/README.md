@@ -14,4 +14,4 @@
 
 ## 参考资料
 
-如需了解 MaaFW 是什么、怎么用、怎么写，请检查仓库内是否存在与 MaaFW 相关的 Agents Skill 存在。如需更多信息，可访问 https://maafw.com/docs 。
+MaaFW 的概念与用法见 `.agents/skills/using-maafw/`；更多细节参考 https://maafw.com/docs 。

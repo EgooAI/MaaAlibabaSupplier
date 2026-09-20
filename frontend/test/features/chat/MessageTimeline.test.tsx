@@ -74,6 +74,57 @@ describe("message timeline", () => {
     expect(translateButtons).toHaveLength(3);
   });
 
+  it("invokes onTranslate with the message when clicking the inline translate action", async () => {
+    const onTranslate = vi.fn();
+    await render({
+      messages: [message({ id: "buyer", role: "buyer", content: "buyer text" })],
+      onTranslate,
+      onOpenCard: vi.fn(),
+    });
+    const translateButton = [...container.querySelectorAll("button")].find(button => button.textContent === "翻译");
+    expect(translateButton).toBeDefined();
+    await act(async () => translateButton!.click());
+    expect(onTranslate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "buyer", content: "buyer text" }));
+  });
+
+  it("invokes force retranslate from the translation block and retry from the failed marker", async () => {
+    const onTranslate = vi.fn();
+    await render({
+      messages: [
+        message({ id: "translated", role: "seller", content: "seller text", translatedContent: "卖家消息译文" }),
+        message({ id: "failed", content: "broken" }),
+      ],
+      failedIds: new Set(["failed"]),
+      onTranslate,
+      onOpenCard: vi.fn(),
+    });
+    await act(async () => (container.querySelector('button[aria-label="重新翻译本条消息"]') as HTMLButtonElement).click());
+    expect(onTranslate).toHaveBeenLastCalledWith(expect.objectContaining({ id: "translated" }), true);
+    const retryButton = [...container.querySelectorAll("button")].find(button => button.textContent === "翻译失败，点击重试");
+    expect(retryButton).toBeDefined();
+    await act(async () => retryButton!.click());
+    expect(onTranslate).toHaveBeenLastCalledWith(expect.objectContaining({ id: "failed", content: "broken" }));
+    expect(onTranslate).toHaveBeenCalledTimes(2);
+  });
+
+  it("disables inline translation actions while a translation job is in flight", async () => {
+    const onTranslate = vi.fn();
+    await render({
+      messages: [
+        message({ id: "pending", content: "in flight" }),
+        message({ id: "other", content: "other text" }),
+      ],
+      pendingIds: new Set(["pending"]),
+      onTranslate,
+      onOpenCard: vi.fn(),
+    });
+    const otherTranslate = [...container.querySelectorAll("button")].find(button => button.textContent === "翻译");
+    expect(otherTranslate).toBeDefined();
+    expect(otherTranslate!.disabled).toBe(true);
+    await act(async () => otherTranslate!.click());
+    expect(onTranslate).not.toHaveBeenCalled();
+  });
+
   it("renders the translation block for any party and hides it via showTranslations", async () => {
     const messages = [
       message({ id: "seller", role: "seller", content: "seller text", translatedContent: "卖家消息译文" }),

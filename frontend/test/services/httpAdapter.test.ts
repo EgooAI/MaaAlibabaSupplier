@@ -188,6 +188,38 @@ describe("http adapter contract", () => {
     expect(new Headers(fetchMock.mock.calls[0][1].headers).get("X-Account-Epoch")).toBe("mock-1");
   });
 
+  it("routes translation requests with exact paths, bodies and the 404-to-null job mapping", async () => {
+    const jobSnapshot = { task_id: "task-1", status: "succeeded", message: "已翻译 1 条" };
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/messages/translations/jobs/missing") {
+        return Promise.resolve(new Response(JSON.stringify({ code: 1, msg: "翻译任务不存在或已过期" }), { status: 404 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ code: 0, msg: "ok", data: jobSnapshot })));
+    });
+    globalThis.fetch = fetchMock;
+    await httpBackend.requestTranslations({ texts: ["hello"], force: true, conversationId: 42 });
+    await httpBackend.queryTranslations({ texts: ["hello"] });
+    await expect(httpBackend.getTranslationJob("task-1")).resolves.toEqual(jobSnapshot);
+    await expect(httpBackend.getTranslationJob("missing")).resolves.toBeNull();
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method ?? "GET", init.body && JSON.parse(init.body)])).toEqual([
+      ["/api/messages/translations", "POST", { texts: ["hello"], force: true, conversationId: 42 }],
+      ["/api/messages/translations/query", "POST", { texts: ["hello"] }],
+      ["/api/messages/translations/jobs/task-1", "GET", undefined],
+      ["/api/messages/translations/jobs/missing", "GET", undefined],
+    ]);
+  });
+
+  it("gates translation submissions on the use_ai capability but not cache queries", async () => {
+    accountSession.accept({ ...structuredClone(connectionSnapshot), client: { ...connectionSnapshot.client, connected: true }, capabilities: { read_chat: true, use_ai: false, operate_client: false } });
+    globalThis.fetch = vi.fn();
+    await expect(httpBackend.requestTranslations({ texts: ["hello"] })).rejects.toThrow("AI 暂不可用");
+    expect(fetch).not.toHaveBeenCalled();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: { translations: {} } })));
+    globalThis.fetch = fetchMock;
+    await httpBackend.queryTranslations({ texts: ["hello"] });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects account requests before fetch while a settings mutation is unresolved", async () => {
     globalThis.fetch = vi.fn();
     accountSession.invalidate();

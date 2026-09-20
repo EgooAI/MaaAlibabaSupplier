@@ -160,7 +160,10 @@ export const mockBackend: OperationsBackend = {
     setTimeout(() => {
       if (!translationJobs.has(task_id)) return;
       for (const text of targets) {
-        if (force || !translationStore.has(text)) translationStore.set(text, mockTranslate(text, force));
+        if (!force && translationStore.has(text)) continue;
+        const value = mockTranslate(text, force);
+        // ABNORMAL（null）不写缓存，保持未翻译态；NO_NEED 以空串哨兵落缓存。
+        if (value !== null) translationStore.set(text, value);
       }
       translationJobs.set(task_id, { task_id, status: "succeeded", message: `已翻译 ${targets.length} 条` });
     }, TRANSLATION_JOB_DELAY_MS);
@@ -177,7 +180,10 @@ export const mockBackend: OperationsBackend = {
     return delay({ translations });
   },
 
-  getTranslationJob: (taskId) => delay(translationJobs.get(taskId) ? { ...translationJobs.get(taskId)! } : null, 120),
+  getTranslationJob: (taskId) => {
+    const job = translationJobs.get(taskId);
+    return delay(job ? { ...job } : null, 120);
+  },
 
   listConversations: async (query = {}) => {
     const settings = mockInboxSettings();
@@ -545,7 +551,12 @@ function syncConsoleAgents() {
   };
 }
 
-function mockTranslate(text: string, force = false) {
-  if (!text) return "";
+function mockTranslate(text: string, force = false): string | null {
+  // 镜像后端三值协议：占位符类文本 → ABNORMAL（null，不缓存）；
+  // CJK 为主的文本 → NO_NEED（空串哨兵）；其余返回 mock 译文。
+  if (/^\W*\[+.*\]+\W*$/.test(text)) return null;
+  const chars = [...text].filter((char) => /\S/.test(char));
+  const cjk = chars.filter((char) => /\p{Script=Han}/u.test(char)).length;
+  if (cjk / chars.length >= 0.5) return "";
   return force ? `重新翻译 mock 译文：${text}` : `这是 mock 译文：${text}`;
 }

@@ -172,6 +172,43 @@ describe("translation flow", () => {
     expect(workbench.activeConversation?.messages[0].translatedContent).toBe("新译文");
   });
 
+  it("treats empty NO_NEED sentinels as resolved without failure markers or resubmission", async () => {
+    mocks.backend.getConversation.mockResolvedValue(detailWith([
+      { id: "one", role: "buyer", content: "hello", createdAt: "now" },
+      { id: "two", role: "seller", content: "已经是中文", createdAt: "now" },
+    ]));
+    await mount();
+    mocks.backend.requestTranslations.mockResolvedValueOnce({ task_id: "job-mixed", status: "pending", message: "等待执行" });
+    mocks.backend.getTranslationJob.mockResolvedValueOnce({ task_id: "job-mixed", status: "succeeded", message: "已翻译 2 条" });
+    mocks.backend.queryTranslations.mockResolvedValueOnce({ translations: { hello: "你好", "已经是中文": "" } });
+    await act(async () => { await workbench.translateMissing(); });
+    expect(mocks.backend.requestTranslations).toHaveBeenCalledExactlyOnceWith({ texts: ["hello", "已经是中文"], force: false, conversationId: 42 });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(workbench.activeConversation?.messages[0].translatedContent).toBe("你好");
+    expect(workbench.activeConversation?.messages[1].translatedContent).toBeUndefined();
+    // 空串哨兵已解决：不标记失败、不计入缺失、不再重复提交。
+    expect(workbench.translationFailedIds.size).toBe(0);
+    expect(workbench.translationStats).toMatchObject({ total: 2, translated: 1, untranslated: 0, pending: 0 });
+    await act(async () => { await workbench.translateMissing(); });
+    expect(mocks.message.info).toHaveBeenCalledWith("译文已齐全");
+    expect(mocks.backend.requestTranslations).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks messages as failed when a succeeded job returns null for their texts", async () => {
+    mocks.backend.getConversation.mockResolvedValue(detailWith([
+      { id: "one", role: "buyer", content: "hello", createdAt: "now" },
+    ]));
+    await mount();
+    mocks.backend.requestTranslations.mockResolvedValueOnce({ task_id: "job-null", status: "pending", message: "等待执行" });
+    mocks.backend.getTranslationJob.mockResolvedValueOnce({ task_id: "job-null", status: "succeeded", message: "已翻译 1 条" });
+    mocks.backend.queryTranslations.mockResolvedValueOnce({ translations: { hello: null } });
+    await act(async () => { await workbench.translateMissing(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(workbench.translationFailedIds.has("one")).toBe(true);
+    expect(workbench.translationPendingIds.size).toBe(0);
+    expect(mocks.message.warning).toHaveBeenCalledWith("有 1 条消息未返回译文，可重试");
+  });
+
   it("skips job tracking for empty submissions and falls back to a cache read", async () => {
     mocks.backend.getConversation.mockResolvedValue(detailWith([
       { id: "one", role: "buyer", content: "hello", createdAt: "now" },

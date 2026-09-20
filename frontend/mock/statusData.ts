@@ -39,11 +39,11 @@ export const dataDirStatus: DataDirStatus = {
 export const taskSnapshots: TaskSnapshot[] = [
   {
     task_id: "task-001",
-    description: "翻译回填",
+    description: "会话归档刷新",
     status: "running",
-    message: "处理 12 条待翻译消息",
+    message: "处理 12 条待归档会话",
     result: null,
-    target: "聊天翻译队列",
+    target: "会话归档",
     created_at: 1788756120,
     started_at: 1788756180,
     completed_at: null,
