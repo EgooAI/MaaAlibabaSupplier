@@ -9,18 +9,24 @@ import { accountSession, AccountChangedError, captureAccount } from "./accountSe
 import { authSession, captureAuth } from "./authSession";
 
 const REQUEST_TIMEOUT_MS = 8000;
+const AI_TIMEOUT_MS = 75000;
+export type ApiErrorKind = "timeout" | "transport" | "http" | "protocol";
 
 export class ApiError extends Error {
   readonly code?: number;
   readonly status?: number;
   readonly path: string;
+  readonly kind: ApiErrorKind;
+  readonly requestId?: string;
 
-  constructor(message: string, path: string, options?: { code?: number; status?: number; cause?: unknown }) {
+  constructor(message: string, path: string, options?: { code?: number; status?: number; cause?: unknown; kind?: ApiErrorKind; requestId?: string }) {
     super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
     this.name = "ApiError";
     this.path = path;
     this.code = options?.code;
     this.status = options?.status;
+    this.kind = options?.kind ?? (options?.status || options?.code ? "http" : options?.cause instanceof TypeError ? "transport" : "protocol");
+    this.requestId = options?.requestId;
   }
 }
 
@@ -34,6 +40,7 @@ function parseApiResponse<T>(payload: unknown, path: string): T {
     throw new ApiError(`API protocol error: ${path}`, path);
   }
   if (envelope.code !== 0) throw new ApiError(envelope.msg, path, { code: envelope.code });
+  if (!("data" in payload)) throw new ApiError(`API protocol error: ${path}`, path);
   return envelope.data as T;
 }
 
@@ -45,18 +52,21 @@ function parseJsonPayload(text: string, path: string): unknown {
   }
 }
 
-async function request<T>(path: string, mode: "json" | "void" | "png", init?: RequestInit): Promise<T> {
+async function request<T>(path: string, mode: "json" | "void" | "png" | "shutdown", init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const auth = captureAuth();
   const account = prepareAccountRequest(path, init);
   const headers = new Headers(account.init?.headers);
   headers.set("Authorization", `Bearer ${auth.token}`);
-  const signal = AbortSignal.any([auth.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS), ...(init?.signal ? [init.signal] : [])]);
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const signal = AbortSignal.any([auth.signal, timeout, ...(init?.signal ? [init.signal] : [])]);
+  let requestId: string | undefined;
   try {
     const response = await fetch(path, requestInit({ ...account.init, headers, signal, cache: "no-store", credentials: "omit" }));
+    requestId = response.headers.get("X-Request-ID") ?? undefined;
     auth.assertCurrent();
     // Authentication failures need no account epoch (including screenshot failures).
     if (response.status === 401) {
-      void authSession.unauthorized(auth.generation);
+      void authSession.unauthorized(auth.generation, requestId);
       auth.assertCurrent();
     }
     const body = mode === "png" && response.ok ? await response.blob() : await response.text();
@@ -74,17 +84,24 @@ async function request<T>(path: string, mode: "json" | "void" | "png", init?: Re
       throw new ApiError(`API response body is empty: ${path}`, path);
     }
     const data = parseApiResponse<T>(parseJsonPayload(text, path), path);
+    if (mode === "shutdown" && (!isPlainObject(data) || typeof data.accepted !== "boolean")) {
+      throw new ApiError("关闭请求回执无效，结果未知", path);
+    }
     return mode === "void" ? undefined as T : data;
   } catch (error) {
     auth.assertCurrent();
     account.ticket?.assertCurrent();
-    if (error instanceof ApiError || error instanceof AccountChangedError) throw error;
-    throw new ApiError(`API request failed: ${path}`, path, { cause: error });
+    if (error instanceof AccountChangedError) throw error;
+    if (error instanceof ApiError) {
+      throw new ApiError(error.message, path, { code: error.code, status: error.status, kind: error.kind, requestId, cause: error.cause });
+    }
+    throw new ApiError(timeout.aborted ? `请求等待超时：${path}` : `API request failed: ${path}`, path, { cause: error, kind: timeout.aborted ? "timeout" : "transport", requestId });
   }
 }
 
 const requestJson = <T,>(path: string, init?: RequestInit) => request<T>(path, "json", init);
 const requestVoid = (path: string, init?: RequestInit) => request<void>(path, "void", init);
+const requestAi = <T,>(path: string, init?: RequestInit) => request<T>(path, "json", init, AI_TIMEOUT_MS);
 
 function envelopeMessage(text: string, path: string): string {
   try {
@@ -133,7 +150,7 @@ export const httpBackend: OperationsBackend = {
   },
   getSelfInfo: () => requestJson("/api/self-info"),
   resetCache: () => requestVoid("/api/cache/reset", { method: "POST" }),
-  shutdownApp: () => requestVoid("/api/app/shutdown", { method: "POST" }),
+  shutdownApp: () => request("/api/app/shutdown", "shutdown", { method: "POST" }),
   getAppUpdate: () => requestJson("/api/app/update"),
   checkAppUpdate: () => requestJson("/api/app/update/check", { method: "POST", body: JSON.stringify({}) }),
   downloadAppUpdate: (candidateId) => requestJson("/api/app/update/download", { method: "POST", body: JSON.stringify({ candidate_id: candidateId }) }),
@@ -167,8 +184,8 @@ export const httpBackend: OperationsBackend = {
     const aggregate = await requestJson<ConversationAggregateDto>(`/api/conversations/${encodeURIComponent(id)}`);
     return adaptConversationDetail(aggregate);
   },
-  getAssistantSuggestions: (conversationId) => requestJson(`/api/conversations/${encodeURIComponent(conversationId)}/suggestions`),
-  analyzeConversation: (conversationId) => requestJson(`/api/conversations/${encodeURIComponent(conversationId)}/analysis`),
+  getAssistantSuggestions: (conversationId) => requestAi(`/api/conversations/${encodeURIComponent(conversationId)}/suggestions`),
+  analyzeConversation: (conversationId) => requestAi(`/api/conversations/${encodeURIComponent(conversationId)}/analysis`),
   sendMessage: async ({ conversationId, ...input }) => {
     if (!input.idempotency_key?.trim()) throw new Error("提交消息必须提供已持久化的幂等键");
     return requestJson(`/api/conversations/${encodeURIComponent(conversationId)}/messages`, { method: "POST", body: JSON.stringify(input) });
@@ -208,10 +225,10 @@ export const httpBackend: OperationsBackend = {
   deleteAgentPreset: (id) => requestJson(`/api/agent/presets/${encodeURIComponent(id)}`, { method: "DELETE" }),
   restoreSystemAgentDefault: (apid) => requestJson(`/api/agent/system/${encodeURIComponent(apid)}/restore`, { method: "POST" }),
   listSystemAgentDefinitions: () => requestJson("/api/agent/system"),
-  runAgentTest: (input) => requestJson("/api/agent/test", { method: "POST", body: JSON.stringify(input) }),
+  runAgentTest: (input) => requestAi("/api/agent/test", { method: "POST", body: JSON.stringify(input) }),
   listAgentTestHistory: () => requestJson("/api/agent/test-history"),
   undoAgentTestSession: (id) => requestJson(`/api/agent/test-history/${encodeURIComponent(id)}/undo`, { method: "POST" }),
-  regenerateAgentTestSessionReply: (id) => requestJson(`/api/agent/test-history/${encodeURIComponent(id)}/regenerate`, { method: "POST" }),
+  regenerateAgentTestSessionReply: (id) => requestAi(`/api/agent/test-history/${encodeURIComponent(id)}/regenerate`, { method: "POST" }),
   deleteAgentTestSession: (id) => requestVoid(`/api/agent/test-history/${encodeURIComponent(id)}`, { method: "DELETE" }),
   branchAgentTestSession: (id) => requestJson(`/api/agent/test-history/${encodeURIComponent(id)}/branch`, { method: "POST" }),
 };

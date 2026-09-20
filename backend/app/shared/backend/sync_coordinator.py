@@ -6,11 +6,15 @@ from pathlib import Path
 from queue import Empty, SimpleQueue
 from threading import Event, RLock, Thread
 import time
+from types import MappingProxyType
+from collections.abc import Mapping
+from uuid import uuid4
 
 from loguru import logger
 
 from backend.app.shared.backend.account_context import AccountContext
 from backend.app.shared.crm.sync_store import canonical_source_dir
+from backend.app.shared.utils.log_context import bind_log_context, capture_log_context, log_event
 
 
 @dataclass
@@ -20,6 +24,7 @@ class SyncTarget:
     source_revision: int
     waiters: list[Future] = field(default_factory=lambda: [Future()])
     future: Future | None = None
+    log_context: Mapping = field(default_factory=lambda: MappingProxyType(capture_log_context()))
 
 
 class SyncCoordinator:
@@ -87,7 +92,8 @@ class SyncCoordinator:
                 # An unchanged committed or active source never needs another scan.
                 if not target.waiters[-1].done() or not self._state["last_error"]:
                     return target.waiters[-1]
-            target = SyncTarget(context, path, source_revision)
+            with bind_log_context(account_epoch=context.epoch, source_revision=source_revision, sync_id=uuid4().hex):
+                target = SyncTarget(context, path, source_revision)
             if self._pending is not None:
                 target.waiters = self._pending.waiters + target.waiters
             self._pending = self._last_target = target
@@ -106,7 +112,9 @@ class SyncCoordinator:
         self._active[target.context.epoch] = target
         self._state.update(pending=False, syncing=True, phase="syncing", last_attempt=self._clock())
         try:
-            future = self._submit(target)
+            with bind_log_context(**target.log_context):
+                log_event("sync.dispatched")
+                future = self._submit(target)
             if not isinstance(future, Future):
                 raise TypeError("CRM sync must return a Future")
         except Exception as exc:
@@ -117,8 +125,10 @@ class SyncCoordinator:
         future.add_done_callback(lambda done: self._complete(target))
 
     def _complete(self, target):
-        self._completed.put(target)
-        self.wake.set()
+        with bind_log_context(**target.log_context):
+            log_event("sync.callback")
+            self._completed.put(target)
+            self.wake.set()
 
     def _publish_archive_result(self, context, result):
         current = self._context
@@ -167,7 +177,8 @@ class SyncCoordinator:
                             retry_at=self._clock() + min(3 * 2 ** min(self._failures - 1, 4), 30),
                         )
                         if self._pending is None:
-                            self._pending = SyncTarget(target.context, target.path, target.source_revision)
+                            self._pending = SyncTarget(target.context, target.path, target.source_revision,
+                                                       log_context=target.log_context)
                             self._last_target = self._pending
                         self._state["pending"] = True
                     else:
@@ -178,10 +189,11 @@ class SyncCoordinator:
                         )
                 for waiter in target.waiters:
                     if not waiter.done():
-                        if error:
-                            waiter.set_exception(error)
-                        else:
-                            waiter.set_result(result)
+                        with bind_log_context(**target.log_context):
+                            if error:
+                                waiter.set_exception(error)
+                            else:
+                                waiter.set_result(result)
             self._dispatch()
 
     def wait(self, target):
@@ -208,18 +220,48 @@ class SyncCoordinator:
 
 
 class SyncService:
-    def __init__(self, middleware, interval=1.0):
+    def __init__(self, middleware, interval=1.0, *, clock=time.time):
         self.middleware = middleware
         self.interval = interval
         self._stop = Event()
         self._lifecycle_lock = RLock()
         self._thread = None
+        self._clock = clock
+        self._observation_lock = RLock()
+        self._observation = {
+            "started_at": None, "heartbeat_at": None, "last_progress_at": None,
+            "phase": "not_started", "phase_started_at": None,
+            "completed_iterations": 0, "last_error": None,
+        }
+
+    def _observe(self, phase, **changes):
+        with self._observation_lock:
+            now = self._clock()
+            if phase != self._observation["phase"]:
+                self._observation.update(phase=phase, phase_started_at=now)
+            self._observation.update(heartbeat_at=now, **changes)
+
+    def observation(self):
+        # Never acquire the lifecycle, account or middleware locks while polling.
+        with self._observation_lock:
+            state = dict(self._observation)
+        sync = self.middleware._coordinator.snapshot()
+        now = self._clock()
+        return {
+            **state, "started": state["started_at"] is not None,
+            "alive": self._thread is not None and self._thread.is_alive(),
+            "stopping": self._stop.is_set(), "observed_at": now,
+            "phase_age_s": max(0, now - state["phase_started_at"]) if state["phase_started_at"] is not None else None,
+            "pending": int(sync["pending"]), "active": int(sync["syncing"]),
+            "pending_observed_at": now, "progress_unit": "service_iterations",
+        }
 
     def start(self):
         with self._lifecycle_lock:
             if self._thread is not None and not self._stop.is_set():
                 return
             self._stop.clear()
+            self._observe("starting", started_at=self._clock(), last_error=None)
             self.middleware.prepare_startup_validation()
             self._thread = Thread(target=self._run, name="im-source-check", daemon=True)
             self._thread.start()
@@ -228,13 +270,22 @@ class SyncService:
         self.middleware.sync_tick(stop=self._stop)
 
     def _run(self):
-        while not self._stop.is_set():
-            self.middleware._coordinator.wake.clear()
-            try:
-                self.tick()
-            except Exception:
-                logger.exception("IM sync service tick failed")
-            self.middleware._coordinator.wake.wait(self.interval)
+        try:
+            while not self._stop.is_set():
+                self.middleware._coordinator.wake.clear()
+                self._observe("checking_source")
+                try:
+                    self.tick()
+                except Exception as exc:
+                    self._observe("waiting", last_error=type(exc).__name__)
+                    logger.exception("IM sync service tick failed")
+                else:
+                    with self._observation_lock:
+                        self._observation["completed_iterations"] += 1
+                    self._observe("waiting", last_progress_at=self._clock(), last_error=None)
+                self.middleware._coordinator.wake.wait(self.interval)
+        finally:
+            self._observe("stopped")
 
     def stop(self):
         with self._lifecycle_lock:
@@ -254,6 +305,13 @@ class SyncService:
 
 _service: SyncService | None = None
 _service_lock = RLock()
+
+
+def observe_sync_service():
+    # The registry lock is held during shutdown; reading its published reference
+    # keeps observation available while a source read or CRM commit is blocked.
+    service = _service
+    return service.observation() if service is not None else None
 
 
 def start_sync_service():

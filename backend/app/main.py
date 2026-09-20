@@ -35,6 +35,9 @@ from backend.app.api.server import run as run_api
 from backend.app.api.auth import validate_auth_config
 from backend.app.shared.utils.env import load_workdir_env
 from backend.app.shared.utils.logging import configure_logging
+from backend.app.shared.utils.process_logs import (
+    attach_process_log, finish_process_log, report_startup_failure,
+)
 from backend.app.shared.backend.sync_coordinator import start_sync_service, stop_sync_service
 from backend.app.shared.backend.outbox_service import start_outbox_service, stop_outbox_service
 from backend.app.updater import register_update_runtime
@@ -106,42 +109,56 @@ def _start_yak_mitm(
     child_env["MITM_RECEIVER_PORT"] = str(port)
     yak_exe = _resolve_yak_executable(backend_root)
     yak_script = backend_root / "yak_mitm.yak"
+    proxy_host = get_env_str("MITM_PROXY_HOST", MAA_API_HOST_DEFAULT)
+    proxy_port = get_env_int("MITM_PROXY_PORT", MITM_PROXY_PORT_DEFAULT)
     log_dir = backend_root / "data" / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "yak_mitm.log"
 
     if not yak_script.exists():
-        logger.warning("yak_mitm.yak not found at {}, skipping", yak_script)
+        logger.warning("Yak MITM script not found; proxy was not created")
         return None
 
     try:
-        with log_path.open("ab") as log_file:
-            proc = subprocess.Popen(
-                [yak_exe, str(yak_script)],
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                creationflags=CREATE_NO_WINDOW,
-                env=child_env,
-            )
+        proc = subprocess.Popen(
+            [yak_exe, str(yak_script)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+            creationflags=CREATE_NO_WINDOW,
+            env=child_env,
+        )
+        attach_process_log(proc, log_path, source="yak")
     except FileNotFoundError:
-        logger.error("'{}' not found — is Yak installed?", yak_exe)
+        logger.error("Yak executable not found; proxy was not created")
         return None
     except OSError as exc:
-        logger.error("Failed to start Yak MITM proxy: {}", exc)
+        logger.error("Failed to create Yak MITM proxy process ({})", type(exc).__name__)
         return None
 
-    proxy_host = get_env_str("MITM_PROXY_HOST", MAA_API_HOST_DEFAULT)
-    proxy_port = get_env_int("MITM_PROXY_PORT", MITM_PROXY_PORT_DEFAULT)
-    if not _wait_for_port(proxy_host, proxy_port, timeout_s=YAK_STARTUP_GRACE_S + 3.5):
-        if proc.poll() is not None:
-            logger.error("Yak MITM proxy exited early with code {}. See {}", proc.returncode, log_path)
-            return None
+    reachable = _wait_for_port(proxy_host, proxy_port, timeout_s=YAK_STARTUP_GRACE_S + 3.5)
+    code = proc.poll()
+    if code is not None:
+        finish_process_log(proc)
+        logger.error("Yak MITM proxy exited during startup (code={}); proxy readiness was not verified", code)
+        return None
+    if not reachable:
         logger.warning("Yak MITM proxy port {}:{} not ready yet, continuing", proxy_host, proxy_port)
-    logger.info("Yak MITM proxy started (pid={})", proc.pid)
+    logger.info(
+        "Yak MITM proxy process created (pid={}, TCP reachable={}); application readiness is not verified",
+        proc.pid, reachable,
+    )
     return proc
 
 
 def main() -> None:
+    try:
+        _main()
+    except Exception as exc:
+        report_startup_failure(exc)
+        raise
+
+
+def _main() -> None:
     load_workdir_env()
     validate_auth_config()
     internal_token = "mitm_" + secrets.token_urlsafe(32)
@@ -166,7 +183,6 @@ def main() -> None:
     try:
         receiver = _start_mitm_receiver(host=receiver_host, port=receiver_port, internal_token=internal_token)
         maafw.start()
-        logger.info("MaaFW process started")
         yak_proc = _start_yak_mitm(
             backend_root, host=receiver_host, port=receiver_port, internal_token=internal_token,
         )
@@ -206,10 +222,13 @@ def main() -> None:
                                     yak_proc.wait(timeout=5.0)
                                 except subprocess.TimeoutExpired:
                                     yak_proc.kill()
+                                    yak_proc.wait(timeout=5.0)
                                 logger.info("Yak MITM proxy terminated")
                         except Exception:
                             logger.exception("Yak MITM shutdown failed")
                         finally:
+                            if yak_proc is not None:
+                                finish_process_log(yak_proc)
                             if receiver is not None:
                                 try:
                                     receiver.shutdown()
@@ -218,4 +237,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        # main already emitted type/frames without exception values or locals.
+        raise SystemExit(1) from None

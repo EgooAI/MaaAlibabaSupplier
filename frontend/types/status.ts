@@ -1,10 +1,14 @@
 import type { ID } from "@/types/common";
+import type { SourceSyncStatus } from "./connection";
 
-export type HealthStatus = "healthy" | "warning" | "offline";
+export type HealthStatus = "healthy" | "warning" | "offline" | "uncertain";
 export type TaskStatus = "queued" | "running" | "succeeded" | "failed";
 export type DocumentTaskStatus = "pending" | "running" | "succeeded" | "failed";
 
 export interface KeyStatus {
+  key_validation?: SourceSyncStatus["key_validation"];
+  last_observed_at?: number | null;
+  observation_stale?: boolean;
   has_key: boolean;
   source: string;
   ali_id: string;
@@ -12,6 +16,9 @@ export interface KeyStatus {
 }
 
 export interface NetworkStatus {
+  observed_at?: number;
+  evidence?: "tcp_connect";
+  business_ready?: boolean | null;
   reachable: boolean;
   host: string;
   port: number;
@@ -45,6 +52,8 @@ export interface TaskSnapshot {
 }
 
 export interface HealthModule {
+  observedAt?: number | null;
+  evidence?: string;
   id: HealthModuleId;
   name: string;
   status: HealthStatus;
@@ -66,7 +75,42 @@ export interface TaskItem {
   resultSuccess?: boolean;
 }
 
+export interface WorkerObservation {
+  started: boolean;
+  alive: boolean;
+  stopping: boolean;
+  started_at: number | null;
+  heartbeat_at: number | null;
+  last_progress_at: number | null;
+  observed_at: number;
+  phase: string;
+  phase_started_at: number | null;
+  phase_age_s: number | null;
+  completed_iterations: number;
+  pending: number | null;
+  pending_observed_at?: number | null;
+  context?: { epoch: string; self_ali_id: string; data_dir: string } | null;
+  last_error: string | null;
+  progress_unit: string;
+}
+
+export interface QueueObservation {
+  initialized: boolean;
+  alive: boolean;
+  pending: number;
+  current_started: number | null;
+  current_age_s: number | null;
+  last_completed: number | null;
+  observed_at: number;
+}
+
 export interface SystemStatusSnapshot {
+  queues?: Record<string, QueueObservation>;
+  workers?: Record<string, WorkerObservation | null>;
+  source?: SourceSyncStatus | null;
+  observedAt?: number;
+  context?: { epoch: string; self_ali_id: string; data_dir: string };
+  lastDiagnostic?: (NodeTestResult & { entry: NodeTestEntry; context: { epoch: string; self_ali_id: string; data_dir: string }; window_generation: string; completed_at: number; currentContext: boolean }) | null;
   updatedAt: string;
   modules: HealthModule[];
   tasks: TaskItem[];

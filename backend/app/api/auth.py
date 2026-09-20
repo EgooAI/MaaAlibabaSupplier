@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from loguru import logger
 from starlette.concurrency import run_in_threadpool
 from starlette._utils import get_route_path
 from starlette.datastructures import Headers, MutableHeaders
@@ -24,6 +25,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from backend.app.api.envelope import err
+from backend.app.shared.utils.log_context import bind_log_context, log_event
 from backend.app.shared.utils.settings import FRONTEND_DEV_ORIGINS, resolve_backend_root
 
 
@@ -136,6 +138,29 @@ class AuthMiddleware:
         self.limiter = limiter
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self._handle(scope, receive, send)
+            return
+        request_id = uuid.uuid4().hex[:12]
+        scope.setdefault("state", {})["request_id"] = request_id
+        start = time.monotonic()
+        status = 500
+
+        async def observe(message: Message) -> None:
+            nonlocal status
+            if message["type"] == "http.response.start":
+                status = message["status"]
+            await send(message)
+
+        with bind_log_context(request_id=request_id):
+            try:
+                await self._handle(scope, receive, observe)
+            finally:
+                route = getattr(scope.get("route"), "path", None)
+                log_event("http.access", method=scope.get("method"), route=route or "unmatched",
+                          status=status, duration_ms=(time.monotonic() - start) * 1000)
+
+    async def _handle(self, scope: Scope, receive: Receive, send: Send) -> None:
         path = get_route_path(scope) if scope["type"] in {"http", "websocket"} else ""
         protected = path == "/api" or path.startswith("/api/")
         if scope["type"] != "http":
@@ -145,8 +170,7 @@ class AuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        request_id = uuid.uuid4().hex[:12]
-        scope.setdefault("state", {})["request_id"] = request_id
+        request_id = scope["state"]["request_id"]
         started = False
         status = None
         complete = False
@@ -213,6 +237,7 @@ class AuthMiddleware:
                     try:
                         valid = await run_in_threadpool(self.store.contains, token_hash)
                     except Exception:
+                        logger.exception("Authentication storage unavailable")
                         await reject(503, "Authentication unavailable")
                         return
                     if not valid:
@@ -227,12 +252,15 @@ class AuthMiddleware:
                         return
             await self.app(scope, receive_request, send_response)
             app_returned = True
-        except Exception:
+        except Exception as exc:
+            logger.opt(exception=exc).error("Unhandled authentication middleware error")
             if started:
                 raise
             # Do not log exception locals: login bodies and bearer tokens are secrets.
             await reject(500, "Internal server error")
         finally:
+            log_event("http.response", status=status, complete=complete,
+                      disconnected=disconnected, send_failed=send_failed)
             pending = scope["state"].pop("update_handoff", None)
             if pending is not None:
                 updater, operation_id = pending

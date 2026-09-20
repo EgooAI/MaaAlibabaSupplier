@@ -1,11 +1,12 @@
 "use client";
 
-import { Button, Listy, Modal, Space, Tag, Typography } from "antd";
+import { Alert, Button, Listy, Modal, Space, Tag, Typography } from "antd";
 import type { AssistantSuggestion } from "@/types/chatCanonical";
 
-export function AssistantSuggestionModal({ open, suggestions, onClose, onInsert }: { open: boolean; suggestions: AssistantSuggestion[]; onClose: () => void; onInsert: (content: string) => void }) {
+export function AssistantSuggestionModal({ open, suggestions, error, onClose, onInsert }: { open: boolean; suggestions: AssistantSuggestion[]; error?: string; onClose: () => void; onInsert: (content: string) => void }) {
   return (
     <Modal title="AI 建议回复" open={open} onCancel={onClose} footer={null} width={760}>
+      {error ? <Alert type="warning" showIcon title={error} /> : null}
       <Listy
         items={suggestions}
         rowKey="id"

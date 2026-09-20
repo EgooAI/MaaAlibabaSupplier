@@ -48,7 +48,7 @@ describe("status model adapters", () => {
       updatedAt: "2026-09-08 10:00",
     });
 
-    expect(snapshot.modules.map((module) => module.status)).toEqual(["healthy", "healthy", "offline", "healthy", "healthy"]);
+    expect(snapshot.modules.map((module) => module.status)).toEqual(["uncertain", "uncertain", "offline", "healthy", "healthy"]);
     expect(snapshot.modules.map((module) => module.latency)).toEqual([null, 50, null, null, null]);
     expect(snapshot.tasks[0].status).toBe("queued");
     expect(snapshot.modules.find((module) => module.id === "health-receiver")?.description).toContain("closed");
@@ -65,6 +65,6 @@ describe("status model adapters", () => {
       updatedAt: "2026-09-08 10:00",
     });
 
-    expect(snapshot.modules.map((module) => module.status)).toEqual(["healthy", "healthy", "warning", "offline", "warning"]);
+    expect(snapshot.modules.map((module) => module.status)).toEqual(["uncertain", "uncertain", "warning", "warning", "warning"]);
   });
 });

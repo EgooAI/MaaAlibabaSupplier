@@ -16,6 +16,9 @@ export interface SourceSyncStatus {
   applied_source_revision: number;
   stale: boolean;
   last_checked: number | null;
+  last_observed_at: number | null;
+  observation_stale: boolean;
+  observation_max_age_s: number;
   last_attempt: number | null;
   retry_at: number | null;
   counts: { inserted: number; updated: number; unchanged: number };

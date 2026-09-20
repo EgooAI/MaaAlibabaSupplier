@@ -43,6 +43,8 @@ from backend.app.shared.crm.views import (
 from backend.app.shared.crm.sync_store import canonical_source_dir, upsert_messages, write_sync_state
 from backend.app.shared.crm.inbox_store import _epoch, write_inbox
 from backend.app.shared.mitm.pool import SelfInfo, UserInfo, get_user_info_pool
+from backend.app.shared.utils.log_context import bind_log_context, capture_log_context, log_event
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from backend.app.shared.backend.im_chat_db import ContactConv, MessageRow
@@ -318,9 +320,8 @@ class CRMAdapter:
         if existing is not None:
             if existing.aid != aid:
                 logger.warning(
-                    "CRM mapping redirect: type={} key={} from_aid={} to_aid={}",
+                    "CRM mapping redirect: type={} from_aid={} to_aid={}",
                     mapping_type,
-                    key,
                     existing.aid,
                     aid,
                 )
@@ -582,16 +583,34 @@ def sync_im_database(
 
 
 def _submit_sync(func, *args: Any) -> Future:
-    future = _SYNC_EXECUTOR.submit(func, *args)
-    future.add_done_callback(_log_sync_failure)
+    context = capture_log_context()
+    context.setdefault("sync_id", uuid4().hex)
+
+    def run():
+        with bind_log_context(**context):
+            log_event("crm.started")
+            return func(*args)
+
+    def completed(done):
+        with bind_log_context(**context):
+            _log_sync_failure(done)
+
+    with bind_log_context(**context):
+        log_event("crm.submitted")
+    future = _SYNC_EXECUTOR.submit(run)
+    future.add_done_callback(completed)
     return future
 
 
 def _log_sync_failure(future) -> None:
     try:
-        future.result()
+        result = future.result()
+        fields = {key: result[key] for key in ("revision", "inserted", "updated", "unchanged")
+                  if key in result} if isinstance(result, dict) else {}
+        log_event("crm.committed", **fields)
     except Exception:
         logger.exception("Failed to sync data into CRM SDK")
+        log_event("crm.failed")
 
 
 def _sync_user_info_now(info: UserInfo) -> None:

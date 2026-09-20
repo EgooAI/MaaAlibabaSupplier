@@ -7,8 +7,11 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from types import MappingProxyType
+from collections.abc import Mapping
 
 from loguru import logger
+from backend.app.shared.utils.log_context import bind_log_context, capture_log_context, log_event
 
 TASK_QUEUE_MAXSIZE = 500
 TASK_RETENTION_S = 3600.0
@@ -47,6 +50,7 @@ class _TaskRequest:
     created_at: float
     started_at: float | None
     completed_at: float | None
+    log_context: Mapping
 
     def snapshot(self) -> TaskSnapshot:
         return TaskSnapshot(
@@ -76,6 +80,8 @@ class TaskQueue:
                 instance._requests: dict[str, _TaskRequest] = {}
                 instance._queue: deque[str] = deque()
                 instance._closing = False
+                instance._current_started: float | None = None
+                instance._last_completed: float | None = None
                 instance._worker = threading.Thread(
                     target=instance._work,
                     daemon=True,
@@ -85,6 +91,23 @@ class TaskQueue:
                 cls._instances[name] = instance
             return instance
 
+    @classmethod
+    def observations(cls, name: str = DEFAULT_QUEUE_NAME) -> dict:
+        """Observe an existing worker; never construct a queue or evict tasks.
+
+        pending excludes the running job. Timestamps are Unix seconds and are
+        retained independently of task-history eviction for this worker lifetime.
+        """
+        with cls._instance_lock:
+            instance = cls._instances.get(name)
+            if instance is None:
+                return {"initialized": False, "alive": False, "pending": 0,
+                        "current_started": None, "last_completed": None}
+            with instance._lock:
+                return {"initialized": True, "alive": instance._worker.is_alive(),
+                        "pending": len(instance._queue), "current_started": instance._current_started,
+                        "last_completed": instance._last_completed}
+
     def enqueue(self, fn: Callable[[], tuple[bool, str]], *, description: str) -> TaskSnapshot:
         now = time.time()
         with self._condition:
@@ -93,8 +116,9 @@ class TaskQueue:
             self._evict_locked(now)
             if len(self._queue) >= TASK_QUEUE_MAXSIZE:
                 raise OverflowError("任务队列已满，请稍后重试")
+            task_id = uuid.uuid4().hex
             request = _TaskRequest(
-                task_id=uuid.uuid4().hex,
+                task_id=task_id,
                 fn=fn,
                 description=description,
                 status=TaskStatus.PENDING,
@@ -103,9 +127,12 @@ class TaskQueue:
                 created_at=now,
                 started_at=None,
                 completed_at=None,
+                log_context=MappingProxyType({**capture_log_context(), "queue_task_id": task_id, "queue": self._name}),
             )
             self._requests[request.task_id] = request
             self._queue.append(request.task_id)
+            with bind_log_context(**request.log_context):
+                log_event("queue.enqueued")
             self._condition.notify_all()
             return request.snapshot()
 
@@ -152,22 +179,35 @@ class TaskQueue:
                 request.status = TaskStatus.RUNNING
                 request.message = "正在执行"
                 request.started_at = time.time()
+                self._current_started = request.started_at
 
-            try:
-                ok, msg = request.fn()
-            except Exception as exc:
-                logger.exception("Task '{}' failed", request.description)
-                ok, msg = False, str(exc)
+            with bind_log_context(**request.log_context):
+                log_event("queue.started")
+                try:
+                    ok, msg = request.fn()
+                except Exception as exc:
+                    logger.exception("Queued task failed")
+                    ok, msg = False, str(exc)
+                with self._condition:
+                    request.result = (ok, msg)
+                    request.completed_at = time.time()
+                    self._last_completed = request.completed_at
+                    self._current_started = None
+                    if ok:
+                        request.status = TaskStatus.SUCCEEDED
+                        request.message = msg or "执行成功"
+                    else:
+                        request.status = TaskStatus.FAILED
+                        request.message = msg or "执行失败"
+                log_event("queue.succeeded" if ok else "queue.failed",
+                          duration_ms=(request.completed_at - request.started_at) * 1000)
 
-            with self._condition:
-                request.result = (ok, msg)
-                request.completed_at = time.time()
-                if ok:
-                    request.status = TaskStatus.SUCCEEDED
-                    request.message = msg or "执行成功"
-                else:
-                    request.status = TaskStatus.FAILED
-                    request.message = msg or "执行失败"
+
+def observe_task_queues() -> dict[str, dict]:
+    """Include both standard queues even when no workers have been initialized."""
+    with TaskQueue._instance_lock:
+        names = dict.fromkeys((DEFAULT_QUEUE_NAME, TRANSLATION_QUEUE_NAME, *TaskQueue._instances))
+    return {name: TaskQueue.observations(name) for name in names}
 
 
 def get_task_queue() -> TaskQueue:

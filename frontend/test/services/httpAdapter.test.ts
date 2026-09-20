@@ -29,6 +29,55 @@ afterEach(() => {
 });
 
 describe("http adapter contract", () => {
+  it.each([
+    [503, "not json", "http"],
+    [200, "not json", "protocol"],
+    [200, "", "protocol"],
+    [200, JSON.stringify({ code: 2, msg: "rejected", data: null }), "http"],
+    [200, JSON.stringify({ code: 0, msg: "ok" }), "protocol"],
+  ])("retains request ID for shutdown status %s with body %s", async (status, body, kind) => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(body, { status, headers: { "X-Request-ID": "request-42" } }));
+    await expect(httpBackend.shutdownApp()).rejects.toMatchObject({ kind, requestId: "request-42" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([true, false])("preserves shutdown accepted=%s", async (accepted) => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: { accepted } })));
+    await expect(httpBackend.shutdownApp()).resolves.toEqual({ accepted });
+  });
+
+  it("distinguishes transport failure from a timeout without replaying", async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new TypeError("connection lost"));
+    await expect(httpBackend.shutdownApp()).rejects.toMatchObject({ kind: "transport" });
+    const controller = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    globalThis.fetch = vi.fn<typeof fetch>((_path, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    }));
+    const pending = httpBackend.shutdownApp();
+    const result = expect(pending).rejects.toMatchObject({ kind: "timeout" });
+    controller.abort(new DOMException("timed out", "TimeoutError"));
+    await result;
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the request ID when response body transport fails", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, headers: new Headers({ "X-Request-ID": "body-lost" }), text: () => Promise.reject(new TypeError("stream closed")) });
+    await expect(httpBackend.shutdownApp()).rejects.toMatchObject({ kind: "transport", requestId: "body-lost" });
+  });
+
+  it("uses 75 seconds only for synchronous AI operations", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    globalThis.fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ code: 0, msg: "ok", data: [] }))));
+    await httpBackend.getAssistantSuggestions("42");
+    await httpBackend.analyzeConversation("42");
+    await httpBackend.runAgentTest({ agentId: "test" });
+    await httpBackend.regenerateAgentTestSessionReply("session");
+    await httpBackend.getSystemStatus();
+    await httpBackend.requestTranslations({ texts: ["hello"] });
+    expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([75000, 75000, 75000, 75000, 8000, 8000]);
+  });
+
   it("sends authenticated update requests with exact payloads and no account epoch", async () => {
     accountSession.invalidate();
     const data = { supported: false, phase: "idle", reason: "source build" };

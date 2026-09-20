@@ -128,7 +128,7 @@ export const mockBackend: OperationsBackend = {
     return delay(undefined);
   },
 
-  shutdownApp: () => delay(undefined),
+  shutdownApp: () => delay({ accepted: true }),
   getAppUpdate: () => delay({
     supported: false, reason: "Mock environment does not support application updates", phase: "idle",
     current: { version: "mock", sha: null },

@@ -21,6 +21,8 @@ def window(hwnd=1, class_name="Qt5152QWindowIcon", title=WINDOW_TITLE):
 
 
 class FakeJob:
+    done = True
+
     def __init__(self, succeeded=True, detail=None):
         self.succeeded = succeeded
         self.detail = detail
@@ -39,6 +41,7 @@ def sdk(monkeypatch):
     state = SimpleNamespace(
         windows=[window()], fail=None, controllers=[], taskers=[], bundles=[],
         options=[], calls=[], outcome=True,
+        native_dirs=[],
         config={"self_ali_id": "seller-a", "alibaba_data_dir": "test-data"},
     )
 
@@ -98,9 +101,16 @@ def sdk(monkeypatch):
     for name in ("_tasker", "_resource", "_window_hwnd"):
         monkeypatch.setattr(runner, name, None)
     monkeypatch.setattr(runner, "_window_generation", "")
+    monkeypatch.setattr(runner, "_native_logs", None)
+    monkeypatch.setattr(runner, "_native_jobs", {})
+    monkeypatch.setattr(runner, "_native_post_uncertain", False)
+    monkeypatch.setattr(runner, "_native_log_observation", {})
+    monkeypatch.setattr(runner, "_set_native_log_dir", lambda path: state.native_dirs.append(path) or True)
     monkeypatch.setattr(account_context, "_context", None)
     monkeypatch.setattr(account_context, "read_app_config", lambda: dict(state.config))
-    return state
+    yield state
+    if runner._native_logs is not None:
+        runner._native_logs.release_after_shutdown(native_stopped=True)
 
 
 def connected_token():
@@ -266,6 +276,47 @@ def test_submit_send_validates_and_posts_without_waiting(sdk, monkeypatch):
 
     assert gui_session.run_guarded(token, send)[0]
     assert calls == ["validate", "post", "wait"]
+
+
+@pytest.mark.parametrize("fault", ["job_id", "sink", None])
+@pytest.mark.parametrize("split_send", [False, True])
+def test_native_correlation_failure_never_skips_wait_or_replays(sdk, monkeypatch, fault, split_send):
+    from backend.app.shared.utils.log_context import bind_log_context, capture_log_context
+
+    token = connected_token()
+    calls, events = [], []
+
+    class Job(FakeJob):
+        @property
+        def job_id(self):
+            if fault == "job_id":
+                raise RuntimeError("telemetry unavailable")
+            return 42
+
+        def wait(self):
+            calls.append("wait")
+            return self
+
+    def post(*args):
+        calls.append("post")
+        return Job(detail=SimpleNamespace(status=SimpleNamespace(succeeded=True)))
+
+    def emit(event, **fields):
+        if fault == "sink":
+            raise OSError("sink unavailable")
+        events.append((event, capture_log_context(), fields))
+
+    monkeypatch.setattr(runner._tasker, "post_task", post)
+    monkeypatch.setattr(runner, "log_event", emit)
+    with bind_log_context(request_id="origin", queue_task_id="queue", outbox_id="outbox", attempt=2):
+        result = gui_session.run_guarded(token, lambda: runner.wait_send(runner.submit_send()) if split_send
+                                         else runner.chat_input("PRIVATE_TEXT"))
+    assert result[0] and calls == ["post", "wait"]
+    if fault is None:
+        assert [event for event, _, _ in events] == ["maa.submitted", "maa.succeeded"]
+        assert all(context["outbox_id"] == "outbox" and context["attempt"] == 2 for _, context, _ in events)
+        assert all(fields["native_job_id"] == 42 and fields["native_runtime_id"] == token.window_generation
+                   for _, _, fields in events)
 
 
 @pytest.mark.parametrize("connected", [False, True])

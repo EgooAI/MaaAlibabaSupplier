@@ -11,10 +11,11 @@ import type { ConversationAggregateDto } from "@/types/chatTransport";
 import type { ConversationDetail } from "@/types/chatCanonical";
 import type { ConversationPage } from "@/types/inbox";
 import { authenticatedSession } from "@/test/support/authFixture";
+import { ApiError } from "@/services/httpAdapter";
 
 const mocks = vi.hoisted(() => ({
   message: { warning: vi.fn(), error: vi.fn(), success: vi.fn(), info: vi.fn() },
-  backend: { getConnection: vi.fn(), getConversationRevision: vi.fn(), listConversations: vi.fn(), getConversation: vi.fn(), markConversationRead: vi.fn(), requestTranslations: vi.fn(), queryTranslations: vi.fn(), getTranslationJob: vi.fn(), analyzeConversation: vi.fn() },
+  backend: { getConnection: vi.fn(), getConversationRevision: vi.fn(), listConversations: vi.fn(), getConversation: vi.fn(), markConversationRead: vi.fn(), requestTranslations: vi.fn(), queryTranslations: vi.fn(), getTranslationJob: vi.fn(), analyzeConversation: vi.fn(), getAssistantSuggestions: vi.fn() },
 }));
 vi.mock("antd", () => ({
   App: { useApp: () => ({ message: mocks.message }) },
@@ -81,6 +82,98 @@ async function mount() {
 }
 
 describe("translation flow", () => {
+  it.each(["analysis", "suggestions"])("retains uncertain %s results without claiming a recoverable history", async (operation) => {
+    await mount();
+    const request = operation === "analysis" ? mocks.backend.analyzeConversation : mocks.backend.getAssistantSuggestions;
+    request.mockRejectedValue(new ApiError("timeout", "/api/conversations/42/ai", { kind: "timeout", requestId: "ai-lost" }));
+    await act(async () => { if (operation === "analysis") await workbench.analyzeConversation(); else await workbench.openSuggestions(); });
+    const text = operation === "analysis" ? workbench.analysisError : workbench.suggestionError;
+    expect(text).toContain("结果未知");
+    expect(text).toContain("无法重新读取");
+    expect(text).toContain("ai-lost");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["missing", "deadline", "cache failure"])("reports %s as unobserved, without marking failure or resubmitting", async (reason) => {
+    mocks.backend.getConversation.mockResolvedValue(detailWith([{ id: "one", role: "buyer", content: "hello", createdAt: "now" }]));
+    await mount();
+    mocks.backend.requestTranslations.mockResolvedValueOnce({ task_id: "unknown-job", status: "pending" });
+    mocks.backend.getTranslationJob.mockResolvedValue(reason === "missing" ? null : { task_id: "unknown-job", status: reason === "deadline" ? "running" : "succeeded" });
+    if (reason === "cache failure") mocks.backend.queryTranslations.mockRejectedValue(new Error("cache unavailable"));
+    await act(async () => workbench.translateMissing());
+    if (reason === "deadline") vi.setSystemTime(Date.now() + 300001);
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(workbench.translationNotice).toContain(reason === "cache failure" ? "缓存查询失败" : "翻译结果未知");
+    expect(workbench.translationPendingIds.size).toBe(0);
+    expect(workbench.translationFailedIds.size).toBe(0);
+    expect(mocks.backend.requestTranslations).toHaveBeenCalledTimes(1);
+    expect(mocks.message.info).not.toHaveBeenCalledWith("翻译仍在后台进行，稍后刷新会自动显示");
+  });
+
+  it("waits for all accepted batches, including when the last batch completes first", async () => {
+    const messages = Array.from({ length: 501 }, (_, index) => ({ id: String(index), role: "buyer" as const, content: `text-${index}`, createdAt: "now" }));
+    mocks.backend.getConversation.mockResolvedValue(detailWith(messages));
+    await mount();
+    mocks.backend.requestTranslations.mockResolvedValueOnce({ task_id: "batch-1" }).mockResolvedValueOnce({ task_id: "batch-2" });
+    mocks.backend.getTranslationJob.mockImplementation(async (id) => ({ task_id: id, status: id === "batch-1" ? "running" : "succeeded" }));
+    await act(async () => workbench.translateMissing());
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(workbench.translationStats.pending).toBe(501);
+    expect(mocks.backend.getTranslationJob.mock.calls.map(([id]) => id)).toEqual(["batch-1", "batch-2"]);
+    mocks.backend.getTranslationJob.mockResolvedValue({ task_id: "batch-1", status: "succeeded" });
+    mocks.backend.queryTranslations.mockImplementation(async ({ texts }: { texts: string[] }) => ({ translations: Object.fromEntries(texts.map((text) => [text, ""])) }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(workbench.translationStats).toMatchObject({ pending: 0, untranslated: 0 });
+    expect(mocks.backend.requestTranslations).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not apply an old completion after reselecting the same conversation", async () => {
+    mocks.backend.getConversation.mockResolvedValue(detailWith([{ id: "one", role: "buyer", content: "hello", createdAt: "now" }]));
+    await mount();
+    mocks.backend.requestTranslations.mockResolvedValueOnce({ task_id: "old-job" });
+    mocks.backend.getTranslationJob.mockResolvedValueOnce({ task_id: "old-job", status: "succeeded" });
+    let resolve!: (value: { translations: Record<string, string> }) => void;
+    mocks.backend.queryTranslations.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    await act(async () => workbench.translateMissing());
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    await act(async () => workbench.selectConversation("42"));
+    mocks.backend.requestTranslations.mockResolvedValueOnce({ task_id: "new-job" });
+    await act(async () => workbench.translateMissing());
+    await act(async () => resolve({ translations: { hello: "old result" } }));
+    expect(workbench.activeConversation?.messages[0].translatedContent).toBeUndefined();
+    expect(workbench.translationPendingIds.has("one")).toBe(true);
+  });
+
+  it("continues observing accepted work after a later batch loses its receipt", async () => {
+    const messages = Array.from({ length: 501 }, (_, index) => ({ id: String(index), role: "buyer" as const, content: `text-${index}`, createdAt: "now" }));
+    mocks.backend.getConversation.mockResolvedValue(detailWith(messages));
+    await mount();
+    mocks.backend.requestTranslations.mockResolvedValueOnce({ task_id: "accepted" }).mockRejectedValueOnce(new ApiError("connection lost", "/api/messages/translations", { kind: "transport", requestId: "batch-2" }));
+    await act(async () => workbench.translateMissing());
+    expect(workbench.translationStats.pending).toBe(500);
+    expect(workbench.translationNotice).toContain("结果未知");
+    expect(workbench.translationNotice).toContain("batch-2");
+    mocks.backend.getTranslationJob.mockResolvedValue({ task_id: "accepted", status: "succeeded" });
+    mocks.backend.queryTranslations.mockImplementation(async ({ texts }: { texts: string[] }) => ({ translations: Object.fromEntries(texts.map((text) => [text, ""])) }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(workbench.translationStats).toMatchObject({ pending: 0, untranslated: 1 });
+    expect(workbench.translationNotice).toContain("结果未知");
+    expect(mocks.backend.requestTranslations).toHaveBeenCalledTimes(2);
+  });
+
+  it("never overlaps slow translation observations", async () => {
+    mocks.backend.getConversation.mockResolvedValue(detailWith([{ id: "one", role: "buyer", content: "hello", createdAt: "now" }]));
+    await mount();
+    mocks.backend.requestTranslations.mockResolvedValueOnce({ task_id: "slow" });
+    let resolve!: (value: null) => void;
+    mocks.backend.getTranslationJob.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    await act(async () => workbench.translateMissing());
+    await act(async () => { await vi.advanceTimersByTimeAsync(8000); });
+    expect(mocks.backend.getTranslationJob).toHaveBeenCalledTimes(1);
+    await act(async () => resolve(null));
+    expect(workbench.translationNotice).toContain("结果未知");
+  });
+
   it("absorbs cached translations for every party and skips card bubbles", async () => {
     mocks.backend.getConversation.mockResolvedValue(detailWith([
       { id: "one", role: "buyer", content: "hello", createdAt: "now" },

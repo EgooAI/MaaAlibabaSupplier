@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass
 from threading import Condition, Event, RLock, Thread
 from uuid import UUID, uuid4
+from types import MappingProxyType
+from collections.abc import Mapping
 
 from loguru import logger
 
@@ -20,6 +22,7 @@ from backend.app.shared.backend.gui_evidence import ClientFrame, compare_frame
 from backend.app.shared.crm.outbox_store import OutboxConflict, OutboxStore
 from backend.app.shared.utils.settings import resolve_backend_root
 from backend.app.task_queue import get_task_queue
+from backend.app.shared.utils.log_context import bind_log_context, capture_log_context, log_event
 
 
 SCREENSHOT_TTL = 120.0
@@ -32,6 +35,7 @@ class _Attempt:
     context: AccountContext
     token: gui_session.GuiSessionToken
     attempt: int
+    log_context: Mapping
 
 
 class ScreenshotExpiredError(AppError):
@@ -51,6 +55,33 @@ class OutboxService:
         self._thread: Thread | None = None
         self._reconcile_lock = RLock()
         self._screenshot_dir = resolve_backend_root() / "data" / "outbox"
+        self._observation_lock = RLock()
+        self._observation = {
+            "started_at": None, "heartbeat_at": None, "last_progress_at": None,
+            "phase": "not_started", "phase_started_at": None,
+            "completed_iterations": 0, "last_error": None,
+            "pending": None, "pending_observed_at": None, "context": None,
+        }
+
+    def _observe_verifier(self, phase, **changes):
+        with self._observation_lock:
+            now = time.time()
+            if phase != self._observation["phase"]:
+                self._observation.update(phase=phase, phase_started_at=now)
+            self._observation.update(heartbeat_at=now, **changes)
+
+    def verifier_observation(self):
+        # Independent of GUI/persistence locks, including during stop().
+        with self._observation_lock:
+            state = dict(self._observation)
+        now = time.time()
+        return {
+            **state, "started": state["started_at"] is not None,
+            "alive": self._thread is not None and self._thread.is_alive(),
+            "stopping": self._stopping.is_set(), "observed_at": now,
+            "phase_age_s": max(0, now - state["phase_started_at"]) if state["phase_started_at"] is not None else None,
+            "progress_unit": "verification_iterations",
+        }
 
     @staticmethod
     def _scope(context: AccountContext) -> dict:
@@ -64,6 +95,7 @@ class OutboxService:
                 self.store.initialize()
                 self.store.recover()
                 self._started = True
+                self._observe_verifier("waiting", started_at=time.time())
                 self._thread = Thread(target=self._verify_loop, name="outbox-verifier", daemon=True)
                 self._thread.start()
         return self
@@ -105,6 +137,7 @@ class OutboxService:
                 **self._scope(context), conversation_id=conversation_id, contact_ali_id=contact_ali_id,
                 login_id=login_id, content=content, action=action, idempotency_key=idempotency_key,
                 draft_version=draft_version,
+                origin_request_id=capture_log_context().get("request_id"), origin_account_epoch=context.epoch,
             )
         if not created:
             return record
@@ -113,7 +146,7 @@ class OutboxService:
             token = self._capture_token(context)
             with self._condition:
                 self._accepting()
-                binding = _Attempt(context, token, record["attempt"])
+                binding = self._bind_attempt(context, token, record)
                 self._attempts[record["id"]] = binding
                 self._enqueue(record, binding, send=False)
         except Exception as exc:
@@ -156,7 +189,7 @@ class OutboxService:
         with self._condition:
             self._accepting()
             record = self.store.retry(task_id, version, **self._scope(context))
-            binding = _Attempt(context, token, record["attempt"])
+            binding = self._bind_attempt(context, token, record)
             self._attempts[task_id] = binding
             self._enqueue(record, binding, send=False)
             return self._require(context, task_id)
@@ -182,6 +215,18 @@ class OutboxService:
         stamp = record["screenshot_at"]
         return stamp is None or not 0 <= time.time() - stamp < SCREENSHOT_TTL
 
+    @staticmethod
+    def _bind_attempt(context, token, record) -> _Attempt:
+        fields = {
+            **capture_log_context(), "outbox_id": record["id"], "attempt": record["attempt"],
+            "account_epoch": context.epoch, "origin_request_id": record.get("origin_request_id"),
+            "origin_account_epoch": record.get("origin_account_epoch"),
+        }
+        binding = _Attempt(context, token, record["attempt"], MappingProxyType(fields))
+        with bind_log_context(**fields):
+            log_event("outbox.attempt_created")
+        return binding
+
     def _move(self, record: dict, status: str, **changes) -> dict:
         current = self.store.transition(
             record["id"], record["status"], record["version"], seller=record["seller"],
@@ -189,6 +234,16 @@ class OutboxService:
         )
         if record["id"] in self._active:
             self._active[record["id"]] = current
+        binding = self._attempts.get(record["id"])
+        fields = dict(binding.log_context) if binding is not None else {
+            "request_id": record.get("origin_request_id"),
+            "account_epoch": record.get("origin_account_epoch"),
+        }
+        with bind_log_context(**fields):
+            log_event("outbox.transition", outbox_id=record["id"], attempt=record["attempt"],
+                      origin_request_id=record.get("origin_request_id"),
+                      origin_account_epoch=record.get("origin_account_epoch"),
+                      status=status, phase=current["phase"], version=current["version"])
         return current
 
     def _update(self, record: dict, **changes) -> dict:
@@ -243,10 +298,11 @@ class OutboxService:
         try:
             if self._queue is None:
                 self._queue = get_task_queue()
-            self._queue.enqueue(
-                lambda: self._execute(record, binding, send=send),
-                description=f"Outbox {'input/send' if send else 'navigation'} {record['id']}",
-            )
+            with bind_log_context(**binding.log_context):
+                self._queue.enqueue(
+                    lambda: self._execute(record, binding, send=send),
+                    description=f"Outbox {'input/send' if send else 'navigation'} {record['id']}",
+                )
         except Exception as exc:
             self._fail_if_current(binding.context, record, str(exc))
 
@@ -260,6 +316,10 @@ class OutboxService:
         )
 
     def _execute(self, queued: dict, binding: _Attempt, *, send: bool) -> tuple[bool, str]:
+        with bind_log_context(**binding.log_context):
+            return self._execute_attempt(queued, binding, send=send)
+
+    def _execute_attempt(self, queued: dict, binding: _Attempt, *, send: bool) -> tuple[bool, str]:
         context, task_id = binding.context, queued["id"]
         with self._condition:
             if self._stopping.is_set():
@@ -362,11 +422,13 @@ class OutboxService:
         with self._reconcile_lock:
             self._flush_terminal_writes()
             context = get_account_context()
+            self._observe_verifier("scanning", context=context.to_dict(), pending=None, pending_observed_at=None)
             if not context.self_ali_id or not context.data_dir:
                 return []
             pending = [record for record in self.store.list_pending(
                 ("verifying", "unknown"), **self._scope(context),
             ) if record["action"] == "send" and record["may_have_sent"]]
+            self._observe_verifier("reading_source" if pending else "scanning", pending=len(pending), pending_observed_at=time.time())
             if not pending:
                 return []
             from backend.app.shared.backend.source_messages import read_source_messages
@@ -401,14 +463,24 @@ class OutboxService:
                         except OutboxConflict:
                             # Another reconciliation tick/task already claimed this evidence.
                             continue
+                self._observe_verifier("reading_source", last_progress_at=time.time())
             return observed
 
     def _verify_loop(self) -> None:
-        while not self._stopping.wait(RECONCILE_INTERVAL):
-            try:
-                self.reconcile_once()
-            except Exception:
-                logger.exception("Outbox local-source reconciliation failed")
+        try:
+            while not self._stopping.wait(RECONCILE_INTERVAL):
+                self._observe_verifier("reconciling")
+                try:
+                    self.reconcile_once()
+                except Exception as exc:
+                    self._observe_verifier("waiting", last_error=type(exc).__name__)
+                    logger.exception("Outbox local-source reconciliation failed")
+                else:
+                    with self._observation_lock:
+                        self._observation["completed_iterations"] += 1
+                    self._observe_verifier("waiting", last_progress_at=time.time(), last_error=None)
+        finally:
+            self._observe_verifier("stopped")
 
     def stop(self, timeout: float = 5.0) -> None:
         deadline = time.monotonic() + timeout
@@ -452,6 +524,11 @@ class OutboxService:
 
 _service: OutboxService | None = None
 _service_lock = RLock()
+
+
+def observe_outbox_verifier():
+    service = _service
+    return service.verifier_observation() if service is not None else None
 
 
 def get_outbox_service() -> OutboxService:

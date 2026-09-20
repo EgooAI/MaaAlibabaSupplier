@@ -101,6 +101,29 @@ def test_default_database_path_uses_isolated_crm_configuration(monkeypatch, tmp_
     assert created and store.get(task["id"], **scope) == task
 
 
+def test_legacy_schema_adds_nullable_origins_without_changing_payload_or_audit(store, scope):
+    old, _ = create(store, scope)
+    events = store.events(old["id"], **scope)
+    with closing(sqlite3.connect(store.database_path)) as conn, conn:
+        conn.execute("ALTER TABLE app_outbox DROP COLUMN origin_request_id")
+        conn.execute("ALTER TABLE app_outbox DROP COLUMN origin_account_epoch")
+    before = store.database_path.read_bytes()
+    assert store.get(old["id"], **scope)["origin_request_id"] is None
+    assert store.database_path.read_bytes() == before
+    stores = [OutboxStore(store.database_path) for _ in range(3)]
+    assert race(*(current.initialize for current in stores)) == [None] * 3
+    assert store.get(old["id"], **scope) == old
+    assert store.events(old["id"], **scope) == events
+    task, _ = create(store, scope, key="new", origin_request_id="request-a", origin_account_epoch="epoch-a")
+    repeated, created = create(store, scope, key="new", origin_request_id="request-b", origin_account_epoch="epoch-b")
+    assert not created and repeated == task
+    failed = move(store, scope, task, "failed")
+    retry = store.retry(task["id"], failed["version"], **scope)
+    assert retry["origin_request_id"] == "request-a"
+    assert retry["origin_account_epoch"] == "epoch-a"
+    assert retry["attempt"] == 2
+
+
 def test_concurrent_idempotency_across_store_instances(store, scope):
     stores = [OutboxStore(store.database_path) for _ in range(8)]
     results = race(*(lambda current=current: create(current, scope) for current in stores))

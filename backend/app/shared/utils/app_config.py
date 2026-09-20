@@ -44,7 +44,7 @@ def read_app_config() -> dict[str, Any]:
     try:
         data = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
-        logger.warning("Ignoring corrupt app config {}: {}", path, exc)
+        logger.opt(exception=True).warning("Ignoring corrupt app config")
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -65,7 +65,7 @@ def write_app_config(patch: dict[str, Any]) -> dict[str, Any]:
                 os.fsync(stream.fileno())
             os.replace(temporary, path)
         except OSError as exc:
-            logger.error("Failed to write app config {}: {}", path, exc)
+            logger.opt(exception=True).error("Failed to write app config")
             raise
         finally:
             if temporary is not None:

@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowDownOutlined, ArrowLeftOutlined, PlusOutlined } from "@ant-design/icons";
-import { Button, Card, Empty, Form, Modal, Select, Space } from "antd";
+import { Alert, Button, Card, Empty, Form, Modal, Select, Space } from "antd";
 import { useState } from "react";
 import { ActionConfirmModal } from "@/components/ActionConfirmModal";
 import { SessionListPanel } from "@/components/SessionListPanel";
@@ -79,11 +79,13 @@ export function AgentSessionsPage() {
         <Space>
           {isMobile ? <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => setMobileView("list")}>返回列表</Button> : null}
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)} disabled={workbench.busy}>新建会话</Button>
+          <Button loading={workbench.reconciling} disabled={workbench.busy} onClick={() => void workbench.reconcileHistory()}>刷新历史</Button>
         </Space>
       }
       className="flex h-full min-h-0 w-full flex-col"
       classNames={{ body: "flex min-h-0 flex-1 flex-col" }}
     >
+      {workbench.operationError ? <Alert type="warning" showIcon title={workbench.operationError} /> : null}
       {workbench.activeSession ? (
         <div className="flex min-h-0 flex-1 flex-col gap-6">
           <div className="relative flex min-h-0 flex-1 flex-col">

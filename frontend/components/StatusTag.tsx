@@ -10,6 +10,7 @@ const statusMap: Record<StatusValue, { label: string; color: string; badge?: "su
   draft: { label: "草稿", color: "default", badge: "default" },
   reviewing: { label: "待审核", color: "purple", badge: "processing" },
   healthy: { label: "正常", color: "green", badge: "success" },
+  uncertain: { label: "未确认", color: "default", badge: "default" },
   warning: { label: "告警", color: "gold", badge: "warning" },
   offline: { label: "离线", color: "red", badge: "error" },
   queued: { label: "排队中", color: "default", badge: "default" },

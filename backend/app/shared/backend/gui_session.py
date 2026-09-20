@@ -120,6 +120,8 @@ def run_guarded(token: GuiSessionToken, fn: Callable[[], _Result]) -> _Result | 
         previous = getattr(_active_session, "token", None)
         try:
             _validate_token(token)
+            if previous is None:
+                runner._prepare_native_logs()
             _active_session.token = token
             return fn()
         except Exception as exc:

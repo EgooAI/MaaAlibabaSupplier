@@ -128,10 +128,10 @@ class TrafficRouter:
         keyword, handler = route
 
         if not event.response_body:
-            logger.debug("MITM event matched {} but response_body is empty: {}", keyword, event.url)
+            logger.debug("MITM event matched {} but response_body is empty", keyword)
             return
 
-        logger.info("[YAK→PY] {} {}", event.method, event.url)
+        logger.info("MITM event matched {}", keyword)
         handler(event)
 
     def _match_route(self, event: _TrafficEvent) -> tuple[str, Callable[[_TrafficEvent], None]] | None:
@@ -145,7 +145,7 @@ class TrafficRouter:
         buyer_login_id = (qs.get("buyerLoginId") or [""])[0]
         info = parse_query_customer_info(event.response_body, url_buyer_login_id=buyer_login_id)
         if info:
-            logger.info("  -> UserInfo (CRM): ali_id={} login_id={}", info.ali_id, info.login_id)
+            logger.info("UserInfo parsed (CRM)")
             get_user_info_pool().put(info)
             sync_user_info(info)
 
@@ -153,7 +153,7 @@ class TrafficRouter:
     def _put_users(users: list[UserInfo], source: str) -> None:
         pool = get_user_info_pool()
         for user in users:
-            logger.info("  -> UserInfo ({}): ali_id={} login_id={}", source, user.ali_id, user.login_id)
+            logger.info("UserInfo parsed ({})", source)
             pool.put(user)
             sync_user_info(user)
 
@@ -183,21 +183,21 @@ class TrafficRouter:
             user_pool.put(user_info)
             sync_user_info(user_info)
             if selected_ali_id and account.ali_id == selected_ali_id:
-                logger.info("  -> SelfInfo: ali_id={} login_id={}", account.ali_id, account.login_id)
+                logger.info("SelfInfo parsed for selected account")
                 sync_self_info(account)
 
     @staticmethod
     def _handle_fetch_card(event: _TrafficEvent) -> None:
         card = parse_fetch_card(event.response_body)
         if card:
-            logger.info("  -> ProductCard: id={} title={}", card.card_id, card.title[:40])
+            logger.info("ProductCard parsed")
             get_product_card_pool().put(card)
             return
 
         # Inquiry cards
         inquiry = parse_inquiry_card(event.response_body)
         if inquiry:
-            logger.info("  -> InquiryCard: id={} products={}", inquiry.inquiry_id, len(inquiry.products))
+            logger.info("InquiryCard parsed ({} products)", len(inquiry.products))
             get_inquiry_card_pool().put(inquiry)
             return
 
@@ -205,7 +205,7 @@ class TrafficRouter:
         generic = parse_generic_card(event.response_body, source_url=event.url)
         pool = get_generic_card_pool()
         for gc in generic:
-            logger.info("  -> GenericCard: type={} id={}", gc.card_type, gc.card_id[:40])
+            logger.info("GenericCard parsed")
             pool.put(gc)
 
 
@@ -271,8 +271,7 @@ class TrafficHandler(BaseHTTPRequestHandler):
         if code == 401:
             self.send_header("WWW-Authenticate", "Bearer")
         self.end_headers()
-        clean = url.split("?")[0] if url else "(no url)"
-        logger.debug("{} [{}] {}", self.command, code, clean)
+        logger.debug("MITM response status={}", code)
 
     def log_message(self, format: str, *args: Any) -> None:
         pass  # suppressed — _respond handles logging

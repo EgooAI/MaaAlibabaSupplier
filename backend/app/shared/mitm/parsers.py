@@ -42,13 +42,13 @@ def _unwrap_jsonp(body: bytes) -> dict | None:
         start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1 or end <= start:
-        logger.debug("JSONP unwrap: no JSON found, text starts with: {!r}", text[:200])
+        logger.debug("JSONP unwrap: no JSON found ({} bytes)", len(body))
         return None
     extracted = text[start : end + 1]
     try:
         return json.loads(extracted)
     except json.JSONDecodeError as e:
-        logger.debug("JSONP unwrap: JSON parse failed at char {}: {}. extracted={!r}", e.pos, e.msg, extracted[:200])
+        logger.debug("JSONP unwrap: JSON parse failed at char {}", e.pos)
         return None
 
 
@@ -77,7 +77,7 @@ def parse_query_customer_info(body: bytes, url_buyer_login_id: str = "") -> User
         logger.warning("queryCustomerInfo: JSONP unwrap returned None (body_len={})", len(body))
         return None
     if not data.get("success"):
-        logger.warning("queryCustomerInfo: success={!r} keys={}", data.get("success"), list(data.keys())[:10])
+        logger.warning("queryCustomerInfo: response did not report success")
         return None
 
     inner = (data.get("data") or {}).get("data") or {}
@@ -101,15 +101,7 @@ def parse_query_customer_info(body: bytes, url_buyer_login_id: str = "") -> User
     if not login_id:
         logger.warning("queryCustomerInfo: no login_id found (buyer={}, crm={})", bool(buyer), bool(crm))
 
-    logger.info(
-        "queryCustomerInfo parsed: login_id={} encrypt_id={} name={} {} country={} company={}",
-        login_id,
-        buyer.get("encryptAccountId") or "",
-        buyer.get("firstName") or "",
-        buyer.get("lastName") or "",
-        buyer.get("country") or "",
-        buyer.get("companyName") or "",
-    )
+    logger.info("queryCustomerInfo parsed")
 
     return UserInfo(
         # ali_id is NOT available from queryCustomerInfo (CRM API).
@@ -221,12 +213,12 @@ def parse_fetch_card(body: bytes) -> ProductCard | None:
 
     card_list = (data.get("data") or {}).get("fbCardList") or []
     if not card_list:
-        logger.info("fetchcard: fbCardList empty, top keys={}", list(data.keys())[:10])
+        logger.info("fetchcard: fbCardList empty")
         return None
 
     card_data = card_list[0].get("data") or {}
     if not card_data:
-        logger.info("fetchcard: card[0].data empty, card[0] keys={}", list(card_list[0].keys())[:10])
+        logger.info("fetchcard: card[0].data empty")
         return None
 
     # fbCardList may contain different card types (product, RFQ, etc.)

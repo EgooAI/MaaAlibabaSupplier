@@ -2,14 +2,22 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backend.app.api.envelope import ok
 from backend.app.api.server import request_shutdown
+from backend.app.diagnostics import DiagnosticResponse
 from backend.app.updater import get_updater
 
 router = APIRouter()
+
+
+@router.get("/api/app/diagnostics/download", response_class=DiagnosticResponse)
+async def download_diagnostics(request: Request) -> DiagnosticResponse:
+    if request.query_params:
+        raise HTTPException(status_code=422, detail="Diagnostic download accepts no query parameters.")
+    return DiagnosticResponse()
 
 
 class UpdateCheck(BaseModel):

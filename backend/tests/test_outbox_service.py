@@ -115,6 +115,35 @@ def test_observers_do_not_initialize_store_or_queue(env):
     assert env.queue.jobs == []
 
 
+def test_attempt_context_retains_origin_across_confirmation_and_changes_on_explicit_retry(env, monkeypatch):
+    from backend.app.shared.utils.log_context import bind_log_context, capture_log_context
+
+    contexts = []
+    monkeypatch.setattr(module.runner, "goto_contact", lambda target: contexts.append(capture_log_context()) or (True, "located"))
+    monkeypatch.setattr(module.runner, "chat_input", lambda text: contexts.append(capture_log_context()) or (True, "filled"))
+    with bind_log_context(request_id="submit-request"):
+        task = prepared(env, action="test")
+    assert task["origin_request_id"] == "submit-request"
+    assert task["origin_account_epoch"] == env.context.epoch
+    with bind_log_context(request_id="confirm-request", account_epoch="unrelated"):
+        confirm(env, task)
+        env.queue.run()
+    assert all(c["request_id"] == "submit-request" and c["account_epoch"] == env.context.epoch for c in contexts)
+    assert all(c["outbox_id"] == task["id"] and c["attempt"] == 1 for c in contexts)
+
+    with bind_log_context(request_id="second-submit"):
+        failed = submit(env, idempotency_key="retry-key")
+    failed = env.service.store.transition(failed["id"], "queued", failed["version"],
+                                         **env.service._scope(env.context), status="failed")
+    with bind_log_context(request_id="retry-request"):
+        retry = env.service.retry(env.context, failed["id"], version=failed["version"])
+    while env.queue.jobs:
+        env.queue.run()
+    assert contexts[-1]["request_id"] == "retry-request"
+    assert contexts[-1]["origin_request_id"] == retry["origin_request_id"] == "second-submit"
+    assert contexts[-1]["attempt"] == 2
+
+
 def test_navigation_only_then_explicit_confirmation_and_durable_send_barrier(env, monkeypatch):
     task = prepared(env)
     assert task["status"] == "awaiting_confirmation"

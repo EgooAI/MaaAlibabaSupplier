@@ -16,7 +16,7 @@ def run() -> None:
     # log_config=None keeps uvicorn off the console; std logging propagates to
     # the root InterceptHandler and lands in data/logs/api.log (pythonw-safe).
     global server
-    server = uvicorn.Server(uvicorn.Config("backend.app.api.main:app", host=host, port=port, reload=False, log_config=None))
+    server = uvicorn.Server(uvicorn.Config("backend.app.api.main:app", host=host, port=port, reload=False, log_config=None, access_log=False))
     server.run()
 
 

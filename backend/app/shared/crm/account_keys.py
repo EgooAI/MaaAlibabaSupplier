@@ -105,7 +105,7 @@ def get_key_hex(ali_id: str, database_path: Optional[Path | str] = None) -> byte
     try:
         return parse_key_hex(record.aes_key_hex)
     except KeyFormatError:
-        logger.warning("Stored key for ali_id={} is corrupt, ignoring", ali_id)
+        logger.warning("Stored account key is corrupt, ignoring")
         return None
 
 

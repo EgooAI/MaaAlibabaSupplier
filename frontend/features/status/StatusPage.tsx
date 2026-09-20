@@ -11,15 +11,18 @@ import { useStatusWorkbench } from "./hooks/useStatusWorkbench";
 import { useAccount } from "@/features/account/AccountProvider";
 import { DataDirBanner } from "@/features/settings/DataDirBanner";
 import { SyncStatus } from "@/features/account/SyncStatus";
+import { WorkerStatus } from "./WorkerStatus";
 
 export function StatusPage() {
   const account = useAccount();
   const canDiagnose = !account.blocked && Boolean(account.snapshot?.client.connected);
-  const { snapshot, loading, creatingTask, testingNode, createTestTask, runNodeTest } = useStatusWorkbench();
+  const { snapshot, loading, lastFailure, creatingTask, testingNode, createTestTask, runNodeTest } = useStatusWorkbench();
+  const failure = lastFailure ? <Alert type="warning" showIcon title={`状态观察失败（${new Date(lastFailure.at).toLocaleTimeString()}）`} description={`${lastFailure.message}。${snapshot ? `当前显示上次成功快照（${snapshot.updatedAt}），可能已过期。` : "尚无可用快照。"}`} /> : null;
 
   if (!snapshot) {
     return (
       <Space orientation="vertical" size="large" className="w-full">
+        {failure}
         <Card loading={loading}>
           {!loading ? <Empty description="暂无状态数据" /> : null}
         </Card>
@@ -29,12 +32,15 @@ export function StatusPage() {
 
   return (
     <Space orientation="vertical" size="large" className="w-full">
-      <ChatSyncCard />
+      {failure}
+      <ChatSyncCard observedSource={snapshot.source} />
+      {snapshot.workers ? <WorkerStatus workers={snapshot.workers} queues={snapshot.queues} /> : null}
 
-      <Card title="模块状态" extra={<Typography.Text type="secondary">更新于 {snapshot.updatedAt}（每 2 秒）</Typography.Text>} loading={loading}>
+      <Card title="模块状态" extra={<Typography.Text type="secondary">更新于 {snapshot.updatedAt}（观察完成后间隔 2 秒）</Typography.Text>} loading={loading}>
         <Row gutter={[16, 16]}>
           {snapshot.modules.map((module) => <Col xs={24} md={8} key={module.id}><HealthModulePanel module={module} /></Col>)}
         </Row>
+        {snapshot.lastDiagnostic ? <Typography.Paragraph type="secondary" className="mt-3 mb-0">上次手动检查完成于 {formatDateTime(snapshot.lastDiagnostic.completed_at)} · 卖家 {snapshot.lastDiagnostic.context.self_ali_id || "未选择"} · {snapshot.lastDiagnostic.entry} · {snapshot.lastDiagnostic.currentContext ? "账号与窗口上下文匹配；不保证当前界面仍有效" : "账号或窗口上下文已失效"}</Typography.Paragraph> : null}
       </Card>
 
       <Card title="诊断动作">
@@ -78,6 +84,7 @@ function HealthModulePanel({ module }: { module: HealthModule }) {
       </div>
       <Space orientation="vertical" size={2}>
         <Typography.Text>{module.description}</Typography.Text>
+        {module.observedAt != null ? <Typography.Text type="secondary">观察时间：{formatDateTime(module.observedAt)}</Typography.Text> : null}
         <Typography.Text type="secondary">延迟：{module.latency === null ? "未知" : `${module.latency}ms`}</Typography.Text>
       </Space>
     </div>
@@ -93,9 +100,9 @@ function SyncDetailTile({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ChatSyncCard() {
+function ChatSyncCard({ observedSource }: { observedSource?: SourceSyncStatus | null }) {
   const { snapshot, blocked } = useAccount();
-  const source: SourceSyncStatus | null = blocked ? null : snapshot?.source ?? null;
+  const source: SourceSyncStatus | null = blocked ? null : observedSource ?? snapshot?.source ?? null;
   const time = (value: number | null) => (value == null ? "尚无记录" : formatDateTime(value));
   return (
     <Card title="聊天同步">
@@ -105,6 +112,7 @@ function ChatSyncCard() {
           <>
             <Row gutter={[12, 12]}>
               <Col xs={12} md={8}><SyncDetailTile label="最近检查" value={time(source.last_checked)} /></Col>
+              <Col xs={12} md={8}><SyncDetailTile label="最近成功观察源库" value={time(source.last_observed_at)} /></Col>
               <Col xs={12} md={8}><SyncDetailTile label="最近尝试" value={time(source.last_attempt)} /></Col>
               <Col xs={12} md={8}><SyncDetailTile label="计划重试" value={source.retry_at == null ? "无" : time(source.retry_at)} /></Col>
               <Col xs={12} md={8}><SyncDetailTile label="最近提交" value={`新增 ${source.counts.inserted} · 更新 ${source.counts.updated} · 未变 ${source.counts.unchanged}`} /></Col>
@@ -112,6 +120,7 @@ function ChatSyncCard() {
               <Col xs={12} md={8}><SyncDetailTile label="后台检查" value={`${source.auto_enabled ? "已启用" : "未启用"}${source.source_dirty ? " · 数据源有变化" : ""}${source.pending ? " · 等待同步" : ""}`} /></Col>
             </Row>
             {source.last_error ? <Alert type="error" showIcon title={source.last_error} /> : null}
+            {source.observation_stale ? <Alert type="warning" showIcon title={`尚无成功源库观察或已超过 ${source.observation_max_age_s} 秒。已有存档可能过期；这不表示同步任务已失败。`} /> : null}
           </>
         ) : null}
       </Space>

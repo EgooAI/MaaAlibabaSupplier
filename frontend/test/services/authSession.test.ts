@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { createHash, webcrypto } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { authSession, AUTH_STORAGE_KEY, captureAuth } from "@/services/authSession";
+import { authSession, AUTH_STORAGE_KEY, AuthRequestError, captureAuth } from "@/services/authSession";
 import { accountSession, scopeBackend } from "@/services/accountSession";
 import { httpBackend } from "@/services/httpAdapter";
 import { connectionSnapshot } from "@/mock/connectionData";
@@ -27,6 +27,67 @@ beforeEach(async () => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("authentication lifetime", () => {
+  describe.each(["login", "session"])("%s diagnostic references", (path) => {
+    it.each([
+      [401, ""],
+      [429, ""],
+      [503, "proxy unavailable"],
+      [200, "not-json"],
+      [200, JSON.stringify({ token: "not-an-envelope" })],
+      [200, JSON.stringify({ code: 0, msg: "ok", data: {} })],
+    ])("retains the reference for status %s and body %s without changing auth/retry behavior", async (status, body) => {
+      if (path === "session") localStorage.setItem(AUTH_STORAGE_KEY, "saved-token");
+      vi.mocked(fetch).mockResolvedValueOnce(new Response(body, { status, headers: { "X-Request-ID": "auth-request-42", "Retry-After": "3" } }));
+      if (path === "session") await authSession.bootstrap();
+      else await authSession.login("secret");
+      expect(authSession.get().error).toContain("请求 ID：auth-request-42");
+      expect(authSession.get().phase).toBe(path === "session" && status !== 401 ? "retry" : "signedOut");
+      expect(localStorage.getItem(AUTH_STORAGE_KEY)).toBe(path === "session" && status !== 401 ? "saved-token" : null);
+      expect(() => captureAuth()).toThrow();
+      if (status === 429) {
+        expect(authSession.get().retryAt).toBe(Date.now() + 3000);
+        if (path === "session") await authSession.retry();
+        else await authSession.login("secret");
+      }
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it.each([
+    ["valid-42._:ref", "valid-42._:ref"],
+    ["<script>bad</script>", undefined],
+    ["two references", undefined],
+    ["x".repeat(129), undefined],
+    [undefined, undefined],
+  ])("only retains and displays a bounded safe request ID: %s", async (header, expected) => {
+    const error = new AuthRequestError("auth failed", 503, 0, header);
+    expect(error.requestId).toBe(expected);
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("", { status: 503, headers: header === undefined ? {} : { "X-Request-ID": header } }));
+    await authSession.login("secret");
+    expect(authSession.get().error?.includes("请求 ID：")).toBe(expected !== undefined);
+    if (expected !== undefined) expect(authSession.get().error).toContain(expected);
+    else if (header) expect(authSession.get().error).not.toContain(header);
+    expect(localStorage.getItem(AUTH_STORAGE_KEY)).toBeNull();
+  });
+
+  it("preserves response diagnostics when a session body is interrupted", async () => {
+    localStorage.setItem(AUTH_STORAGE_KEY, "saved-token");
+    vi.mocked(fetch).mockResolvedValueOnce({ status: 200, ok: true, headers: new Headers({ "X-Request-ID": "auth-body-lost" }), json: () => Promise.reject(new TypeError("stream interrupted")) } as Response);
+    await authSession.bootstrap();
+    expect(authSession.get()).toMatchObject({ phase: "retry", error: expect.stringContaining("auth-body-lost") });
+    expect(localStorage.getItem(AUTH_STORAGE_KEY)).toBe("saved-token");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("includes the logout diagnostic reference while retaining uncertain revocation wording", async () => {
+    await authenticatedSession();
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("", { status: 503, headers: { "X-Request-ID": "logout-42" } }));
+    await authSession.logout();
+    expect(authSession.get()).toMatchObject({ phase: "signedOut", warning: expect.stringContaining("该凭证可能仍有效") });
+    expect(authSession.get().warning).toContain("请求 ID：logout-42");
+    expect(localStorage.getItem(AUTH_STORAGE_KEY)).toBeNull();
+  });
+
   it("blocks business calls until a persisted permanent token is verified and discards cached account data", async () => {
     accountSession.accept(connectionSnapshot);
     localStorage.setItem(AUTH_STORAGE_KEY, "permanent-token");
@@ -156,9 +217,10 @@ describe("authentication lifetime", () => {
     vi.mocked(fetch).mockReturnValueOnce(slow.promise);
     const boot = authSession.bootstrap();
     await authenticatedSession("new");
-    slow.resolve(new Response("", { status: 401 }));
+    slow.resolve(new Response("", { status: 401, headers: { "X-Request-ID": "obsolete-auth-response" } }));
     await boot;
     expect(captureAuth().token).toBe("new");
+    expect(authSession.get().error).toBeUndefined();
     localStorage.removeItem(AUTH_STORAGE_KEY);
     await authSession.bootstrap();
     const lateLogin = deferred<Response>();

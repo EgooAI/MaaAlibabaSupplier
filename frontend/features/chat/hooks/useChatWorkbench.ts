@@ -10,6 +10,7 @@ import type { AssistantSuggestion, ChatMessage, ConversationDetail } from "@/typ
 import { useConversationSummaries } from "./useConversationSummaries";
 import type { ConversationQuery } from "@/types/inbox";
 import { adaptInboxState } from "@/services/chatAdapter";
+import { operationErrorMessage } from "@/services/errors";
 
 type AnalysisState = {
   loading: boolean;
@@ -18,13 +19,15 @@ type AnalysisState = {
 
 type TranslationJobState = {
   conversationId: string;
-  taskId: string;
+  taskIds: string[];
+  selection: number;
+  deadline: number;
   messageIds: string[];
   texts: string[];
 };
 
 const TRANSLATION_POLL_INTERVAL_MS = 2000;
-const TRANSLATION_POLL_MAX_TICKS = 150;
+const TRANSLATION_OBSERVATION_MS = 300000;
 const TRANSLATION_QUERY_CHUNK = 500;
 const TRANSLATION_SUBMIT_CHUNK = 500;
 
@@ -49,10 +52,13 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [suggestions, setSuggestions] = useState<AssistantSuggestion[]>([]);
   const [suggestionOpen, setSuggestionOpen] = useState(false);
+  const [suggestionError, setSuggestionError] = useState<string>();
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [analysisState, setAnalysisState] = useState<AnalysisState>({ loading: false });
   const [translationVisible, setTranslationVisible] = useState(true);
   const [translationJob, setTranslationJob] = useState<TranslationJobState>();
+  const [translationNotice, setTranslationNotice] = useState<string>();
+  const translationBusy = useRef(false);
   const [translationPendingIds, setTranslationPendingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [translationFailedIds, setTranslationFailedIds] = useState<ReadonlySet<string>>(() => new Set());
   // NO_NEED 哨兵（空串译文）已解决但不可渲染：以文本为键。ref 是同步事实源
@@ -130,6 +136,7 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
 
   /** Fetch cached translations for explicit texts and merge them into the conversation. */
   const queryAndApplyTranslations = useCallback(async (conversationId: string, sourceMessages: ChatMessage[], texts: string[]) => {
+    const selection = selectionRef.current;
     let translations: Record<string, string | null> = {};
     const chunks: string[][] = [];
     for (let index = 0; index < texts.length; index += TRANSLATION_QUERY_CHUNK) chunks.push(texts.slice(index, index + TRANSLATION_QUERY_CHUNK));
@@ -138,8 +145,11 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
     for (const result of settled) {
       if (result.status === "fulfilled") translations = { ...translations, ...result.value.translations };
     }
-    if (activeIdRef.current !== conversationId) return;
+    if (activeIdRef.current !== conversationId || selection !== selectionRef.current) return false;
     applyTextTranslations(conversationId, sourceMessages, translations);
+    const complete = settled.every((result) => result.status === "fulfilled");
+    if (!complete) setTranslationNotice("译文缓存查询失败，无法确认翻译结果；请稍后查询缓存，勿立即重复提交。");
+    return complete;
   }, [applyTextTranslations, backend]);
 
   /** Pull cached translations for messages without one and merge them in. */
@@ -150,7 +160,7 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
       .filter((item) => isTranslatableMessage(item) && !item.translatedContent && !noNeedTextsRef.current.has(item.content.trim()))
       .map((item) => item.content.trim()))];
     if (!texts.length) return;
-    await queryAndApplyTranslations(conversationId, messages, texts);
+    return queryAndApplyTranslations(conversationId, messages, texts);
   }, [queryAndApplyTranslations]);
 
   /** Re-read explicit texts after a job completes; force retranslations replace old values. */
@@ -159,15 +169,24 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
     const conversation = activeConversationRef.current;
     const messages = conversation?.id === conversationId ? conversation.messages : undefined;
     if (!messages) return;
-    await queryAndApplyTranslations(conversationId, messages, texts);
+    return queryAndApplyTranslations(conversationId, messages, texts);
   }, [queryAndApplyTranslations]);
 
-  const finishTranslationJob = useCallback(async (job: TranslationJobState, outcome: "succeeded" | "failed" | "timeout" | "aborted") => {
-    setTranslationJob((current) => current && current.taskId === job.taskId ? undefined : current);
-    if (outcome === "aborted") return;
-    await absorbTranslationTexts(job.conversationId, job.texts);
-    if (activeIdRef.current !== job.conversationId) return;
+  const finishTranslationJob = useCallback(async (job: TranslationJobState, outcome: "succeeded" | "failed" | "unknown" | "aborted") => {
+    if (selectionRef.current !== job.selection) return;
+    setTranslationJob((current) => current === job ? undefined : current);
+    if (outcome === "aborted") {
+      translationBusy.current = false;
+      setTranslationPendingIds(new Set());
+      setTranslationNotice("账号状态已变化，已停止观察原翻译任务；其结果尚未确认。");
+      return;
+    }
+    const cacheObserved = await absorbTranslationTexts(job.conversationId, job.texts);
+    if (activeIdRef.current !== job.conversationId || selectionRef.current !== job.selection) return;
+    translationBusy.current = false;
     setTranslationPendingIds(new Set());
+    if (outcome === "unknown") setTranslationNotice("翻译结果未知：任务记录缺失或观察已到期。请查询缓存核对，勿立即重复提交。");
+    if (!cacheObserved) return;
     // 详情尚未就绪（快速重选竞态）时跳过未解决判定，避免把成功任务误标为失败。
     const conversation = activeConversationRef.current;
     if (!conversation) return;
@@ -177,41 +196,55 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
         .map((item) => item.id),
     );
     const unresolved = job.messageIds.filter((id) => !resolvedNow.has(id));
-    if (unresolved.length && outcome !== "timeout") {
+    if (unresolved.length && outcome !== "unknown") {
       setTranslationFailedIds((current) => new Set([...current, ...unresolved]));
       if (outcome === "failed") message.error("翻译失败，可点击消息重试");
       else message.warning(`有 ${unresolved.length} 条消息未返回译文，可重试`);
     }
-    if (outcome === "timeout") message.info("翻译仍在后台进行，稍后刷新会自动显示");
   }, [absorbTranslationTexts, message]);
 
   // Poll the active translation job; pauses while the tab is hidden.
   useEffect(() => {
     const job = translationJob;
     if (!job) return;
-    let ticks = 0;
     let cancelled = false;
+    let busy = false;
+    let finished = false;
+    const pending = new Set(job.taskIds);
+    let outcome: "succeeded" | "failed" | "unknown" = "succeeded";
     const timer = setInterval(() => {
-      if (cancelled || document.hidden) return;
-      ticks += 1;
-      if (ticks > TRANSLATION_POLL_MAX_TICKS) {
-        void finishTranslationJob(job, "timeout");
+      if (cancelled || finished || busy || document.hidden) return;
+      if (Date.now() >= job.deadline) {
+        finished = true;
+        void finishTranslationJob(job, "unknown");
         return;
       }
+      busy = true;
       void (async () => {
         try {
-          const snapshot = await backend.getTranslationJob(job.taskId);
-          if (cancelled) return;
-          if (snapshot && (snapshot.status === "succeeded" || snapshot.status === "failed")) {
-            void finishTranslationJob(job, snapshot.status);
+          for (const taskId of pending) {
+            const snapshot = await backend.getTranslationJob(taskId);
+            if (cancelled) return;
+            if (!snapshot || snapshot.status === "succeeded" || snapshot.status === "failed") {
+              pending.delete(taskId);
+              if (!snapshot) outcome = "unknown";
+              else if (snapshot.status === "failed" && outcome !== "unknown") outcome = "failed";
+            }
+          }
+          if (!pending.size) {
+            finished = true;
+            void finishTranslationJob(job, outcome);
           }
         } catch (error) {
           if (cancelled) return;
           if (error instanceof AccountChangedError) {
+            finished = true;
             void finishTranslationJob(job, "aborted");
             return;
           }
-          // transient poll failure: keep polling until the tick cap
+          setTranslationNotice(operationErrorMessage(error, "翻译任务观察失败") + "；将继续查询状态，不会自动重新提交。");
+        } finally {
+          busy = false;
         }
       })();
     }, TRANSLATION_POLL_INTERVAL_MS);
@@ -224,6 +257,8 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
   const translateMessages = useCallback(async (targets: ChatMessage[], options?: { force?: boolean }) => {
     const conversationId = activeIdRef.current;
     if (!conversationId) return;
+    if (translationBusy.current) { message.info("翻译已提交，请等待观察结果"); return; }
+    const selection = selectionRef.current;
     const force = options?.force ?? false;
     // Any party's textual message is translatable; card bubbles carry no text.
     const eligible = targets.filter(isTranslatableMessage);
@@ -234,42 +269,49 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
     const texts = [...new Set(eligible.map((item) => item.content.trim()))];
     // 传会话 ID 让后端把全量历史作为翻译上下文；非数字 ID（mock）则省略。
     const numericId = Number(conversationId);
-    // 后端单次上限 500 条：分批提交，状态聚合跟踪（轮询最后一批，完成时统一回吸全量）。
+    // Track every accepted batch; a later rejected batch cannot erase earlier receipts.
     const batches: string[][] = [];
     for (let index = 0; index < texts.length; index += TRANSLATION_SUBMIT_CHUNK) batches.push(texts.slice(index, index + TRANSLATION_SUBMIT_CHUNK));
-    let submissionFailed = false;
-    let trackedTaskId: string | undefined;
+    const taskIds: string[] = [];
+    const acceptedTexts: string[] = [];
+    translationBusy.current = true;
+    setTranslationNotice(undefined);
     try {
       for (const batch of batches) {
+        if (selectionRef.current !== selection) return;
         const job = await backend.requestTranslations({
           texts: batch,
           force,
           ...(Number.isFinite(numericId) ? { conversationId: numericId } : {}),
         });
-        if (job.task_id) trackedTaskId = job.task_id;
+        if (selectionRef.current !== selection) return;
+        acceptedTexts.push(...batch);
+        if (job.task_id) taskIds.push(job.task_id);
       }
     } catch (error) {
-      if (error instanceof AccountChangedError) return;
-      submissionFailed = true;
+      if (error instanceof AccountChangedError) {
+        if (selectionRef.current === selection) translationBusy.current = false;
+        return;
+      }
+      if (selectionRef.current !== selection) return;
+      setTranslationNotice(operationErrorMessage(error, "翻译提交失败", "请先查询缓存核对，勿立即重复提交"));
     }
-    if (submissionFailed) {
-      message.error(force ? "重新翻译提交失败" : "翻译提交失败");
-      if (!trackedTaskId) return;
-    }
-    if (activeIdRef.current !== conversationId) return;
-    const ids = eligible.map((item) => item.id);
+    if (activeIdRef.current !== conversationId || selectionRef.current !== selection) return;
+    const accepted = new Set(acceptedTexts);
+    const ids = eligible.filter((item) => accepted.has(item.content.trim())).map((item) => item.id);
     setTranslationFailedIds((current) => {
       if (!current.size) return current;
       const next = new Set(current);
       for (const id of ids) next.delete(id);
       return next.size === current.size ? current : next;
     });
-    if (!trackedTaskId) {
+    if (!taskIds.length) {
+      translationBusy.current = false;
       void absorbTranslations(conversationId);
       return;
     }
     setTranslationPendingIds((current) => new Set([...current, ...ids]));
-    setTranslationJob({ conversationId, taskId: trackedTaskId, messageIds: ids, texts });
+    setTranslationJob({ conversationId, taskIds, messageIds: ids, texts: acceptedTexts, selection, deadline: Date.now() + TRANSLATION_OBSERVATION_MS });
   }, [absorbTranslations, backend, message]);
 
   const translatableMessages = useMemo(() => activeConversation?.messages.filter(isTranslatableMessage) ?? [], [activeConversation?.messages]);
@@ -311,6 +353,8 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
     ++analysisRequestRef.current;
     setActiveConversationId(id);
     setTranslationJob(undefined);
+    translationBusy.current = false;
+    setTranslationNotice(undefined);
     setTranslationPendingIds(new Set());
     setTranslationFailedIds(new Set());
     noNeedTextsRef.current = new Set();
@@ -322,6 +366,8 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
     commitConversation(undefined);
     setActiveCardId(undefined);
     setAnalysisState({ loading: false });
+    setSuggestionError(undefined);
+    setSuggestions([]);
     setDetailLoading(true);
     const acknowledge = beginRead("detail");
 
@@ -387,12 +433,17 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
     suggestionRequestRef.current = requestId;
     setSuggestionOpen(true);
     setSuggestions([]);
+    setSuggestionError(undefined);
 
     try {
       const nextSuggestions = await backend.getAssistantSuggestions(conversationId);
       if (suggestionRequestRef.current === requestId && activeIdRef.current === conversationId) setSuggestions(nextSuggestions);
-    } catch {
-      if (suggestionRequestRef.current === requestId && activeIdRef.current === conversationId) message.error("回复建议加载失败");
+    } catch (error) {
+      if (suggestionRequestRef.current === requestId && activeIdRef.current === conversationId) {
+        const text = operationErrorMessage(error, "回复建议加载失败", "本次建议可能仍在生成，丢失的结果无法重新读取；稍后人工决定是否重新生成，可能重复调用模型");
+        setSuggestionError(text);
+        message.error(text);
+      }
     }
   }, [activeConversation?.id, backend, message]);
 
@@ -430,10 +481,11 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
       const current = activeConversationRef.current;
       if (current?.id === conversationId) commitConversation({ ...current, analysis });
       setAnalysisState({ loading: false });
-    } catch {
+    } catch (error) {
       if (analysisRequestRef.current === requestId && activeIdRef.current === conversationId) {
-        setAnalysisState({ loading: false, error: "会话分析失败" });
-        message.error("会话分析失败");
+        const text = operationErrorMessage(error, "会话分析失败", "本次分析可能仍在执行，丢失的结果无法重新读取；稍后人工决定是否重新生成，可能重复调用模型");
+        setAnalysisState({ loading: false, error: text });
+        message.error(text);
       }
     }
   }, [activeConversation?.id, backend, commitConversation, message]);
@@ -485,9 +537,19 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
     translationStats,
     translationPendingIds,
     translationFailedIds,
+    translationNotice,
+    reconcileTranslations: async () => {
+      const id = activeIdRef.current;
+      const selection = selectionRef.current;
+      if (!id) return;
+      const texts = activeConversationRef.current?.messages.filter(isTranslatableMessage).map((item) => item.content.trim()) ?? [];
+      const observed = await absorbTranslationTexts(id, texts);
+      if (selectionRef.current === selection && observed) setTranslationNotice("缓存查询完成；未返回译文的消息仍无法确认任务结果。重新提交可能重复调用模型，请人工核对。");
+    },
     gotoContact,
     suggestions,
     suggestionOpen,
+    suggestionError,
     setSuggestionOpen,
     openSuggestions,
     insertSuggestion,

@@ -22,6 +22,8 @@ def capture(sdk, monkeypatch):
     )
 
     class CaptureJob:
+        done = True
+
         def wait(self):
             state.events.append("wait")
             if state.failure == "wait":

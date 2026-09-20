@@ -219,7 +219,7 @@ class _DictPool(Generic[M]):
             try:
                 self._data[row[0]] = model_cls.model_validate_json(row[1])
             except Exception:
-                logger.warning("跳过损坏的池记录 table={} key={}", self._table, row[0])
+                logger.warning("Skipping corrupt pool record in table={}", self._table)
 
     def close(self) -> None:
         with self._lock:
@@ -292,7 +292,7 @@ class UserInfoPool:
             try:
                 info = UserInfo.model_validate_json(raw)
             except Exception:
-                logger.warning("跳过损坏的用户池记录 key={}", key)
+                logger.warning("Skipping corrupt user pool record")
                 continue
             self._data[key] = info
             if info.login_id:

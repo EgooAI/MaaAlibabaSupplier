@@ -22,6 +22,7 @@ from backend.app.shared.agent.translation import assign_short_hashes, clean_text
 from backend.app.shared.backend.account_context import account_lock, get_account_context
 from backend.app.shared.crm.translation_cache import translation_cached
 from backend.app.task_queue import TaskSnapshot, TaskStatus, get_translation_queue
+from backend.app.shared.utils.log_context import bind_log_context, log_event
 
 # Each LLM call carries at most this many texts; larger submissions are chunked.
 TRANSLATION_CHUNK_SIZE = 50
@@ -45,6 +46,7 @@ def submit_translation_job(
 
     def _run() -> tuple[bool, str]:
         if not _epoch_matches(expected_epoch):
+            log_event("translation.cancelled")
             return False, "账号已切换，翻译任务已取消"
         conversation = _conversation_context(conversation_id)
         # 只为真正待翻译的文本分配短哈希：已缓存文本的上下文行不带标记。
@@ -55,12 +57,14 @@ def submit_translation_job(
         failed = 0
         for start in range(0, len(pending), TRANSLATION_CHUNK_SIZE):
             chunk = pending[start : start + TRANSLATION_CHUNK_SIZE]
+            log_event("translation.chunk_started", count=len(chunk))
             try:
                 outcome = translate_texts_to_crm(
                     chunk, force=force, conversation=conversation, annotate=annotate
                 )
                 # Agent 遗漏条目按协议违约计为失败，可通过重试补齐。
                 failed += outcome.omitted
+                log_event("translation.chunk_completed", count=len(chunk) - outcome.omitted)
             except Exception:
                 # Partial success: chunks already written stay in the cache.
                 logger.exception("translation chunk failed ({} texts)", len(chunk))
@@ -69,7 +73,8 @@ def submit_translation_job(
             return False, f"{failed}/{len(pending)} 条翻译失败，可重试"
         return True, f"已翻译 {len(pending)} 条"
 
-    return get_translation_queue().enqueue(_run, description="Translation texts")
+    with bind_log_context(account_epoch=expected_epoch):
+        return get_translation_queue().enqueue(_run, description="Translation texts")
 
 
 def translation_job(task_id: str) -> TaskSnapshot | None:

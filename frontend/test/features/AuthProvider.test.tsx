@@ -98,9 +98,10 @@ describe("global authentication gate", () => {
 
   it("shows a Retry-After countdown, retains the saved token, and verifies only on retry", async () => {
     localStorage.setItem(AUTH_STORAGE_KEY, "saved");
-    vi.mocked(fetch).mockResolvedValueOnce(response(null, 429, { "Retry-After": "3" }));
+    vi.mocked(fetch).mockResolvedValueOnce(response(null, 429, { "Retry-After": "3", "X-Request-ID": "auth-rate-limited" }));
     await mount();
     expect(container.textContent).toContain("3 秒");
+    expect(container.textContent).toContain("请求 ID：auth-rate-limited");
     const retry = [...container.querySelectorAll("button")].find((item) => item.textContent === "重新验证登录")!;
     expect(retry.disabled).toBe(true);
     await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
@@ -148,10 +149,11 @@ describe("global authentication gate", () => {
     localStorage.setItem(AUTH_STORAGE_KEY, "saved");
     vi.mocked(fetch).mockResolvedValueOnce(response({ authenticated: true })).mockResolvedValueOnce(response(connectionSnapshot));
     await mount();
-    vi.mocked(fetch).mockResolvedValue(new Response("", { status: 401 }));
+    vi.mocked(fetch).mockResolvedValue(new Response("", { status: 401, headers: { "X-Request-ID": "business-unauthorized" } }));
     await act(async () => { await expect(httpBackend.resetCache()).rejects.toThrow("登录状态已变化"); });
     expect(container.querySelector("[data-workspace]")).toBeNull();
     expect(container.textContent).toContain("登录凭证已失效");
+    expect(container.textContent).toContain("请求 ID：business-unauthorized");
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
     expect(fetch).toHaveBeenCalledTimes(3);
   });

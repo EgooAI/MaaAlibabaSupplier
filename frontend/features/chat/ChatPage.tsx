@@ -2,7 +2,7 @@
 
 import { ArrowDownOutlined, ArrowLeftOutlined, CheckOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
 import { Suspense, useEffect, useRef, useState } from "react";
-import { Button, Card, Empty, Popover, Spin, Tooltip } from "antd";
+import { Alert, Button, Card, Empty, Popover, Spin, Tooltip } from "antd";
 import { useRouter, useSearchParams } from "next/navigation";
 import { inboxQueryFromUrl } from "@/domain/chat/inboxModel";
 import { statusLabel } from "@/domain/chat/chatModel";
@@ -112,6 +112,7 @@ function ChatWorkspace() {
     >
       {active ? (
         <div className="flex min-h-0 flex-1 flex-col">
+          {workbench.translationNotice ? <Alert type="warning" showIcon title={workbench.translationNotice} action={<Button size="small" onClick={() => void workbench.reconcileTranslations()}>查询缓存</Button>} /> : null}
           {workbench.translationStats.total > 0 ? (
             <TranslationToolbar
               visible={workbench.translationVisible}
@@ -187,7 +188,7 @@ function ChatWorkspace() {
         </div>
       </div>
 
-      <AssistantSuggestionModal open={workbench.suggestionOpen} suggestions={workbench.suggestions} onClose={() => workbench.setSuggestionOpen(false)} onInsert={workbench.insertSuggestion} />
+      <AssistantSuggestionModal open={workbench.suggestionOpen} suggestions={workbench.suggestions} error={workbench.suggestionError} onClose={() => workbench.setSuggestionOpen(false)} onInsert={workbench.insertSuggestion} />
       <ChatAnalysisModal open={workbench.analysisOpen} analysis={active?.analysis} focus={analysisFocus} loading={workbench.analysisLoading} error={workbench.analysisError} onClose={() => workbench.setAnalysisOpen(false)} />
       <CustomerInfo conversation={active} open={customerInfoOpen} onClose={() => setCustomerInfoOpen(false)} onGotoContact={() => void workbench.gotoContact()} />
       <CardDetailDrawer card={workbench.activeCard} open={Boolean(workbench.activeCard)} onClose={() => workbench.setActiveCardId(undefined)} />

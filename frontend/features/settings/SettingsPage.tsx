@@ -75,7 +75,7 @@ export function AccountSetup() {
 }
 
 export function SettingsPage() {
-  const { confirmOpen, setConfirmOpen, terminating, terminated, confirmShutdown } = useShutdownApp();
+  const { confirmOpen, setConfirmOpen, terminating, terminated, shutdownError, confirmShutdown } = useShutdownApp();
 
   const handleConfirm = () => void confirmShutdown();
 
@@ -84,8 +84,8 @@ export function SettingsPage() {
       <Card>
         <Result
           status="info"
-          title="程序已终止"
-          subTitle="后端及附带进程（MaaPiCli、Yak 代理）正在退出，本页面已不可用。浏览器标签页将尝试自动关闭，若未关闭请手动关闭。"
+          title="关闭请求已接受"
+          subTitle="后端已接受退出请求，尚未确认所有进程退出。请检查程序状态后手动关闭本页面。"
         />
       </Card>
     );
@@ -98,6 +98,7 @@ export function SettingsPage() {
 
       <Card title="程序控制">
         <Space orientation="vertical" size="middle" className="w-full">
+          {shutdownError ? <Alert type="warning" showIcon title={shutdownError} /> : null}
           <Typography.Text type="secondary">
             终止程序将退出后端服务及附带进程（MaaPiCli、Yak MITM 代理），本页面也会随之失效。如需再次使用，请重新启动程序。
           </Typography.Text>

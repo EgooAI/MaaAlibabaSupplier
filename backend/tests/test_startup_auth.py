@@ -1,4 +1,5 @@
 import os
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -112,7 +113,7 @@ def test_yak_receives_token_only_in_child_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("MITM_RECEIVER_PORT", "8085")
     monkeypatch.setattr(main, "_resolve_yak_executable", lambda root: "yak.exe")
     monkeypatch.setattr(main, "_wait_for_port", lambda *args, **kwargs: True)
-    popen = Mock(return_value=SimpleNamespace(pid=123))
+    popen = Mock(return_value=SimpleNamespace(pid=123, stdout=BytesIO(), poll=lambda: None))
     monkeypatch.setattr(main.subprocess, "Popen", popen)
     logger = Mock()
     monkeypatch.setattr(main, "logger", logger)
@@ -123,6 +124,21 @@ def test_yak_receives_token_only_in_child_environment(monkeypatch, tmp_path):
     assert child["MITM_RECEIVER_HOST"] == "::1" and child["MITM_RECEIVER_PORT"] == "9015"
     assert os.environ["MAA_MITM_INTERNAL_TOKEN"] == "inherited-token"
     assert "new-private-token" not in repr(logger.mock_calls)
+    assert main.finish_process_log(popen.return_value)
+
+
+@pytest.mark.parametrize("reachable", [False, True])
+def test_yak_early_exit_is_not_readiness_even_when_port_is_open(monkeypatch, tmp_path, reachable):
+    (tmp_path / "yak_mitm.yak").write_text("// test script", encoding="utf-8")
+    monkeypatch.setattr(main, "_wait_for_port", lambda *args, **kwargs: reachable)
+    process = SimpleNamespace(pid=123, stdout=BytesIO(), poll=lambda: 17)
+    monkeypatch.setattr(main.subprocess, "Popen", Mock(return_value=process))
+    logger = Mock()
+    monkeypatch.setattr(main, "logger", logger)
+    assert main._start_yak_mitm(tmp_path, host="127.0.0.1", port=8085, internal_token="private-token") is None
+    assert "exited during startup" in logger.error.call_args.args[0]
+    logger.info.assert_not_called()
+    assert process.diagnostic_log.finished.is_set()
 
 
 def test_yak_cannot_spawn_without_private_token(monkeypatch, tmp_path):

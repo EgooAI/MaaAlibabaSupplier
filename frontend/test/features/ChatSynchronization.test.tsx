@@ -104,6 +104,21 @@ async function observe(snapshot: ConnectionSnapshot) {
 }
 
 describe("chat synchronization boundaries", () => {
+  it("keeps the readable workspace and draft when successful source observation expires", async () => {
+    await mount();
+    await act(async () => workbench.setDraft("keep this draft"));
+    const oldRevision = connectionSnapshot.source.revision;
+    await observe({ ...connectionSnapshot, source: { ...connectionSnapshot.source, ready: false, stale: true, freshness: "stale", observation_stale: true } });
+    expect(container.textContent).toContain("源库观察已过期");
+    expect(container.textContent).not.toContain("同步失败");
+    expect(container.querySelector("textarea")?.value).toBe("keep this draft");
+    expect(account.snapshot?.source.revision).toBe(oldRevision);
+    expect(mocks.backend.retryConnection).not.toHaveBeenCalled();
+    await observe(connectionSnapshot);
+    expect(container.textContent).toContain("聊天已更新");
+    expect(container.querySelector("textarea")?.value).toBe("keep this draft");
+  });
+
   it("shows automatic sync progress and permits manual refresh after completion without replacing the workspace", async () => {
     const source = { ...connectionSnapshot.source, syncing: true, pending: true, freshness: "syncing" as const, stale: true, last_error: "source offline", retry_at: 1_789_600_300 };
     mocks.backend.getConnection.mockResolvedValue({ ...connectionSnapshot, source });

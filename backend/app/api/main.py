@@ -16,6 +16,7 @@ from backend.app.api.auth import LOGIN_LIMITER, AuthMiddleware, SessionStore, va
 from backend.app.api.envelope import AppError, err, user_message
 from backend.app.shared.backend.account_context import get_account_context
 from backend.app.shared.utils.settings import FRONTEND_DEV_ORIGINS, resolve_repo_root
+from backend.app.shared.utils.log_context import bind_log_context, log_event
 
 from backend.app.api.routers import agent, app as app_router, auth, conversations, messages, outbox, self, settings, status
 
@@ -47,9 +48,10 @@ def create_app() -> FastAPI:
                 response_token = response_epoch.set(marker)
                 try:
                     try:
-                        response = await call_next(request)
+                        with bind_log_context(account_epoch=context.epoch):
+                            response = await call_next(request)
                     except Exception:
-                        logger.error("Unhandled account API error [{}]", request_id)
+                        logger.exception("Unhandled account API error")
                         response = JSONResponse(status_code=500, content=err("服务器内部错误", 1))
                     current = await run_in_threadpool(get_account_context)
                     if current.epoch != marker[0]:
@@ -75,7 +77,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
-        logger.warning("API error {} {}: {}", request.url.path, exc.status_code, exc.message)
+        log_event("http.rejected", status=exc.status_code, exception_type=type(exc).__name__)
         return JSONResponse(status_code=exc.status_code, content=err(user_message(exc.message), exc.code))
 
     @app.exception_handler(RequestValidationError)
@@ -93,7 +95,8 @@ def create_app() -> FastAPI:
     @app.exception_handler(Exception)
     async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
         request_id = getattr(request.state, "request_id", "-")
-        logger.error("Unhandled API error [{}]", request_id)
+        with bind_log_context(request_id=request_id):
+            logger.opt(exception=exc).error("Unhandled API error")
         return JSONResponse(status_code=500, content=err("服务器内部错误", 1))
 
     app.include_router(auth.router, tags=["auth"])

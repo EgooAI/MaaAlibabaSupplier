@@ -52,8 +52,15 @@ async function removeStoredToken(previous: string | null, generation: number) {
   }
 }
 
-class AuthRequestError extends Error {
-  constructor(message: string, readonly status?: number, readonly retryAt = 0) { super(message); }
+export class AuthRequestError extends Error {
+  readonly requestId?: string;
+
+  constructor(message: string, readonly status?: number, readonly retryAt = 0, requestId?: string) {
+    const reference = requestId && requestId.length <= 128 && !/[^A-Za-z0-9._:-]/.test(requestId) ? requestId : undefined;
+    super(reference ? `${message}（请求 ID：${reference}）` : message);
+    this.name = "AuthRequestError";
+    this.requestId = reference;
+  }
 }
 
 async function authRequest(path: string, currentToken: string | null, signal: AbortSignal, body?: unknown) {
@@ -64,19 +71,27 @@ async function authRequest(path: string, currentToken: string | null, signal: Ab
     signal: AbortSignal.any([signal, AbortSignal.timeout(8000)]),
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
+  const requestId = response.headers.get("X-Request-ID") ?? undefined;
   // Status takes precedence even when a proxy returns an empty/non-JSON body.
-  if (response.status === 401) throw new AuthRequestError("登录凭证无效，请重新登录", 401);
+  if (response.status === 401) throw new AuthRequestError("登录凭证无效，请重新登录", 401, 0, requestId);
   if (response.status === 429) {
     const retry = response.headers.get("Retry-After");
     const seconds = retry === null ? NaN : Number(retry);
     const retryAt = Number.isFinite(seconds) ? Date.now() + seconds * 1000 : Date.parse(retry ?? "");
-    throw new AuthRequestError("登录服务请求过于频繁，请稍后重试", 429, Math.max(Date.now() + 2000, retryAt || 0));
+    throw new AuthRequestError("登录服务请求过于频繁，请稍后重试", 429, Math.max(Date.now() + 2000, retryAt || 0), requestId);
   }
-  if (!response.ok) throw new AuthRequestError("登录服务暂不可用，请重试", response.status);
-  const envelope = await response.json();
+  if (!response.ok) throw new AuthRequestError("登录服务暂不可用，请重试", response.status, 0, requestId);
+  let envelope;
+  try {
+    envelope = await response.json();
+  } catch {
+    throw new AuthRequestError("登录服务响应读取失败，请重试", response.status, 0, requestId);
+  }
   if (envelope?.code !== 0 || typeof envelope.msg !== "string" || !("data" in envelope)) {
-    throw new AuthRequestError("登录服务返回了无效响应，请重试");
+    throw new AuthRequestError("登录服务返回了无效响应，请重试", response.status, 0, requestId);
   }
+  if (path === "session" && envelope.data?.authenticated !== true) throw new AuthRequestError("登录服务返回了无效会话，请重试", response.status, 0, requestId);
+  if (path === "login" && (typeof envelope.data?.token !== "string" || !envelope.data.token)) throw new AuthRequestError("登录服务返回了无效凭证，请重试", response.status, 0, requestId);
   return envelope.data;
 }
 
@@ -85,14 +100,13 @@ async function verify() {
   const currentToken = token;
   const generation = replace(currentToken, "verifying");
   try {
-    const data = await authRequest("session", currentToken, lifetime.signal);
+    await authRequest("session", currentToken, lifetime.signal);
     if (generation !== state.generation) return;
-    if (data?.authenticated !== true) throw new AuthRequestError("登录服务返回了无效会话，请重试");
     publish({ phase: "authenticated" });
   } catch (error) {
     if (generation !== state.generation) return;
     if (error instanceof AuthRequestError && error.status === 401) {
-      await authSession.unauthorized(generation);
+      await authSession.unauthorized(generation, error.requestId);
     } else {
       publish({ phase: "retry", error: error instanceof Error ? error.message : "无法验证登录，请重试", retryAt: error instanceof AuthRequestError ? error.retryAt : 0 });
     }
@@ -155,7 +169,6 @@ export const authSession = {
       const secret_sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
       const data = await authRequest("login", null, lifetime.signal, { secret_sha256 });
       if (generation !== state.generation) return;
-      if (typeof data?.token !== "string" || !data.token) throw new Error("登录服务返回了无效凭证，请重试");
       token = data.token;
       publish({ phase: "persist" });
       await persist();
@@ -169,11 +182,11 @@ export const authSession = {
   useTemporarySession() {
     if (state.phase === "persist" && token) publish({ phase: "authenticated", temporary: true, error: undefined });
   },
-  async unauthorized(generation: number) {
+  async unauthorized(generation: number, requestId?: string) {
     if (generation !== state.generation) return;
     const previous = token;
     const signedOutGeneration = replace(null, "signedOut");
-    publish({ error: "登录凭证已失效，请重新登录" });
+    publish({ error: new AuthRequestError("登录凭证已失效，请重新登录", 401, 0, requestId).message });
     await removeStoredToken(previous, signedOutGeneration);
   },
   async logout() {
@@ -184,7 +197,8 @@ export const authSession = {
       if (previous) await authRequest("logout", previous, new AbortController().signal);
     } catch (error) {
       if (generation !== state.generation || (error instanceof AuthRequestError && error.status === 401)) return;
-      publish({ warning: [state.warning, "本页已退出，但服务端撤销凭证失败；该凭证可能仍有效。"].filter(Boolean).join(" ") });
+      const warning = new AuthRequestError("本页已退出，但服务端撤销凭证失败；该凭证可能仍有效。", undefined, 0, error instanceof AuthRequestError ? error.requestId : undefined).message;
+      publish({ warning: [state.warning, warning].filter(Boolean).join(" ") });
     } finally {
       await removal;
     }

@@ -14,7 +14,7 @@ export interface OperationsBackend {
   retryConnection(epoch: AccountEpoch): Promise<ConnectionSnapshot>;
   getSelfInfo(): Promise<SelfInfo | null>;
   resetCache(): Promise<void>;
-  shutdownApp(): Promise<void>;
+  shutdownApp(): Promise<{ accepted: boolean }>;
   getAppUpdate(): Promise<UpdateState>;
   checkAppUpdate(): Promise<UpdateState>;
   downloadAppUpdate(candidateId: string): Promise<UpdateState>;

@@ -1,9 +1,10 @@
 "use client";
 
 import { App } from "antd";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { canRegenerateAgentTestReply, canRunAgentExecution, canUndoAgentTestTurn, filterAgentsByCategory, filterAgentTestSessionsByCategory, nextAgentTestSessionId } from "@/domain/agent/agentModel";
 import { backend } from "@/services/client";
+import { operationErrorMessage } from "@/services/errors";
 import type { AgentConfig, AgentTestSession } from "@/types/agent";
 
 type SessionActionType = "send" | "undo" | "regenerate" | "copy" | "delete";
@@ -18,6 +19,9 @@ export function useAgentSessionWorkbench() {
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState("");
   const [action, setAction] = useState<SessionAction>();
+  const [operationError, setOperationError] = useState<string>();
+  const [reconciling, setReconciling] = useState(false);
+  const selection = useRef(0);
 
   useEffect(() => {
     let mounted = true;
@@ -52,27 +56,53 @@ export function useAgentSessionWorkbench() {
   );
   const canUndoTurn = Boolean(activeSession && canUndoAgentTestTurn(activeSession));
   const canRegenerateReply = Boolean(activeSession && canRunAgentExecution(activeAgent) && canRegenerateAgentTestReply(activeSession));
-  const busy = Boolean(action || creating);
+  const busy = Boolean(action || creating || reconciling || loading);
+
+  async function reconcileHistory() {
+    if (busy) return;
+    setReconciling(true);
+    try {
+      const history = filterAgentTestSessionsByCategory(await backend.listAgentTestHistory(), agents, "regular");
+      setSessions(history);
+      setActiveSessionId((current) => history.some((item) => item.id === current) ? current : history[0]?.id);
+      setOperationError("历史已重新读取，请核对本次输入和回复。未出现结果不代表后台操作已停止，请勿立即重发。");
+    } catch (error) {
+      setOperationError(operationErrorMessage(error, "历史读取失败"));
+    } finally {
+      setReconciling(false);
+    }
+  }
+
+  function reportOperationError(error: unknown, fallback: string) {
+    const text = operationErrorMessage(error, fallback, "请手动刷新历史核对输入和回复，勿立即重发");
+    setOperationError(text);
+    message.error(text);
+  }
 
   function selectSession(id: string) {
+    ++selection.current;
     setActiveSessionId(id);
   }
 
   async function createSession(agentId: string) {
-    if (creating || action) return false;
+    if (busy) return false;
     const agent = agents.find((item) => item.id === agentId && item.category === "regular");
     if (!canRunAgentExecution(agent)) return false;
 
     setCreating(true);
+    setOperationError(undefined);
+    const selected = selection.current;
     try {
       const result = await backend.runAgentTest({ agentId: agent.id });
       setSessions((current) => [result.session, ...current.filter((item) => item.id !== result.session.id)]);
-      setActiveSessionId(result.session.id);
-      setDraft("");
+      if (selected === selection.current) {
+        setActiveSessionId(result.session.id);
+        setDraft("");
+      }
       message.success("会话已创建");
       return true;
     } catch (error: unknown) {
-      message.error(error instanceof Error ? error.message : "会话创建失败");
+      reportOperationError(error, "会话创建失败");
       return false;
     } finally {
       setCreating(false);
@@ -82,15 +112,17 @@ export function useAgentSessionWorkbench() {
   async function sendMessage() {
     if (busy || !activeSession || !draft.trim() || !canRunAgentExecution(activeAgent)) return;
     const sessionId = activeSession.id;
+    const selected = selection.current;
     setAction({ type: "send", sessionId });
+    setOperationError(undefined);
     try {
       const submittedDraft = draft.trim();
       const result = await backend.runAgentTest({ agentId: activeSession.agentId, sessionId, content: submittedDraft });
       replaceSession(result.session);
-      setDraft((current) => current.trim() === submittedDraft ? "" : current);
+      if (selected === selection.current) setDraft((current) => current.trim() === submittedDraft ? "" : current);
       message.success("消息已发送");
     } catch (error: unknown) {
-      message.error(error instanceof Error ? error.message : "消息发送失败");
+      reportOperationError(error, "消息发送失败");
     } finally {
       setAction(undefined);
     }
@@ -142,11 +174,12 @@ export function useAgentSessionWorkbench() {
 
   async function updateSession(type: "undo" | "regenerate", sessionId: string, request: () => Promise<AgentTestSession>, successText: string) {
     setAction({ type, sessionId });
+    setOperationError(undefined);
     try {
       replaceSession(await request());
       message.success(successText);
     } catch (error: unknown) {
-      message.error(error instanceof Error ? error.message : "会话操作失败");
+      reportOperationError(error, "会话操作失败");
     } finally {
       setAction(undefined);
     }
@@ -160,5 +193,6 @@ export function useAgentSessionWorkbench() {
     agents, sessions, activeSession, activeAgent, activeSessionId, loading, creating, draft, setDraft,
     action, busy, canUndoTurn, canRegenerateReply, selectSession, createSession, sendMessage,
     undoTurn, regenerateReply, copySession, deleteSession,
+    operationError, reconciling, reconcileHistory,
   };
 }

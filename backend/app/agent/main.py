@@ -26,7 +26,7 @@ from backend.app.shared.utils.logging import configure_logging
 
 def main() -> None:
     load_workdir_env()
-    configure_logging()
+    configure_logging(source="agent")
 
     if len(sys.argv) < 2:
         logger.error("Usage: python main.py <socket_id>")

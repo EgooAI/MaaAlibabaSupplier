@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import socket
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 
-from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
+from backend.app.shared.backend.im_db_middleware import IMDBMiddleware, get_im_db_middleware
+from backend.app.shared.backend.account_context import get_account_context
 from backend.app.shared.utils.app_config import get_configured_self_ali_id
 from backend.app.shared.utils.env import get_env_int, get_env_str, load_workdir_env
 from backend.app.shared.utils.settings import (
@@ -34,6 +36,9 @@ class NetworkStatus:
     port: int
     latency_ms: float | None
     error: str | None
+    observed_at: float = field(default_factory=time.time)
+    evidence: str = "tcp_connect"
+    business_ready: bool | None = None
 
 
 def check_user_status() -> KeyStatus:
@@ -50,7 +55,21 @@ def check_user_status() -> KeyStatus:
 
 def check_data_dir_status() -> dict:
     """Return the middleware data-dir status dict for the status snapshot."""
-    return get_im_db_middleware().data_dir_status()
+    middleware = IMDBMiddleware._instance
+    if middleware is not None:
+        return middleware.data_dir_status()
+    path = get_account_context().data_dir
+    return {
+        "state": ("ok" if IMDBMiddleware.looks_like_data_dir(Path(path)) else "invalid") if path else "unconfigured",
+        "path": path, "source": "file" if path else "none", "detail": "",
+    }
+
+
+def observe_workers() -> dict:
+    from backend.app.shared.backend.sync_coordinator import observe_sync_service
+    from backend.app.shared.backend.outbox_service import observe_outbox_verifier
+
+    return {"im-source-check": observe_sync_service(), "outbox-verifier": observe_outbox_verifier()}
 
 
 def check_im_sync_status() -> dict:

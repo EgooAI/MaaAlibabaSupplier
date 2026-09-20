@@ -49,6 +49,7 @@ from backend.app.shared.utils.im_wal import WalError, checksum_chain, read_wal_h
 from backend.app.shared.utils.settings import resolve_backend_root
 
 _CACHE_TTL = 5.0  # seconds
+SOURCE_OBSERVATION_MAX_AGE = 30.0  # UI freshness only; never an execution timeout.
 # Minimum gap between two full source rebuilds; bursts of client writes coalesce.
 _MIN_REFRESH_INTERVAL = 3.0  # seconds
 # Backoff ceiling after consecutive rebuild failures (3s, 6s, 12s, ... capped here).
@@ -109,6 +110,7 @@ class IMDBMiddleware:
                 instance._validation_running = False
                 instance._source_dirty = False
                 instance._last_checked: float | None = None
+                instance._last_observed_at: float | None = None
                 instance._source_status: dict = {}
                 instance._coordinator = SyncCoordinator(instance._submit_sync)
                 try:
@@ -158,6 +160,7 @@ class IMDBMiddleware:
         self._auto_enabled = False
         self._source_dirty = False
         self._last_checked = None
+        self._last_observed_at = None
         self._publish_source_status()
 
     def _submit_sync(self, target):
@@ -177,7 +180,7 @@ class IMDBMiddleware:
             except (sqlite3.Error, OSError) as exc:
                 self._last_error = str(exc) or type(exc).__name__
                 self._error_code = "sync_error"
-                logger.warning("CRM sync state restore failed: {}", exc)
+                logger.opt(exception=True).warning("CRM sync state restore failed")
         if restored:
             self._source_revision = max(self._source_revision, restored["applied_source_revision"])
             self._coordinator.select(context, restored)
@@ -303,7 +306,7 @@ class IMDBMiddleware:
 
         db_path = data_dir / "IMServiceDir" / "MessageSDK" / self_sender_id(ali_id) / "database" / "im.sqlite"
         if not db_path.exists():
-            logger.warning("Encrypted DB not found: {}", db_path)
+            logger.warning("Encrypted DB not found")
             return None
 
         return db_path
@@ -401,13 +404,13 @@ class IMDBMiddleware:
             except OSError:
                 continue
             if len(raw) not in (16, 24, 32):
-                logger.warning("Legacy key file {} has invalid size, skipping", path)
+                logger.warning("Legacy key file has invalid size, skipping")
                 continue
             if not self._verify_source_key(raw, db_path):
                 continue
             save_key(ali_id, raw, "auto")
             # Keep the legacy file: another account may still need it.
-            logger.info("Migrated legacy AES key file into database for ali_id={}", ali_id)
+            logger.info("Migrated legacy AES key file into database")
             return raw
         return None
 
@@ -443,7 +446,7 @@ class IMDBMiddleware:
         try:
             key = retrieve_db_key(str(db_path))
         except (ValueError, EOFError, OSError) as exc:
-            logger.warning("Failed to retrieve DB key from live process: {}", exc)
+            logger.opt(exception=True).warning("Failed to retrieve DB key from live process")
             return False
 
         if not self._verify_source_key(key, db_path):
@@ -473,7 +476,7 @@ class IMDBMiddleware:
             dst.write_bytes(decrypted)
             return zlib.crc32(encrypted) & 0xFFFFFFFF
         except Exception as exc:
-            logger.error("DB decryption failed: {}", exc)
+            logger.opt(exception=True).error("DB decryption failed")
             return None
 
     @staticmethod
@@ -521,7 +524,7 @@ class IMDBMiddleware:
             finally:
                 conn.close()
         except Exception as exc:
-            logger.warning("重建的IM缓存校验失败，已丢弃: {}", exc)
+            logger.opt(exception=True).warning("Rebuilt IM cache validation failed; discarded")
             return False
         return True
 
@@ -548,7 +551,7 @@ class IMDBMiddleware:
                 self._discard_build(cached)
                 return None
         except OSError as exc:
-            logger.warning("IM源库拷贝失败（可能被客户端锁定），沿用旧缓存: {}", exc)
+            logger.opt(exception=True).warning("IM source copy failed; retaining previous cache")
             self._build_error = (str(exc), "source_copy_error")
             self._discard_build(cached)
             return None
@@ -712,6 +715,7 @@ class IMDBMiddleware:
         self._cache_time = time.time()
 
     def _note_success(self, elapsed_ms: float, wal_frames: int) -> None:
+        self._last_observed_at = time.time()
         self._consecutive_failures = 0
         self._backoff_until = 0.0
         self._last_error = ""
@@ -730,7 +734,7 @@ class IMDBMiddleware:
         self._backoff_until = time.time() + delay
         self._last_error = detail
         self._error_code = code
-        logger.warning("IM源库刷新失败({}次连败)，{}s后重试: {}", self._consecutive_failures, delay, detail)
+        logger.warning("IM source refresh failed ({} consecutive failures), retry in {}s", self._consecutive_failures, delay)
 
     def _refresh(self) -> bool:
         with account_lock, self._lock:
@@ -756,6 +760,7 @@ class IMDBMiddleware:
             return self._cached_db_path is not None
 
         if self._is_source_fresh(db_path, now):
+            self._last_observed_at = time.time()
             self._last_error = self._error_code = ""
             self._backoff_until = 0.0
             self._consecutive_failures = 0
@@ -791,7 +796,7 @@ class IMDBMiddleware:
         try:
             self._replace_connection(cached, ali_id)
         except sqlite3.Error as exc:
-            logger.error("Failed to open cached IM database: {}", exc)
+            logger.opt(exception=True).error("Failed to open cached IM database")
             self._discard_build(cached)
             self._note_failure("缓存打开失败")
             return self._cached_db_path is not None
@@ -800,7 +805,7 @@ class IMDBMiddleware:
         self._note_success((time.perf_counter() - started) * 1000, wal_frames)
         self.sync_to_crm()
         self._cleanup_stale_caches(cached)
-        logger.info("IM database refreshed (cached at {})", cached)
+        logger.info("IM database source snapshot refreshed")
         return True
 
     def sync_to_crm(self, wait: bool = False) -> Future | None:
@@ -860,6 +865,7 @@ class IMDBMiddleware:
             "wal_frames_applied": self._wal_frames_applied,
             "last_refresh_ms": round(self._last_refresh_ms, 1),
             "last_checked": self._last_checked,
+            "last_observed_at": self._last_observed_at,
             "last_error": self._last_error,
             "error_code": self._error_code,
             "retry_at": (self._backoff_until or None)
@@ -875,11 +881,16 @@ class IMDBMiddleware:
         sync = self._coordinator.snapshot()
         error = source["last_error"] or sync["last_error"]
         syncing = sync["syncing"] or sync["pending"]
+        observed_at = source["last_observed_at"]
+        observation_stale = observed_at is None or time.time() - observed_at > SOURCE_OBSERVATION_MAX_AGE
         stale = bool(error or not source["auto_enabled"] or source["source_dirty"] or syncing
+                     or observation_stale
                      or source["source_revision"] != sync["applied_source_revision"])
         phase = "error" if error else ("syncing" if syncing else sync["phase"])
         return {
             **source, **sync,
+            "observation_stale": observation_stale,
+            "observation_max_age_s": SOURCE_OBSERVATION_MAX_AGE,
             "last_error": error,
             "error_code": source["error_code"] or ("sync_error" if sync["last_error"] else ""),
             "retry_at": max(source["retry_at"] or 0, sync["retry_at"] or 0) or None,

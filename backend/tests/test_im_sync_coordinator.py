@@ -62,6 +62,33 @@ def test_latest_pending_and_waiters_cover_requested_target(coordinator):
     assert len(calls) == 2
 
 
+def test_pending_dispatch_and_waiter_callback_keep_original_context(coordinator):
+    from backend.app.shared.utils.log_context import bind_log_context, capture_log_context
+
+    coordinator, calls, _ = coordinator
+    submitted, completed = [], []
+    original = coordinator._submit
+
+    def submit(target):
+        submitted.append(capture_log_context())
+        return original(target)
+
+    coordinator._submit = submit
+    with bind_log_context(request_id="first-request"):
+        request(coordinator, 1)
+    # Background work with no HTTP origin must not inherit the completing request.
+    pending = request(coordinator, 2)
+    pending.add_done_callback(lambda future: completed.append(capture_log_context()))
+    with bind_log_context(request_id="unrelated-request", account_epoch="other-epoch"):
+        finish(coordinator, calls, 0, 1)
+        finish(coordinator, calls, 1, 2)
+    assert submitted[0]["request_id"] == "first-request"
+    assert submitted[1]["request_id"] is None
+    assert completed[0]["request_id"] is None
+    assert submitted[1]["account_epoch"] == completed[0]["account_epoch"] == "epoch-A"
+    assert submitted[1]["sync_id"] == completed[0]["sync_id"]
+
+
 @pytest.mark.parametrize("submission_error", [False, True])
 def test_crm_failures_back_off_and_explicit_clear_retries(coordinator, submission_error):
     coordinator, calls, now = coordinator

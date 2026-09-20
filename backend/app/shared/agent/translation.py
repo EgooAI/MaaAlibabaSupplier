@@ -104,7 +104,7 @@ def translate_texts_to_crm(
     for item in items:
         short = item["text_hash"]
         if short not in translations:
-            logger.warning("Translation agent omitted text_hash={} text={!r}", short, item["text"])
+            logger.warning("Translation agent omitted an item ({} characters)", len(item["text"]))
             omitted += 1
             continue
         raw = translations[short]

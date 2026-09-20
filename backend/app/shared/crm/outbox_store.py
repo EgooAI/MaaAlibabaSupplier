@@ -67,6 +67,8 @@ def _json(value: object) -> str:
 
 def _record(row: sqlite3.Row) -> dict:
     result = dict(row)
+    result.setdefault("origin_request_id", None)
+    result.setdefault("origin_account_epoch", None)
     result["may_have_sent"] = bool(result["may_have_sent"])
     for name in ("baseline", "evidence"):
         result[name] = json.loads(result[name]) if result[name] is not None else None
@@ -133,10 +135,16 @@ class OutboxStore:
                     evidence TEXT,
                     matched_message_id TEXT,
                     draft_version INTEGER,
+                    origin_request_id TEXT,
+                    origin_account_epoch TEXT,
                     UNIQUE(seller, data_dir, idempotency_key),
                     UNIQUE(seller, data_dir, matched_message_id)
                 )
             """)
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(app_outbox)")}
+            for name in ("origin_request_id", "origin_account_epoch"):
+                if name not in columns:
+                    conn.execute(f"ALTER TABLE app_outbox ADD COLUMN {name} TEXT")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS app_outbox_events (
                     id INTEGER PRIMARY KEY,
@@ -167,6 +175,7 @@ class OutboxStore:
         self, *, seller: str, data_dir: str | Path, conversation_id: int,
         contact_ali_id: str, login_id: str, content: str, action: str,
         idempotency_key: str, draft_version: int | None = None,
+        origin_request_id: str | None = None, origin_account_epoch: str | None = None,
     ) -> tuple[dict, bool]:
         seller, directory = _scope(seller, data_dir)
         if action not in ("send", "test"):
@@ -198,6 +207,7 @@ class OutboxStore:
                 "created_at": now, "updated_at": now, "screenshot_id": None,
                 "screenshot_at": None, "screenshot_digest": None, "baseline": None,
                 "evidence": None, "matched_message_id": None,
+                "origin_request_id": origin_request_id, "origin_account_epoch": origin_account_epoch,
             }
             conn.execute(
                 f"INSERT INTO app_outbox ({','.join(record)}) VALUES ({','.join('?' for _ in record)})",
