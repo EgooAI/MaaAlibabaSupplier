@@ -86,16 +86,11 @@ class ConversationSummaryTestCase(unittest.TestCase):
         self.assertFalse(digest.latest_is_card)
         self.assertEqual(digest.dialogue_count, 2)
 
-    def test_preload_resolves_contact_user_without_extra_queries(self) -> None:
-        users = self.preloaded["users"]
-        self.assertIn(CONTACT_ALI_ID, users)
-        self.assertEqual(users[CONTACT_ALI_ID].login_id, "buyer")
-        self.assertNotIn("unknown-contact", users)
-
     def test_summary_matches_aggregate_contract(self) -> None:
         conv = self.convs[0]
         full = _build_aggregate(self.adapter, SELF_ALI_ID, conv)
         summary = _build_summary(self.digests[0], self.preloaded)
+        self.assertEqual(summary["customer_view"]["login_id"], "buyer")
         self.assertEqual(set(summary), set(full))
         for key in ("sid", "name", "participants", "latest", "unread_count",
                     "dialogue_count", "customer_view"):

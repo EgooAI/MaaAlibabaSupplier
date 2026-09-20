@@ -765,24 +765,6 @@ def test_queued_diagnostic_cannot_run_for_next_account(client, sdk):
     assert not sdk.calls
 
 
-@pytest.mark.parametrize("action", ["send", "test"])
-def test_connected_submission_only_navigates_with_fake_sdk(client, sdk, chat, monkeypatch, action):
-    import numpy as np
-    from backend.app.shared.backend.gui_evidence import frame_from_image
-
-    monkeypatch.setattr(outbox_service.runner, "capture_client_frame", lambda: frame_from_image(np.zeros((4, 5, 3), dtype=np.uint8)))
-    connect(client)
-    response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": action, "idempotency_key": "key"})
-    assert response.status_code == 200, response.text
-    task_id = response.json()["data"]["outbox"]["id"]
-    queue = TaskQueue()
-    queue.shutdown()
-    task = client.get(f"/api/outbox/{task_id}").json()["data"]
-    assert task["status"] == "awaiting_confirmation" and not task["may_have_sent"]
-    assert [entry for entry, _ in sdk.calls] == ["ContactSearch"]
-    assert sdk.calls[0][1]["ContactSearch_InputText"]["action"]["param"]["input_text"] == "buyer-login"
-
-
 def test_running_send_returns_task_id_and_all_observers_remain_responsive(client, sdk, chat, monkeypatch):
     import numpy as np
     from backend.app.shared.backend.gui_evidence import frame_from_image
@@ -971,7 +953,7 @@ def test_directory_write_persists_new_epoch_and_clears_identity(client, tmp_path
 
 
 def test_key_writes_with_current_epoch_persist_without_implicit_sync(client, monkeypatch):
-    from backend.app.shared.crm.account_keys import get_key_hex
+    from backend.app.shared.crm.account_keys import get_key_hex, get_key_source
 
     mw = get_im_db_middleware()
     key = bytes(range(16))
@@ -981,6 +963,7 @@ def test_key_writes_with_current_epoch_persist_without_implicit_sync(client, mon
     response = client.put("/api/settings/ali-keys", json={"ali_id": "seller-a", "aes_key_hex": key.hex()})
     assert response.status_code == 200, response.text
     assert get_key_hex("seller-a") == key
+    assert get_key_source("seller-a") == "manual"
     assert response.headers["X-Account-Epoch"] != client.headers["X-Account-Epoch"]
     client.headers["X-Account-Epoch"] = response.headers["X-Account-Epoch"]
     response = client.delete("/api/settings/ali-keys/seller-a")

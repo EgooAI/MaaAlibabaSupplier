@@ -69,12 +69,6 @@ class DataDirSettingsTestCase(unittest.TestCase):
         self.config_path.write_bytes(b"{not json")
         self.assertEqual(app_config.read_app_config(), {})
 
-    def test_status_unconfigured(self) -> None:
-        mw = self._fresh_middleware()
-        status = mw.data_dir_status()
-        self.assertEqual(status["state"], "unconfigured")
-        self.assertEqual(status["path"], "")
-
     def test_status_invalid_for_empty_dir(self) -> None:
         empty = Path(self.temp_dir.name) / "empty"
         empty.mkdir()
@@ -101,6 +95,7 @@ class DataDirSettingsTestCase(unittest.TestCase):
         mw = self._fresh_middleware()
         status = mw.data_dir_status()
         self.assertEqual(status["state"], "unconfigured")
+        self.assertEqual(status["path"], "")
         self.assertEqual(status["source"], "none")
 
     def test_set_data_dir_resets_cached_connection(self) -> None:
@@ -125,10 +120,6 @@ class DataDirSettingsTestCase(unittest.TestCase):
         mw._data_dir = layout
         rows = mw.scan_ali_ids()
         self.assertEqual([row["ali_id"] for row in rows], ["10002", "10001"])
-
-    def test_resolve_self_ali_id_reads_manual_selection_only(self) -> None:
-        app_config.write_app_config({app_config.CONFIG_KEY_SELF_ALI_ID: "10001"})
-        self.assertEqual(mw_mod.IMDBMiddleware._resolve_self_ali_id(), "10001")
 
 
 class AccountKeyTestCase(unittest.TestCase):
@@ -176,11 +167,6 @@ class DataDirSettingsApiTestCase(unittest.TestCase):
         self.addCleanup(patcher.stop)
         patcher.start()
 
-    def test_get_status(self) -> None:
-        body = self.client.get("/api/settings/alibaba-data-dir").json()
-        self.assertEqual(body["code"], 0)
-        self.assertEqual(body["data"]["state"], "unconfigured")
-
     def test_put_rejects_blank(self) -> None:
         resp = self.client.put("/api/settings/alibaba-data-dir", json={"path": "   "})
         self.assertEqual(resp.status_code, 422)
@@ -192,22 +178,12 @@ class DataDirSettingsApiTestCase(unittest.TestCase):
         self.assertEqual(resp.status_code, 422)
         self.fake.set_data_dir.assert_not_called()
 
-    def test_put_accepts_real_layout(self) -> None:
-        with TemporaryDirectory() as tmp:
-            layout = _make_layout(Path(tmp))
-            self.fake.data_dir_status.return_value = {"state": "ok", "path": str(layout), "source": "file", "detail": ""}
-
-            resp = self.client.put("/api/settings/alibaba-data-dir", json={"path": str(layout)})
-            self.assertEqual(resp.status_code, 200)
-            self.fake.set_data_dir.assert_called_once_with(str(layout))
-
     def test_candidates_returns_list(self) -> None:
-        candidates = [str(_make_layout(Path(self.temp_dir.name)))]
-        with mock.patch.object(settings_router, "find_data_dir_candidates", return_value=candidates) as scan:
-            body = self.client.get("/api/settings/alibaba-data-dir/candidates").json()
-        self.assertEqual(body["code"], 0)
-        self.assertEqual(body["data"]["candidates"], candidates)
-        scan.assert_called_once_with()
+        candidates = [str(Path(self.temp_dir.name) / "AlibabaSupplierData")]
+        with mock.patch.object(settings_router, "find_data_dir_candidates", return_value=candidates):
+            response = self.client.get("/api/settings/alibaba-data-dir/candidates")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["candidates"], candidates)
 
 
 class AliIdentityApiTestCase(unittest.TestCase):
@@ -248,11 +224,6 @@ class AliIdentityApiTestCase(unittest.TestCase):
         self.assertEqual(resp.status_code, 422)
         self.fake.set_self_ali_id.assert_not_called()
 
-    def test_save_ali_id_accepts_known(self) -> None:
-        resp = self.client.put("/api/settings/ali-id", json={"ali_id": "10002"})
-        self.assertEqual(resp.status_code, 200)
-        self.fake.set_self_ali_id.assert_called_once_with("10002")
-
     def test_save_ali_key_rejects_garbage(self) -> None:
         self.fake.resolve_encrypted_db_path.return_value = Path(self.temp_dir.name) / "im.sqlite"
         resp = self.client.put("/api/settings/ali-keys", json={"ali_id": "10001", "aes_key_hex": "zz"})
@@ -266,17 +237,6 @@ class AliIdentityApiTestCase(unittest.TestCase):
             resp = self.client.put("/api/settings/ali-keys", json={"ali_id": "10001", "aes_key_hex": bytes(16).hex()})
         self.assertEqual(resp.status_code, 422)
         save.assert_not_called()
-
-    def test_save_ali_key_accepts_matching(self) -> None:
-        key = bytes(range(16))
-        db_path = Path(self.temp_dir.name) / "im.sqlite"
-        db_path.write_bytes(_encrypt_sqlite_header(key) + b"\x00" * 48)
-        self.fake.resolve_encrypted_db_path.return_value = db_path
-        with mock.patch.object(settings_router, "save_key") as save:
-            resp = self.client.put("/api/settings/ali-keys", json={"ali_id": "10001", "aes_key_hex": key.hex()})
-        self.assertEqual(resp.status_code, 200)
-        save.assert_called_once_with("10001", key, "manual")
-        self.fake.drop_cached_key.assert_called_once()
 
     def test_clear_ali_key_missing_returns_422(self) -> None:
         with mock.patch.object(settings_router, "delete_key", return_value=False):

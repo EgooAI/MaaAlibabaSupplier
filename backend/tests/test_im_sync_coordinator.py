@@ -475,6 +475,15 @@ def test_service_checks_source_and_restart_revalidates_without_retry(mw, submiss
     monkeypatch.setattr(mw, "retry_connection", capture)
     submitted.clear()
     restarted = service_module.start_sync_service()
+    ready = Event()
+    tick = restarted.tick
+
+    def observe_tick():
+        tick()
+        if mw.sync_status()["ready"]:
+            ready.set()
+
+    monkeypatch.setattr(restarted, "tick", observe_tick)
     try:
         assert submitted.wait(5)
         assert mw.key_validation_status() == "valid"
@@ -482,7 +491,7 @@ def test_service_checks_source_and_restart_revalidates_without_retry(mw, submiss
         capture.assert_not_called()
         assert len(submissions) == 3
         submissions[2][3].set_result(committed(submissions[2][4], 3))
-        restarted.tick()
+        assert ready.wait(5)
         assert mw.sync_status()["ready"]
     finally:
         for call in submissions:

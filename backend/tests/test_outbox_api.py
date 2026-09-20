@@ -244,6 +244,8 @@ def test_observation_only_bounded_list_and_sanitized_evidence(client, outbox, mo
     store = outbox.service.store
     context = account_context.get_account_context()
     for index in range(3):
+        monkeypatch.setattr("backend.app.shared.crm.outbox_store.time",
+                            SimpleNamespace(time=lambda index=index: float(index)))
         task, _ = store.create(seller=context.self_ali_id, data_dir=context.data_dir,
                               conversation_id=1, contact_ali_id="buyer", login_id="buyer-login",
                               content="hello", action="send", idempotency_key=str(index))

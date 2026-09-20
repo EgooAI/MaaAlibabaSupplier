@@ -28,6 +28,7 @@ const aggregate: ConversationAggregateDto = {
   customer_view: {
     id: "301",
     ali_id: "buyer-account",
+    login_id: "buyer",
     name: "DB Customer",
     company: "Buyer Co.",
     country: "Germany",
@@ -36,7 +37,9 @@ const aggregate: ConversationAggregateDto = {
     stage: "negotiating",
     tags: ["高意向"],
     availability: "当前可联系",
+    joining_years: 3,
     behavior: ["近期已联系"],
+    d90: { product_views: 12, valid_inquiries: 4, replied_inquiries: 3, valid_rfqs: 1, login_days: 28, spam_inquiries: 0, blacklisted: 0 },
   },
   latest: { content: "聚合最新内容", updated_at: "2026-09-08 11:00" },
   unread_count: 1,
@@ -60,6 +63,16 @@ const aggregate: ConversationAggregateDto = {
       created_at: "2026-09-08 10:11",
       role: "card",
     },
+    {
+      message: { external_mid: "message-seller", sid: 42, sender: 9001, read: null, content: "sure", type: "text" },
+      created_at: "2026-09-08 10:12",
+      role: "seller",
+    },
+    {
+      message: { external_mid: "message-system", sid: 42, sender: 9001, read: null, content: "sys", type: "system" },
+      created_at: "2026-09-08 10:13",
+      role: "system",
+    },
   ],
 };
 
@@ -69,7 +82,14 @@ describe("chat adapter", () => {
 
     expect(summary).toEqual({
       id: "42",
-      customer: expect.objectContaining({ id: "301", aliId: "buyer-account", stage: "negotiating" }),
+      customer: expect.objectContaining({
+        id: "301",
+        aliId: "buyer-account",
+        loginId: "buyer",
+        stage: "negotiating",
+        joiningYears: 3,
+        d90: expect.objectContaining({ productViews: 12 }),
+      }),
       latestMessage: "聚合最新内容",
       updatedAt: "2026-09-08 11:00",
       unreadCount: 1,
@@ -81,15 +101,17 @@ describe("chat adapter", () => {
     const detail = adaptConversationDetail(aggregate, { cards: [card] });
 
     expect(detail.messages).toMatchObject([
-      { id: "message-1", externalMid: "message-1", senderAid: 101, read: false, content: "需要报价", createdAt: "2026-09-08 10:10", rawContent: { text: "需要报价" } },
+      { id: "message-1", role: "buyer", externalMid: "message-1", senderAid: 101, read: false, content: "需要报价", createdAt: "2026-09-08 10:10", rawContent: { text: "需要报价" } },
       { id: "message-card", role: "card", content: "系统推荐卡片", card },
+      { role: "seller", content: "sure" },
+      { role: "system", content: "sys" },
     ]);
     expect(detail.analysis).toMatchObject({ stage: "negotiating", score: 91, nextActions: ["发送报价"] });
     expect("source" in detail).toBe(false);
     expect(JSON.stringify(detail)).not.toContain("external_mid");
   });
 
-  it("uses cards carried by the aggregate before adapter options", () => {
+  it("links cards carried by the aggregate", () => {
     const detail = adaptConversationDetail({ ...aggregate, business_cards: [card] });
     expect(detail.messages[1].card).toEqual(card);
   });
@@ -112,6 +134,11 @@ describe("chat adapter", () => {
     const summary = adaptConversationSummary({ sid: 99, name: null, participants: [9001], accounts: [{ aid: 9001, cid: 901, pid: "alibaba", account: "seller-account", nickname: "Seller", avatar: null, sids: [99], extra: null }], customers: [{ cid: 901, name: "Seller Customer", region: "China" }], messages: [], latest: { content: null, updated_at: null }, unread_count: 0, reply_state: "unknown", pending_since: null, due_at: null, is_overdue: false, history_pending: false, uncertain: true });
     expect(summary.customer).toMatchObject({ id: "99", name: "未知客户", country: "", company: "", stage: "unknown" });
     expect(summary.updatedAt).toBe("未知时间");
+  });
+
+  it("keeps customers unknown when buyer messages have no matching relationship data", () => {
+    const detail = adaptConversationDetail({ ...aggregate, customer_view: undefined, accounts: [], customers: [], participants: [] });
+    expect(detail.customer.name).toBe("未知客户");
   });
 
 });

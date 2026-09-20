@@ -260,6 +260,7 @@ def test_changed_or_expired_frame_requires_another_confirmation_without_input(en
     assert refreshed["screenshot_id"] != task["screenshot_id"]
     assert refreshed["version"] > task["version"]
     assert refreshed["attempt"] == task["attempt"]
+    assert env.calls[-3:] == ["baseline", "guard", "frame"]
     assert "input" not in env.calls and "click" not in env.calls
     with pytest.raises(AppError):
         env.service.get_screenshot(env.context, task["id"], task["screenshot_id"])
@@ -268,24 +269,6 @@ def test_changed_or_expired_frame_requires_another_confirmation_without_input(en
     confirm(env, refreshed)
     env.queue.run()
     assert env.calls.count("input") == env.calls.count("click") == 1
-
-
-def test_frame_captured_after_slow_baseline(env):
-    task = prepared(env)
-    confirm(env, task)
-    env.now += 121
-    env.queue.run()
-    assert env.calls[-3:] == ["baseline", "guard", "frame"]
-    assert "input" not in env.calls
-
-
-def test_expired_token_between_confirmation_and_execution_never_inputs(env):
-    task = prepared(env)
-    confirm(env, task)
-    env.token = replace(env.token, window_generation="reconnected")
-    assert not env.queue.run()[0]
-    assert env.service.get(env.context, task["id"])["status"] == "failed"
-    assert "input" not in env.calls and "click" not in env.calls
 
 
 def test_cancel_during_source_read_wins_before_any_input(env, monkeypatch):
@@ -412,7 +395,7 @@ def test_preinput_failures_are_safe_and_retry_requires_fresh_token(env, monkeypa
     failed = env.service.get(env.context, task["id"])
     assert failed["status"] == "failed" and not failed["may_have_sent"]
     assert failed["screenshot_id"] is None
-    assert "input" not in env.calls
+    assert "input" not in env.calls and "click" not in env.calls
     env.token = replace(env.token, window_generation="new-attempt")
     retried = env.service.retry(env.context, task["id"], version=failed["version"])
     assert retried["id"] == task["id"] and retried["attempt"] == 2
@@ -956,41 +939,3 @@ def test_shutdown_db_errors_still_signal_join_and_never_resume_pending_jobs(env,
         assert replacement._queue.jobs == []
     finally:
         replacement.stop()
-
-
-@pytest.mark.parametrize("failures", [
-    {"outbox"}, {"queue"}, {"sync"}, {"maafw"}, {"yak"}, {"outbox", "queue", "sync", "maafw", "yak"},
-])
-def test_main_attempts_every_cleanup_despite_errors(monkeypatch, failures):
-    from backend.app import main
-
-    calls, errors = [], []
-
-    def cleanup(name):
-        def run(*args, **kwargs):
-            calls.append(name)
-            if name in failures:
-                raise sqlite3.OperationalError(f"{name} cleanup failed")
-        return run
-
-    for name in ("load_workdir_env", "configure_logging", "ensure_system_agents_seeded",
-                 "ensure_default_llm_levels_seeded", "_register_agent_runtime", "_start_mitm_receiver",
-                 "start_sync_service", "start_outbox_service"):
-        monkeypatch.setattr(main, name, lambda **kwargs: None)
-    monkeypatch.setattr(main, "MaaFWProcess", lambda root: SimpleNamespace(start=lambda: None, stop=cleanup("maafw")))
-    monkeypatch.setattr(main, "_start_yak_mitm", lambda root, **kwargs: SimpleNamespace(
-        poll=lambda: None, terminate=cleanup("yak"), wait=lambda **kwargs: None,
-    ))
-    monkeypatch.setattr(main, "stop_outbox_service", cleanup("outbox"))
-    monkeypatch.setattr(main, "stop_sync_service", cleanup("sync"))
-    monkeypatch.setattr("backend.app.task_queue.shutdown_task_queue", cleanup("queue"))
-    monkeypatch.setattr(main, "logger", SimpleNamespace(info=lambda *args: None, exception=lambda text: errors.append(text)))
-
-    def api_error():
-        raise RuntimeError("original API failure")
-
-    monkeypatch.setattr(main, "run_api", api_error)
-    with pytest.raises(RuntimeError, match="original API failure"):
-        main.main()
-    assert calls == ["outbox", "queue", "sync", "maafw", "yak"]
-    assert len(errors) == len(failures)

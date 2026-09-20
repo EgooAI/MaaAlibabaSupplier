@@ -25,7 +25,7 @@ class DefaultLlmLevelsTestCase(unittest.TestCase):
         except Exception:
             pass
 
-    def test_seeds_level_zero_blank_on_fresh_db(self) -> None:
+    def test_seeds_level_zero_blank_and_is_idempotent(self) -> None:
         ensure_default_llm_levels_seeded()
 
         config = LLMApiConfigManager().get_config(DEFAULT_SEEDED_LLM_LEVEL)
@@ -35,10 +35,7 @@ class DefaultLlmLevelsTestCase(unittest.TestCase):
         self.assertEqual(config.api_key, "")
         self.assertEqual(config.model_name, "")
 
-    def test_seed_is_idempotent(self) -> None:
         ensure_default_llm_levels_seeded()
-        ensure_default_llm_levels_seeded()
-
         self.assertEqual(len(LLMApiConfigManager().list_configs()), 1)
 
     def test_seed_never_overwrites_user_row(self) -> None:

@@ -83,7 +83,10 @@ describe("message composer", () => {
     expect(expandButton()).toBeNull();
   });
 
-  it("expands into a modal seeded with the draft and commits on confirm", async () => {
+  it.each([
+    ["confirm", /完\s*成/],
+    ["cancel", /取\s*消/],
+  ] as const)("seeds the expanded editor and handles %s without leaking edits", async (action, label) => {
     const onChange = vi.fn();
     await render({ compact: true, value: "短回复", onChange });
     await act(async () => {
@@ -93,26 +96,12 @@ describe("message composer", () => {
     await act(async () => {
       typeInto(modalTextarea()!, "第一行\n第二行长文本");
     });
-    await act(async () => {
-      modalButton(/完\s*成/)!.click();
-    });
-    expect(onChange).toHaveBeenLastCalledWith("第一行\n第二行长文本");
-    expect(modalTextarea()).toBeNull();
-  });
-
-  it("discards modal edits when cancelled", async () => {
-    const onChange = vi.fn();
-    await render({ compact: true, value: "原草稿", onChange });
-    await act(async () => {
-      expandButton()!.click();
-    });
-    await act(async () => {
-      typeInto(modalTextarea()!, "不该提交的修改");
-    });
-    await act(async () => {
-      modalButton(/取\s*消/)!.click();
-    });
     expect(onChange).not.toHaveBeenCalled();
+    await act(async () => {
+      modalButton(label)!.click();
+    });
+    if (action === "confirm") expect(onChange).toHaveBeenCalledExactlyOnceWith("第一行\n第二行长文本");
+    else expect(onChange).not.toHaveBeenCalled();
     expect(modalTextarea()).toBeNull();
   });
 });

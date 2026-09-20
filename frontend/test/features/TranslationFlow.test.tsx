@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, useEffect, type ReactNode, type ButtonHTMLAttributes } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountProvider, useAccount } from "@/features/account/AccountProvider";
@@ -18,12 +18,6 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("antd", () => ({
   App: { useApp: () => ({ message: mocks.message }) },
-  Space: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
-  Tag: ({ children }: { children: ReactNode }) => <span>{children}</span>,
-  Typography: { Text: ({ children }: { children: ReactNode }) => <span>{children}</span> },
-  Button: ({ children, disabled, loading, onClick }: ButtonHTMLAttributes<HTMLButtonElement> & { loading?: boolean }) => <button disabled={disabled || loading} onClick={onClick}>{children}</button>,
-  Descriptions: ({ items }: { items: Array<{ key: string; label: string; children: ReactNode }> }) => <dl>{items.map((item) => <div key={item.key}><dt>{item.label}</dt><dd>{item.children}</dd></div>)}</dl>,
 }));
 vi.mock("@/services/client", () => ({ backend: mocks.backend }));
 
@@ -113,16 +107,22 @@ describe("translation flow", () => {
     expect(mocks.backend.queryTranslations).not.toHaveBeenCalled();
   });
 
-  it("runs a job end to end: submit, poll, absorb and clear pending state", async () => {
+  it.each([
+    ["missing", undefined, false],
+    ["forced", "旧译文", true],
+  ] as const)("runs a %s translation end to end: submit, poll, absorb and clear pending state", async (_, translatedContent, force) => {
     mocks.backend.getConversation.mockResolvedValue(detailWith([
-      { id: "one", role: "buyer", content: "hello", createdAt: "now" },
+      { id: "one", role: "buyer", content: "hello", createdAt: "now", translatedContent },
     ]));
     mocks.backend.queryTranslations.mockResolvedValue({ translations: {} });
     await mount();
     mocks.backend.requestTranslations.mockResolvedValueOnce({ task_id: "job-1", status: "pending", message: "等待执行" });
     mocks.backend.getTranslationJob.mockResolvedValueOnce({ task_id: "job-1", status: "running", message: "正在执行" });
-    await act(async () => { await workbench.translateMissing(); });
-    expect(mocks.backend.requestTranslations).toHaveBeenCalledExactlyOnceWith({ texts: ["hello"], force: false, conversationId: 42 });
+    await act(async () => {
+      if (force) await workbench.translateMessages(workbench.activeConversation!.messages, { force });
+      else await workbench.translateMissing();
+    });
+    expect(mocks.backend.requestTranslations).toHaveBeenCalledExactlyOnceWith({ texts: ["hello"], force, conversationId: 42 });
     expect(workbench.translationPendingIds.has("one")).toBe(true);
     expect(workbench.translationStats.pending).toBe(1);
     // First tick still running; second tick observes success and absorbs from the cache.
@@ -135,41 +135,31 @@ describe("translation flow", () => {
     expect(workbench.translationFailedIds.size).toBe(0);
   });
 
-  it("marks unresolved messages as failed and keeps them retryable when a job fails", async () => {
+  it.each([
+    ["failed", {}, "error", "翻译失败，可点击消息重试"],
+    ["succeeded", { hello: null }, "warning", "有 1 条消息未返回译文，可重试"],
+  ] as const)("keeps unresolved messages retryable after a %s job", async (status, translations, level, warning) => {
     mocks.backend.getConversation.mockResolvedValue(detailWith([
       { id: "one", role: "buyer", content: "hello", createdAt: "now" },
       { id: "two", role: "card", content: "[卡片]", createdAt: "now" },
     ]));
     await mount();
     mocks.backend.requestTranslations.mockResolvedValueOnce({ task_id: "job-fail", status: "pending", message: "等待执行" });
-    mocks.backend.getTranslationJob.mockResolvedValueOnce({ task_id: "job-fail", status: "failed", message: "2/2 条翻译失败，可重试" });
+    mocks.backend.getTranslationJob.mockResolvedValueOnce({ task_id: "job-fail", status, message: "job finished" });
+    mocks.backend.queryTranslations.mockResolvedValueOnce({ translations });
     await act(async () => { await workbench.translateMissing(); });
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
     // Card bubbles carry no text: only the textual message is submitted.
     expect(mocks.backend.requestTranslations).toHaveBeenCalledExactlyOnceWith({ texts: ["hello"], force: false, conversationId: 42 });
     expect(workbench.translationFailedIds.has("one")).toBe(true);
     expect(workbench.translationPendingIds.size).toBe(0);
-    expect(mocks.message.error).toHaveBeenCalledWith("翻译失败，可点击消息重试");
+    expect(mocks.message[level]).toHaveBeenCalledWith(warning);
     // Retrying submits a fresh job and clears the failed marker.
     mocks.backend.requestTranslations.mockResolvedValueOnce({ task_id: "job-2", status: "pending", message: "等待执行" });
     await act(async () => { await workbench.translateMessages(workbench.activeConversation!.messages); });
     expect(mocks.backend.requestTranslations).toHaveBeenLastCalledWith({ texts: ["hello"], force: false, conversationId: 42 });
     expect(workbench.translationFailedIds.size).toBe(0);
     expect(workbench.translationPendingIds.has("one")).toBe(true);
-  });
-
-  it("retranslates a translated message by replacing the old value from the cache", async () => {
-    mocks.backend.getConversation.mockResolvedValue(detailWith([
-      { id: "one", role: "buyer", content: "hello", createdAt: "now", translatedContent: "旧译文" },
-    ]));
-    await mount();
-    mocks.backend.requestTranslations.mockResolvedValueOnce({ task_id: "job-force", status: "pending", message: "等待执行" });
-    mocks.backend.getTranslationJob.mockResolvedValueOnce({ task_id: "job-force", status: "succeeded", message: "已翻译 1 条" });
-    mocks.backend.queryTranslations.mockResolvedValueOnce({ translations: { hello: "新译文" } });
-    await act(async () => { await workbench.translateMessages(workbench.activeConversation!.messages, { force: true }); });
-    expect(mocks.backend.requestTranslations).toHaveBeenCalledWith({ texts: ["hello"], force: true, conversationId: 42 });
-    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
-    expect(workbench.activeConversation?.messages[0].translatedContent).toBe("新译文");
   });
 
   it("treats empty NO_NEED sentinels as resolved without failure markers or resubmission", async () => {
@@ -192,21 +182,6 @@ describe("translation flow", () => {
     await act(async () => { await workbench.translateMissing(); });
     expect(mocks.message.info).toHaveBeenCalledWith("译文已齐全");
     expect(mocks.backend.requestTranslations).toHaveBeenCalledTimes(1);
-  });
-
-  it("marks messages as failed when a succeeded job returns null for their texts", async () => {
-    mocks.backend.getConversation.mockResolvedValue(detailWith([
-      { id: "one", role: "buyer", content: "hello", createdAt: "now" },
-    ]));
-    await mount();
-    mocks.backend.requestTranslations.mockResolvedValueOnce({ task_id: "job-null", status: "pending", message: "等待执行" });
-    mocks.backend.getTranslationJob.mockResolvedValueOnce({ task_id: "job-null", status: "succeeded", message: "已翻译 1 条" });
-    mocks.backend.queryTranslations.mockResolvedValueOnce({ translations: { hello: null } });
-    await act(async () => { await workbench.translateMissing(); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
-    expect(workbench.translationFailedIds.has("one")).toBe(true);
-    expect(workbench.translationPendingIds.size).toBe(0);
-    expect(mocks.message.warning).toHaveBeenCalledWith("有 1 条消息未返回译文，可重试");
   });
 
   it("skips job tracking for empty submissions and falls back to a cache read", async () => {

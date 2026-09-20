@@ -8,7 +8,6 @@ from unittest.mock import Mock
 import pytest
 
 from backend.app import translation_jobs
-from backend.app.api.routers import messages
 from backend.app.shared.agent.translation import SHORT_HASH_LENGTH, TranslationOutcome
 from backend.app.shared.crm.sdk import Translate, TranslateManager
 from backend.app.shared.crm.translation_cache import md5_text_key
@@ -192,27 +191,22 @@ def test_translation_job_does_not_hold_account_lock(client, monkeypatch):
     assert _wait_terminal(task_id).status == TaskStatus.SUCCEEDED
 
 
-def test_query_returns_cached_translations_and_no_need_sentinel(client, monkeypatch):
-    monkeypatch.setattr(
-        messages,
-        "get_translation",
-        lambda text: {"hello": "译:hello", "cached": ""}.get(text),
-    )
+def test_cache_queries_preserve_translations_and_no_need_sentinel(client):
+    manager = TranslateManager()
+    for text, translation in (("hello", "译:hello"), ("cached", "")):
+        manager.upsert_translate(Translate(text_hash=md5_text_key(text), translation=translation))
     response = client.post("/api/messages/translations/query", json={"texts": ["hello", "world", " hello ", "cached"]})
     assert response.status_code == 200
     # null=未缓存；空串=NO_NEED 哨兵（已缓存、无需翻译）。
     assert response.json()["data"]["translations"] == {"hello": "译:hello", "world": None, "cached": ""}
+    for text, translation in (("%20hello%20", "译:hello"), ("cached", ""), ("world", None)):
+        response = client.get(f"/api/messages/translations/{text}")
+        assert response.status_code == 200
+        assert response.json()["data"] == translation
 
 
 def test_unknown_job_returns_404(client):
     assert client.get("/api/messages/translations/jobs/missing").status_code == 404
-
-
-def test_fetch_translation_by_path(client, monkeypatch):
-    monkeypatch.setattr(messages, "get_translation", lambda text: f"译:{text}")
-    response = client.get("/api/messages/translations/hello")
-    assert response.status_code == 200
-    assert response.json()["data"] == "译:hello"
 
 
 def test_submission_rejects_oversized_texts(client):

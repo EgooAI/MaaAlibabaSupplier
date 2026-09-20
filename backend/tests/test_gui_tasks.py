@@ -48,7 +48,9 @@ def blocked_queue():
 
 
 @pytest.mark.parametrize("action", ["send", "test"])
-def test_send_acceptance_is_pending_and_queryable(client, send_setup, blocked_queue, action):
+def test_send_acceptance_is_pending_and_queryable(client, send_setup, blocked_queue, monkeypatch, action):
+    aggregate = Mock(side_effect=AssertionError("legacy aggregate must not be built"))
+    monkeypatch.setattr(conversations, "_build_aggregate", aggregate)
     queue, release = blocked_queue
     response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": action, "idempotency_key": "key"})
     assert response.status_code == 200
@@ -57,6 +59,7 @@ def test_send_acceptance_is_pending_and_queryable(client, send_setup, blocked_qu
     snapshot = result["outbox"]
     assert snapshot["status"] == "queued" and not snapshot["may_have_sent"]
     assert send_setup == []
+    aggregate.assert_not_called()
     tasks = client.get("/api/conversations/1/outbox").json()["data"]
     assert any(task["id"] == snapshot["id"] for task in tasks)
 
@@ -64,16 +67,6 @@ def test_send_acceptance_is_pending_and_queryable(client, send_setup, blocked_qu
     queue.shutdown()
     assert send_setup == [("goto", "buyer-login")]
     assert client.get(f"/api/outbox/{snapshot['id']}").json()["data"]["status"] == "awaiting_confirmation"
-
-
-def test_submission_does_not_build_legacy_conversation_aggregate(client, send_setup, blocked_queue, monkeypatch):
-    aggregate = Mock(side_effect=AssertionError("legacy aggregate must not be built"))
-    monkeypatch.setattr(conversations, "_build_aggregate", aggregate)
-    response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": "send", "idempotency_key": "key"})
-    assert response.status_code == 200
-    assert response.json()["data"]["outbox"]["status"] == "queued"
-    aggregate.assert_not_called()
-    assert send_setup == []
 
 
 def test_failed_navigation_never_inputs_or_sends(client, send_setup, monkeypatch):

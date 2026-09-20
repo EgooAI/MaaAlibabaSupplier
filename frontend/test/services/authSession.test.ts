@@ -352,6 +352,7 @@ describe("authenticated business transport", () => {
     const init = vi.mocked(fetch).mock.calls[0][1];
     expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer test-session");
     expect(new Headers(init?.headers).get("X-Account-Epoch")).toBe("mock-1");
+    expect(new Headers(init?.headers).get("Content-Type")).toBe("application/json");
   });
 
   it.each(transports)("handles current 401 before the account guard on %s", async (_mode, call) => {

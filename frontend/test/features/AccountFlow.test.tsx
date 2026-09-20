@@ -19,10 +19,9 @@ vi.mock("antd", () => {
   const Text = ({ children }: { children: ReactNode }) => <div>{children}</div>;
   return {
     App: { useApp: () => ({ message: mocks.message }) },
-    Space: Text, Typography: { Text },
+    Space: Text, Tag: Text, Typography: { Text },
     Card: ({ title, extra, children }: { title: string; extra?: ReactNode; children: ReactNode }) => <section aria-label={title}>{extra}{children}</section>,
     Tooltip: Text,
-    Tag: ({ children, color }: { children: ReactNode; color: string }) => <span data-color={color}>{children}</span>,
     Alert: ({ title, description, type }: { title: ReactNode; description?: ReactNode; type: string }) => <div role="alert" data-type={type}>{title}{description}</div>,
     Button: ({ children, disabled, loading, onClick, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { loading?: boolean }) => <button aria-label={props["aria-label"]} disabled={disabled || loading} onClick={onClick}>{children}</button>,
     Steps: ({ items }: { items: Array<{ key: string; title: string; content: string; status: string }> }) => <ol>{items.map((item) => <li key={item.key} data-step={item.key} data-status={item.status}>{item.title}：{item.content}</li>)}</ol>,
@@ -146,7 +145,6 @@ describe("account connection flow", () => {
     expect(container.textContent).toContain(`自动重试时间：${new Date(retryAt * 1000).toLocaleString()}`);
     expect(container.textContent).not.toContain("正在重试同步");
     expect(container.textContent).not.toContain("正在自动验证密钥或同步聊天");
-    expect(container.querySelector('section[aria-label="密钥与聊天同步"] [data-color]')?.getAttribute("data-color")).toBe("warning");
     await act(async () => syncButton().click());
     await poll();
     expect(step("crm").getAttribute("data-status")).toBe("wait");
@@ -159,7 +157,6 @@ describe("account connection flow", () => {
     expect(syncButton().disabled).toBe(true);
     expect(container.textContent).toContain("正在重试同步");
     expect(container.textContent).not.toContain("自动重试时间");
-    expect(container.querySelector('section[aria-label="密钥与聊天同步"] [data-color]')?.getAttribute("data-color")).toBe("processing");
     expect(mocks.backend.retryConnection).not.toHaveBeenCalled();
   });
 

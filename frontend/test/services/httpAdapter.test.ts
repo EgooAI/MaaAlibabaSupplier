@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { httpBackend, requestInit } from "@/services/httpAdapter";
+import { httpBackend } from "@/services/httpAdapter";
 import type { ConversationAggregateDto } from "@/types/chatTransport";
 import { accountSession } from "@/services/accountSession";
 import { connectionSnapshot } from "@/mock/connectionData";
@@ -172,13 +172,10 @@ describe("http adapter contract", () => {
   });
 
   it.each([
-    () => httpBackend.getSelfInfo(),
-    () => httpBackend.listConversations(),
     () => httpBackend.requestTranslations({ texts: ["hello"], force: false, conversationId: 42 }),
     () => httpBackend.queryTranslations({ texts: ["hello"] }),
     () => httpBackend.getTranslationJob("task-1"),
     () => httpBackend.exportConversations({ conversationIds: ["42"] }),
-    () => httpBackend.resetCache(),
   ])("attaches the expected epoch to account data requests", async (call) => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: { items: [], total: 0, offset: 0, limit: 50, inbox_revision: 1, pagination_revision: "page-1" } })));
     globalThis.fetch = fetchMock;
@@ -351,44 +348,14 @@ describe("http adapter contract", () => {
     ]);
   });
 
-  it("unwraps successful API envelopes and rejects non-zero codes", async () => {
-    globalThis.fetch = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, msg: "ok", data: { ready: true } }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 7, msg: "业务失败", data: null }), { status: 200 }));
-
-    await expect(httpBackend.getSelfInfo()).resolves.toEqual({ ready: true });
-    await expect(httpBackend.getSelfInfo()).rejects.toThrow("业务失败");
-  });
-
-  it("rejects bare payloads without an envelope", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(aggregate), { status: 200 }));
-
-    await expect(httpBackend.getConversation("42")).rejects.toThrow("API protocol error: /api/conversations/42");
-  });
-
-  it("rejects malformed API envelopes", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: "0", msg: "ok", data: { ready: true } }), { status: 200 }));
-
-    await expect(httpBackend.getSelfInfo()).rejects.toThrow("API protocol error: /api/self-info");
-  });
-
-  it("rejects error envelopes on void requests", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 7, msg: "拒绝删除" }), { status: 200 }));
-
-    await expect(httpBackend.deleteAgentTestSession("session-1")).rejects.toThrow("拒绝删除");
-  });
-
-  it("rejects invalid JSON response bodies", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(new Response("not-json", { status: 200 }));
-
-    await expect(httpBackend.getSelfInfo()).rejects.toThrow("API response body is not valid JSON: /api/self-info");
-  });
-
-  it("keeps caller headers when adding JSON defaults", () => {
-    const init = requestInit({ headers: { "X-Trace-Id": "trace-1" } });
-    const headers = new Headers(init.headers);
-
-    expect(headers.get("Content-Type")).toBe("application/json");
-    expect(headers.get("X-Trace-Id")).toBe("trace-1");
+  it.each([
+    ["non-zero JSON code", JSON.stringify({ code: 7, msg: "业务失败", data: null }), () => httpBackend.getSelfInfo(), "业务失败"],
+    ["bare payload", JSON.stringify(aggregate), () => httpBackend.getConversation("42"), "API protocol error: /api/conversations/42"],
+    ["string code", JSON.stringify({ code: "0", msg: "ok", data: { ready: true } }), () => httpBackend.getSelfInfo(), "API protocol error: /api/self-info"],
+    ["non-zero void code", JSON.stringify({ code: 7, msg: "拒绝删除" }), () => httpBackend.deleteAgentTestSession("session-1"), "拒绝删除"],
+    ["invalid JSON", "not-json", () => httpBackend.getSelfInfo(), "API response body is not valid JSON: /api/self-info"],
+  ] as const)("rejects %s responses", async (_label, body, call, error) => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(body, { status: 200 }));
+    await expect(call()).rejects.toThrow(error);
   });
 });

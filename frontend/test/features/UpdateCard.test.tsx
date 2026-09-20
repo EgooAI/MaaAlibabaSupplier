@@ -22,7 +22,7 @@ vi.mock("antd", () => {
     Alert: ({ title, description }: { title: ReactNode; description?: ReactNode }) => <aside>{title}{description}</aside>,
     Spin: () => <span>loading</span>,
     Progress: ({ percent }: { percent: number }) => <progress value={percent} max={100} />,
-    Descriptions: Object.assign(({ title, items, children }: { title?: string; items?: { key: string; label: string; children: ReactNode }[]; children?: ReactNode }) => <div>{title}{items?.map((item) => <p key={item.key}>{item.label}: {item.children}</p>)}{children}</div>, { Item: Group }),
+    Descriptions: Object.assign(({ title, items, children }: { title?: string; items?: { key: string; label: string; children: ReactNode }[]; children?: ReactNode }) => <div>{title}{items?.map((item) => <div key={item.key}>{item.label}: {item.children}</div>)}{children}</div>, { Item: Group }),
     Button: ({ children, disabled, loading, onClick }: ButtonHTMLAttributes<HTMLButtonElement> & { loading?: boolean }) => <button disabled={disabled || loading} onClick={onClick}>{children}</button>,
     Modal: ({ open, title, children, onOk, onCancel, okText }: { open: boolean; title: string; children: ReactNode; onOk: () => void; onCancel: () => void; okText: string }) => open ? <div role="dialog">{title}{children}<button onClick={onOk}>{okText}</button><button onClick={onCancel}>取消</button></div> : null,
   };
@@ -74,19 +74,13 @@ afterEach(async () => {
 });
 
 describe("manual application update", () => {
-  it("reads local status once without an account provider and never checks remotely on mount or a timer", async () => {
-    await render();
+  it("reads local status once across Strict Mode replay and never checks remotely on mount or a timer", async () => {
+    await act(async () => root.render(<StrictMode><UpdateCard /></StrictMode>));
     await advance(60_000);
     expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(1);
     expect(mocks.backend.checkAppUpdate).not.toHaveBeenCalled();
     expect(mocks.backend.downloadAppUpdate).not.toHaveBeenCalled();
     for (const text of ["v1", "1234567", "example/app", "main", "build.yml", "windows-app"]) expect(container.textContent).toContain(text);
-  });
-
-  it("deduplicates the initial read across Strict Mode effect replay", async () => {
-    await act(async () => root.render(<StrictMode><UpdateCard /></StrictMode>));
-    expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(1);
-    expect(mocks.backend.checkAppUpdate).not.toHaveBeenCalled();
   });
 
   it("allows retrying a failed initial local read without triggering a remote check", async () => {

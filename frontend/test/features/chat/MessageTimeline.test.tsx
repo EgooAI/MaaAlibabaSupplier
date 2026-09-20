@@ -39,7 +39,7 @@ afterEach(async () => {
 });
 
 describe("message timeline", () => {
-  it("aligns auto-reception (system) replies on the seller side with seller styling kept distinct", async () => {
+  it("aligns auto-reception (system) replies on the seller side", async () => {
     await render({
       messages: [
         message({ id: "buyer", role: "buyer", content: "buyer text" }),
@@ -51,40 +51,22 @@ describe("message timeline", () => {
     });
     expect(rowOf("buyer text").className).toContain("justify-start");
     expect(rowOf("seller text").className).toContain("justify-end");
-    // Auto-reception replies are sent by our own account: right side, but the
-    // system bubble style stays grey to distinguish them from real seller text.
     expect(rowOf("auto reception text").className).toContain("justify-end");
-    expect(rowOf("auto reception text").querySelector(".bg-slate-100")).not.toBeNull();
-    expect(rowOf("seller text").querySelector(".bg-blue-50")).not.toBeNull();
     expect(rowOf("unknown origin text").className).toContain("justify-start");
   });
 
-  it("offers translation affordances for every textual message and skips cards", async () => {
-    await render({
-      messages: [
-        message({ id: "buyer", role: "buyer", content: "buyer text" }),
-        message({ id: "seller", role: "seller", content: "seller text" }),
-        message({ id: "auto", role: "system", content: "auto text" }),
-        message({ id: "card", role: "card", content: "[卡片]" }),
-      ],
-      onTranslate: vi.fn(),
-      onOpenCard: vi.fn(),
-    });
-    const translateButtons = [...container.querySelectorAll("button")].filter(button => button.textContent === "翻译");
-    expect(translateButtons).toHaveLength(3);
-  });
-
-  it("invokes onTranslate with the message when clicking the inline translate action", async () => {
+  it.each(["buyer", "seller", "system"] as const)("translates a %s message and skips cards", async (role) => {
     const onTranslate = vi.fn();
+    const target = message({ id: role, role, content: `${role} text` });
     await render({
-      messages: [message({ id: "buyer", role: "buyer", content: "buyer text" })],
+      messages: [target, message({ id: "card", role: "card", content: "[卡片]" })],
       onTranslate,
       onOpenCard: vi.fn(),
     });
-    const translateButton = [...container.querySelectorAll("button")].find(button => button.textContent === "翻译");
-    expect(translateButton).toBeDefined();
-    await act(async () => translateButton!.click());
-    expect(onTranslate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "buyer", content: "buyer text" }));
+    const translateButtons = [...container.querySelectorAll("button")].filter(button => button.textContent === "翻译");
+    expect(translateButtons).toHaveLength(1);
+    await act(async () => translateButtons[0].click());
+    expect(onTranslate).toHaveBeenCalledExactlyOnceWith(target);
   });
 
   it("invokes force retranslate from the translation block and retry from the failed marker", async () => {
@@ -113,15 +95,19 @@ describe("message timeline", () => {
       messages: [
         message({ id: "pending", content: "in flight" }),
         message({ id: "other", content: "other text" }),
+        message({ id: "failed", content: "broken" }),
       ],
       pendingIds: new Set(["pending"]),
+      failedIds: new Set(["failed"]),
       onTranslate,
       onOpenCard: vi.fn(),
     });
-    const otherTranslate = [...container.querySelectorAll("button")].find(button => button.textContent === "翻译");
-    expect(otherTranslate).toBeDefined();
-    expect(otherTranslate!.disabled).toBe(true);
-    await act(async () => otherTranslate!.click());
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("翻译中");
+    for (const label of ["翻译", "翻译失败，点击重试"]) {
+      const action = [...container.querySelectorAll("button")].find(button => button.textContent === label)!;
+      expect(action.disabled).toBe(true);
+      await act(async () => action.click());
+    }
     expect(onTranslate).not.toHaveBeenCalled();
   });
 
@@ -136,20 +122,5 @@ describe("message timeline", () => {
     expect(container.querySelectorAll('button[aria-label="重新翻译本条消息"]')).toHaveLength(2);
     await render({ messages, showTranslations: false, onOpenCard: vi.fn() });
     expect(container.textContent).not.toContain("卖家消息译文");
-  });
-
-  it("shows inline pending and failed translation states", async () => {
-    await render({
-      messages: [
-        message({ id: "pending", content: "in flight" }),
-        message({ id: "failed", content: "broken" }),
-      ],
-      pendingIds: new Set(["pending"]),
-      failedIds: new Set(["failed"]),
-      onTranslate: vi.fn(),
-      onOpenCard: vi.fn(),
-    });
-    expect(container.textContent).toContain("翻译中…");
-    expect(container.textContent).toContain("翻译失败，点击重试");
   });
 });

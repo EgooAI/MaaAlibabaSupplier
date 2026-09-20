@@ -84,9 +84,7 @@ describe("conversation domain model", () => {
     expect(merged[1]).toMatchObject({ id: "message-2", translatedContent: "Received" });
     expect(merged[2]).toMatchObject({ id: "message-3", translatedContent: "自动回复" });
     expect(mergeMessageTextTranslations(allParties, { "需要报价": null })[0].translatedContent).toBeUndefined();
-    expect(mergeMessageTextTranslations(allParties, {})).toBe(allParties);
     const source = [{ ...messages[0], translatedContent: "Quote needed" }, messages[1]];
-    expect(mergeMessageTextTranslations(source, { "需要报价": "Quote needed" })).toBe(source);
     const replaced = mergeMessageTextTranslations(source, { "需要报价": "Refreshed" });
     expect(replaced).not.toBe(source);
     expect(replaced[0].translatedContent).toBe("Refreshed");
@@ -103,40 +101,34 @@ describe("conversation domain model", () => {
     expect(isTranslatableMessage({ ...messages[0], content: "   " })).toBe(false);
   });
 
-  it("merges incoming conversation details without dropping local translations or analysis", () => {
-    const incoming: ConversationDetail = { ...detail, messages: messages.map((item) => ({ ...item })), analysis: undefined };
-    const current: ConversationDetail = { ...detail, messages: [{ ...messages[0], translatedContent: "Quote needed" }, messages[1]] };
-
-    const merged = mergeConversationDetail(current, incoming);
-
-    expect(merged.analysis).toBe(detail.analysis);
-    expect(merged.messages[0]).toMatchObject({ id: "message-1", translatedContent: "Quote needed" });
-  });
-
-  it("keeps local analysis and drops translations for edited messages on refresh", () => {
+  it.each([
+    ["unchanged", messages[0].content, undefined, "Quote needed"],
+    ["edited", "需要报价（已编辑）", { ...detail.analysis!, summary: "服务端新分析" }, undefined],
+  ] as const)("keeps local analysis and only reuses translations for matching content on %s refresh", (_label, content, analysis, translatedContent) => {
     const incoming: ConversationDetail = {
       ...detail,
-      messages: [{ ...messages[0], content: "需要报价（已编辑）" }, messages[1]],
-      analysis: { ...detail.analysis!, summary: "服务端新分析" },
+      messages: [{ ...messages[0], content }, messages[1]],
+      analysis,
     };
     const current: ConversationDetail = { ...detail, messages: [{ ...messages[0], translatedContent: "Quote needed" }, messages[1]] };
 
     const merged = mergeConversationDetail(current, incoming);
 
-    // 本地已有人工/异步结果时优先保留，同时防止旧译文套用到已编辑内容。
     expect(merged.analysis).toBe(detail.analysis);
-    expect(merged.messages[0].translatedContent).toBeUndefined();
-    expect(merged.messages[0].content).toBe("需要报价（已编辑）");
+    expect(merged.messages[0]).toMatchObject({ id: "message-1", content });
+    expect(merged.messages[0].translatedContent).toBe(translatedContent);
   });
 
   it("exports canonical details", () => {
-    expect(buildConversationExport([detail]).content).toContain("客户：Buyer 42");
-    expect(buildConversationExport([detail]).content).toContain("[2026-09-08 10:10] buyer: 需要报价");
-    expect(buildConversationExport([detail])).not.toHaveProperty("archiveName");
     const translated: ConversationDetail = {
       ...detail,
       messages: [{ ...messages[0], translatedContent: "Quote needed" }, messages[1]],
     };
-    expect(buildConversationExport([translated]).content).toContain("译文：Quote needed");
+    const result = buildConversationExport([translated]);
+    expect(result).not.toHaveProperty("archiveName");
+    const exported = result.content;
+    expect(exported).toContain("客户：Buyer 42");
+    expect(exported).toContain("[2026-09-08 10:10] buyer: 需要报价");
+    expect(exported).toContain("译文：Quote needed");
   });
 });

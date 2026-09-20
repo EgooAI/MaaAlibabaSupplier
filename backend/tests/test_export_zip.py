@@ -10,7 +10,6 @@ from backend.app.shared.crm.views import CrmConversation, CrmMessage, CrmResolve
 from backend.app.shared.export_zip import (
     build_export_zip,
     clean_filename,
-    conversation_text,
     dialogue_count,
 )
 
@@ -70,23 +69,21 @@ class ExportZipTestCase(unittest.TestCase):
         self.assertEqual(clean_filename('a/b:c<d>e|"f?g*h'), "a_b_c_d_e__f_g_h")
         self.assertEqual(clean_filename(""), "unknown")
 
-    def test_conversation_text_shape(self) -> None:
-        text = conversation_text(_conv(), CrmResolver("10001"))
-        self.assertIn("---", text)
-        self.assertIn("客户ID: 20002", text)
-        self.assertIn("我 (", text)
-        self.assertTrue(text.endswith("\n"))
-        self.assertFalse(text.endswith("\n\n"))
-
     def test_build_export_zip_names_and_content(self) -> None:
         payload, archive_name = build_export_zip([_conv(), _conv()], CrmResolver("10001"))
         self.assertTrue(archive_name.startswith("Chats-Export-"))
         self.assertTrue(archive_name.endswith(".zip"))
         with zipfile.ZipFile(BytesIO(payload)) as archive:
             names = archive.namelist()
+            text = archive.read(names[0]).decode("utf-8")
         self.assertEqual(len(names), 2)
         self.assertNotEqual(names[0], names[1])
         self.assertTrue(all(name.endswith(".txt") for name in names))
+        self.assertIn("---", text)
+        self.assertIn("客户ID: 20002", text)
+        self.assertIn("我 (", text)
+        self.assertTrue(text.endswith("\n"))
+        self.assertFalse(text.endswith("\n\n"))
 
 
 if __name__ == "__main__":

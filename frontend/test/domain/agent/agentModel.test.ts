@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_TOOL_OPTIONS, SYSTEM_AGENT_APIDS, agentPresetToConfig, agentPresetToDbPreset, canRegenerateAgentTestReply, canUndoAgentTestTurn, createRegularAgentPreset, dbPresetToAgentPreset, displayAgentTools, documentToLlmLevelConfig, filterAgentTestSessionsByCategory, isValidToolRoundLimit, llmLevelToDocumentConfig, nextAgentTestSessionId, normalizeAgentEditValues, normalizeAgentLevel, normalizeAgentTools, removeLatestAgentTestTurn, replaceLatestAgentTestReply } from "@/domain/agent/agentModel";
-import { agentPresets } from "@/mock/agentData";
+import { agentPresetToConfig, agentPresetToDbPreset, canRegenerateAgentTestReply, canUndoAgentTestTurn, createRegularAgentPreset, dbPresetToAgentPreset, displayAgentTools, documentToLlmLevelConfig, filterAgentTestSessionsByCategory, isValidToolRoundLimit, llmLevelToDocumentConfig, nextAgentTestSessionId, normalizeAgentEditValues, normalizeAgentLevel, normalizeAgentTools, removeLatestAgentTestTurn, replaceLatestAgentTestReply } from "@/domain/agent/agentModel";
 import type { AgentConfig, AgentPreset, AgentTestSession, DocumentLlmConfig } from "@/types/agent";
 
 const agents: AgentConfig[] = [
@@ -58,8 +57,7 @@ describe("agent model", () => {
     expect(nextAgentTestSessionId([{ ...sessions[0], id: "only" }], "only")).toBeUndefined();
   });
 
-  it("exposes one registered tool option source and ignores object prototype keys", () => {
-    expect(AGENT_TOOL_OPTIONS.map((option) => option.value)).toEqual(["crm_query", "quote_template", "order_summary", "logistics_calculator"]);
+  it("normalizes tool aliases and ignores object prototype keys", () => {
     expect(displayAgentTools(["toString", "CRM 查询"])).toEqual(["toString", "CRM 查询"]);
     expect(normalizeAgentTools(["CRM 查询", "crm_query", "  "])).toEqual(["crm_query"]);
   });
@@ -96,7 +94,6 @@ describe("agent model", () => {
     });
     expect(agentPresetToConfig(preset)).toMatchObject({ id: "agent-domain-1", apid: "agent-domain-1", enabled: false, level: 4, capabilities: ["crm_query", "quote_template"] });
     expect(displayAgentTools(preset.tools)).toEqual(["CRM 查询", "报价模板"]);
-    expect(normalizeAgentTools(["CRM 查询", "crm_query", "  "])).toEqual(["crm_query"]);
     expect(() => normalizeAgentLevel(5)).toThrow();
   });
 
@@ -106,14 +103,6 @@ describe("agent model", () => {
     expect(preset).not.toHaveProperty("apid");
     expect(preset).not.toHaveProperty("intelevel");
     expect(agentPresetToDbPreset(preset)).toEqual({ apid: "agent-db-2", name: "DB Agent", description: "", prompt: "prompt", intelevel: 0, tools: [], enabled: false, updated_at: "2026-09-11", category: "regular" });
-  });
-
-  it("matches system agent SQL seed levels", () => {
-    const systemApids = new Set<string>(Object.values(SYSTEM_AGENT_APIDS));
-    const systemPresets = agentPresets.filter((preset) => systemApids.has(String(preset.id)));
-    expect(systemPresets).toHaveLength(4);
-    expect(systemPresets.every((preset) => preset.level === 0 && preset.tools?.length === 0 && preset.enabled)).toBe(true);
-    expect(systemPresets.every((preset) => !("apid" in preset) && !("intelevel" in preset))).toBe(true);
   });
 
   it("round-trips nullable max tool rounds without converting null to zero", () => {

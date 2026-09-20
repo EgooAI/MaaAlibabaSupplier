@@ -38,6 +38,11 @@ def test_isolation_fixture(request):
     assert Path.cwd() != COLLECTION_CWD
     assert Path.cwd().is_relative_to(COLLECTION_CWD)
     assert settings.BACKEND_ROOT == Path.cwd() / "backend"
+    assert Path(os.environ["MAA_AUTH_DB_PATH"]).is_relative_to(settings.BACKEND_ROOT)
+    from backend.app.api import auth, main
+    from backend.app import updater
+    assert isinstance(main.LOGIN_LIMITER, auth.LoginLimiter)
+    assert updater._instance is None
     from backend.app.shared.utils import env, im_db_decryptor
     from maa.toolkit import Toolkit
     import socket
@@ -89,6 +94,10 @@ def main():
             stubs = {
                 "backend/__init__.py": "",
                 "backend/app/__init__.py": "",
+                "backend/app/api/__init__.py": "",
+                "backend/app/api/auth.py": "class LoginLimiter:\n    pass\n",
+                "backend/app/api/main.py": "LOGIN_LIMITER = object()\n",
+                "backend/app/updater.py": "_instance = object()\n",
                 "backend/app/crm_sdk/__init__.py": "",
                 "backend/app/shared/__init__.py": "",
                 "backend/app/shared/utils/__init__.py": "",

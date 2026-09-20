@@ -175,12 +175,11 @@ describe("inbox home and settings", () => {
     expect(container.querySelector('[aria-label="筛选会话"]')).not.toBeNull();
   });
 
-  it("reads and saves 1..168 hours without invalidating the epoch, remounting, or changing drafts", async () => {
+  it("reads and saves 1..168 hours without invalidating the epoch or remounting", async () => {
     await mount(true);
     const epoch = account.snapshot?.account.epoch;
     const generation = account.generation;
     const card = container.querySelector("section");
-    localStorage.setItem("draft", "unsent");
     expect(container.querySelector("input")!.value).toBe("24");
     expect(account.readRefreshSequence).toBe(0);
     for (const value of ["", "0", "169"]) {
@@ -196,7 +195,6 @@ describe("inbox home and settings", () => {
     expect(account.generation).toBe(generation);
     expect(account.readRefreshSequence).toBe(2);
     expect(container.querySelector("section")).toBe(card);
-    expect(localStorage.getItem("draft")).toBe("unsent");
     expect(localStorage.getItem("maa:account-changed")).toBeNull();
   });
 

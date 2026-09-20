@@ -47,18 +47,6 @@ class AgentConsoleTestCase(unittest.TestCase):
         finally:
             self.temp_dir.cleanup()
 
-    def test_console_shape(self) -> None:
-        body = self.client.get("/api/agent/console").json()
-        self.assertEqual(body["code"], 0)
-        for key in ("llmLevels", "agents", "agentPresets", "history"):
-            self.assertIn(key, body["data"])
-
-    def test_system_definitions(self) -> None:
-        body = self.client.get("/api/agent/system").json()
-        self.assertEqual(body["code"], 0)
-        self.assertEqual(len(body["data"]), 4)
-        self.assertTrue(all(item["apid"] for item in body["data"]))
-
     def test_llm_config_roundtrip(self) -> None:
         payload = {
             "level": 4, "base_url": "https://llm.example", "api_key": "k",
@@ -67,7 +55,11 @@ class AgentConsoleTestCase(unittest.TestCase):
         saved = self.client.put("/api/agent/llm-config", json=payload).json()
         self.assertEqual(saved["code"], 0)
         self.assertEqual(saved["data"]["model_name"], "m")
-        console = self.client.get("/api/agent/console").json()["data"]
+        body = self.client.get("/api/agent/console").json()
+        self.assertEqual(body["code"], 0)
+        console = body["data"]
+        for key in ("llmLevels", "agents", "agentPresets", "history"):
+            self.assertIn(key, console)
         self.assertTrue(any(level["level"] == 4 for level in console["llmLevels"]))
 
     def test_llm_config_rejects_blank_required_fields(self) -> None:
