@@ -19,7 +19,7 @@ from backend.tests.test_connection_api import client as base_client, connect, sd
 
 @pytest.fixture
 def client(base_client):
-    connect(base_client, confirm=True)
+    connect(base_client)
     return base_client
 
 

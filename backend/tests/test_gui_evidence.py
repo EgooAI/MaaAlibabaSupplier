@@ -10,12 +10,12 @@ from PIL import Image
 from backend.app.api.envelope import AppError
 from backend.app.shared.backend import account_context, gui_session, maafw_runner as runner
 from backend.app.shared.backend.gui_evidence import ClientFrame, compare_frame, frame_from_image
-from backend.tests.test_maafw_runner import confirmed_token, native_pipeline, sdk, window
+from backend.tests.test_maafw_runner import connected_token, native_pipeline, sdk, window
 
 
 @pytest.fixture
 def capture(sdk, monkeypatch):
-    token = confirmed_token()
+    token = connected_token()
     state = SimpleNamespace(
         token=token, image=np.zeros((4, 6, 3), dtype=np.uint8),
         failure=None, events=[],
@@ -51,7 +51,7 @@ def capture(sdk, monkeypatch):
     return state
 
 
-def test_capture_requires_active_guard_even_with_confirmed_session(capture, sdk):
+def test_capture_requires_active_guard_even_with_connected_session(capture, sdk):
     with pytest.raises(AppError, match="run_guarded"):
         runner.capture_client_frame()
     with ThreadPoolExecutor(max_workers=1) as executor:
@@ -190,7 +190,7 @@ def test_confirmation_stage_contract_and_persistence_barrier(capture, sdk, chang
 
 @pytest.mark.parametrize("outcome", [False, None, RuntimeError("click outcome unavailable")])
 def test_send_only_failure_is_not_replayed(sdk, outcome):
-    token = confirmed_token()
+    token = connected_token()
     sdk.outcome = outcome
     assert gui_session.run_guarded(token, runner.click_send)[0] is False
     assert sdk.calls == [("ChatInput_SendOnly", {"ChatInput_SendMessage": {"enabled": True}})]
@@ -198,7 +198,7 @@ def test_send_only_failure_is_not_replayed(sdk, outcome):
 
 @pytest.fixture
 def native_binding(sdk, native_pipeline, monkeypatch):
-    token = confirmed_token()
+    token = connected_token()
     monkeypatch.setattr(runner, "_tasker", native_pipeline.tasker)
     monkeypatch.setattr(runner, "_resource", native_pipeline.resource)
     return token, native_pipeline

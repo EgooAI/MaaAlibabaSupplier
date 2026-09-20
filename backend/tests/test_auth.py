@@ -11,7 +11,6 @@ from unittest.mock import Mock
 
 import pytest
 from fastapi import HTTPException, Request
-from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from backend.app.api import auth, auth_cli, main
@@ -67,12 +66,14 @@ def test_every_business_route_is_guarded_before_epoch_and_database(monkeypatch):
     forbidden = Mock(side_effect=AssertionError("Business context accessed before auth"))
     monkeypatch.setattr(main, "get_account_context", forbidden)
     app = main.create_app()
-    routes = [route for route in app.routes if isinstance(route, APIRoute)]
+    # OpenAPI includes nested routers even when app.routes is not flattened.
+    routes = app.openapi()["paths"]
     assert routes
-    for route in routes:
-        assert route.path == "/api" or route.path.startswith("/api/"), f"Route outside auth boundary: {route.path}"
-    paths = [(method, route.path) for route in routes
-             for method in route.methods if (method, route.path) != ("POST", "/api/auth/login")]
+    for path in routes:
+        assert path == "/api" or path.startswith("/api/"), f"Route outside auth boundary: {path}"
+    methods = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
+    paths = [(method.upper(), path) for path, operations in routes.items()
+             for method in operations if method in methods and (method, path) != ("post", "/api/auth/login")]
     paths.extend((method, path) for method in ("GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS")
                  for path in ("/api", "/api/", "/api/unknown", "/api/auth/login/"))
     with TestClient(app, raise_server_exceptions=False) as client:

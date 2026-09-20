@@ -92,15 +92,16 @@ this suite.
 - `test_crm_account_scope.py` and `test_im_db_isolation.py` exercise colliding source
   message IDs, selected-self reads, fixed account/cache snapshots, old futures,
   callback lock ordering, failed submissions and key recovery.
-- `test_gui_session.py` and `test_connection_api.py` exercise manual confirmation,
-  same-window reconnect, stale dialogs/requests/queued tasks, mutation conflicts,
+- `test_gui_session.py` and `test_connection_api.py` exercise connected-context capture,
+  same-window reconnect, stale requests/queued tasks, mutation conflicts,
   nonblocking status during long GUI operations and explicit connection recovery.
 - Frontend Vitest includes React lifecycle tests for account switching, failed
   polling, stale responses, synchronization completion and persistent draft fallback.
 
-Manual confirmation only asserts the operator's selected seller/window pairing.
-It does not establish the current recipient or platform acceptance. Browser
-layout screenshots and actual client behavior remain separate validation work.
+Connection guards bind the selected seller, directory, epoch and window generation;
+they do not identify the client's logged-in seller or prove platform acceptance.
+Outbox recipient/content screenshot confirmation remains required. Browser layout
+screenshots and actual client behavior remain separate validation work.
 
 ## Isolation Incident And Guard
 
@@ -120,6 +121,13 @@ loads their fixtures; verify the entry path before changing test invocation rule
 - `test_im_sync_coordinator.py` drives controlled futures and clocks to verify
   latest-pending coalescing, retry backoff, pinned caches, target waiting, lifecycle
   shutdown and late commits to the same archive after an epoch change.
+- Startup tests revalidate saved keys against synthetic source headers, restore
+  synchronization without a browser, and reject stale results after settings or
+  manual retry changes. Transient failures retry automatically; missing/invalid
+  keys never fall back to process capture, legacy migration, GUI or model calls.
+- `test_account_key_store.py` checks read-only saved-key access, malformed values
+  and SQLite lock recovery. Manual validation failures without a scheduled worker
+  must not advertise an automatic retry time.
 - Source tests use encrypted synthetic databases and native SQLite WAL files,
   including RESTART reuse, uncommitted frames, corrupt current frames and transient
   file access failures. They never inspect the installed client database.

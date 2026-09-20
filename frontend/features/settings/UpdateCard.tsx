@@ -36,7 +36,7 @@ function SourceDetails({ source }: { source: UpdateState["source"] }) {
 
 export function UpdateCard() {
   const { phase, generation } = useAuth();
-  if (phase !== "authenticated") return <Card title="应用更新"><Typography.Text type="secondary">登录验证完成后可管理应用更新。</Typography.Text></Card>;
+  if (phase !== "authenticated") return <Card title="程序更新"><Typography.Text type="secondary">登录验证完成后可管理应用更新。</Typography.Text></Card>;
   return <UpdateControls key={generation} />;
 }
 
@@ -50,18 +50,8 @@ function UpdateControls() {
     ? Math.min(100, Math.max(0, Math.round(state.downloaded_bytes / state.total_bytes * 100))) : null;
   const repository = state?.source.repository ?? "";
   const branch = state?.source.branch ?? "";
-  const title = state ? (
-    <Space size={4} wrap>
-      <span>目标分支：</span>
-      {branch ? githubLink(repository, `/tree/${branch}`, branch) : "未配置"}
-      <span>（{repository || "未配置"}）</span>
-      <Tooltip title={<SourceDetails source={state.source} />}>
-        <InfoCircleOutlined aria-label="更新来源详情" className="cursor-help text-slate-400" />
-      </Tooltip>
-    </Space>
-  ) : "应用更新";
 
-  return <Card title={title} extra={<Tag color={restarting ? "processing" : state?.phase === "ready" ? "success" : "default"}>{restarting ? "等待重新连接" : state ? phaseLabels[state.phase] : error ? "状态不可用" : "读取状态"}</Tag>}>
+  return <Card title="程序更新" extra={<Tag color={restarting ? "processing" : state?.phase === "ready" ? "success" : "default"}>{restarting ? "等待重新连接" : state ? phaseLabels[state.phase] : error ? "状态不可用" : "读取状态"}</Tag>}>
     <Space orientation="vertical" size="middle" className="w-full">
       <Typography.Text type="secondary">手动检查指定 GitHub Actions 来源并下载构建产物。页面不会自动检查新版本；安装后将立即重启程序。</Typography.Text>
       {!state && pending ? <Spin size="small" aria-label="读取更新状态" /> : null}
@@ -69,6 +59,13 @@ function UpdateControls() {
         <Descriptions size="small" column={{ xs: 1, sm: 2, lg: 3 }} styles={{ content: { overflowWrap: "anywhere", minWidth: 0 } }} items={[
           { key: "version", label: "当前版本", children: state.current.run_id ? githubLink(repository, `/actions/runs/${state.current.run_id}`, state.current.version) : state.current.version },
           { key: "sha", label: "当前提交", children: commitLink(repository, state.current.sha) },
+          { key: "branch", label: "目标分支", children: <Space size={4} wrap>
+            {branch ? githubLink(repository, `/tree/${branch}`, branch) : "未配置"}
+            <span>（{repository || "未配置"}）</span>
+            <Tooltip title={<SourceDetails source={state.source} />}>
+              <InfoCircleOutlined aria-label="更新来源详情" className="cursor-help text-slate-400" />
+            </Tooltip>
+          </Space> },
         ]} />
         {!state.supported ? <Alert type="info" showIcon title="此运行环境不支持应用更新" description={state.reason || "请使用支持更新的打包版本；源码开发环境无法安装更新。"} /> : null}
         {candidate ? <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">

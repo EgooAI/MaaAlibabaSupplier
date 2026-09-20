@@ -104,15 +104,19 @@ async function observe(snapshot: ConnectionSnapshot) {
 }
 
 describe("chat synchronization boundaries", () => {
-  it("shows worker status and submits the manual refresh button without replacing the workspace", async () => {
+  it("shows automatic sync progress and permits manual refresh after completion without replacing the workspace", async () => {
     const source = { ...connectionSnapshot.source, syncing: true, pending: true, freshness: "syncing" as const, stale: true, last_error: "source offline", retry_at: 1_789_600_300 };
     mocks.backend.getConnection.mockResolvedValue({ ...connectionSnapshot, source });
     await act(async () => root.render(<AccountProvider><ReadableWorkspace /><SyncStatus /></AccountProvider>));
-    expect(container.textContent).toContain("同步失败");
+    expect(container.textContent).toContain("同步中");
     expect(container.textContent).toContain("正在重试同步");
     expect(container.textContent).toContain("存档可能过期");
     const before = container.querySelector("textarea");
     const generation = account.generation;
+    expect(container.querySelector("button")!.disabled).toBe(true);
+    await act(async () => container.querySelector("button")!.click());
+    expect(mocks.backend.retryConnection).not.toHaveBeenCalled();
+    await observe(connectionSnapshot);
     await act(async () => container.querySelector("button")!.click());
     expect(mocks.backend.retryConnection).toHaveBeenCalledExactlyOnceWith(connectionSnapshot.account.epoch);
     expect(mocks.message.info).toHaveBeenCalledWith("同步请求已提交，完成情况请查看同步状态");
@@ -148,7 +152,7 @@ describe("chat synchronization boundaries", () => {
     expect(mocks.backend.retryConnection).not.toHaveBeenCalled();
   });
 
-  it.each(["unverified", "invalid", "unavailable"] as const)("reads archive revisions with a %s key without requesting sync", async (keyValidation) => {
+  it.each(["unverified", "verifying", "invalid", "unavailable"] as const)("reads archive revisions with a %s key without requesting sync", async (keyValidation) => {
     vi.useFakeTimers();
     const snapshot = { ...connectionSnapshot, source: { ...connectionSnapshot.source, key_validation: keyValidation } };
     mocks.backend.getConnection.mockResolvedValue(snapshot);

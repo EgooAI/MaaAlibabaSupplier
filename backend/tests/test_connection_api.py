@@ -48,18 +48,11 @@ def client(sdk, monkeypatch, tmp_path):
         yield client
 
 
-def connect(client, *, confirm=False):
+def connect(client):
     epoch = client.headers["X-Account-Epoch"]
     response = client.post("/api/settings/connection/connect", json={"epoch": epoch})
     assert response.status_code == 200, response.text
-    snapshot = response.json()["data"]
-    if confirm:
-        response = client.post("/api/settings/connection/confirm", json={
-            "epoch": epoch, "window_generation": snapshot["client"]["window_generation"],
-        })
-        assert response.status_code == 200, response.text
-        snapshot = response.json()["data"]
-    return snapshot
+    return response.json()["data"]
 
 
 @pytest.fixture
@@ -122,24 +115,41 @@ def test_connection_reports_broken_crm_as_unreadable(client):
     assert database.read_bytes() == b"not a database"
 
 
-def test_connection_confirmation_and_reconnect(client, sdk):
+def test_connection_enables_operation_and_reconnect_refreshes_generation(client, sdk):
     snapshot = connect(client)
-    assert snapshot["client"]["connected"] and not snapshot["client"]["confirmed"]
+    assert snapshot["client"]["connected"]
+    assert "confirmed" not in snapshot["client"]
+    assert snapshot["capabilities"]["operate_client"]
     assert not sdk.calls
     epoch = snapshot["account"]["epoch"]
-    response = client.post("/api/settings/connection/confirm", json={"epoch": epoch, "window_generation": "old"})
-    assert response.status_code == 409
-    snapshot = connect(client, confirm=True)
-    assert snapshot["capabilities"]["operate_client"]
-    assert not connect(client)["client"]["confirmed"]
+    response = client.post("/api/settings/connection/confirm", json={"epoch": epoch, "window_generation": snapshot["client"]["window_generation"]})
+    assert response.status_code == 404
+    reconnected = connect(client)
+    assert reconnected["capabilities"]["operate_client"]
+    assert reconnected["client"]["window_generation"] != snapshot["client"]["window_generation"]
     assert not sdk.calls
 
 
-@pytest.mark.parametrize("operation", ["connect", "retry", "confirm"])
+@pytest.mark.parametrize("selected", [False, True])
+@pytest.mark.parametrize("connected", [False, True])
+def test_operate_client_requires_selected_seller_and_connection(client, sdk, selected, connected):
+    if not selected:
+        response = client.put("/api/settings/ali-id", json={"ali_id": ""})
+        assert response.status_code == 200
+        client.headers["X-Account-Epoch"] = response.headers["X-Account-Epoch"]
+    if connected:
+        connect(client)
+    snapshot = client.get("/api/settings/connection").json()["data"]
+    assert snapshot["client"]["connected"] is connected
+    assert snapshot["capabilities"]["operate_client"] is (selected and connected)
+    assert not sdk.calls
+
+
+@pytest.mark.parametrize("operation", ["connect", "retry"])
 def test_connection_rejects_stale_body_epoch(client, sdk, monkeypatch, operation):
     retry = Mock()
     monkeypatch.setattr(get_im_db_middleware(), "retry_connection", retry)
-    response = client.post(f"/api/settings/connection/{operation}", json={"epoch": "stale", "window_generation": "stale"})
+    response = client.post(f"/api/settings/connection/{operation}", json={"epoch": "stale"})
     assert response.status_code == 409
     retry.assert_not_called()
     assert not sdk.controllers and not sdk.calls
@@ -506,22 +516,21 @@ def test_revision_keeps_archive_readable_after_worker_detects_invalid_key(client
     ("/api/conversations/1/messages", {"content": "hello", "action": "test", "idempotency_key": "key"}),
     ("/api/conversations/1/goto-contact", {"login_id": "buyer-login"}),
 ])
-def test_gui_writes_require_manual_confirmation(client, sdk, chat, path, body):
-    connect(client)
+def test_gui_writes_require_connection(client, sdk, chat, path, body):
     response = client.post(path, json=body)
     if path.endswith("/messages"):
         assert response.status_code == 200
         task = response.json()["data"]["outbox"]
         assert task["status"] == "failed" and not task["may_have_sent"]
-        assert "人工确认" in task["reason"]
+        assert task["reason"] == "客户端尚未连接，请先连接客户端。"
     else:
-        assert response.status_code == 409
+        assert response.status_code == 503
     assert TaskQueue._instances.get(DEFAULT_QUEUE_NAME) is None
     assert not sdk.calls
 
 
 def test_send_rejects_missing_login_and_goto_rejects_unrelated_target(client, sdk, chat, monkeypatch):
-    connect(client, confirm=True)
+    connect(client)
     response = client.post("/api/conversations/1/goto-contact", json={"login_id": "another-buyer"})
     assert response.status_code == 409
     monkeypatch.setattr(conversations, "crm_get_user_info", lambda *args: SimpleNamespace(login_id=""))
@@ -533,7 +542,7 @@ def test_send_rejects_missing_login_and_goto_rejects_unrelated_target(client, sd
 
 @pytest.mark.parametrize("change", ["account", "reconnect", "window"])
 def test_queued_send_fails_when_session_expires(client, sdk, chat, monkeypatch, change):
-    connect(client, confirm=True)
+    connect(client)
     context = account_context.get_account_context()
     queue = TaskQueue()
     entered, release = Event(), Event()
@@ -553,7 +562,7 @@ def test_queued_send_fails_when_session_expires(client, sdk, chat, monkeypatch, 
             response = client.put("/api/settings/ali-id", json={"ali_id": "seller-b"})
             assert response.status_code == 200
         elif change == "reconnect":
-            connect(client, confirm=True)
+            connect(client)
         else:
             sdk.windows = [window(2)]
     finally:
@@ -569,9 +578,9 @@ def test_queued_send_fails_when_session_expires(client, sdk, chat, monkeypatch, 
     assert reason in failed["reason"]
 
 
-@pytest.mark.parametrize("operation", ["account", "directory", "key", "connect", "retry", "confirm"])
+@pytest.mark.parametrize("operation", ["account", "directory", "key", "connect", "retry"])
 def test_settings_conflict_immediately_during_guarded_gui(client, sdk, operation):
-    snapshot = connect(client, confirm=True)
+    snapshot = connect(client)
     epoch = snapshot["account"]["epoch"]
     token = gui_session.capture_gui_session(epoch)
     entered, release = Event(), Event()
@@ -592,7 +601,7 @@ def test_settings_conflict_immediately_during_guarded_gui(client, sdk, operation
             elif operation == "key":
                 request = executor.submit(client.delete, "/api/settings/ali-keys/seller-a")
             else:
-                request = executor.submit(client.post, f"/api/settings/connection/{operation}", json={"epoch": epoch, "window_generation": snapshot["client"]["window_generation"]})
+                request = executor.submit(client.post, f"/api/settings/connection/{operation}", json={"epoch": epoch})
             assert request.result(timeout=2).status_code == 409
         finally:
             release.set()
@@ -720,7 +729,7 @@ def test_response_is_rejected_if_epoch_changes_after_endpoint(client, monkeypatc
     assert response.headers["X-Account-Epoch"] != client.headers["X-Account-Epoch"]
 
 
-def test_diagnostic_is_read_only_without_confirmation(client, sdk):
+def test_connected_diagnostic_is_read_only(client, sdk):
     connect(client)
     response = client.post("/api/status/node-test", json={})
     assert response.status_code == 200, response.text
@@ -729,7 +738,7 @@ def test_diagnostic_is_read_only_without_confirmation(client, sdk):
     queue.shutdown()
     assert queue.get(task_id).status == TaskStatus.SUCCEEDED
     assert sdk.calls == [("Diagnostics_ChatInput", {})]
-    assert not gui_session.get_client_status()["confirmed"]
+    assert gui_session.get_client_status()["connected"]
 
 
 def test_queued_diagnostic_cannot_run_for_next_account(client, sdk):
@@ -757,12 +766,12 @@ def test_queued_diagnostic_cannot_run_for_next_account(client, sdk):
 
 
 @pytest.mark.parametrize("action", ["send", "test"])
-def test_confirmed_submission_only_navigates_with_fake_sdk(client, sdk, chat, monkeypatch, action):
+def test_connected_submission_only_navigates_with_fake_sdk(client, sdk, chat, monkeypatch, action):
     import numpy as np
     from backend.app.shared.backend.gui_evidence import frame_from_image
 
     monkeypatch.setattr(outbox_service.runner, "capture_client_frame", lambda: frame_from_image(np.zeros((4, 5, 3), dtype=np.uint8)))
-    connect(client, confirm=True)
+    connect(client)
     response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": action, "idempotency_key": "key"})
     assert response.status_code == 200, response.text
     task_id = response.json()["data"]["outbox"]["id"]
@@ -779,7 +788,7 @@ def test_running_send_returns_task_id_and_all_observers_remain_responsive(client
     from backend.app.shared.backend.gui_evidence import frame_from_image
 
     monkeypatch.setattr(outbox_service.runner, "capture_client_frame", lambda: frame_from_image(np.zeros((4, 5, 3), dtype=np.uint8)))
-    connect(client, confirm=True)
+    connect(client)
     queue = TaskQueue()
     entered, release = Event(), Event()
     post_task = sdk.taskers[0].post_task
@@ -824,7 +833,8 @@ def test_running_send_returns_task_id_and_all_observers_remain_responsive(client
                 assert not release.is_set()
                 data = response.json()["data"]
                 if path == "/api/settings/connection":
-                    assert data["client"]["confirmed"]
+                    assert data["client"]["connected"]
+                    assert data["capabilities"]["operate_client"]
                     assert "操作正在执行" in data["client"]["detail"]
                 elif path == "/api/status/tasks":
                     assert all(not task["description"].startswith("Outbox ") for task in data)
@@ -1002,24 +1012,20 @@ def test_connection_actions_continue_to_use_body_epoch_without_header(client):
     epoch = client.headers.pop("X-Account-Epoch")
     response = client.post("/api/settings/connection/connect", json={"epoch": epoch})
     assert response.status_code == 200
-    generation = response.json()["data"]["client"]["window_generation"]
-    response = client.post("/api/settings/connection/confirm", json={"epoch": epoch, "window_generation": generation})
-    assert response.status_code == 200
-    assert response.json()["data"]["client"]["confirmed"]
+    assert response.json()["data"]["client"]["connected"]
+    assert response.json()["data"]["capabilities"]["operate_client"]
 
 
 def test_connection_details_and_guard_errors_are_chinese(client, sdk, chat):
     snapshot = connect(client)
-    assert "人工确认" in snapshot["client"]["detail"]
-    assert "自动核验登录身份" in snapshot["client"]["detail"]
+    assert snapshot["client"]["detail"] == "客户端窗口已连接。"
     assert snapshot["source"]["key_validation"] == "unverified"
+    sdk.windows = [window(2)]
     response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": "send", "idempotency_key": "key"})
     assert response.status_code == 200
     assert response.json()["data"]["outbox"]["status"] == "failed"
-    assert response.json()["data"]["outbox"]["reason"] == "请先人工确认所选账号与客户端窗口一致。"
-    sdk.windows = [window(2)]
-    response = client.post("/api/settings/connection/confirm", json={
-        "epoch": client.headers["X-Account-Epoch"], "window_generation": snapshot["client"]["window_generation"],
-    })
-    assert response.status_code == 409
-    assert response.json()["msg"] == "客户端窗口已变化，请重新连接并人工确认。"
+    assert response.json()["data"]["outbox"]["reason"] == "客户端窗口已变化，请重新连接后重试。"
+    response = client.post("/api/conversations/1/goto-contact", json={"login_id": "buyer-login"})
+    assert response.status_code == 503
+    assert response.json()["msg"] == "客户端尚未连接，请先连接客户端。"
+    assert not sdk.calls

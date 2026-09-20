@@ -6,21 +6,20 @@ import pytest
 
 from backend.app.api.envelope import AppError
 from backend.app.shared.backend import account_context, gui_session, maafw_runner as runner
-from backend.tests.test_maafw_runner import confirmed_token, sdk, window
+from backend.tests.test_maafw_runner import connected_token, sdk, window
 
 
 def test_status_polling_never_initializes_and_connect_has_zero_input(sdk):
     for _ in range(3):
         status = gui_session.get_client_status()
-        assert not status["connected"] and not status["confirmed"]
+        assert not status["connected"]
         assert status["window_generation"] == ""
     assert not sdk.controllers and not sdk.options and not sdk.calls
 
     status = gui_session.connect_client()
-    assert status["connected"] and not status["confirmed"]
+    assert status["connected"]
     assert status["window_generation"]
-    assert "not automatic login identity verification" in status["detail"]
-    assert "same window cannot be detected" in status["detail"]
+    assert "confirmed" not in status
     for _ in range(3):
         assert gui_session.get_client_status() == status
     assert len(sdk.controllers) == 1 and len(sdk.options) == 1
@@ -36,37 +35,34 @@ def test_status_polling_never_initializes_and_connect_has_zero_input(sdk):
     lambda: runner.run_node("Diagnostics_Unknown"),
     lambda: runner.run_node("Diagnostics_ChatInput", {"Diagnostics_ChatInput": {"action": "Click"}}),
 ])
-@pytest.mark.parametrize("confirmed", [False, True])
-def test_direct_writes_cannot_bypass_guard(sdk, operation, confirmed):
-    if confirmed:
-        confirmed_token()
+@pytest.mark.parametrize("connected", [False, True])
+def test_direct_writes_cannot_bypass_guard(sdk, operation, connected):
+    if connected:
+        connected_token()
     assert not operation()[0]
     assert not sdk.calls
-    assert len(sdk.controllers) == int(confirmed)
+    assert len(sdk.controllers) == int(connected)
 
 
 @pytest.mark.parametrize("entry", ["Diagnostics_ChatInput", "Diagnostics_ContactSearch"])
-def test_diagnostics_work_without_account_or_confirmation(sdk, entry):
+def test_diagnostics_work_without_account_or_connection(sdk, entry):
     sdk.config.clear()
     assert runner.run_node(entry)[0]
     assert sdk.calls == [(entry, {})]
-    assert not gui_session.get_client_status()["confirmed"]
+    assert gui_session.get_client_status()["connected"]
 
 
-def test_confirmation_requires_selection_current_epoch_and_generation(sdk):
-    status = gui_session.connect_client()
+def test_capture_requires_selection_and_current_epoch(sdk):
+    gui_session.connect_client()
     context = account_context.get_account_context()
-    for epoch, generation in (("old-epoch", status["window_generation"]), (context.epoch, "old-window")):
-        with pytest.raises(AppError) as error:
-            gui_session.confirm_client(epoch, generation)
-        assert error.value.status_code == 409
     with pytest.raises(AppError) as error:
-        gui_session.capture_gui_session(context.epoch)
+        gui_session.capture_gui_session("old-epoch")
     assert error.value.status_code == 409
+    assert gui_session.capture_gui_session(context.epoch).self_ali_id == context.self_ali_id
     sdk.config["self_ali_id"] = ""
     context = account_context.get_account_context()
     with pytest.raises(AppError) as error:
-        gui_session.confirm_client(context.epoch, status["window_generation"])
+        gui_session.capture_gui_session(context.epoch)
     assert error.value.status_code == 409
     assert not sdk.calls
 
@@ -80,60 +76,58 @@ def test_unavailable_connection_raises_service_error(sdk):
     with pytest.raises(AppError) as error:
         gui_session.capture_gui_session(epoch)
     assert error.value.status_code == 503
-    with pytest.raises(AppError) as error:
-        gui_session.confirm_client(epoch, "")
-    assert error.value.status_code == 503
     assert not sdk.calls
 
 
 @pytest.mark.parametrize("windows", [[window(2)], [], [window(1), window(2)]])
-def test_poll_revokes_confirmation_without_rebinding_even_if_window_returns(sdk, windows):
-    token = confirmed_token()
+def test_poll_invalidates_session_without_rebinding_even_if_window_returns(sdk, windows):
+    token = connected_token()
     sdk.windows = windows
     status = gui_session.get_client_status()
-    assert not status["connected"] and not status["confirmed"]
+    assert not status["connected"]
     assert status["window_generation"] == ""
     sdk.windows = [window(1)]
-    assert not gui_session.get_client_status()["confirmed"]
+    assert not gui_session.get_client_status()["connected"]
     assert not gui_session.run_guarded(token, lambda: runner.chat_send("stale"))[0]
     assert len(sdk.controllers) == 1 and not sdk.calls
     new_status = gui_session.connect_client()
     assert new_status["window_generation"] != token.window_generation
-    assert not new_status["confirmed"]
-    with pytest.raises(AppError) as error:
-        gui_session.confirm_client(token.epoch, token.window_generation)
-    assert error.value.status_code == 409
-
-
-def test_window_changed_between_connect_and_confirm_is_rejected(sdk):
-    status = gui_session.connect_client()
-    sdk.windows = [window(2)]
-    with pytest.raises(AppError) as error:
-        gui_session.confirm_client(account_context.get_account_context().epoch, status["window_generation"])
-    assert error.value.status_code == 409
-    assert len(sdk.controllers) == 1 and not sdk.calls
-
-
-def test_window_changed_during_confirmation_is_rejected(sdk, monkeypatch):
-    status = gui_session.connect_client()
-    observations = iter([[window(1)], [window(2)]])
-    monkeypatch.setattr(runner.Toolkit, "find_desktop_windows", lambda: next(observations))
-    with pytest.raises(AppError) as error:
-        gui_session.confirm_client(account_context.get_account_context().epoch, status["window_generation"])
-    assert error.value.status_code == 409
-    assert gui_session._confirmation is None
+    assert new_status["connected"]
+    assert not gui_session.run_guarded(token, lambda: runner.chat_send("stale"))[0]
     assert not sdk.calls
 
 
-def test_reconnect_same_window_invalidates_an_open_confirmation_dialog(sdk):
-    before = gui_session.connect_client()
-    epoch = account_context.get_account_context().epoch
-    after = gui_session.connect_client()
-    assert before["window_generation"] != after["window_generation"]
+def test_window_changed_between_connect_and_capture_is_rejected(sdk):
+    gui_session.connect_client()
+    sdk.windows = [window(2)]
     with pytest.raises(AppError) as error:
-        gui_session.confirm_client(epoch, before["window_generation"])
-    assert error.value.status_code == 409
-    assert gui_session.confirm_client(epoch, after["window_generation"])["confirmed"]
+        gui_session.capture_gui_session(account_context.get_account_context().epoch)
+    assert error.value.status_code == 503
+    assert len(sdk.controllers) == 1 and not sdk.calls
+
+
+def test_window_changed_after_capture_is_rejected_at_execution(sdk, monkeypatch):
+    gui_session.connect_client()
+    observations = iter([[window(1)], [window(2)]])
+    monkeypatch.setattr(runner.Toolkit, "find_desktop_windows", lambda: next(observations))
+    token = gui_session.capture_gui_session(account_context.get_account_context().epoch)
+    assert not gui_session.run_guarded(token, lambda: runner.chat_send("stale"))[0]
+    assert not sdk.calls
+
+
+def test_repeated_capture_is_equal_until_same_window_reconnects(sdk):
+    token = connected_token()
+    for _ in range(3):
+        captured = gui_session.capture_gui_session(token.epoch)
+        assert captured == token
+        assert gui_session.run_guarded(captured, lambda: True) is True
+    after = gui_session.connect_client()
+    assert token.window_generation != after["window_generation"]
+    assert len(sdk.controllers) == 1
+    assert not gui_session.run_guarded(token, lambda: runner.chat_send("stale"))[0]
+    current = gui_session.capture_gui_session(token.epoch)
+    assert current.window_generation == after["window_generation"]
+    assert gui_session.run_guarded(current, lambda: True) is True
     assert not sdk.calls
 
 
@@ -143,34 +137,34 @@ def test_window_lost_during_connect_raises_service_error(sdk, monkeypatch):
     with pytest.raises(AppError) as error:
         gui_session.connect_client()
     assert error.value.status_code == 503
-    assert gui_session._confirmation is None
+    assert runner._window_generation == ""
     assert not sdk.calls
 
 
-def test_discovery_error_revokes_confirmation_without_reconnecting(sdk):
-    token = confirmed_token()
+def test_discovery_error_invalidates_session_without_reconnecting(sdk):
+    token = connected_token()
     sdk.fail = "discovery_exception"
     status = gui_session.get_client_status()
-    assert not status["connected"] and not status["confirmed"]
+    assert not status["connected"]
     assert "discovery failed" in status["detail"]
     sdk.fail = None
     assert not gui_session.run_guarded(token, lambda: runner.chat_send("stale"))[0]
     assert len(sdk.controllers) == 1 and not sdk.calls
 
 
-def test_diagnostic_rebind_also_invalidates_old_confirmation(sdk):
-    token = confirmed_token()
+def test_diagnostic_rebind_also_invalidates_old_session(sdk):
+    token = connected_token()
     sdk.windows = [window(2)]
     assert runner.run_node("Diagnostics_ChatInput")[0]
     status = gui_session.get_client_status()
-    assert status["connected"] and not status["confirmed"]
+    assert status["connected"]
     assert status["window_generation"] != token.window_generation
     assert not gui_session.run_guarded(token, lambda: runner.chat_send("stale"))[0]
     assert sdk.calls == [("Diagnostics_ChatInput", {})]
 
 
 def test_window_change_after_navigation_stops_before_send_without_rebinding(sdk):
-    token = confirmed_token()
+    token = connected_token()
 
     def navigate_and_send():
         assert runner.goto_contact("buyer")[0]
@@ -181,12 +175,12 @@ def test_window_change_after_navigation_stops_before_send_without_rebinding(sdk)
     assert not success and reason
     assert [entry for entry, _ in sdk.calls] == ["ContactSearch"]
     assert len(sdk.controllers) == 1
-    assert not gui_session.get_client_status()["confirmed"]
+    assert not gui_session.get_client_status()["connected"]
 
 
-@pytest.mark.parametrize("change", ["seller", "data_dir", "a_b_a", "restart", "reconfirm"])
+@pytest.mark.parametrize("change", ["seller", "data_dir", "a_b_a", "restart", "reconnect"])
 def test_queued_stale_session_fails_before_invoking_closure(sdk, monkeypatch, change):
-    token = confirmed_token()
+    token = connected_token()
     invoked = []
     if change == "seller":
         sdk.config["self_ali_id"] = "seller-b"
@@ -202,16 +196,17 @@ def test_queued_stale_session_fails_before_invoking_closure(sdk, monkeypatch, ch
     elif change == "restart":
         # Recreate the process-local startup state without reloading modules in other tests.
         runner._reset_binding()
-        monkeypatch.setattr(gui_session, "_confirmation", None)
         monkeypatch.setattr(account_context, "_context", None)
-        assert not gui_session.get_client_status()["confirmed"]
+        assert not gui_session.get_client_status()["connected"]
         assert account_context.get_account_context().epoch != token.epoch
     else:
         gui_session.connect_client()
-        assert not gui_session.get_client_status()["confirmed"]
+        assert gui_session.get_client_status()["connected"]
 
-    # Even a new confirmation cannot revive a previously queued task.
-    new_token = confirmed_token()
+    # Capturing the current session cannot revive a previously queued task.
+    if change == "restart":
+        gui_session.connect_client()
+    new_token = gui_session.capture_gui_session(account_context.get_account_context().epoch)
     assert new_token != token
 
     def queued():
@@ -225,17 +220,17 @@ def test_queued_stale_session_fails_before_invoking_closure(sdk, monkeypatch, ch
 
 
 def test_token_is_immutable_and_all_binding_fields_are_checked(sdk):
-    token = confirmed_token()
+    token = connected_token()
     with pytest.raises(FrozenInstanceError):
         token.epoch = "changed"
-    for field in ("self_ali_id", "data_dir", "epoch", "window_generation", "confirmation_id"):
+    for field in ("self_ali_id", "data_dir", "epoch", "window_generation"):
         altered = replace(token, **{field: "changed"})
         assert not gui_session.run_guarded(altered, lambda: runner.chat_send("forged"))[0]
     assert not sdk.calls
 
 
 def test_account_switch_is_rejected_for_the_entire_guarded_task(sdk):
-    token = confirmed_token()
+    token = connected_token()
     navigating, release = Event(), Event()
 
     def task():
@@ -260,11 +255,12 @@ def test_account_switch_is_rejected_for_the_entire_guarded_task(sdk):
     with account_context.changing_account():
         sdk.config["self_ali_id"] = "seller-b"
         account_context.invalidate_account_context()
-    assert not gui_session.get_client_status()["confirmed"]
+    assert gui_session.get_client_status()["connected"]
+    assert not gui_session.run_guarded(token, lambda: runner.chat_send("stale"))[0]
 
 
 def test_guard_does_not_leak_after_failure_or_to_other_threads(sdk):
-    token = confirmed_token()
+    token = connected_token()
 
     def fail():
         raise RuntimeError("task failed")
@@ -274,4 +270,4 @@ def test_guard_does_not_leak_after_failure_or_to_other_threads(sdk):
     with ThreadPoolExecutor(max_workers=1) as executor:
         assert not executor.submit(runner.chat_send, "unguarded worker").result(timeout=2)[0]
     assert not sdk.calls
-    assert gui_session.run_guarded(token, lambda: runner.chat_send("confirmed"))[0]
+    assert gui_session.run_guarded(token, lambda: runner.chat_send("current"))[0]

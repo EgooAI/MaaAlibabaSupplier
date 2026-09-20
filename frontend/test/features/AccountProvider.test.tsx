@@ -13,7 +13,7 @@ import { authenticatedSession } from "@/test/support/authFixture";
 
 const mocks = vi.hoisted(() => ({
   message: { warning: vi.fn(), error: vi.fn() },
-  backend: { getConnection: vi.fn(), getSelfInfo: vi.fn(), connectClient: vi.fn(), retryConnection: vi.fn(), confirmClient: vi.fn() },
+  backend: { getConnection: vi.fn(), getSelfInfo: vi.fn(), connectClient: vi.fn(), retryConnection: vi.fn() },
 }));
 vi.mock("antd", () => ({ App: { useApp: () => ({ message: mocks.message }) } }));
 vi.mock("@/services/client", () => ({ backend: mocks.backend }));
@@ -156,7 +156,6 @@ describe("shared account provider", () => {
     expect(mocks.backend.getConnection).toHaveBeenCalledTimes(4);
     expect(mocks.backend.connectClient).not.toHaveBeenCalled();
     expect(mocks.backend.retryConnection).not.toHaveBeenCalled();
-    expect(mocks.backend.confirmClient).not.toHaveBeenCalled();
   });
 
   it("rejects out-of-order observations and remounts the workspace on epoch change", async () => {

@@ -148,13 +148,11 @@ describe("http adapter contract", () => {
     globalThis.fetch = fetchMock;
     await expect(httpBackend.getConnection()).resolves.toEqual(connectionSnapshot);
     await httpBackend.connectClient("epoch-a");
-    await httpBackend.confirmClient("epoch-a", "window-a");
     accountSession.accept({ ...connectionSnapshot, account: { ...connectionSnapshot.account, epoch: "epoch-a" } });
     await httpBackend.retryConnection("epoch-a");
     expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method ?? "GET", init.body && JSON.parse(init.body)])).toEqual([
       ["/api/settings/connection", "GET", undefined],
       ["/api/settings/connection/connect", "POST", { epoch: "epoch-a" }],
-      ["/api/settings/connection/confirm", "POST", { epoch: "epoch-a", window_generation: "window-a" }],
       ["/api/settings/connection/retry", "POST", { epoch: "epoch-a" }],
     ]);
   });
@@ -210,7 +208,7 @@ describe("http adapter contract", () => {
   });
 
   it("gates translation submissions on the use_ai capability but not cache queries", async () => {
-    accountSession.accept({ ...structuredClone(connectionSnapshot), client: { ...connectionSnapshot.client, connected: true }, capabilities: { read_chat: true, use_ai: false, operate_client: false } });
+    accountSession.accept({ ...structuredClone(connectionSnapshot), client: { ...connectionSnapshot.client, connected: true }, capabilities: { read_chat: true, use_ai: false, operate_client: true } });
     globalThis.fetch = vi.fn();
     await expect(httpBackend.requestTranslations({ texts: ["hello"] })).rejects.toThrow("AI 暂不可用");
     expect(fetch).not.toHaveBeenCalled();
@@ -229,16 +227,16 @@ describe("http adapter contract", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it.each(["send", "test"] as const)("blocks %s before manual client confirmation", async (action) => {
-    accountSession.accept({ ...structuredClone(connectionSnapshot), client: { ...connectionSnapshot.client, connected: true } });
+  it.each(["send", "test"] as const)("blocks %s while the client is disconnected", async (action) => {
+    accountSession.accept(structuredClone(connectionSnapshot));
     globalThis.fetch = vi.fn();
-    await expect(httpBackend.sendMessage({ conversationId: "42", content: "hello", action, idempotency_key: "key" })).rejects.toThrow("人工确认");
-    await expect(httpBackend.gotoContact("42", "buyer")).rejects.toThrow("人工确认");
+    await expect(httpBackend.sendMessage({ conversationId: "42", content: "hello", action, idempotency_key: "key" })).rejects.toThrow("接入客户端");
+    await expect(httpBackend.gotoContact("42", "buyer")).rejects.toThrow("接入客户端");
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("allows read-only diagnostics on an unconfirmed connected client, including without a readable archive", async () => {
-    accountSession.accept({ ...structuredClone(connectionSnapshot), client: { ...connectionSnapshot.client, connected: true, confirmed: false }, capabilities: { read_chat: false, use_ai: false, operate_client: false } });
+  it("allows read-only diagnostics on a connected client, including without a seller or readable archive", async () => {
+    accountSession.accept({ ...structuredClone(connectionSnapshot), account: { ...connectionSnapshot.account, self_ali_id: "" }, client: { ...connectionSnapshot.client, connected: true }, capabilities: { read_chat: false, use_ai: false, operate_client: false } });
     const receipt = { success: null, message: "queued", task_snapshot: { task_id: "diagnostic-1" } };
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: receipt })));
     globalThis.fetch = fetchMock;
@@ -254,7 +252,7 @@ describe("http adapter contract", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("allows cache reset without client confirmation and rejects a mismatched response epoch", async () => {
+  it("allows cache reset without a client connection and rejects a mismatched response epoch", async () => {
     accountSession.accept(structuredClone(connectionSnapshot));
     globalThis.fetch = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, msg: "ok", data: null }), { headers: { "X-Account-Epoch": "mock-1" } }))
@@ -267,7 +265,7 @@ describe("http adapter contract", () => {
     accountSession.accept(structuredClone(connectionSnapshot));
     globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: [] })));
     await expect(httpBackend.getAssistantSuggestions("42")).resolves.toEqual([]);
-    accountSession.accept({ ...connectionSnapshot, capabilities: { read_chat: true, use_ai: false, operate_client: true } });
+    accountSession.accept({ ...connectionSnapshot, client: { ...connectionSnapshot.client, connected: true }, capabilities: { read_chat: true, use_ai: false, operate_client: true } });
     await expect(httpBackend.analyzeConversation("42")).rejects.toThrow("AI 暂不可用");
   });
 

@@ -98,22 +98,20 @@ def sdk(monkeypatch):
     for name in ("_tasker", "_resource", "_window_hwnd"):
         monkeypatch.setattr(runner, name, None)
     monkeypatch.setattr(runner, "_window_generation", "")
-    monkeypatch.setattr(gui_session, "_confirmation", None)
     monkeypatch.setattr(account_context, "_context", None)
     monkeypatch.setattr(account_context, "read_app_config", lambda: dict(state.config))
     return state
 
 
-def confirmed_token():
-    status = gui_session.connect_client()
+def connected_token():
+    gui_session.connect_client()
     epoch = account_context.get_account_context().epoch
-    gui_session.confirm_client(epoch, status["window_generation"])
     return gui_session.capture_gui_session(epoch)
 
 
-def run_confirmed(fn):
+def run_connected(fn):
     try:
-        token = confirmed_token()
+        token = connected_token()
     except AppError as exc:
         return False, exc.message
     return gui_session.run_guarded(token, fn)
@@ -125,13 +123,13 @@ def run_confirmed(fn):
 ])
 def test_initialization_failure_can_recover(sdk, failure):
     sdk.fail = failure
-    assert not run_confirmed(lambda: runner.chat_input("first"))[0]
+    assert not run_connected(lambda: runner.chat_input("first"))[0]
     assert runner._tasker is None
     assert runner._resource is None
     assert not sdk.calls
 
     sdk.fail = None
-    assert run_confirmed(lambda: runner.chat_input("second"))[0]
+    assert run_connected(lambda: runner.chat_input("second"))[0]
     assert len(sdk.calls) == 1
 
 
@@ -142,17 +140,17 @@ def test_initialization_failure_can_recover(sdk, failure):
 ])
 def test_rejects_missing_partial_or_ambiguous_windows_and_recovers(sdk, windows):
     sdk.windows = windows
-    assert not run_confirmed(lambda: runner.chat_send("first"))[0]
+    assert not run_connected(lambda: runner.chat_send("first"))[0]
     assert not sdk.controllers
     assert not sdk.calls
 
     sdk.windows = [window()]
-    assert run_confirmed(lambda: runner.chat_input("second"))[0]
+    assert run_connected(lambda: runner.chat_input("second"))[0]
 
 
 def test_resource_path_and_controller_match_interface(sdk):
     sdk.windows = [window(2, title="Other"), window(3, class_name="Other"), window(4)]
-    assert run_confirmed(lambda: runner.goto_contact("buyer-test"))[0]
+    assert run_connected(lambda: runner.goto_contact("buyer-test"))[0]
     assert sdk.bundles == [settings.resolve_backend_root() / "assets" / "resource"]
     assert sdk.options == [settings.resolve_backend_root() / "debug"]
     config = load_jsonc(ASSETS / "interface.json")["controller"][0]
@@ -167,8 +165,8 @@ def test_resource_path_and_controller_match_interface(sdk):
 
 
 @pytest.mark.parametrize("change", ["new_hwnd", "disconnected", "not_inited"])
-def test_rebind_requires_explicit_reconnection_and_confirmation(sdk, change):
-    token = confirmed_token()
+def test_rebind_requires_explicit_reconnection(sdk, change):
+    token = connected_token()
     assert gui_session.run_guarded(token, lambda: runner.chat_input("first"))[0]
     if change == "new_hwnd":
         sdk.windows = [window(2)]
@@ -180,7 +178,7 @@ def test_rebind_requires_explicit_reconnection_and_confirmation(sdk, change):
     assert not gui_session.run_guarded(token, lambda: runner.chat_input("stale"))[0]
     assert len(sdk.calls) == 1
     assert len(sdk.controllers) == 1
-    assert run_confirmed(lambda: runner.chat_input("second"))[0]
+    assert run_connected(lambda: runner.chat_input("second"))[0]
     assert token.window_generation != runner._window_generation
     assert len(sdk.controllers) == 2
     assert runner._tasker.controller is sdk.controllers[-1]
@@ -190,7 +188,7 @@ def test_rebind_requires_explicit_reconnection_and_confirmation(sdk, change):
 
 @pytest.mark.parametrize("windows", [[], [window(1), window(2)], [window(1, title="Other")]])
 def test_cached_window_is_rechecked(sdk, windows):
-    token = confirmed_token()
+    token = connected_token()
     assert gui_session.run_guarded(token, lambda: runner.chat_input("first"))[0]
     sdk.windows = windows
     assert not gui_session.run_guarded(token, lambda: runner.chat_send("second"))[0]
@@ -198,20 +196,20 @@ def test_cached_window_is_rechecked(sdk, windows):
     assert runner._tasker is None
 
     sdk.windows = [window(3)]
-    assert run_confirmed(lambda: runner.chat_input("third"))[0]
+    assert run_connected(lambda: runner.chat_input("third"))[0]
     assert sdk.controllers[-1].hwnd == 3
 
 
 @pytest.mark.parametrize("outcome", [False, None, RuntimeError("result unavailable")])
 def test_failed_task_is_not_replayed(sdk, outcome):
     sdk.outcome = outcome
-    assert not run_confirmed(lambda: runner.chat_send("first"))[0]
+    assert not run_connected(lambda: runner.chat_send("first"))[0]
     assert len(sdk.calls) == 1
     assert len(sdk.taskers) == 1
 
     sdk.outcome = True
     sdk.windows = [window(2)]
-    assert run_confirmed(lambda: runner.chat_input("second"))[0]
+    assert run_connected(lambda: runner.chat_input("second"))[0]
     assert len(sdk.calls) == 2
     assert len(sdk.taskers) == 2
 
@@ -227,7 +225,7 @@ def assert_chat_calls(calls):
 
 
 def test_send_test_send_overrides_both_branches(sdk):
-    token = confirmed_token()
+    token = connected_token()
     assert gui_session.run_guarded(token, lambda: runner.chat_send("first"))[0]
     assert gui_session.run_guarded(token, lambda: runner.chat_input("test"))[0]
     assert gui_session.run_guarded(token, lambda: runner.chat_send("last"))[0]
@@ -236,7 +234,7 @@ def test_send_test_send_overrides_both_branches(sdk):
 
 
 def test_submit_send_validates_and_posts_without_waiting(sdk, monkeypatch):
-    token = confirmed_token()
+    token = connected_token()
     calls = []
     validate = gui_session._validate_token
 
@@ -270,21 +268,21 @@ def test_submit_send_validates_and_posts_without_waiting(sdk, monkeypatch):
     assert calls == ["validate", "post", "wait"]
 
 
-@pytest.mark.parametrize("confirmed", [False, True])
-def test_submit_send_requires_guard_and_never_initializes(sdk, confirmed):
-    if confirmed:
-        confirmed_token()
+@pytest.mark.parametrize("connected", [False, True])
+def test_submit_send_requires_guard_and_never_initializes(sdk, connected):
+    if connected:
+        connected_token()
     with pytest.raises(AppError, match="run_guarded"):
         runner.submit_send()
     assert sdk.calls == []
-    assert len(sdk.controllers) == int(confirmed)
+    assert len(sdk.controllers) == int(connected)
 
 
 def test_submit_send_revalidates_session_inside_guard_before_native_post(sdk, monkeypatch):
-    token = confirmed_token()
+    token = connected_token()
 
     def send():
-        monkeypatch.setattr(gui_session, "_confirmation", None)
+        monkeypatch.setattr(runner, "_window_generation", "reconnected")
         return runner.submit_send()
 
     ok, reason = gui_session.run_guarded(token, send)
@@ -294,7 +292,7 @@ def test_submit_send_revalidates_session_inside_guard_before_native_post(sdk, mo
 
 @pytest.mark.parametrize("outcome", [True, False, None, RuntimeError("wait failed")])
 def test_wait_send_only_waits_for_original_job_without_reposting(sdk, outcome):
-    token = confirmed_token()
+    token = connected_token()
     sdk.outcome = outcome
 
     def send():
@@ -308,7 +306,7 @@ def test_wait_send_only_waits_for_original_job_without_reposting(sdk, outcome):
 def test_wait_send_keeps_outer_account_and_gui_guard(sdk, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
 
-    token = confirmed_token()
+    token = connected_token()
 
     def probe():
         for lock in (account_context.account_lock, runner._run_lock):

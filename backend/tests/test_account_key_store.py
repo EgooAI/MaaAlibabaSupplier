@@ -1,5 +1,6 @@
 import sqlite3
 import unittest
+from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -13,9 +14,11 @@ from backend.app.shared.crm.account_keys import (
     KEY_SOURCE_MANUAL,
     AccountKeyStore,
     IMAccountKey,
+    KeyFormatError,
     delete_key,
     get_key_hex,
     get_key_source,
+    read_saved_key,
     save_key,
 )
 
@@ -72,6 +75,36 @@ class AccountKeyStoreTestCase(unittest.TestCase):
         self.assertTrue(delete_key("10001", database_path=self.db_path))
         self.assertIsNone(get_key_hex("10001", database_path=self.db_path))
         self.assertFalse(delete_key("10001", database_path=self.db_path))
+
+    def test_read_saved_key_is_readonly_and_distinguishes_corrupt_values(self):
+        missing = Path(self.temp_dir.name) / "missing" / "crm.sqlite"
+        self.assertIsNone(read_saved_key("10001", missing))
+        self.assertFalse(missing.parent.exists())
+        empty = Path(self.temp_dir.name) / "empty.sqlite"
+        with closing(sqlite3.connect(empty)) as conn:
+            conn.execute("CREATE TABLE unrelated (id INTEGER)")
+        before = empty.read_bytes()
+        self.assertIsNone(read_saved_key("10001", empty))
+        self.assertEqual(empty.read_bytes(), before)
+        self.assertIsNone(read_saved_key("10001", self.db_path))
+        save_key("10001", bytes(16), "manual", self.db_path)
+        self.assertEqual(read_saved_key("10001", self.db_path), (bytes(16), "manual"))
+        for malformed in ("not-hex", "aa"):
+            self.store.upsert_key(IMAccountKey(ali_id="10001", aes_key_hex=malformed))
+            with self.assertRaises(KeyFormatError):
+                read_saved_key("10001", self.db_path)
+            self.assertEqual(self.store.get_key("10001").aes_key_hex, malformed)
+
+    def test_read_saved_key_propagates_storage_lock_and_recovers(self):
+        save_key("10001", bytes(16), "manual", self.db_path)
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute("BEGIN EXCLUSIVE")
+            with self.assertRaises(sqlite3.OperationalError):
+                read_saved_key("10001", self.db_path)
+        finally:
+            conn.close()
+        self.assertEqual(read_saved_key("10001", self.db_path), (bytes(16), "manual"))
 
 
 class MiddlewareKeyRecoveryTestCase(unittest.TestCase):

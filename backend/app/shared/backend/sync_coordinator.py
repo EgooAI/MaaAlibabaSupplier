@@ -212,13 +212,20 @@ class SyncService:
         self.middleware = middleware
         self.interval = interval
         self._stop = Event()
-        self._thread = Thread(target=self._run, name="im-source-check", daemon=True)
+        self._lifecycle_lock = RLock()
+        self._thread = None
 
     def start(self):
-        self._thread.start()
+        with self._lifecycle_lock:
+            if self._thread is not None and not self._stop.is_set():
+                return
+            self._stop.clear()
+            self.middleware.prepare_startup_validation()
+            self._thread = Thread(target=self._run, name="im-source-check", daemon=True)
+            self._thread.start()
 
     def tick(self):
-        self.middleware.sync_tick()
+        self.middleware.sync_tick(stop=self._stop)
 
     def _run(self):
         while not self._stop.is_set():
@@ -230,13 +237,19 @@ class SyncService:
             self.middleware._coordinator.wake.wait(self.interval)
 
     def stop(self):
-        self._stop.set()
-        self.middleware._coordinator.wake.set()
-        self._thread.join()
-        self.middleware._coordinator.shutdown()
-        with self.middleware._lock:
-            self.middleware._reset_runtime_state()
-            self.middleware._select_sync_context()
+        with self._lifecycle_lock:
+            if self._thread is None or self._stop.is_set():
+                return
+            self._stop.set()
+            with self.middleware._lock:
+                self.middleware._cancel_startup_validation()
+                self.middleware._publish_source_status()
+            self.middleware._coordinator.wake.set()
+            self._thread.join()
+            self.middleware._coordinator.shutdown()
+            with self.middleware._lock:
+                self.middleware._reset_runtime_state()
+                self.middleware._select_sync_context()
 
 
 _service: SyncService | None = None

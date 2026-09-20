@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from backend.app.api.envelope import AppError, api_error, ok
 from backend.app.api.account_scope import SettingsRoute, require_epoch
 from backend.app.api.connection import connection_snapshot
-from backend.app.shared.backend.gui_session import connect_client, confirm_client
+from backend.app.shared.backend.gui_session import connect_client
 from backend.app.shared.backend.im_db_middleware import (
     IMDBMiddleware,
     STATE_OK,
@@ -34,10 +34,6 @@ class ConnectionInput(BaseModel):
     epoch: str = Field(min_length=1)
 
 
-class ConfirmConnectionInput(ConnectionInput):
-    window_generation: str = Field(min_length=1)
-
-
 @router.get("/api/settings/connection")
 def get_connection() -> dict:
     return ok(connection_snapshot())
@@ -47,13 +43,6 @@ def get_connection() -> dict:
 def connect_connection(body: ConnectionInput) -> dict:
     require_epoch(body.epoch)
     connect_client()
-    return ok(connection_snapshot())
-
-
-@router.post("/api/settings/connection/confirm")
-def confirm_connection(body: ConfirmConnectionInput) -> dict:
-    require_epoch(body.epoch)
-    confirm_client(body.epoch, body.window_generation)
     return ok(connection_snapshot())
 
 

@@ -32,7 +32,7 @@ from backend.app.shared.backend.account_context import AccountContext, account_l
 from backend.app.shared.backend.sync_coordinator import SyncCoordinator
 from backend.app.shared.crm import sync_im_database
 from backend.app.shared.crm.sync_store import read_sync_state
-from backend.app.shared.crm.account_keys import get_key_hex, get_key_source, save_key
+from backend.app.shared.crm.account_keys import KeyFormatError, get_key_hex, get_key_source, read_saved_key, save_key
 from backend.app.shared.crm.identities import self_sender_id, strip_icbu_suffix
 from backend.app.shared.utils.app_config import (
     CONFIG_KEY_ALIBABA_DATA_DIR,
@@ -104,6 +104,9 @@ class IMDBMiddleware:
                 instance._source_revision: int = 0
                 instance._sync_future: Future | None = None
                 instance._auto_enabled = False
+                instance._validation_sequence = 0
+                instance._startup_validation = None
+                instance._validation_running = False
                 instance._source_dirty = False
                 instance._last_checked: float | None = None
                 instance._source_status: dict = {}
@@ -128,6 +131,7 @@ class IMDBMiddleware:
 
     def _reset_runtime_state(self) -> None:
         """Drop connection/key/fingerprint; caller must hold the lock."""
+        self._cancel_startup_validation()
         if self._conn is not None:
             try:
                 self._conn.close()
@@ -305,6 +309,73 @@ class IMDBMiddleware:
         return db_path
 
     # -- Key management (per-account, stored in the app database) --------------
+
+    def _cancel_startup_validation(self):
+        """Caller holds _lock; the sequence also invalidates same-epoch retries."""
+        self._validation_sequence += 1
+        self._startup_validation = None
+        self._validation_running = False
+        if self._key_validation == "verifying":
+            self._key_validation = "unverified"
+
+    def prepare_startup_validation(self):
+        """Queue only the startup selection; do no key or source I/O here."""
+        with account_lock, self._lock:
+            context = get_account_context()
+            if (not context.self_ali_id or not context.data_dir
+                    or self._key_validation != "unverified" or self._last_checked is not None
+                    or self._startup_validation is not None):
+                return
+            self._validation_sequence += 1
+            self._startup_validation = (context, self._validation_sequence)
+            self._key_validation = "verifying"
+            self._publish_source_status()
+
+    def _revalidate_saved_key(self, task, stop):
+        # Key-store and source reads must not hold account locks: settings and
+        # explicit retry can supersede a slow read even within the same epoch.
+        context, sequence = task
+        key, source = None, "none"
+        validation, detail, code = "valid", "", ""
+        try:
+            saved = read_saved_key(context.self_ali_id)
+        except KeyFormatError:
+            validation, detail, code = "invalid", "已保存的 AES Key 格式无效，请在设置中更新密钥", "key_invalid"
+        except (sqlite3.Error, OSError):
+            validation, detail, code = "unverified", "暂时无法读取已保存的 AES Key，将自动重试", "key_store_unreadable"
+        else:
+            if saved is None:
+                validation, detail, code = "unavailable", "所选账号没有已保存的 AES Key，请在设置中验证接入", "key_unavailable"
+            else:
+                key, source = saved
+                db_path = (Path(context.data_dir) / DATA_DIR_SIGNATURE / self_sender_id(context.self_ali_id)
+                           / "database" / "im.sqlite")
+                try:
+                    if not self._verify_source_key(key, db_path):
+                        validation, detail, code = "invalid", "已保存的 AES Key 与当前源库不匹配，请在设置中更新密钥", "key_invalid"
+                except OSError:
+                    validation, detail, code = "unverified", "源库头暂时不可读或不完整，将自动重试", "source_unreadable"
+        with account_lock, self._lock:
+            if (stop is not None and stop.is_set()
+                    or task != self._startup_validation or sequence != self._validation_sequence
+                    or context != get_account_context()):
+                return
+            self._validation_running = False
+            self._key_validation = validation
+            if validation == "unverified":
+                self._note_failure(detail, code)
+            else:
+                self._startup_validation = None
+                self._backoff_until = 0.0
+                self._consecutive_failures = 0
+                self._last_error, self._error_code = detail, code
+                if validation == "valid":
+                    self._key, self._key_source = key, source
+                    self._key_ali_id = context.self_ali_id
+                    self._auto_enabled = True
+            self._publish_source_status()
+            if self._auto_enabled:
+                self._refresh()
 
     @staticmethod
     def _verify_source_key(key: bytes, db_path: Path) -> bool:
@@ -750,21 +821,35 @@ class IMDBMiddleware:
         """Wait for the captured target without selecting or submitting another one."""
         return self._coordinator.wait(future)
 
-    def sync_tick(self):
+    def sync_tick(self, *, stop=None):
         """One controllable worker iteration; GUI contention skips source work."""
+        if stop is not None and stop.is_set():
+            return
         self._coordinator.tick()
+        task = None
         if not account_lock.acquire(blocking=False):
             return
         try:
             if not self._lock.acquire(blocking=False):
                 return
             try:
-                if self._auto_enabled:
+                if (self._startup_validation is not None and not self._validation_running
+                        and time.time() >= self._backoff_until):
+                    task = self._startup_validation
+                    self._validation_running = True
+                    self._key_validation = "verifying"
+                    self._last_checked = time.time()
+                    self._backoff_until = 0.0
+                    self._last_error = self._error_code = ""
+                    self._publish_source_status()
+                elif self._auto_enabled:
                     self._refresh()
             finally:
                 self._lock.release()
         finally:
             account_lock.release()
+        if task is not None:
+            self._revalidate_saved_key(task, stop)
 
     def _publish_source_status(self):
         fingerprint = self._source_fingerprint
@@ -777,7 +862,8 @@ class IMDBMiddleware:
             "last_checked": self._last_checked,
             "last_error": self._last_error,
             "error_code": self._error_code,
-            "retry_at": self._backoff_until or None,
+            "retry_at": (self._backoff_until or None)
+            if self._auto_enabled or self._startup_validation is not None else None,
             "key_validation": self._key_validation,
             "auto_enabled": self._auto_enabled,
             "source_dirty": self._source_dirty,
@@ -858,7 +944,7 @@ class IMDBMiddleware:
         return (True, source) if source else (False, "none")
 
     def key_validation_status(self) -> str:
-        """Return unverified/valid/invalid/unavailable without attempting capture."""
+        """Return unverified/verifying/valid/invalid/unavailable without capture."""
         return self._key_validation
 
     def get_connection(self) -> sqlite3.Connection | None:
@@ -868,9 +954,10 @@ class IMDBMiddleware:
                 return self._conn
 
     def retry_connection(self, *, wait: bool = False) -> sqlite3.Connection | None:
-        """The only entry point allowed to capture a key and enable source checks."""
+        """Explicit validation, including capture when the stored key is unusable."""
         future = None
         with account_lock, self._lock:
+            self._cancel_startup_validation()
             self._backoff_until = 0.0
             self._last_refresh_start = 0.0
             self._consecutive_failures = 0

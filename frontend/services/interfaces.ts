@@ -10,7 +10,6 @@ import type { AliIdList, CreateTestTaskInput, DataDirCandidates, DataDirStatus, 
 export interface OperationsBackend {
   getConnection(): Promise<ConnectionSnapshot>;
   connectClient(epoch: AccountEpoch): Promise<ConnectionSnapshot>;
-  confirmClient(epoch: AccountEpoch, windowGeneration: string): Promise<ConnectionSnapshot>;
   // Submission receipt; completion is observed through committed revisions.
   retryConnection(epoch: AccountEpoch): Promise<ConnectionSnapshot>;
   getSelfInfo(): Promise<SelfInfo | null>;

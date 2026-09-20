@@ -26,12 +26,12 @@ _REASON_CODES = {
     "message_already_claimed", "ambiguous_send_attempts", "local_message_observed",
 }
 _SAFE_REASONS = {
-    "Manually confirm the selected account and client window first.",
-    "GUI session expired; reconnect and manually confirm again.",
-    "Account context changed; reload and manually confirm again.",
-    "Client window changed; reconnect and manually confirm again.",
-    "Client connection lost; reconnect and manually confirm again.",
-    "Client is not connected; connect and manually confirm the selected account.",
+    "Select a seller before operating the client.",
+    "GUI session expired; reconnect and retry.",
+    "Account context changed; reload and retry.",
+    "Client window changed; reconnect and retry.",
+    "Client connection lost; reconnect and retry.",
+    "Client is not connected; connect first.",
     "Outbox service is stopping",
     "Source baseline unavailable; no text was entered",
 }

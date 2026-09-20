@@ -183,7 +183,7 @@ def test_first_access_requires_explicit_retry_and_does_not_capture_key(mw, submi
     assert mw.get_connection() is None
     assert capture.call_count == 1
     assert mw.sync_status()["error_code"] == "key_unavailable"
-    assert mw.sync_status()["retry_at"] is not None
+    assert mw.sync_status()["retry_at"] is None
     assert mw.retry_connection() is not None
     assert capture.call_count == 2
     assert mw.key_validation_status() == "valid"

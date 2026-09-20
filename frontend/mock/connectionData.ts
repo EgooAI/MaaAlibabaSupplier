@@ -10,7 +10,7 @@ export const connectionSnapshot: ConnectionSnapshot = {
     counts: { inserted: 10, updated: 0, unchanged: 0 }, pending: false, syncing: false,
     freshness: "fresh", auto_enabled: true, source_dirty: false,
   },
-  client: { connected: false, window_generation: "", confirmed: false, detail: "尚未接入客户端" },
+  client: { connected: false, window_generation: "", detail: "尚未接入客户端" },
   capabilities: { read_chat: true, use_ai: true, operate_client: false },
   model: { configured: true },
 };

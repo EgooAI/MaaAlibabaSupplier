@@ -117,7 +117,7 @@ export function AliIdentityCard({ dataDirOk }: { dataDirOk: boolean }) {
       ) : (
         <Space orientation="vertical" size="middle" className="w-full">
           <Typography.Text type="secondary">
-            从数据目录分析账号。每个账号有独立的 AES Key，未捕获到时可手动设置。保存后请在“密钥与聊天同步”中主动验证并同步。切换账号后需重新确认客户端卖家；旧账号的会话和草稿在切回后恢复。
+            从数据目录分析账号。每个账号有独立的 AES Key，未捕获到时可手动设置。保存后请在“密钥与聊天同步”中验证接入；重启后会自动验证已保存的密钥，临时失败会自动重试。切换账号后，旧账号的会话和草稿在切回后恢复。
           </Typography.Text>
           <AppTable<AliAccount>
             rowKey="ali_id"

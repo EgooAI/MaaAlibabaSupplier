@@ -1,7 +1,6 @@
 "use client";
 
-import { Alert, App, Button, Card, Modal, Space, Steps, Typography } from "antd";
-import { useState } from "react";
+import { Alert, App, Button, Card, Space, Steps, Typography } from "antd";
 import { backend } from "@/services/client";
 import { useAccount } from "./AccountProvider";
 import { flowSteps } from "./flowSteps";
@@ -30,13 +29,16 @@ export function SyncCard() {
   const { snapshot } = useAccount();
   // The retry endpoint captures/verifies the key first, then synchronizes.
   // The label states what will actually happen for the current key state.
-  const buttonLabel = { unverified: "验证密钥并同步", invalid: "重新验证密钥并同步", unavailable: "重新验证密钥并同步", valid: "立即同步" }[snapshot?.source.key_validation ?? "unverified"];
+  const source = snapshot?.source;
+  const retrying = Boolean(source?.last_error && source.retry_at != null && (source.key_validation === "unverified" || source.key_validation === "valid"));
+  const buttonLabel = { unverified: "验证密钥并同步", verifying: "密钥验证中", invalid: "重新验证密钥并同步", unavailable: "重新验证密钥并同步", valid: "立即同步" }[source?.key_validation ?? "unverified"];
   return (
     <Card title="密钥与聊天同步">
       <Space orientation="vertical" size="middle" className="w-full">
         <SyncStatus buttonLabel={buttonLabel} />
-        {snapshot?.source.last_error ? (
-          <Alert type="error" showIcon title={snapshot.source.last_error} description="请检查数据目录、账号及密钥，修正后点击上方按钮重新验证并同步。" />
+        {source?.key_validation === "verifying" ? <Typography.Text type="secondary">正在自动验证已保存的密钥，验证成功后会继续同步聊天，无需重复点击。</Typography.Text> : null}
+        {source?.last_error ? (
+          <Alert type={retrying ? "warning" : "error"} showIcon title={source.last_error} description={retrying ? "后台将自动重试，无需重复点击；已有存档可能过期。" : "请检查数据目录、账号及密钥，修正后点击上方按钮重新验证并同步。"} />
         ) : null}
       </Space>
     </Card>
@@ -46,36 +48,21 @@ export function SyncCard() {
 export function ClientCard() {
   const { snapshot, blocked, mutating, mutate } = useAccount();
   const { message } = App.useApp();
-  const [confirmation, setConfirmation] = useState<{ epoch: string; window: string; seller: string }>();
   const run = async (operation: () => Promise<unknown>) => {
     try { await mutate(operation); }
     catch (err) { message.error(err instanceof Error ? err.message : "操作失败，请刷新状态后重试"); }
   };
   if (!snapshot) return null;
-  const current = confirmation && !blocked && snapshot.account.epoch === confirmation.epoch && snapshot.client.connected && snapshot.client.window_generation === confirmation.window;
   const canAct = !blocked && !mutating && Boolean(snapshot.account.self_ali_id);
   return (
     <Card title="客户端接入">
       <Space orientation="vertical" size="middle" className="w-full">
-        {!snapshot.client.confirmed ? (
-          <Alert type="warning" showIcon title="卖家身份尚未人工确认" description="确认前可以阅读聊天、编辑草稿；发送、填入测试与跳转联系人不可用。" />
-        ) : null}
+        <Alert type={snapshot.client.connected ? "success" : "warning"} showIcon title={snapshot.client.connected ? "客户端已接入" : "客户端尚未接入"} description={snapshot.client.detail} />
         <Space wrap>
           <Button loading={mutating} disabled={!canAct} onClick={() => void run(() => backend.connectClient(snapshot.account.epoch))}>{snapshot.client.connected ? "重新接入客户端" : "接入客户端"}</Button>
-          <Button type="primary" disabled={!canAct || !snapshot.client.connected || snapshot.client.confirmed || !snapshot.client.window_generation} onClick={() => setConfirmation({ epoch: snapshot.account.epoch, window: snapshot.client.window_generation, seller: snapshot.account.self_ali_id })}>核对并确认卖家</Button>
         </Space>
-        <Typography.Text type="secondary">接入仅初始化客户端，不执行点击；重新接入或窗口变化后需重新人工确认。</Typography.Text>
+        <Typography.Text type="secondary">选择卖家并接入客户端后即可操作。接入仅初始化客户端，不执行点击；发送和填入仍需查看截图并确认联系人与内容。</Typography.Text>
       </Space>
-      <Modal title="人工确认客户端卖家身份" open={Boolean(confirmation)} onCancel={() => setConfirmation(undefined)} okText="我已核对，确认是此卖家" okButtonProps={{ disabled: !current }} confirmLoading={mutating} onOk={() => {
-        if (!current || !confirmation) return;
-        const selected = confirmation;
-        setConfirmation(undefined);
-        void run(() => backend.confirmClient(selected.epoch, selected.window));
-      }}>
-        <Typography.Paragraph>请在阿里客户端窗口查看当前登录账号，确认其卖家 Ali ID 与下面一致。不要仅凭昵称判断。</Typography.Paragraph>
-        <Typography.Paragraph strong>{confirmation?.seller}</Typography.Paragraph>
-        {!current ? <Alert type="warning" title="账号或客户端窗口已变化，请关闭后重新核对。" /> : null}
-      </Modal>
     </Card>
   );
 }

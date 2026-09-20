@@ -8,7 +8,7 @@ export interface SourceSyncStatus {
   error_code: string | null;
   last_error: string | null;
   last_success: number | null;
-  key_validation: "unverified" | "valid" | "invalid" | "unavailable";
+  key_validation: "unverified" | "verifying" | "valid" | "invalid" | "unavailable";
   epoch: AccountEpoch;
   self_ali_id: string;
   revision: number;
@@ -30,7 +30,7 @@ export interface ConnectionSnapshot {
   account: { self_ali_id: string; data_dir: string; epoch: AccountEpoch };
   data_dir: DataDirStatus;
   source: SourceSyncStatus;
-  client: { connected: boolean; window_generation: string; confirmed: boolean; detail: string };
+  client: { connected: boolean; window_generation: string; detail: string };
   capabilities: { read_chat: boolean; use_ai: boolean; operate_client: boolean };
   model: { configured: boolean };
 }

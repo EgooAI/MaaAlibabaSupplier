@@ -34,7 +34,7 @@ class DeferredQueue:
 @pytest.fixture
 def env(monkeypatch, tmp_path):
     context = AccountContext("seller", str(tmp_path / "source"), "epoch")
-    token = GuiSessionToken(context.self_ali_id, context.data_dir, context.epoch, "window", "confirmation")
+    token = GuiSessionToken(context.self_ali_id, context.data_dir, context.epoch, "window")
     queue = DeferredQueue()
     service = module.OutboxService(OutboxStore(tmp_path / "crm.sqlite"), queue)
     state = SimpleNamespace(
@@ -227,7 +227,7 @@ def test_running_cannot_be_cancelled_and_has_no_second_send(env, monkeypatch):
     assert env.calls.count("click") == 1
 
 
-@pytest.mark.parametrize("kind", ["version", "screenshot", "epoch", "window", "confirmation"])
+@pytest.mark.parametrize("kind", ["version", "screenshot", "epoch", "window"])
 def test_stale_confirmation_never_enqueues_input(env, kind):
     task = prepared(env)
     if kind == "version":
@@ -237,10 +237,8 @@ def test_stale_confirmation_never_enqueues_input(env, kind):
     elif kind == "epoch":
         env.context = replace(env.context, epoch="other")
         env.token = replace(env.token, epoch="other")
-    elif kind == "window":
-        env.token = replace(env.token, window_generation="other")
     else:
-        env.token = replace(env.token, confirmation_id="other")
+        env.token = replace(env.token, window_generation="other")
     with pytest.raises(OutboxConflict):
         confirm(env, task)
     assert env.queue.jobs == []
@@ -284,7 +282,7 @@ def test_frame_captured_after_slow_baseline(env):
 def test_expired_token_between_confirmation_and_execution_never_inputs(env):
     task = prepared(env)
     confirm(env, task)
-    env.token = replace(env.token, confirmation_id="reconnected")
+    env.token = replace(env.token, window_generation="reconnected")
     assert not env.queue.run()[0]
     assert env.service.get(env.context, task["id"])["status"] == "failed"
     assert "input" not in env.calls and "click" not in env.calls
@@ -388,7 +386,7 @@ def test_stale_queue_callback_cannot_run_new_retry_attempt(env):
 
 def test_initial_guard_capture_failure_retains_id_for_retry(env, monkeypatch):
     def reject(epoch):
-        raise AppError("not confirmed", status_code=409)
+        raise AppError("Client is not connected; connect first.", status_code=503)
 
     monkeypatch.setattr(module.gui_session, "capture_gui_session", reject)
     task = submit(env)
@@ -405,7 +403,7 @@ def test_preinput_failures_are_safe_and_retry_requires_fresh_token(env, monkeypa
         task = env.service.get(env.context, task["id"])
         confirm(env, task)
     if stage in ("navigation_guard", "send_guard"):
-        env.token = replace(env.token, confirmation_id="fresh")
+        env.token = replace(env.token, window_generation="fresh")
     elif stage == "baseline":
         env.source["valid"] = False
     else:
@@ -415,7 +413,7 @@ def test_preinput_failures_are_safe_and_retry_requires_fresh_token(env, monkeypa
     assert failed["status"] == "failed" and not failed["may_have_sent"]
     assert failed["screenshot_id"] is None
     assert "input" not in env.calls
-    env.token = replace(env.token, confirmation_id="new-attempt")
+    env.token = replace(env.token, window_generation="new-attempt")
     retried = env.service.retry(env.context, task["id"], version=failed["version"])
     assert retried["id"] == task["id"] and retried["attempt"] == 2
     assert env.service._attempts[task["id"]].token == env.token
@@ -860,7 +858,7 @@ def test_terminal_compensation_cannot_overwrite_newer_version_or_attempt(env, mo
         confirm(env, task)
         monkeypatch.setattr(module.runner, "chat_input", lambda text: (False, "input uncertain"))
     else:
-        env.token = replace(env.token, confirmation_id="revoked")
+        env.token = replace(env.token, window_generation="revoked")
     transition = env.service.store.transition
 
     def locked(*args, **kwargs):

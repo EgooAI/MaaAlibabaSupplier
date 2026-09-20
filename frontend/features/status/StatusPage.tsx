@@ -44,7 +44,7 @@ export function StatusPage() {
           <Button disabled={!canDiagnose} loading={testingNode === "ChatInput_GoToInput"} onClick={() => void runNodeTest("ChatInput_GoToInput")}>检查聊天输入框</Button>
           <Button disabled={!canDiagnose} loading={testingNode === "ContactSearch_GoToSearch"} onClick={() => void runNodeTest("ContactSearch_GoToSearch")}>检查联系人搜索框</Button>
         </Space>
-        <Typography.Paragraph type="secondary" className="mt-3 mb-0">界面检查仅需接入客户端，无需人工确认；会排队执行，仅识别控件，不点击或输入。发送、填入测试和跳转联系人仍需人工确认。</Typography.Paragraph>
+        <Typography.Paragraph type="secondary" className="mt-3 mb-0">界面检查仅需接入客户端；会排队执行，仅识别控件，不点击或输入。选择卖家并接入客户端后可发送、填入测试和跳转联系人；发送与填入仍需查看截图并确认联系人与内容。</Typography.Paragraph>
       </Card>
 
       <Card title="任务队列">

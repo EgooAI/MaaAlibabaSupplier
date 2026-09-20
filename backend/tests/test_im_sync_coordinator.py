@@ -4,6 +4,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from io import BytesIO
 import os
 from pathlib import Path
+import sqlite3
 from threading import Event
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -12,9 +13,9 @@ import pytest
 
 from backend.app.shared.backend import im_db_middleware as module
 from backend.app.shared.backend import sync_coordinator as service_module
-from backend.app.shared.backend.account_context import AccountContext, account_lock
+from backend.app.shared.backend.account_context import AccountContext, account_lock, get_account_context
 from backend.app.shared.backend.sync_coordinator import SyncCoordinator
-from backend.app.shared.crm.account_keys import save_key
+from backend.app.shared.crm.account_keys import AccountKeyStore, IMAccountKey, delete_key, save_key
 from backend.tests.test_im_db_isolation import KEY, committed, encrypted_db, mw, submissions
 
 
@@ -442,7 +443,7 @@ def test_background_completion_runs_latest_without_another_request(mw, submissio
     service_module.stop_sync_service()
 
 
-def test_service_checks_source_without_browser_and_restart_requires_validation(mw, submissions, monkeypatch):
+def test_service_checks_source_and_restart_revalidates_without_retry(mw, submissions, monkeypatch):
     source = encrypted_db(mw._data_dir)
     save_key("10001", KEY, "manual")
     mw.retry_connection()
@@ -469,16 +470,24 @@ def test_service_checks_source_without_browser_and_restart_requires_validation(m
                 call[3].set_result(committed(call[4]))
         service_module.stop_sync_service()
     assert not mw._coordinator.pinned_paths()
-    capture = Mock(side_effect=AssertionError("restart requires retry"))
+    capture = Mock(side_effect=AssertionError("startup must use saved keys only"))
     monkeypatch.setattr(mw, "_ensure_key", capture)
+    monkeypatch.setattr(mw, "retry_connection", capture)
+    submitted.clear()
     restarted = service_module.start_sync_service()
     try:
-        restarted.tick()
-        assert mw.key_validation_status() == "unverified"
-        assert mw.get_connection() is None
+        assert submitted.wait(5)
+        assert mw.key_validation_status() == "valid"
+        assert mw.sync_status()["auto_enabled"] and not mw.sync_status()["ready"]
         capture.assert_not_called()
-        assert len(submissions) == 2
+        assert len(submissions) == 3
+        submissions[2][3].set_result(committed(submissions[2][4], 3))
+        restarted.tick()
+        assert mw.sync_status()["ready"]
     finally:
+        for call in submissions:
+            if not call[3].done():
+                call[3].set_result(committed(call[4]))
         service_module.stop_sync_service()
 
 
@@ -498,7 +507,7 @@ def test_restart_restores_only_scoped_archive_state(mw, monkeypatch):
         assert status["last_success"] == previous["last_success"]
         assert status["stale"] and not status["ready"]
         assert status["key_validation"] == "unverified"
-        capture = Mock(side_effect=AssertionError("restart must not validate automatically"))
+        capture = Mock(side_effect=AssertionError("validation requires the service to be started"))
         monkeypatch.setattr(restarted, "_ensure_key", capture)
         restarted.sync_tick()
         assert restarted.get_connection() is None
@@ -513,3 +522,304 @@ def test_restart_restores_only_scoped_archive_state(mw, monkeypatch):
     finally:
         restarted._coordinator.shutdown()
         restarted._reset_runtime_state()
+
+
+def test_startup_saved_key_reaches_real_commit_and_start_is_idempotent(mw, monkeypatch):
+    encrypted_db(mw._data_dir)
+    save_key("10001", KEY, "manual")
+    mw.retry_connection(wait=True)
+    previous = mw.sync_status()
+    mw._coordinator.shutdown()
+    mw._reset_runtime_state()
+    monkeypatch.setattr(module.IMDBMiddleware, "_instance", None)
+    restarted = module.IMDBMiddleware()
+    assert restarted.sync_status()["revision"] == previous["revision"]
+    assert restarted.key_validation_status() == "unverified"
+    forbidden = Mock(side_effect=AssertionError("startup must not capture, migrate or call retry"))
+    for name in ("_ensure_key", "_migrate_legacy_key_file", "retry_connection"):
+        monkeypatch.setattr(restarted, name, forbidden)
+    monkeypatch.setattr(module, "retrieve_db_key", forbidden)
+    reading, release, ready = Event(), Event(), Event()
+    read = module.read_saved_key
+
+    def paused_read(seller):
+        reading.set()
+        assert release.wait(5)
+        return read(seller)
+
+    reader = Mock(side_effect=paused_read)
+    monkeypatch.setattr(module, "read_saved_key", reader)
+    service = service_module.SyncService(restarted, interval=0.01)
+    tick = service.tick
+
+    def observe_tick():
+        tick()
+        if restarted.sync_status()["ready"]:
+            ready.set()
+
+    monkeypatch.setattr(service, "tick", observe_tick)
+    service.stop()  # Stopping a not-yet-started service is harmless.
+    service.start()
+    thread = service._thread
+    try:
+        assert reading.wait(5)
+        service.start()
+        service.tick()
+        assert service._thread is thread
+        status = restarted.sync_status()
+        assert status["key_validation"] == "verifying"
+        assert not status["auto_enabled"] and not status["ready"]
+        assert status["revision"] == previous["revision"]
+        release.set()
+        assert ready.wait(5)
+        assert restarted.sync_status()["revision"] > previous["revision"]
+        assert restarted.sync_status()["key_validation"] == "valid"
+        service.start()
+        assert restarted.sync_status()["ready"]
+        assert reader.call_count == 1
+        forbidden.assert_not_called()
+    finally:
+        release.set()
+        service.stop()
+        service.stop()
+    assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("failure", ["missing_source", "short_header", "permission", "key_store_locked"])
+def test_startup_transient_failure_retries_while_auto_disabled(mw, submissions, monkeypatch, failure):
+    source = encrypted_db(mw._data_dir)
+    original = source.read_bytes()
+    save_key("10001", KEY, "manual")
+    now = [module.time.time()]
+    monkeypatch.setattr(module, "time", SimpleNamespace(time=lambda: now[0], perf_counter=module.time.perf_counter))
+    forbidden = Mock(side_effect=AssertionError("no interactive fallback"))
+    monkeypatch.setattr(mw, "retry_connection", forbidden)
+    monkeypatch.setattr(mw, "_ensure_key", forbidden)
+    monkeypatch.setattr(mw, "_migrate_legacy_key_file", forbidden)
+    monkeypatch.setattr(module, "retrieve_db_key", forbidden)
+    if failure == "missing_source":
+        source.unlink()
+    elif failure == "short_header":
+        source.write_bytes(b"short")
+    verify = Mock(wraps=mw._verify_source_key)
+    if failure == "permission":
+        verify.side_effect = PermissionError("sharing violation")
+    monkeypatch.setattr(mw, "_verify_source_key", verify)
+    reader = Mock(wraps=module.read_saved_key)
+    if failure == "key_store_locked":
+        reader.side_effect = sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(module, "read_saved_key", reader)
+    mw.prepare_startup_validation()
+    assert mw.key_validation_status() == "verifying"
+    mw.sync_tick()
+    status = mw.sync_status()
+    assert status["key_validation"] == "unverified" and not status["auto_enabled"]
+    assert status["error_code"] == ("key_store_unreadable" if failure == "key_store_locked" else "source_unreadable")
+    assert status["retry_at"] == now[0] + module._MIN_REFRESH_INTERVAL
+    assert not status["ready"] and not submissions
+    for _ in range(3):
+        mw.sync_tick()
+        assert mw.sync_status() == status
+    assert reader.call_count == 1
+    # A second failure increases the existing backoff, without a manual retry.
+    now[0] = status["retry_at"]
+    mw.sync_tick()
+    assert mw.sync_status()["retry_at"] == now[0] + 2 * module._MIN_REFRESH_INTERVAL
+    source.write_bytes(original)
+    verify.side_effect = reader.side_effect = None
+    now[0] = mw.sync_status()["retry_at"]
+    mw.sync_tick()
+    assert reader.call_count == 3 and len(submissions) == 1
+    assert mw.sync_status()["key_validation"] == "valid" and mw.sync_status()["auto_enabled"]
+    assert not mw.sync_status()["ready"]
+    submissions[0][3].set_result(committed(submissions[0][4]))
+    mw.sync_tick()
+    assert mw.sync_status()["ready"]
+    forbidden.assert_not_called()
+
+
+@pytest.mark.parametrize("saved,validation", [(None, "unavailable"), ("zz", "invalid"), ("aa", "invalid"), (bytes(16).hex(), "invalid")])
+def test_startup_terminal_key_errors_preserve_storage_and_never_capture(mw, submissions, monkeypatch, saved, validation):
+    encrypted_db(mw._data_dir)
+    store = AccountKeyStore()
+    if saved is not None:
+        store.upsert_key(IMAccountKey(ali_id="10001", aes_key_hex=saved, source="manual"))
+    forbidden = Mock(side_effect=AssertionError("no automatic capture or migration"))
+    monkeypatch.setattr(module, "retrieve_db_key", forbidden)
+    monkeypatch.setattr(mw, "_migrate_legacy_key_file", forbidden)
+    monkeypatch.setattr(mw, "retry_connection", forbidden)
+    reader = Mock(wraps=module.read_saved_key)
+    monkeypatch.setattr(module, "read_saved_key", reader)
+    mw.prepare_startup_validation()
+    mw.sync_tick()
+    status = mw.sync_status()
+    assert status["key_validation"] == validation
+    assert not status["auto_enabled"] and not status["ready"]
+    assert status["last_error"] and status["retry_at"] is None
+    for _ in range(3):
+        mw.sync_tick()
+    assert reader.call_count == 1 and not submissions
+    record = store.get_key("10001")
+    assert record is None if saved is None else record.aes_key_hex == saved
+    forbidden.assert_not_called()
+
+
+@pytest.mark.parametrize("change", ["account", "directory", "save_key", "delete_key", "manual_retry", "manual_retry_failure"])
+@pytest.mark.parametrize("old_valid", [True, False])
+def test_startup_result_cannot_overwrite_new_context_or_manual_retry(mw, submissions, monkeypatch, change, old_valid):
+    source = encrypted_db(mw._data_dir)
+    save_key("10001", KEY, "manual")
+    context = get_account_context()
+    entered, release = Event(), Event()
+    verify = mw._verify_source_key
+    attempts = []
+
+    def pause_first(key, path):
+        attempts.append(path)
+        if len(attempts) == 1:
+            entered.set()
+            assert release.wait(5)
+            return old_valid
+        return verify(key, path)
+
+    monkeypatch.setattr(mw, "_verify_source_key", pause_first)
+    mw.prepare_startup_validation()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        worker = pool.submit(mw.sync_tick)
+        try:
+            assert entered.wait(5)
+            if change == "account":
+                mw.set_self_ali_id("10002")
+            elif change == "directory":
+                mw.set_data_dir(str(Path.cwd() / "other-client"))
+            elif change == "save_key":
+                save_key("10001", bytes(16), "manual")
+                mw.drop_cached_key()
+            elif change == "delete_key":
+                delete_key("10001")
+                mw.drop_cached_key()
+            elif change == "manual_retry_failure":
+                source.write_bytes(b"short")
+                assert mw.retry_connection() is None
+                assert get_account_context() == context
+                assert mw.sync_status()["key_validation"] == "unverified"
+                assert mw.sync_status()["error_code"] == "source_unreadable"
+                assert mw.sync_status()["retry_at"] is None
+            else:
+                mw.retry_connection()
+                assert get_account_context() == context
+                submissions[0][3].set_result(committed(submissions[0][4]))
+                mw._coordinator.tick()
+                assert mw.sync_status()["ready"]
+            status = mw.sync_status()
+        finally:
+            release.set()
+        worker.result(timeout=5)
+    assert mw.sync_status() == status
+    mw.sync_tick()
+    assert mw.sync_status()["auto_enabled"] == (change == "manual_retry")
+    assert len(submissions) == (1 if change == "manual_retry" else 0)
+
+
+@pytest.mark.parametrize("selection", ["startup_queued", "account_changed"])
+def test_manual_short_header_failure_does_not_advertise_automatic_retry(mw, submissions, monkeypatch, selection):
+    if selection == "startup_queued":
+        mw.prepare_startup_validation()
+        assert mw.key_validation_status() == "verifying"
+    else:
+        mw.set_self_ali_id("10002")
+    seller = get_account_context().self_ali_id
+    source = encrypted_db(mw._data_dir, seller)
+    original = source.read_bytes()
+    save_key(seller, KEY, "manual")
+    source.write_bytes(b"short")
+    now = [module.time.time()]
+    monkeypatch.setattr(module, "time", SimpleNamespace(time=lambda: now[0], perf_counter=module.time.perf_counter))
+    forbidden = Mock(side_effect=AssertionError("no automatic capture or migration"))
+    monkeypatch.setattr(module, "retrieve_db_key", forbidden)
+    monkeypatch.setattr(mw, "_migrate_legacy_key_file", forbidden)
+    assert mw.retry_connection() is None
+    status = mw.sync_status()
+    assert status["key_validation"] == "unverified" and not status["auto_enabled"]
+    assert status["error_code"] == "source_unreadable" and status["last_error"]
+    assert status["retry_at"] is None
+    assert mw._backoff_until == now[0] + module._MIN_REFRESH_INTERVAL
+    source.write_bytes(original)
+    now[0] = mw._backoff_until
+    mw.sync_tick()
+    assert mw.sync_status() == status and not submissions
+    assert mw.retry_connection() is not None
+    assert mw.sync_status()["key_validation"] == "valid" and mw.sync_status()["auto_enabled"]
+    submissions[0][3].set_result(committed(submissions[0][4]))
+    mw.sync_tick()
+    assert mw.sync_status()["ready"]
+    forbidden.assert_not_called()
+
+
+def test_stop_discards_inflight_startup_result_and_service_can_restart(mw, submissions, monkeypatch):
+    encrypted_db(mw._data_dir)
+    save_key("10001", KEY, "manual")
+    entered, release, cancelled, submitted = Event(), Event(), Event(), Event()
+    reader = module.read_saved_key
+
+    def paused_read(seller):
+        result = reader(seller)
+        entered.set()
+        assert release.wait(5)
+        return result
+
+    monkeypatch.setattr(module, "read_saved_key", paused_read)
+    cancel = mw._cancel_startup_validation
+
+    def observe_cancel():
+        cancel()
+        cancelled.set()
+
+    monkeypatch.setattr(mw, "_cancel_startup_validation", observe_cancel)
+    service = service_module.SyncService(mw, interval=0.01)
+    service.start()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        try:
+            assert entered.wait(5)
+            stopped = pool.submit(service.stop)
+            assert cancelled.wait(5)
+            assert not stopped.done()
+        finally:
+            release.set()
+        stopped.result(timeout=5)
+    assert not submissions and mw._key is None
+    assert mw.key_validation_status() == "unverified"
+    submit = mw._coordinator._submit
+
+    def observe_submit(target):
+        future = submit(target)
+        submitted.set()
+        return future
+
+    monkeypatch.setattr(mw._coordinator, "_submit", observe_submit)
+    service.start()
+    try:
+        assert submitted.wait(5)
+        assert mw.key_validation_status() == "valid"
+    finally:
+        for call in submissions:
+            call[3].set_result(committed(call[4]))
+        service.stop()
+
+
+def test_startup_queue_and_status_observation_do_not_validate(mw, monkeypatch):
+    encrypted_db(mw._data_dir)
+    save_key("10001", KEY, "manual")
+    forbidden = Mock(side_effect=AssertionError("observation must not validate"))
+    monkeypatch.setattr(module, "read_saved_key", forbidden)
+    monkeypatch.setattr(mw, "_verify_source_key", forbidden)
+    monkeypatch.setattr(mw, "_ensure_key", forbidden)
+    for queued in (False, True):
+        if queued:
+            mw.prepare_startup_validation()
+        for _ in range(3):
+            assert mw.key_validation_status() == ("verifying" if queued else "unverified")
+            assert mw.key_status() == (True, "manual")
+            assert not mw.sync_status()["ready"]
+            assert mw.data_dir_status()["state"] == "ok"
+    forbidden.assert_not_called()

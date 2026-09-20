@@ -11,7 +11,7 @@ from backend.tests.test_outbox_api import outbox
 
 @pytest.fixture
 def client(base_client, monkeypatch):
-    connect(base_client, confirm=True)
+    connect(base_client)
     monkeypatch.setattr(status, "_last_node_result", None)
     return base_client
 

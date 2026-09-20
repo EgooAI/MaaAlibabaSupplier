@@ -109,7 +109,7 @@ def connection_snapshot() -> dict:
         "capabilities": {
             "read_chat": readable,
             "use_ai": readable and configured,
-            "operate_client": bool(context.self_ali_id and client["connected"] and client["confirmed"]),
+            "operate_client": bool(context.self_ali_id and client["connected"]),
         },
         "model": {"configured": configured},
     }

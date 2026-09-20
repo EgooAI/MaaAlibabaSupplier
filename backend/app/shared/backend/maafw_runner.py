@@ -59,11 +59,11 @@ def _probe_binding() -> tuple[bool, str]:
     try:
         window = _find_window(Toolkit.find_desktop_windows())
         if _tasker is None:
-            return False, "Client is not connected; connect and manually confirm the selected account."
+            return False, "Client is not connected; connect first."
         if _window_hwnd != window.hwnd:
-            raise RuntimeError("Client window changed; reconnect and manually confirm again.")
+            raise RuntimeError("Client window changed; reconnect and retry.")
         if not _tasker.inited or not _tasker.controller.connected:
-            raise RuntimeError("Client connection lost; reconnect and manually confirm again.")
+            raise RuntimeError("Client connection lost; reconnect and retry.")
         return True, "Client window is connected."
     except Exception as exc:
         _reset_binding()
@@ -145,7 +145,7 @@ def run_node(entry: str, pipeline_override: dict | None = None) -> tuple[bool, s
             if tasker is None:
                 return False, f"初始化失败: {err}"
         else:
-            return False, "GUI writes require a manually confirmed session and run_guarded."
+            return False, "GUI writes require a valid session and run_guarded."
 
         # Never replay a failed task: its send click may already have happened.
         try:
@@ -230,7 +230,7 @@ def submit_send() -> TaskJob:
     with account_lock, _run_lock:
         token = getattr(gui_session._active_session, "token", None)
         if token is None:
-            raise AppError("GUI writes require a manually confirmed session and run_guarded.", status_code=409)
+            raise AppError("GUI writes require a valid session and run_guarded.", status_code=409)
         gui_session._validate_token(token)
         return _tasker.post_task("ChatInput_SendOnly", {"ChatInput_SendMessage": {"enabled": True}})
 

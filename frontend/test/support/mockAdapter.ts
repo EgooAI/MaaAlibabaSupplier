@@ -72,9 +72,8 @@ function getMockOutbox(id: string, version?: number) {
 
 function changeMockAccount() {
   connectionStore.account.epoch = crypto.randomUUID();
-  connectionStore.source = { ...connectionStore.source, epoch: connectionStore.account.epoch, self_ali_id: connectionStore.account.self_ali_id, phase: "idle", ready: false, key_validation: "unverified", auto_enabled: false, freshness: "stale", stale: true, syncing: false, pending: false };
-  connectionStore.client.confirmed = false;
-  connectionStore.capabilities = { read_chat: false, use_ai: false, operate_client: false };
+  connectionStore.source = { ...connectionStore.source, epoch: connectionStore.account.epoch, self_ali_id: connectionStore.account.self_ali_id, phase: "idle", ready: false, key_validation: "unverified", auto_enabled: false, freshness: "stale", stale: true, syncing: false, pending: false, last_error: null, error_code: null, retry_at: null };
+  connectionStore.capabilities = { read_chat: false, use_ai: false, operate_client: Boolean(connectionStore.account.self_ali_id && connectionStore.client.connected) };
 }
 
 function checkMockEpoch(epoch: string) {
@@ -82,22 +81,15 @@ function checkMockEpoch(epoch: string) {
 }
 
 function requireMockClient() {
-  if (!connectionStore.capabilities.operate_client) throw new Error("请先人工确认客户端卖家身份");
+  if (!connectionStore.capabilities.operate_client) throw new Error("请先选择卖家账号并接入客户端");
 }
 
 export const mockBackend: OperationsBackend = {
   getConnection: () => delay(structuredClone(connectionStore)),
   connectClient: async (epoch) => {
     checkMockEpoch(epoch);
-    connectionStore.client = { connected: true, window_generation: crypto.randomUUID(), confirmed: false, detail: "请人工确认当前窗口卖家" };
-    connectionStore.capabilities.operate_client = false;
-    return delay(structuredClone(connectionStore));
-  },
-  confirmClient: async (epoch, windowGeneration) => {
-    checkMockEpoch(epoch);
-    if (!connectionStore.client.connected || windowGeneration !== connectionStore.client.window_generation) throw new Error("客户端窗口已变化");
-    connectionStore.client.confirmed = true;
-    connectionStore.capabilities.operate_client = true;
+    connectionStore.client = { connected: true, window_generation: crypto.randomUUID(), detail: "客户端窗口已连接" };
+    connectionStore.capabilities.operate_client = Boolean(connectionStore.account.self_ali_id);
     return delay(structuredClone(connectionStore));
   },
   retryConnection: async (epoch) => {
@@ -323,6 +315,7 @@ export const mockBackend: OperationsBackend = {
     dataDirStatusStore = { state: "ok", path: trimmed, source: "file", detail: "" };
     connectionStore.data_dir = dataDirStatusStore;
     connectionStore.account.data_dir = trimmed;
+    connectionStore.account.self_ali_id = "";
     changeMockAccount();
     statusStore = buildStatusSnapshot();
     return delay(structuredClone(dataDirStatusStore));

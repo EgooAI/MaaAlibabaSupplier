@@ -5,7 +5,7 @@ import { connectionSnapshot } from "@/mock/connectionData";
 import { outboxTask, screenshotPng } from "@/test/support/outboxFixture";
 import { authenticatedSession } from "@/test/support/authFixture";
 
-const ready = () => ({ ...structuredClone(connectionSnapshot), capabilities: { read_chat: true, use_ai: true, operate_client: true } });
+const ready = () => ({ ...structuredClone(connectionSnapshot), client: { ...connectionSnapshot.client, connected: true }, capabilities: { read_chat: true, use_ai: true, operate_client: true } });
 beforeEach(async () => { await authenticatedSession(); accountSession.accept(ready()); });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const response = (data: unknown, epoch = "mock-1") => new Response(JSON.stringify({ code: 0, msg: "ok", data }), { headers: { "X-Account-Epoch": epoch } });
@@ -30,12 +30,12 @@ describe("outbox HTTP contract and account isolation", () => {
     if (method === "GET") expect(init.cache).toBe("no-store");
   });
 
-  it("requires the stage-one operate_client gate for confirm and retry but permits disconnected reads and cancel", async () => {
+  it("requires a connected client for screenshot confirmation and retry but permits disconnected reads and cancel", async () => {
     accountSession.accept(structuredClone(connectionSnapshot));
     const fetch = vi.fn().mockImplementation(() => Promise.resolve(response(outboxTask())));
     vi.stubGlobal("fetch", fetch);
-    await expect(httpBackend.confirmOutbox("task", 1, "frame")).rejects.toThrow("人工确认");
-    await expect(httpBackend.retryOutbox("task", 1)).rejects.toThrow("人工确认");
+    await expect(httpBackend.confirmOutbox("task", 1, "frame")).rejects.toThrow("接入客户端");
+    await expect(httpBackend.retryOutbox("task", 1)).rejects.toThrow("接入客户端");
     expect(fetch).not.toHaveBeenCalled();
     await httpBackend.getOutbox("task");
     await httpBackend.cancelOutbox("task", 1);

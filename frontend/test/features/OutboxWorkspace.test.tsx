@@ -37,7 +37,7 @@ let store: OutboxTask[];
 let createUrl: ReturnType<typeof vi.fn>;
 let revokeUrl: ReturnType<typeof vi.fn>;
 let chat: ReturnType<typeof useChatWorkbench>;
-const readySnapshot = () => ({ ...structuredClone(connectionSnapshot), client: { ...connectionSnapshot.client, connected: true, confirmed: true }, capabilities: { read_chat: true, use_ai: true, operate_client: true } });
+const readySnapshot = () => ({ ...structuredClone(connectionSnapshot), client: { ...connectionSnapshot.client, connected: true }, capabilities: { read_chat: true, use_ai: true, operate_client: true } });
 const awaiting = (overrides: Partial<OutboxTask> = {}) => outboxTask({ status: "awaiting_confirmation", version: 3, screenshot_id: "frame-1", screenshot_at: Date.now() / 1000, ...overrides });
 
 function Harness({ sid = "42", draft = "submitted text" }: { sid?: string; draft?: string }) {

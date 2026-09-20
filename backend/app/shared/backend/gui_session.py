@@ -1,9 +1,4 @@
-"""Process-local manual GUI confirmation, not automatic login identity verification.
-
-The operator must confirm that the window belongs to the selected seller. Login
-changes inside the same window cannot be detected; the operator must reconnect
-and confirm again. The separate, manually invoked Maa CLI is outside this guard.
-"""
+"""Process-local GUI guards bound to the selected seller and connected window."""
 
 from __future__ import annotations
 
@@ -21,7 +16,6 @@ from backend.app.shared.backend.account_context import AccountContext, account_l
 class ClientStatus(TypedDict):
     connected: bool
     window_generation: str
-    confirmed: bool
     detail: str
 
 
@@ -31,37 +25,18 @@ class GuiSessionToken:
     data_dir: str
     epoch: str
     window_generation: str
-    confirmation_id: str
 
 
-_confirmation: GuiSessionToken | None = None
 _active_session = local()
 _Result = TypeVar("_Result")
-_MANUAL_NOTICE = (
-    "Manual confirmation only, not automatic login identity verification. "
-    "Account changes inside the same window cannot be detected; reconnect and confirm again."
-)
 
 
 def _status_locked() -> ClientStatus:
-    global _confirmation
-    context = get_account_context()
     connected, detail = runner._probe_binding()
-    if _confirmation is not None and (
-        not connected
-        or (_confirmation.self_ali_id, _confirmation.data_dir, _confirmation.epoch)
-        != (context.self_ali_id, context.data_dir, context.epoch)
-        or _confirmation.window_generation != runner._window_generation
-    ):
-        _confirmation = None
-    confirmed = _confirmation is not None
-    if connected:
-        detail = "Selected account manually confirmed." if confirmed else "Manual account confirmation required."
     return {
         "connected": connected,
         "window_generation": runner._window_generation,
-        "confirmed": confirmed,
-        "detail": detail + " " + _MANUAL_NOTICE,
+        "detail": detail,
     }
 
 
@@ -70,14 +45,11 @@ def get_client_status() -> ClientStatus:
     # A running task holds the runner lock. Observation must not delay its
     # acceptance response or the status poll used to track that same task.
     if not runner._run_lock.acquire(blocking=False):
-        context = get_account_context()
-        confirmation = _confirmation
+        generation = runner._window_generation
         return {
-            "connected": bool(runner._window_generation),
-            "window_generation": runner._window_generation,
-            "confirmed": bool(confirmation and confirmation.epoch == context.epoch
-                              and confirmation.window_generation == runner._window_generation),
-            "detail": "客户端操作正在执行；连接状态将在操作间隙重新检查。 " + _MANUAL_NOTICE,
+            "connected": bool(generation),
+            "window_generation": generation,
+            "detail": "客户端操作正在执行；连接状态将在操作间隙重新检查。",
         }
     try:
         return _status_locked()
@@ -86,14 +58,12 @@ def get_client_status() -> ClientStatus:
 
 
 def connect_client() -> ClientStatus:
-    """Initialize with zero GUI input and require a fresh manual confirmation."""
-    global _confirmation
+    """Initialize with zero GUI input and refresh the window generation."""
     with account_lock, runner._run_lock:
-        _confirmation = None
         tasker, error = runner._ensure_init()
         if tasker is None:
             raise AppError(f"Client connection failed: {error}", status_code=503)
-        # Even reconnecting the same HWND invalidates an already-open dialog.
+        # Even reconnecting the same HWND invalidates previously captured tasks.
         runner._window_generation = uuid4().hex
         status = _status_locked()
         if not status["connected"]:
@@ -104,50 +74,35 @@ def connect_client() -> ClientStatus:
 def _require_context(expected_epoch: str) -> AccountContext:
     context = get_account_context()
     if context.epoch != expected_epoch:
-        raise AppError("Account context changed; reload and manually confirm again.", status_code=409)
+        raise AppError("Account context changed; reload and retry.", status_code=409)
     if not context.self_ali_id:
-        raise AppError("Select a seller before confirming the client.", status_code=409)
+        raise AppError("Select a seller before operating the client.", status_code=409)
     return context
-
-
-def confirm_client(expected_epoch: str, expected_generation: str) -> ClientStatus:
-    """Record the operator's assertion; this does not discover the logged-in user."""
-    global _confirmation
-    with account_lock, runner._run_lock:
-        status = _status_locked()
-        context = _require_context(expected_epoch)
-        if expected_generation != status["window_generation"]:
-            raise AppError("Client window changed; reconnect and manually confirm again.", status_code=409)
-        if not status["connected"]:
-            raise AppError(status["detail"], status_code=503)
-        _confirmation = GuiSessionToken(
-            context.self_ali_id, context.data_dir, context.epoch,
-            status["window_generation"], uuid4().hex,
-        )
-        status = _status_locked()
-        if not status["confirmed"]:
-            raise AppError("Client window changed during confirmation; reconnect and confirm again.", status_code=409)
-        return status
 
 
 def capture_gui_session(expected_epoch: str) -> GuiSessionToken:
     """Capture at enqueue time; the worker must still call run_guarded."""
     with account_lock, runner._run_lock:
         status = _status_locked()
-        _require_context(expected_epoch)
+        context = _require_context(expected_epoch)
         if not status["connected"]:
             raise AppError(status["detail"], status_code=503)
-        if _confirmation is None:
-            raise AppError("Manually confirm the selected account and client window first.", status_code=409)
-        return _confirmation
+        return GuiSessionToken(
+            context.self_ali_id, context.data_dir, context.epoch,
+            status["window_generation"],
+        )
 
 
 def _validate_token(token: GuiSessionToken) -> None:
     """Caller holds both locks, including for each runner node inside a task."""
     status = _status_locked()
-    _require_context(token.epoch)
-    if token != _confirmation or token.window_generation != status["window_generation"]:
-        raise AppError("GUI session expired; reconnect and manually confirm again.", status_code=409)
+    context = _require_context(token.epoch)
+    if (
+        (token.self_ali_id, token.data_dir, token.epoch)
+        != (context.self_ali_id, context.data_dir, context.epoch)
+        or token.window_generation != status["window_generation"]
+    ):
+        raise AppError("GUI session expired; reconnect and retry.", status_code=409)
     if not status["connected"]:
         raise AppError(status["detail"], status_code=503)
 

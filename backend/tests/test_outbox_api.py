@@ -33,7 +33,7 @@ def outbox(client, chat, monkeypatch, tmp_path):
         "checked_at": time.time(), "messages": [{"id": "private-baseline-id"}],
     }
     monkeypatch.setattr(source_messages, "read_source_messages", lambda *args: source)
-    connect(client, confirm=True)
+    connect(client)
     yield SimpleNamespace(service=service, queue=queue, frame=frame, source=source)
     service.stop()
 
@@ -110,6 +110,26 @@ def test_two_step_contract_png_and_immutable_content(client, outbox, sdk, action
     assert "private-source" not in str(result)
 
 
+@pytest.mark.parametrize("already_confirmed", [False, True])
+def test_reconnect_same_window_invalidates_screenshot_session(client, outbox, sdk, already_confirmed):
+    task = prepared(client, outbox)
+    if already_confirmed:
+        assert confirm(client, task).status_code == 200
+    connect(client)
+    assert len(sdk.controllers) == 1
+    if already_confirmed:
+        assert not outbox.queue.run()[0]
+        result = client.get(f"/api/outbox/{task['id']}").json()["data"]
+        assert result["status"] == "failed" and not result["may_have_sent"]
+        assert result["reason"] == "客户端操作会话已失效，请重新连接后重试。"
+    else:
+        response = confirm(client, task)
+        assert response.status_code == 409
+        assert response.json()["msg"] == "原客户端操作授权已失效，请显式重试任务。"
+    assert outbox.queue.jobs == []
+    assert [entry for entry, _ in sdk.calls] == ["ContactSearch"]
+
+
 def test_concurrent_duplicate_and_recovery_with_stale_gui(client, outbox):
     with ThreadPoolExecutor(max_workers=2) as pool:
         replies = [future.result(timeout=5) for future in [pool.submit(submit, client) for _ in range(2)]]
@@ -119,7 +139,7 @@ def test_concurrent_duplicate_and_recovery_with_stale_gui(client, outbox):
     task = accepted[0]
     assert submit(client).json()["data"]["outbox"]["id"] == task["id"]
     assert len(outbox.queue.jobs) == 1
-    connect(client)  # Same epoch, but the old manual authorization is gone.
+    connect(client)  # Same epoch, but the window generation has changed.
     assert submit(client).json()["data"]["outbox"] == task
     assert len(outbox.queue.jobs) == 1
     for changes in ({"content": "changed"}, {"action": "test"}, {"draft_version": 1}):

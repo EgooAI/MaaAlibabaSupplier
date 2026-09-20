@@ -12,8 +12,10 @@ app layer — the generic CRM SDK must not depend on it. Only the generic
 
 from __future__ import annotations
 
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
+import sqlite3
 from typing import Optional
 
 from Crypto.Cipher import AES
@@ -110,6 +112,34 @@ def get_key_hex(ali_id: str, database_path: Optional[Path | str] = None) -> byte
 def get_key_source(ali_id: str, database_path: Optional[Path | str] = None) -> str:
     record = AccountKeyStore(database_path=database_path).get_key(ali_id) if ali_id else None
     return record.source if record is not None else ""
+
+
+def read_saved_key(ali_id: str, database_path: Optional[Path | str] = None) -> tuple[bytes, str] | None:
+    """Read without schema creation/migration; distinguish absent, corrupt and busy."""
+    if not ali_id:
+        return None
+    if database_path is None:
+        from backend.app.shared.crm.sync import _default_database_path
+
+        database_path = _default_database_path()
+    path = Path(database_path).resolve()
+    try:
+        path.stat()
+    except FileNotFoundError:
+        return None
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0.2)) as conn:
+        if not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='im_account_key'",
+        ).fetchone():
+            return None
+        record = conn.execute(
+            "SELECT aes_key_hex, source FROM im_account_key WHERE ali_id=?", (ali_id,),
+        ).fetchone()
+    if record is None:
+        return None
+    if not isinstance(record[0], str):
+        raise KeyFormatError("Stored AES key is malformed")
+    return parse_key_hex(record[0]), record[1]
 
 
 def save_key(ali_id: str, key: bytes, source: str, database_path: Optional[Path | str] = None) -> None:

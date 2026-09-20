@@ -11,7 +11,9 @@ export interface FlowStepItem {
 // here from the same authoritative fields, so no parallel state exists.
 export function flowSteps(snapshot: ConnectionSnapshot): FlowStepItem[] {
   const { account, data_dir: dir, source, client, model } = snapshot;
-  const keyText = { unverified: "待验证", valid: "密钥已验证", invalid: "密钥验证失败", unavailable: "密钥不可用" }[source.key_validation];
+  const retrying = Boolean(source.last_error && source.retry_at != null && (source.key_validation === "unverified" || source.key_validation === "valid"));
+  const syncing = source.syncing || (!retrying && (source.pending || source.phase === "syncing"));
+  const keyText = { unverified: retrying ? "暂时无法验证，将自动重试" : "待验证", verifying: "正在验证已保存的密钥", valid: "密钥已验证", invalid: "密钥验证失败", unavailable: "密钥不可用" }[source.key_validation];
   return [
     {
       key: "data_dir",
@@ -29,19 +31,19 @@ export function flowSteps(snapshot: ConnectionSnapshot): FlowStepItem[] {
       key: "key",
       title: "密钥",
       content: keyText,
-      status: source.key_validation === "valid" ? "finish" : source.key_validation === "unverified" ? "wait" : "error",
+      status: source.key_validation === "valid" ? "finish" : source.key_validation === "verifying" ? "process" : source.key_validation === "unverified" ? "wait" : "error",
     },
     {
       key: "crm",
       title: "聊天同步",
-      content: source.ready ? "聊天已同步" : source.last_error || "待同步",
-      status: source.ready ? "finish" : source.phase === "error" || source.last_error ? "error" : "wait",
+      content: syncing ? "正在同步聊天" : retrying ? "暂时不可用，等待自动重试" : source.last_error || (source.ready ? "聊天已同步" : "待同步"),
+      status: syncing ? "process" : retrying ? "wait" : source.phase === "error" || source.last_error ? "error" : source.ready ? "finish" : "wait",
     },
     {
       key: "client",
-      title: "客户端确认",
-      content: client.connected ? (client.confirmed ? "已确认卖家" : "待人工确认") : "未接入客户端",
-      status: client.connected ? (client.confirmed ? "finish" : "process") : "wait",
+      title: "客户端接入",
+      content: client.connected ? "客户端已接入" : "未接入客户端",
+      status: client.connected ? "finish" : "wait",
     },
     {
       key: "model",
