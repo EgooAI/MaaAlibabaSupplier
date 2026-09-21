@@ -1,7 +1,6 @@
 """Connection observations shared by settings and chat reads (no live retry)."""
 
 import json
-import os
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -12,8 +11,8 @@ from backend.app.shared.backend.account_context import get_account_context
 from backend.app.shared.backend.gui_session import get_client_status
 from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
 from backend.app.shared.crm.identities import PLATFORM_PID
+from backend.app.shared.crm.paths import default_crm_database_path
 from backend.app.shared.crm.sdk import LLMApiConfig
-from backend.app.shared.utils.settings import CRM_DB_RELATIVE_DEFAULT, resolve_backend_root
 
 # Sync internals surfaced only by the diagnostics endpoint, never by the UI.
 _INTERNAL_SOURCE_FIELDS = frozenset({"source_mtime", "cache_time", "wal_frames_applied", "last_refresh_ms", "wal_pipeline"})
@@ -22,9 +21,7 @@ _INTERNAL_SOURCE_FIELDS = frozenset({"source_mtime", "cache_time", "wal_frames_a
 def _observe_crm(query: str, tables: set[str], parameters: tuple = ()) -> list[dict]:
     # SDK managers create tables and CRMAdapter runs migrations on construction.
     # Polling must leave those writes to explicit setup/synchronization paths.
-    path = Path(os.environ.get("MAA_CRM_DB_PATH", CRM_DB_RELATIVE_DEFAULT))
-    if not path.is_absolute():
-        path = resolve_backend_root() / path
+    path = default_crm_database_path()
     if not path.is_file():
         return []
     with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as database:

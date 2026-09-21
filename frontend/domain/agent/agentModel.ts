@@ -216,23 +216,18 @@ export function documentToLlmLevelConfig(input: DocumentLlmConfig): LlmLevelConf
     system_prompt: input.system_prompt,
     context: input.context,
     max_tool_rounds: normalizeToolRoundLimit(input.max_tool_rounds),
-    baseUrl: input.base_url,
-    apiKey: input.api_key,
-    modelName: input.model_name,
-    systemPrompt: input.system_prompt,
-    maxToolRounds: normalizeToolRoundLimit(input.max_tool_rounds),
   };
 }
 
 export function llmLevelToDocumentConfig(config: LlmLevelConfig): DocumentLlmConfig {
   return {
     level: normalizeAgentLevel(config.level),
-    base_url: config.base_url ?? config.baseUrl ?? "",
-    api_key: config.api_key ?? config.apiKey ?? "",
-    model_name: config.model_name ?? config.modelName ?? "",
-    system_prompt: config.system_prompt ?? config.systemPrompt ?? "",
+    base_url: config.base_url,
+    api_key: config.api_key,
+    model_name: config.model_name,
+    system_prompt: config.system_prompt,
     context: config.context,
-    max_tool_rounds: normalizeToolRoundLimit(config.max_tool_rounds ?? config.maxToolRounds),
+    max_tool_rounds: normalizeToolRoundLimit(config.max_tool_rounds),
   };
 }
 

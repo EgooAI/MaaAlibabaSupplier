@@ -240,10 +240,6 @@ class _DictPool(Generic[M]):
             self._data[key] = item
             _save_model(self._conn, self._table, self._key_column, key, item)
 
-    def all(self) -> dict[str, M]:
-        with self._lock:
-            return dict(self._data)
-
     def clear(self) -> None:
         with self._lock:
             _clear_table(self._conn, self._table)
@@ -452,88 +448,6 @@ class GenericCardPool(_DictPool[GenericCard]):
         with self._lock:
             return self._data.get(key)
 
-    def by_type(self, card_type: int) -> dict[str, GenericCard]:
-        prefix = f"{card_type}:"
-        with self._lock:
-            return {k: v for k, v in self._data.items() if k.startswith(prefix)}
-
 
 def get_generic_card_pool() -> GenericCardPool:
     return GenericCardPool()
-
-
-# ---------------------------------------------------------------------------
-# InquiryCardPool
-# ---------------------------------------------------------------------------
-
-
-class InquiryCardPool(_DictPool[InquiryCard]):
-    _instance: InquiryCardPool | None = None
-    _instance_lock = threading.Lock()
-
-    def __new__(cls) -> InquiryCardPool:
-        with cls._instance_lock:
-            if cls._instance is None:
-                instance = super().__new__(cls)
-                instance._init_pool("inquiry_card", "inquiry_id", InquiryCard)
-                cls._instance = instance
-        return cls._instance
-
-    def _get_key(self, item: InquiryCard) -> str:
-        return item.inquiry_id
-
-    def get(self, inquiry_id: str) -> InquiryCard | None:
-        with self._lock:
-            return self._data.get(inquiry_id)
-
-
-def get_inquiry_card_pool() -> InquiryCardPool:
-    return InquiryCardPool()
-
-
-# ---------------------------------------------------------------------------
-# InputPendingPool  — per-contact unsent input text
-# ---------------------------------------------------------------------------
-
-
-class InputPendingPool:
-    """Thread-safe SQLite-backed store for per-contact unsent input text."""
-
-    _instance: InputPendingPool | None = None
-    _instance_lock = threading.Lock()
-
-    def __new__(cls) -> InputPendingPool:
-        with cls._instance_lock:
-            if cls._instance is None:
-                instance = super().__new__(cls)
-                instance._lock = threading.Lock()
-                instance._conn = _get_connection()
-                _execute_schema(
-                    instance._conn,
-                    "CREATE TABLE IF NOT EXISTS input_pending "
-                    "(contact_ali_id TEXT PRIMARY KEY, text TEXT NOT NULL DEFAULT '')",
-                )
-                instance._cache: dict[str, str] = {}
-                for row in instance._conn.execute(
-                    "SELECT contact_ali_id, text FROM input_pending"
-                ):
-                    instance._cache[row[0]] = row[1]
-                cls._instance = instance
-            return cls._instance
-
-    def get(self, contact_ali_id: str) -> str:
-        with self._lock:
-            return self._cache.get(contact_ali_id, "")
-
-    def put(self, contact_ali_id: str, text: str) -> None:
-        with self._lock:
-            self._cache[contact_ali_id] = text
-            self._conn.execute(
-                "INSERT OR REPLACE INTO input_pending (contact_ali_id, text) VALUES (?, ?)",
-                (contact_ali_id, text),
-            )
-            self._conn.commit()
-
-
-def get_input_pending_pool() -> InputPendingPool:
-    return InputPendingPool()

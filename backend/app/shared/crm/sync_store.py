@@ -13,6 +13,7 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlmodel import Session
 
 from backend.app.shared.crm.sdk import Message
+from backend.app.shared.crm.paths import default_crm_database_path
 
 
 sync_state = Table(
@@ -42,9 +43,7 @@ def read_sync_state(
     Revision aliases match the result of sync_im_database().result().
     """
     if database_path is None:
-        from backend.app.shared.crm.sync import _default_database_path
-
-        database_path = _default_database_path()
+        database_path = default_crm_database_path()
     path = Path(database_path).resolve()
     if not path.is_file():
         return None

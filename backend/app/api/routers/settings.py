@@ -13,9 +13,9 @@ from backend.app.shared.backend.gui_session import connect_client
 from backend.app.shared.backend.im_db_middleware import (
     IMDBMiddleware,
     STATE_OK,
-    find_data_dir_candidates,
     get_im_db_middleware,
 )
+from backend.app.shared.backend.im_layout import find_data_dir_candidates, looks_like_data_dir
 from backend.app.shared.crm.account_keys import (
     KeyFormatError,
     delete_key,
@@ -80,7 +80,7 @@ def save_data_dir(body: DataDirInput) -> dict:
     candidate = Path(raw).resolve()
     if not candidate.exists():
         raise AppError(f"目录不存在: {raw}", status_code=422)
-    if not IMDBMiddleware.looks_like_data_dir(candidate):
+    if not looks_like_data_dir(candidate):
         raise AppError("目录下未找到 IMServiceDir/MessageSDK IM 数据库结构", status_code=422)
     try:
         get_im_db_middleware().set_data_dir(str(candidate))

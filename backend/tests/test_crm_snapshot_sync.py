@@ -16,6 +16,7 @@ from backend.app.shared.crm.sdk import Account, Customer, Message
 from backend.app.shared.crm.sync_store import canonical_source_dir, read_sync_state
 from backend.app.shared.crm.views import CrmResolver, message_display_text, resolve_role
 from backend.app.shared.mitm.pool import SelfInfo
+from backend.tests.crm_helpers import conversations_for
 
 
 def source_row(mid, text="same text", *, timestamp=1756720000, kind=0, cid="seller-buyer", sender="buyer@icbu"):
@@ -91,7 +92,7 @@ def test_snapshot_delta_late_arrival_new_table_and_retained_history(snapshot):
     assert messages[mid].created_at == datetime.fromtimestamp(1756720010)
     adapter.engine.dispose()
     reopened = sync.CRMAdapter(target)
-    assert len(reopened.list_conversations("seller")[0].messages) == 4
+    assert len(conversations_for(reopened, "seller")[0].messages) == 4
     assert read_sync_state("seller", directory, target) == third
     assert third["last_success"] >= first["last_success"] > 0
 
@@ -102,7 +103,7 @@ def test_unsupported_type_keeps_activity_direction_and_safe_placeholder(snapshot
     add_source(source, [source_row(1, "opaque blob label", kind=kind, sender="seller@icbu")])
     assert apply()["inserted"] == 1
     adapter = sync.CRMAdapter(target)
-    conversation = adapter.list_conversations("seller")[0]
+    conversation = conversations_for(adapter, "seller")[0]
     message = conversation.messages[0]
     assert message.user_content_type == kind
     assert message.sender_id == "seller@icbu"
@@ -111,7 +112,6 @@ def test_unsupported_type_keeps_activity_direction_and_safe_placeholder(snapshot
     label = message_display_text(message)
     assert label and "opaque" not in label
     assert str(kind if kind is not None else "unknown") in label
-    assert adapter.list_conversation_digests("seller")[0].latest_content_label == label
     assert conversation.last_content_label == label
     assert conversation_transcript(conversation.messages, CrmResolver("seller"))[0][2] == label
 

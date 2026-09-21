@@ -154,7 +154,7 @@ def test_navigation_only_then_explicit_confirmation_and_durable_send_barrier(env
 
     def input_text(text):
         running = env.service.get(env.context, task["id"])
-        assert running["status"] == "running" and running["phase"] == "input"
+        assert running["status"] == "running"
         assert not running["may_have_sent"]
         assert running["baseline"] == {
             "origin": env.source["origin"], "ids": ["message:old"],
@@ -166,7 +166,7 @@ def test_navigation_only_then_explicit_confirmation_and_durable_send_barrier(env
 
     def click():
         running = env.service.get(env.context, task["id"])
-        assert running["phase"] == "click" and running["may_have_sent"] is True
+        assert running["may_have_sent"] is True
         env.calls.append("click")
         return env.send_job
 
@@ -588,7 +588,7 @@ def test_new_possible_send_during_source_read_is_included_in_ambiguity_check(env
         running = env.service._move(queued, "running", baseline={
             "origin": env.source["origin"], "ids": [], "checked_at": 999.0, "sent_at": env.now,
         })
-        env.service._update(running, may_have_sent=True, phase="click")
+        env.service._update(running, may_have_sent=True)
         return {**env.source, "checked_at": env.now + 1, "messages": [{
             "id": "message:new", "sender_id": "seller@icbu", "cid": "seller-buyer",
             "created_at": env.now, "type": 0, "text": task["content"],
@@ -607,14 +607,15 @@ def test_restart_never_replays_and_preserves_pre_post_click_uncertainty(env, sta
         seller=env.context.self_ali_id, data_dir=env.context.data_dir, conversation_id=1,
         contact_ali_id="buyer", login_id="buyer-login", content="text", action="send", idempotency_key="restart",
     )
-    for target in ("navigating", "awaiting_confirmation", "queued_send", "running", "click", "verifying"):
-        if task["phase"] == state:
+    for target in ("navigating", "awaiting_confirmation", "queued_send", "running"):
+        if task["status"] == state:
             break
-        if target == "click":
-            task = env.service._update(task, phase="click", may_have_sent=True)
-        else:
-            changes = {"screenshot_id": "0" * 32, "screenshot_at": 1000, "screenshot_digest": "digest"} if target == "awaiting_confirmation" else {}
-            task = env.service._move(task, target, **changes)
+        changes = {"screenshot_id": "0" * 32, "screenshot_at": 1000, "screenshot_digest": "digest"} if target == "awaiting_confirmation" else {}
+        task = env.service._move(task, target, **changes)
+    if state in ("click", "verifying"):
+        task = env.service._update(task, may_have_sent=True)
+        if state == "verifying":
+            task = env.service._move(task, "verifying")
     env.service.start()
     recovered = env.service.get(env.context, task["id"])
     assert recovered["status"] == ("unknown" if state in ("navigating", "running", "click", "verifying") else "failed")
@@ -761,7 +762,7 @@ def test_send_post_exception_is_unknown_and_never_retried(env, monkeypatch):
 
     def post():
         record = env.service.get(env.context, task["id"])
-        assert record["may_have_sent"] and record["phase"] == "click"
+        assert record["may_have_sent"]
         env.calls.append("post_failed")
         raise RuntimeError("native post outcome unavailable")
 
@@ -797,10 +798,10 @@ def test_terminal_writes_retry_after_repeated_db_locks_without_replaying_gui(env
     assert not ok and "locked" in reason
     assert failures == ["verifying", "unknown"]
     record = env.service.get(env.context, task["id"])
-    assert record["status"] == "running" and record["phase"] == "click" and record["may_have_sent"]
+    assert record["status"] == "running" and record["may_have_sent"]
     pending = env.service._pending_terminal_writes[task["id"]]
     assert pending == {name: record[name] for name in (
-        "id", "seller", "data_dir", "attempt", "version", "status", "phase",
+        "id", "seller", "data_dir", "attempt", "version", "status",
     )} | {"reason": "database is locked"}
     assert env.service._active == {} and env.service._attempts == {}
     assert record["screenshot_id"] == task["screenshot_id"]
@@ -855,7 +856,7 @@ def test_completed_snapshot_survives_failure_to_read_database_after_click(env, m
     monkeypatch.setattr(env.service.store, "get", locked_get)
     assert not env.queue.run()[0]
     pending = env.service._pending_terminal_writes[task["id"]]
-    assert pending["phase"] == "click" and not env.service._active
+    assert pending["status"] == "running" and not env.service._active
     monkeypatch.setattr(env.service.store, "get", get)
     env.service.reconcile_once()
     assert env.service.get(env.context, task["id"])["status"] == "unknown"
@@ -923,13 +924,13 @@ def test_active_click_is_not_compensated_before_callback_completes(env, monkeypa
                 env.service.stop(timeout=0.01)
                 assert not env.service._thread.is_alive()
             assert env.service.get(env.context, task["id"])["status"] == "running"
-            assert env.service._active[task["id"]]["phase"] == "click"
+            assert env.service._active[task["id"]]["may_have_sent"] is True
             assert env.service._pending_terminal_writes == {}
         finally:
             release.set()
         assert not future.result(5)[0]
     assert env.service._active == {}
-    assert env.service._pending_terminal_writes[task["id"]]["phase"] == "click"
+    assert env.service._pending_terminal_writes[task["id"]]["status"] == "running"
     monkeypatch.setattr(env.service.store, "transition", transition)
     if stop:
         env.service.stop()

@@ -111,8 +111,7 @@ export function mergeConversationDetail(current: ConversationDetail, incoming: C
   };
 }
 
-export function buildConversationExport(details: ConversationDetail[], now = Date.now()) {
-  const timestamp = now;
+export function buildConversationExport(details: ConversationDetail[]) {
   const content = details
     .map((conversation) => {
       const header = [
@@ -128,9 +127,8 @@ export function buildConversationExport(details: ConversationDetail[], now = Dat
     .join("\n\n---\n\n");
 
   return {
-    file_name: `conversation-export-${timestamp}.txt`,
+    archive_name: null,
     content,
-    fileName: `conversation-export-${timestamp}.txt`,
   };
 }
 

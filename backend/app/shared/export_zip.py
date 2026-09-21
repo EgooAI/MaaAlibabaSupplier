@@ -12,7 +12,7 @@ import zipfile
 from datetime import datetime, timezone
 
 from backend.app.shared.chat_format import extract_card_ref
-from backend.app.shared.crm import get_user_info as get_crm_user_info
+from backend.app.shared.crm.sync import CRMAdapter
 from backend.app.shared.crm.views import CrmConversation, CrmMessage, coerce_epoch
 
 _INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -44,7 +44,7 @@ def dialogue_count(conv: CrmConversation) -> int:
 
 
 def contact_display_name(contact_ali_id: str) -> str:
-    info = get_crm_user_info(contact_ali_id)
+    info = CRMAdapter().get_user_info(contact_ali_id)
     if info is None:
         return contact_ali_id
     name = f"{info.first_name} {info.last_name}".strip()
@@ -86,7 +86,7 @@ def front_matter_value(value: object) -> str:
 
 
 def customer_info_lines(contact: str) -> list[str]:
-    info = get_crm_user_info(contact)
+    info = CRMAdapter().get_user_info(contact)
     if info is None:
         return [f"客户ID: {front_matter_value(contact)}"]
 

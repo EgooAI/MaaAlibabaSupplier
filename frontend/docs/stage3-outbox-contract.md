@@ -4,7 +4,7 @@ The chat workbench uses the outbox contract exclusively. JSON responses use the 
 
 | Request | Body | Result |
 | --- | --- | --- |
-| `POST /api/conversations/{sid}/messages` | `{ content, action: 'send' | 'test', idempotency_key, draft_version? }` | `{ outbox: OutboxTask }` |
+| `POST /api/conversations/{sid}/messages` | `{ content, action: 'send' | 'test', idempotency_key }` | `{ outbox: OutboxTask }` |
 | `GET /api/conversations/{sid}/outbox` | none | `OutboxTask[]` |
 | `GET /api/outbox/{id}` | none | `OutboxTask` |
 | `POST /api/outbox/{id}/confirm` | `{ version, screenshot_id }` | `OutboxTask` |

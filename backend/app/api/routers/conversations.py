@@ -29,16 +29,11 @@ from backend.app.shared.chat_format import (
     business_card_from_message,
     conversation_transcript,
 )
-from backend.app.shared.crm import (
-    get_conversation_detail as crm_get_conversation_detail,
-    get_user_info as crm_get_user_info,
-)
 from backend.app.shared.crm.identities import PLATFORM_PID, message_external_id
 from backend.app.shared.crm.inbox_store import InboxStore
 from backend.app.shared.crm.inbox_queries import has_archive_messages, observe_inbox, public_state, query_inbox, scoped_message_ids
 from backend.app.shared.crm.sdk import AccountMapping
 from backend.app.shared.crm.sync import CRMAdapter
-from backend.app.shared.mitm.pool import UserInfo
 from backend.app.shared.crm.views import (
     CrmConversation,
     CrmConversationDigest,
@@ -104,8 +99,10 @@ def _inbox_projection(filters: InboxFilters) -> dict:
     return query_inbox(store, context.self_ali_id, context.data_dir, _summary_customer_view, filters.model_dump())
 
 
-def _scoped_conversation(store: InboxStore, context: AccountContext, sid: int) -> CrmConversation | None:
-    conv = crm_get_conversation_detail(context.self_ali_id, sid)
+def _scoped_conversation(
+    store: InboxStore, context: AccountContext, sid: int, adapter: CRMAdapter,
+) -> CrmConversation | None:
+    conv = adapter.get_conversation_detail(context.self_ali_id, sid)
     if conv is None:
         return None
     mids = scoped_message_ids(store, context.self_ali_id, context.data_dir, sid)
@@ -125,7 +122,6 @@ class SendMessageInput(BaseModel):
     content: str = Field(min_length=1)
     action: Literal["send", "test"]
     idempotency_key: str = Field(min_length=1, max_length=128, pattern=r"\S")
-    draft_version: int | None = Field(default=None, ge=0, strict=True)
 
 
 class ExportConversationsInput(BaseModel):
@@ -225,7 +221,7 @@ def _build_aggregate(adapter: CRMAdapter, self_ali_id: str, conv: CrmConversatio
         "customers": customers,
         "platforms": platforms,
         "account_mappings": mappings,
-        "customer_view": _build_customer_view(conv.contact_ali_id, accounts, customers),
+        "customer_view": _build_customer_view(conv.contact_ali_id, accounts, customers, adapter.get_user_info(conv.contact_ali_id)),
         "latest": {
             "content": (last["message"]["content"] if isinstance(last["message"]["content"], str) else last["message"]["content"].get("label")) if last else None,
             "updated_at": last["created_at"] if last else None,
@@ -266,28 +262,6 @@ def _minimal_customer_view(contact_ali_id: str) -> dict:
         "behavior": [],
         "d90": {},
     }
-
-
-def _preload_conversation_maps(adapter: CRMAdapter, digests: list[CrmConversationDigest]) -> dict:
-    """Batch preload for the list path: 1 session, few IN queries, no per-conv round trips."""
-    aids: set[int] = set()
-    contacts: set[str] = set()
-    for digest in digests:
-        aids.update(digest.participants or [])
-        if digest.contact_ali_id:
-            contacts.add(digest.contact_ali_id)
-    accounts_map, customers_map, key_to_aid = adapter.batch_load_conversation_maps(aids, contacts)
-    users: dict[str, Any] = {}
-    for contact in contacts:
-        account = accounts_map.get(key_to_aid.get(contact, -1))
-        extra = account.extra if account is not None else None
-        if not isinstance(extra, dict):
-            continue
-        try:
-            users[contact] = UserInfo.model_validate(extra)
-        except ValueError:
-            continue
-    return {"accounts": accounts_map, "customers": customers_map, "users": users}
 
 
 def _summary_customer_view(digest: CrmConversationDigest, preloaded: dict) -> dict:
@@ -334,8 +308,8 @@ def _build_summary(digest: CrmConversationDigest, preloaded: dict, view: dict | 
     }
 
 
-def _build_customer_view(contact_ali_id: str, accounts: list[dict], customers: list[dict]) -> dict | None:
-    return _assemble_customer_view(contact_ali_id, accounts, customers, crm_get_user_info(contact_ali_id))
+def _build_customer_view(contact_ali_id: str, accounts: list[dict], customers: list[dict], user: Any) -> dict | None:
+    return _assemble_customer_view(contact_ali_id, accounts, customers, user)
 
 
 def _assemble_customer_view(
@@ -531,12 +505,13 @@ def conversation_revision() -> dict:
 def get_conversation(conversation_id: int) -> dict:
     store, context = _inbox_store()
     self_ali_id = context.self_ali_id
+    adapter = CRMAdapter()
     try:
         snapshot = store.snapshot(conversation_id, seller=self_ali_id, data_dir=context.data_dir, epoch=context.epoch)
     except ValueError:
         raise AppError("会话不存在", status_code=404)
     try:
-        conv = _scoped_conversation(store, context, conversation_id)
+        conv = _scoped_conversation(store, context, conversation_id, adapter)
     except AppError:
         raise
     except Exception:
@@ -546,7 +521,7 @@ def get_conversation(conversation_id: int) -> dict:
         raise AppError("会话不存在", status_code=404)
     try:
         state = store.states(self_ali_id, context.data_dir, [conversation_id])[conversation_id]
-        return ok({**_build_aggregate(CRMAdapter(), self_ali_id, conv), **public_state(state),
+        return ok({**_build_aggregate(adapter, self_ali_id, conv), **public_state(state),
                    "read_snapshot": snapshot})
     except AppError:
         raise
@@ -576,19 +551,20 @@ def send_message(conversation_id: int, body: SendMessageInput) -> dict:
     context = get_account_context()
     if not context.data_dir:
         raise AppError("请先在设置页选择数据目录。", status_code=503)
-    conv = crm_get_conversation_detail(self_ali_id, conversation_id)
+    adapter = CRMAdapter()
+    conv = adapter.get_conversation_detail(self_ali_id, conversation_id)
     if conv is None:
         raise AppError("会话不存在", status_code=404)
     if not conv.contact_ali_id or not conv.contact_ali_id.strip():
         raise AppError("会话缺少联系人身份，无法安全跳转客户端", status_code=503)
-    user = crm_get_user_info(conv.contact_ali_id)
+    user = adapter.get_user_info(conv.contact_ali_id)
     login_id = (user.login_id if user and user.login_id else "").strip()
     if not login_id:
         raise AppError("联系人缺少 login_id，无法安全跳转客户端", status_code=503)
 
     task = get_outbox_service().submit(
         context, conversation_id, conv.contact_ali_id, login_id,
-        content, body.action, body.idempotency_key, draft_version=body.draft_version,
+        content, body.action, body.idempotency_key,
     )
     return ok({"outbox": public_task(task)})
 
@@ -596,7 +572,7 @@ def send_message(conversation_id: int, body: SendMessageInput) -> dict:
 @router.get("/api/conversations/{conversation_id}/suggestions")
 def suggestions(conversation_id: int) -> dict:
     store, context = _inbox_store()
-    conv = _scoped_conversation(store, context, conversation_id)
+    conv = _scoped_conversation(store, context, conversation_id, CRMAdapter())
     if conv is None:
         raise AppError("会话不存在", status_code=404)
     try:
@@ -623,7 +599,7 @@ def suggestions(conversation_id: int) -> dict:
 @router.get("/api/conversations/{conversation_id}/analysis")
 def analysis(conversation_id: int) -> dict:
     store, context = _inbox_store()
-    conv = _scoped_conversation(store, context, conversation_id)
+    conv = _scoped_conversation(store, context, conversation_id, CRMAdapter())
     if conv is None:
         raise AppError("会话不存在", status_code=404)
     try:
@@ -668,9 +644,10 @@ def export_conversations(body: ExportConversationsInput) -> dict:
     store, context = _inbox_store()
     convs: list[CrmConversation] = []
     missing: list[int] = []
+    adapter = CRMAdapter()
     for sid in sids:
         try:
-            conv = _scoped_conversation(store, context, sid)
+            conv = _scoped_conversation(store, context, sid, adapter)
         except AppError:
             raise
         except Exception:
@@ -691,11 +668,7 @@ def export_conversations(body: ExportConversationsInput) -> dict:
         return api_error("服务器内部错误", status_code=500)
     data: dict = {
         "archive_name": archive_name,
-        "file_name": archive_name,
         "content": b64encode(payload).decode("ascii"),
-        # 兼容旧前端 camel 键。
-        "archiveName": archive_name,
-        "fileName": archive_name,
     }
     if missing:
         data["missing"] = missing
@@ -706,10 +679,11 @@ def export_conversations(body: ExportConversationsInput) -> dict:
 def goto_contact_api(conversation_id: int, body: GotoContactInput) -> dict:
     token = capture_gui_session(request_epoch.get())
     self_ali_id = _ready()
-    conv = crm_get_conversation_detail(self_ali_id, conversation_id)
+    adapter = CRMAdapter()
+    conv = adapter.get_conversation_detail(self_ali_id, conversation_id)
     if conv is None:
         raise AppError("会话不存在", status_code=404)
-    user = crm_get_user_info(conv.contact_ali_id)
+    user = adapter.get_user_info(conv.contact_ali_id)
     login_id = (user.login_id if user and user.login_id else "").strip()
     if not login_id:
         raise AppError("联系人缺少 login_id，无法安全跳转客户端", status_code=503)

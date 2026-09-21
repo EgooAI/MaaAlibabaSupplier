@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from backend.app.shared.backend.im_db_middleware import IMDBMiddleware, get_im_db_middleware
+from backend.app.shared.backend.im_layout import looks_like_data_dir
 from backend.app.shared.backend.account_context import get_account_context
 from backend.app.shared.utils.app_config import get_configured_self_ali_id
 from backend.app.shared.utils.env import get_env_int, get_env_str, load_workdir_env
@@ -60,7 +61,7 @@ def check_data_dir_status() -> dict:
         return middleware.data_dir_status()
     path = get_account_context().data_dir
     return {
-        "state": ("ok" if IMDBMiddleware.looks_like_data_dir(Path(path)) else "invalid") if path else "unconfigured",
+        "state": ("ok" if looks_like_data_dir(Path(path)) else "invalid") if path else "unconfigured",
         "path": path, "source": "file" if path else "none", "detail": "",
     }
 

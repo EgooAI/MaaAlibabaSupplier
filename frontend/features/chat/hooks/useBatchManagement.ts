@@ -56,7 +56,7 @@ export function useBatchManagement(initialQuery: ConversationQuery = {}) {
     setExporting(true);
     try {
       const result = await backend.exportConversations({ conversationIds: visibleSelectedIds });
-      const archiveName = result.archive_name ?? result.archiveName;
+      const archiveName = result.archive_name;
       const isZip = Boolean(archiveName);
       const blob = isZip
         ? new Blob([Uint8Array.from(atob(result.content), (char) => char.charCodeAt(0))], { type: "application/zip" })
@@ -64,7 +64,7 @@ export function useBatchManagement(initialQuery: ConversationQuery = {}) {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = archiveName ?? result.file_name ?? result.fileName;
+      link.download = archiveName ?? "conversation-export.txt";
       link.click();
       URL.revokeObjectURL(url);
       message.success(isZip ? "已导出 ZIP 文件" : "已导出 TXT 文件");

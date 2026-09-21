@@ -5,10 +5,10 @@
 ## 代码结构
 
 - `shared` — 主后端，`app` 与 agent 共享。含以下子包：
-  - `backend/` — 业务逻辑：邮件（`email.py`）、IM 访问（`im_chat_db.py` / `im_db_middleware.py`）、系统状态（`status.py`）。
+  - `backend/` — 业务逻辑：邮件（`email.py`）、IM 访问（`im_chat_db.py` / `im_db_middleware.py`）、目录布局（`im_layout.py`）、系统状态（`status.py`）。
   - `agent/` — Chat/Agent 工具层：系统 Agent 身份常量（`system_agents.py`）、输入构造（`inputs.py`）、统一执行（`runner.py`，超限抛 `AgentRunError`）、翻译写入 CRM（`translation.py`，短哈希标记与三值协议）、回复建议（`suggestions.py`）、系统预设补种（`system_presets.py`）、输出归一化（`output_normalizers.py`）。
-  - `crm/` — 应用侧 CRM 适配层。`__init__.py` 是 API/业务稳定入口；`queries.py` 查询；`ingest.py` 刷新 IM→CRM；`sync.py` 写入 SDK；`translation_cache.py` 译文表读写（32 位 md5 主键，`get_translation()` 的空串为 NO_NEED 哨兵）。
-  - `utils/` — 环境变量、运行时 KV、IM 解密、日志等。
+  - `crm/` — 应用侧 CRM 适配层。`__init__.py` 是 API/业务稳定入口；`sync.py` 的 `CRMAdapter` 直接承担 SDK 读写（路由不再经过转发层）；`paths.py` 解析 CRM 库路径；`outbox_state.py` 是出站状态、转换表、可编辑字段与风险判定的单一来源；`translation_cache.py` 译文表读写（32 位 md5 主键，`get_translation()` 的空串为 NO_NEED 哨兵，`get_translations()` 批量复用同一 Manager）。
+  - `utils/` — 环境变量、IM 解密、WAL 处理、日志等。
   - `mitm/` — MITM 解析器与数据池。
 - `crm_sdk` — 通用 CRM SDK（仓库内直接引用，包化改造待做）；应用专属逻辑放 `shared/crm/` 与 `shared/agent/`，不要写入 SDK。
 - `agent` — Maa Custom Recognition/Action 入口。
@@ -44,8 +44,7 @@ APP -> 127.0.0.1:8084 Yak/Yakit MITM -> 127.0.0.1:8085 Python receiver -> parser
 部分池持久化到 `data/pools.db`。客户/会话/消息主数据经 `app.shared.crm` 读取，不直接依赖 pool。
 
 - **UserInfoPool** — 联系人合并缓存；
-- **ProductCardPool / GenericCardPool / InquiryCardPool** — `fetchcard` 卡片；
-- **InputPendingPool** — 旧的 SQLite 草稿池，目前聊天页不使用。聊天页草稿由浏览器按数据目录、卖家账号和会话分别保存；存储失败时保留内存副本并提示。
+- **ProductCardPool / GenericCardPool** — `fetchcard` 卡片；InquiryCard 解析后不再入池（产品当前无读取方）；
 
 会话中任意一方（买家/卖家/自动接待）的消息译文写入 CRM `Translate` 表（`shared/agent/translation.py` 经 `crm/translation_cache`），以 SDK 持久化表作为业务主存。
 
@@ -79,7 +78,7 @@ APP -> 127.0.0.1:8084 Yak/Yakit MITM -> 127.0.0.1:8085 Python receiver -> parser
 
 ### 出站任务与截图确认
 
-- `outbox_store.py` 在应用 CRM 中保存 `app_outbox` 和 `app_outbox_events`，不修改通用 SDK。幂等键按卖家、目录隔离；同键不同正文或目标会拒绝，状态转换使用版本 CAS 并保留审计。
+- `outbox_store.py` 在应用 CRM 中保存 `app_outbox` 和 `app_outbox_events`，不修改通用 SDK。幂等键按卖家、目录隔离；同键不同正文或目标会拒绝，状态转换使用版本 CAS 并保留审计（事件表只记录状态转换，字段更新不再写整行快照）。`phase` 列已删除，执行子阶段由状态与 `may_have_sent` 表达。
 - 发送接口返回持久化 outbox，而不是以 GUI 队列成功表示已发送。流程为排队、搜索、等待截图确认、排队执行、输入/发送、核查。仅填入任务最终为 `filled`；本地唯一匹配最终为 `observed`，没有平台确认或人工确认已发送的终态。
 - 当前仍使用联系人搜索及回车定位。搜索后必须在工作台查看完整 PNG 并二次确认联系人与不可变的提交文本；截图有效期 120 秒，绑定账号、窗口、任务版本和截图 ID。执行前复拍，全帧摘要变化即重新要求确认，不输入、不发送。光标、动画或新消息等变化也可能触发重新确认，这是保守策略。
 - 截图位于 `backend/data/outbox/`，只经当前账号的任务图片接口读取，响应禁止缓存。图片和审计是敏感业务资料；当前会保留在本机数据目录，不能视为公开调试素材。
@@ -103,8 +102,8 @@ APP -> 127.0.0.1:8084 Yak/Yakit MITM -> 127.0.0.1:8085 Python receiver -> parser
 
 UI/业务以 `app.shared.crm` 为稳定入口：
 
-- `get_self_info()` / `get_user_info()` / `list_conversations()` / `refresh_chat_data()`；
-- 翻译：`get_translation()` / `translation_cached()`；批量提交经 `translation_jobs.py` 异步执行（专用 worker 队列、按 50 条分片、按 epoch 取消，不持账号锁）。规则与对话上下文在 `build_translation_input`，LLM I/O 使用 ≤5 字符短哈希标记，落库仍按 32 位 md5 主键写入 `Translate`。
+- 读：`CRMAdapter.get_self_info()` / `get_user_info()` / `get_conversation_detail()`；会话列表与收件箱由 `inbox_queries` 在一致读事务中直接查询 SDK 表，路由只做投影；
+- 翻译：`get_translation()` / `translation_cached()` / `get_translations()`；批量提交经 `translation_jobs.py` 异步执行（专用 worker 队列、按 50 条分片、按 epoch 取消，不持账号锁）。规则与对话上下文在 `build_translation_input`，LLM I/O 使用 ≤5 字符短哈希标记，落库仍按 32 位 md5 主键写入 `Translate`。
 
 `get_self_info(self_ali_id=None)` 按显式身份或当前手选身份读取 CRM（首次 IM 同步即写入 self 行），无回退到其他卖家。卡片池与输入草稿仍属 UI/业务缓存，不并入 CRM core。重同步勿阻塞 MITM 或 IM 解密锁，宜后台队列。
 

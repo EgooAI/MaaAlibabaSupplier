@@ -89,7 +89,7 @@ def _conversation_context(conversation_id: int | None) -> list[tuple[str, str, s
     if conversation_id is None:
         return None
     from backend.app.shared.chat_format import conversation_transcript
-    from backend.app.shared.crm.queries import get_conversation_detail
+    from backend.app.shared.crm.sync import CRMAdapter
     from backend.app.shared.crm.views import CrmResolver
 
     try:
@@ -97,7 +97,7 @@ def _conversation_context(conversation_id: int | None) -> list[tuple[str, str, s
             context = get_account_context()
             if not context.self_ali_id:
                 return None
-            conv: Any = get_conversation_detail(context.self_ali_id, conversation_id)
+            conv: Any = CRMAdapter().get_conversation_detail(context.self_ali_id, conversation_id)
         if conv is None or not conv.messages:
             return None
         return conversation_transcript(conv.messages, CrmResolver(context.self_ali_id), limit=None)

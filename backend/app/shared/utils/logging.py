@@ -24,7 +24,7 @@ LOG_ARCHIVE_BYTES = LOG_MAX_BYTES * LOG_ARCHIVES
 _LABEL = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
 _ANSI_SGR = re.compile(r"\x1b\[[0-9;:]{0,64}m")
 _NATIVE_IDS = frozenset({"task_id", "job_id", "node_id", "reco_id", "action_id", "pid", "tid", "line"})
-_NATIVE_ENTRIES = frozenset({
+NATIVE_ENTRIES = frozenset({
     "ChatInput", "ChatInput_GoToInput", "ChatInput_SelectAll", "ChatInput_SelectAll_A",
     "ChatInput_SelectAll_ReleaseCtrl", "ChatInput_ClearText", "ChatInput_InputText",
     "ChatInput_SendOnly", "ChatInput_SendMessage", "ContactSearch", "ContactSearch_GoToSearch",
@@ -32,7 +32,7 @@ _NATIVE_ENTRIES = frozenset({
     "ContactSearch_PressEnter", "Diagnostics_ChatInput", "Diagnostics_ChatInput_Recognize",
     "Diagnostics_ContactSearch", "Diagnostics_ContactSearch_Recognize",
 })
-_ERROR_CATEGORIES = {
+ERROR_CATEGORIES = {
     "timeout": "timeout", "timed out": "timeout", "connection refused": "connection_refused",
     "connection reset": "connection_reset", "permission denied": "permission_denied",
     "recognition failed": "recognition_failed", "action failed": "action_failed",
@@ -117,11 +117,11 @@ def safe_fields(fields: dict) -> dict:
                     result[key] = basename
             continue
         if key == "error_category":
-            if type(value) is str and value in _ERROR_CATEGORIES.values():
+            if type(value) is str and value in ERROR_CATEGORIES.values():
                 result[key] = value
             continue
         if key == "node":
-            if type(value) is str and value in _NATIVE_ENTRIES:
+            if type(value) is str and value in NATIVE_ENTRIES:
                 result[key] = value
             continue
         if key not in _FIELDS:
@@ -176,12 +176,12 @@ def _native_context(tail: str) -> dict:
                 tail = tail[match.end():]
             continue
         match = re.match(r'(entry|node)\s*[:=]\s*"?([A-Za-z0-9_]{1,80})"?(?=\s|,|$)', candidate)
-        if (match and (item is None or match.end() == len(item)) and match[2] in _NATIVE_ENTRIES):
+        if (match and (item is None or match.end() == len(item)) and match[2] in NATIVE_ENTRIES):
             fields[match[1]] = match[2]
             if item is None:
                 tail = tail[match.end():]
             continue
-        for prefix, category in _ERROR_CATEGORIES.items():
+        for prefix, category in ERROR_CATEGORIES.items():
             if re.match(re.escape(prefix) + r"(?=\s|:|\.|$)", candidate, re.I):
                 fields["error_category"] = category
                 break

@@ -1,6 +1,7 @@
 "use client";
 
 import { Listy, Modal, Progress, Space, Spin, Tag, Typography } from "antd";
+import { EMPTY_TEXT } from "@/components/empty";
 import { stageLabel } from "@/domain/chat/chatModel";
 import type { ConversationAnalysis } from "@/types/chatCanonical";
 
@@ -48,7 +49,7 @@ export function ChatAnalysisModal({ open, analysis, focus = "intent", loading = 
     <Modal title={config.title} open={open} onCancel={onClose} footer={null} width={680}>
       {loading ? <div className="flex justify-center py-10"><Spin /></div> : null}
       {!loading && error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
-      {!loading && !error && !analysis ? <Typography.Text>当前会话暂无分析结果</Typography.Text> : null}
+      {!loading && !error && !analysis ? <Typography.Text>{EMPTY_TEXT.analysis}</Typography.Text> : null}
       {!loading && !error && analysis ? (
         <Space orientation="vertical" className="w-full">
           <Typography.Text strong>{config.primaryLabel}</Typography.Text>

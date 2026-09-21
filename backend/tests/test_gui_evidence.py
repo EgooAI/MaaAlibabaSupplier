@@ -174,8 +174,8 @@ def test_confirmation_stage_contract_and_persistence_barrier(capture, sdk, chang
         if comparison.needs_reconfirm:
             return comparison
         assert runner.chat_input("approved text")[0]
-        barrier.append(len(sdk.calls))  # Service persists may_have_sent before click_send.
-        return runner.click_send()
+        barrier.append(len(sdk.calls))  # Service persists may_have_sent before submit_send.
+        return runner.wait_send(runner.submit_send())
 
     result = gui_session.run_guarded(capture.token, confirm)
     if changed:
@@ -194,7 +194,7 @@ def test_confirmation_stage_contract_and_persistence_barrier(capture, sdk, chang
 def test_send_only_failure_is_not_replayed(sdk, outcome):
     token = connected_token()
     sdk.outcome = outcome
-    assert gui_session.run_guarded(token, runner.click_send)[0] is False
+    assert gui_session.run_guarded(token, lambda: runner.wait_send(runner.submit_send()))[0] is False
     assert sdk.calls == [("ChatInput_SendOnly", {"ChatInput_SendMessage": {"enabled": True}})]
 
 
@@ -233,10 +233,10 @@ def test_native_send_only_recognizes_button_without_typing(native_binding, butto
         height, width = pixels.shape[:2]
         controller.frame[620:620 + height, 650:650 + width] = pixels
     controller.click_ok = button != "click_failed"
-    # A preceding fill disables the send node; click_send must enable it explicitly.
+    # A preceding fill disables the send node; submit_send must enable it explicitly.
     assert native.resource.override_pipeline(runner.chat_input_override("unused", send=False))
     assert native.resource.override_pipeline({"ChatInput_SendOnly": {"timeout": 0}})
-    result = gui_session.run_guarded(token, runner.click_send)
+    result = gui_session.run_guarded(token, lambda: runner.wait_send(runner.submit_send()))
     assert result[0] is (button == "enabled")
     assert len(controller.clicks) == (1 if button in ("enabled", "click_failed") else 0)
     assert controller.keys == controller.texts == []

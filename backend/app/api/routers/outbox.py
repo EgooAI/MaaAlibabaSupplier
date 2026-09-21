@@ -9,32 +9,16 @@ from backend.app.api.account_scope import AccountRoute, OutboxObservationRoute, 
 from backend.app.api.envelope import AppError, ok, user_message
 from backend.app.shared.backend.account_context import get_account_context
 from backend.app.shared.backend.outbox_service import ScreenshotExpiredError, get_outbox_service
+from backend.app.shared.crm.outbox_state import REASON_CODES, SAFE_REASONS
 
 router = APIRouter(route_class=AccountRoute)
 observations = APIRouter(route_class=OutboxObservationRoute)
 
 _PUBLIC_FIELDS = (
     "id", "conversation_id", "contact_ali_id", "login_id", "content", "action",
-    "idempotency_key", "status", "version", "attempt", "phase", "may_have_sent",
+    "idempotency_key", "status", "version", "attempt", "may_have_sent",
     "created_at", "updated_at", "screenshot_id", "screenshot_at", "matched_message_id",
 )
-_REASON_CODES = {
-    "cancelled_by_user", "screenshot_expired_or_changed", "shutdown_before_execution",
-    "shutdown_execution_uncertain", "restart_execution_uncertain", "restart_before_execution",
-    "restart_confirmation_lost", "baseline_invalid", "task_not_verifiable", "snapshot_invalid",
-    "snapshot_scope_or_time_mismatch", "message_not_observed", "multiple_candidate_messages",
-    "message_already_claimed", "ambiguous_send_attempts", "local_message_observed",
-}
-_SAFE_REASONS = {
-    "Select a seller before operating the client.",
-    "GUI session expired; reconnect and retry.",
-    "Account context changed; reload and retry.",
-    "Client window changed; reconnect and retry.",
-    "Client connection lost; reconnect and retry.",
-    "Client is not connected; connect first.",
-    "Outbox service is stopping",
-    "Source baseline unavailable; no text was entered",
-}
 
 
 def public_task(record: dict) -> dict:
@@ -42,8 +26,8 @@ def public_task(record: dict) -> dict:
     result = {name: record[name] for name in _PUBLIC_FIELDS}
     reason = record.get("reason")
     result["reason"] = (
-        reason if reason is None or reason in _REASON_CODES else
-        user_message(reason) if reason in _SAFE_REASONS else "outbox_operation_failed"
+        reason if reason is None or reason in REASON_CODES else
+        user_message(reason) if reason in SAFE_REASONS else "outbox_operation_failed"
     )
     proof = record.get("evidence")
     result["evidence"] = None

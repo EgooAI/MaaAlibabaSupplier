@@ -186,7 +186,7 @@ describe("inbox workspace", () => {
     await act(async () => batch.changePage(50));
     expect(batch.selectedIds).toEqual([]);
     await act(async () => batch.selectAll());
-    mocks.backend.exportConversations.mockResolvedValue({ file_name: "test.txt", content: "hello" });
+    mocks.backend.exportConversations.mockResolvedValue({ archive_name: "test.zip", content: "hello" });
     vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test");
     vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
     await act(async () => batch.exportSelected());

@@ -3,6 +3,7 @@
 import { ExperimentOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Col, Empty, Row, Space, Typography } from "antd";
 import { AppTable } from "@/components/AppTable";
+import { EMPTY_TEXT } from "@/components/empty";
 import { StatusTag } from "@/components/StatusTag";
 import { formatDateTime } from "@/domain/time";
 import type { SourceSyncStatus } from "@/types/connection";
@@ -24,7 +25,7 @@ export function StatusPage() {
       <Space orientation="vertical" size="large" className="w-full">
         {failure}
         <Card loading={loading}>
-          {!loading ? <Empty description="暂无状态数据" /> : null}
+          {!loading ? <Empty description={EMPTY_TEXT.status} /> : null}
         </Card>
       </Space>
     );
@@ -68,7 +69,7 @@ export function StatusPage() {
             { title: "任务消息", dataIndex: "message", minWidth: 220 },
             { title: "结果", dataIndex: "result", minWidth: 220, render: (value: string | undefined, task: TaskItem) => value ?? (task.status === "succeeded" || task.status === "failed" ? "—" : "未完成") },
           ]}
-          locale={{ emptyText: "暂无任务" }}
+          locale={{ emptyText: EMPTY_TEXT.tasks }}
         />
       </Card>
     </Space>

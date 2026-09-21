@@ -9,12 +9,13 @@ from backend.app.api.routers.conversations import (
     _build_aggregate,
     _build_summary,
     _minimal_customer_view,
-    _preload_conversation_maps,
 )
 from backend.app.shared.backend.im_chat_db import ContactConv, MessageRow
 from backend.app.shared.crm.identities import self_sender_id
 from backend.app.shared.crm.sync import CRMAdapter
+from backend.app.shared.crm.views import CrmConversationDigest
 from backend.app.shared.mitm.pool import SelfInfo, UserInfo
+from backend.tests.crm_helpers import conversations_for
 
 SELF_ALI_ID = "10001"
 CONTACT_ALI_ID = "20002"
@@ -40,7 +41,6 @@ class ConversationSummaryTestCase(unittest.TestCase):
         self.temp_dir = TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "crm.sqlite"
         self.pools_path = Path(self.temp_dir.name) / "pools.db"
-        # Router-level helpers build their own default-path adapter; point it here.
         self.enterContext(mock.patch.dict(os.environ, {
             "MAA_POOLS_DB_PATH": str(self.pools_path),
             "MAA_CRM_DB_PATH": str(self.db_path),
@@ -63,11 +63,31 @@ class ConversationSummaryTestCase(unittest.TestCase):
             last_content_label="system notice",
         )
         self.adapter.sync_conversations([conv], self.self_info)
-        self.convs = self.adapter.list_conversations(SELF_ALI_ID)
-        self.assertEqual(len(self.convs), 1)
-        self.digests = self.adapter.list_conversation_digests(SELF_ALI_ID)
-        self.assertEqual(len(self.digests), 1)
-        self.preloaded = _preload_conversation_maps(self.adapter, self.digests)
+        self.conv = conversations_for(self.adapter, SELF_ALI_ID)[0]
+        self.digest = CrmConversationDigest(
+            contact_ali_id=self.conv.contact_ali_id,
+            sid=self.conv.sid,
+            key=self.conv.key,
+            participants=self.conv.participants,
+            latest_created_at=self.conv.last_created_at,
+            latest_content_label=self.conv.last_content_label,
+            latest_is_card=False,
+            dialogue_count=sum(1 for message in self.conv.messages if not message.is_system),
+        )
+        accounts: dict = {}
+        customers: dict = {}
+        for aid in self.conv.participants:
+            account = self.adapter.accounts.get_account(aid)
+            if account is None:
+                continue
+            accounts[aid] = account
+            customer = self.adapter.customers.get_customer(account.cid)
+            if customer is not None:
+                customers[account.cid] = customer
+        self.preloaded = {
+            "accounts": accounts, "customers": customers,
+            "users": {CONTACT_ALI_ID: get_user_info_pool().get(CONTACT_ALI_ID)},
+        }
 
     def tearDown(self) -> None:
         self.adapter.engine.dispose()
@@ -77,19 +97,16 @@ class ConversationSummaryTestCase(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_digest_carries_latest_pointer_and_counts(self) -> None:
-        digest = self.digests[0]
-        conv = self.convs[0]
-        self.assertEqual(digest.sid, conv.sid)
-        self.assertEqual(digest.key, conv.key)
-        self.assertEqual(digest.contact_ali_id, CONTACT_ALI_ID)
-        self.assertEqual(digest.latest_content_label, "system notice")
-        self.assertFalse(digest.latest_is_card)
-        self.assertEqual(digest.dialogue_count, 2)
+        self.assertEqual(self.digest.sid, self.conv.sid)
+        self.assertEqual(self.digest.key, self.conv.key)
+        self.assertEqual(self.digest.contact_ali_id, CONTACT_ALI_ID)
+        self.assertEqual(self.digest.latest_content_label, "system notice")
+        self.assertFalse(self.digest.latest_is_card)
+        self.assertEqual(self.digest.dialogue_count, 2)
 
     def test_summary_matches_aggregate_contract(self) -> None:
-        conv = self.convs[0]
-        full = _build_aggregate(self.adapter, SELF_ALI_ID, conv)
-        summary = _build_summary(self.digests[0], self.preloaded)
+        full = _build_aggregate(self.adapter, SELF_ALI_ID, self.conv)
+        summary = _build_summary(self.digest, self.preloaded)
         self.assertEqual(summary["customer_view"]["login_id"], "buyer")
         self.assertEqual(set(summary), set(full))
         for key in ("sid", "name", "participants", "latest", "unread_count",
@@ -100,16 +117,10 @@ class ConversationSummaryTestCase(unittest.TestCase):
         self.assertEqual(summary["platforms"], [{"pid": "alibaba_icbu", "name": "Alibaba"}])
 
     def test_minimal_view_covers_full_key_set(self) -> None:
-        conv = self.convs[0]
-        full = _build_aggregate(self.adapter, SELF_ALI_ID, conv)
+        full = _build_aggregate(self.adapter, SELF_ALI_ID, self.conv)
         assert full["customer_view"] is not None
         self.assertEqual(set(_minimal_customer_view("ghost")), set(full["customer_view"]))
         self.assertIsNone(_assemble_customer_view("ghost", [], [], None))
-
-    def test_empty_conversation_list_preloads_nothing(self) -> None:
-        preloaded = _preload_conversation_maps(self.adapter, [])
-        self.assertEqual(preloaded, {"accounts": {}, "customers": {}, "users": {}})
-        self.assertEqual(self.adapter.list_conversation_digests("nope"), [])
 
 
 if __name__ == "__main__":

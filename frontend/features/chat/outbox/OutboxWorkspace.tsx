@@ -53,7 +53,7 @@ export function OutboxWorkspace({ conversation, ...composer }: Omit<ChatComposer
       </div>)}
       {outbox.tasks.map((task) => <article key={task.id} className="my-2 border-t border-slate-200 pt-2" aria-label={`任务 ${task.id}`}>
         <Space wrap><Tag>{outboxLabels[task.status]}</Tag><Typography.Text>{task.action === "test" ? "仅填入" : "发送"} · {task.login_id} · 第 {task.attempt} 次</Typography.Text></Space>
-        <div className="text-xs text-slate-500">{new Date(task.created_at * 1000).toLocaleString()} · 阶段：{task.phase || task.status}</div>
+        <div className="text-xs text-slate-500">{new Date(task.created_at * 1000).toLocaleString()}</div>
         <pre className="whitespace-pre-wrap break-words">{task.content}</pre>
         {task.reason && <Typography.Paragraph>{task.reason}</Typography.Paragraph>}
         {task.status === "observed" && <Typography.Paragraph>仅在本地数据中发现匹配消息，不代表平台送达或对方已收到。</Typography.Paragraph>}

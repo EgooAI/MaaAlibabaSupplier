@@ -366,17 +366,3 @@ def wait_send(job: TaskJob) -> tuple[bool, str]:
         except Exception as exc:
             logger.opt(exception=True).error("MaaFW send wait failed")
             return False, str(exc)
-
-
-def click_send() -> tuple[bool, str]:
-    """Synchronous guarded send for callers without a separate admission lock."""
-    try:
-        return wait_send(submit_send())
-    except Exception as exc:
-        logger.opt(exception=True).error("MaaFW send submission failed")
-        return False, str(exc)
-
-
-def chat_send(text: str) -> tuple[bool, str]:
-    """Type text and click send; success does not confirm platform delivery."""
-    return run_node("ChatInput", chat_input_override(text, send=True))

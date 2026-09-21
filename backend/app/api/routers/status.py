@@ -13,8 +13,8 @@ from backend.app.api.envelope import AppError, ok, user_message
 from backend.app.api.account_scope import AccountRoute, request_epoch, require_epoch
 from backend.app.shared.backend.account_context import account_lock, get_account_context
 from backend.app.shared.backend.im_db_middleware import IMDBMiddleware
+from backend.app.shared.backend.im_layout import encrypted_db_path
 from backend.app.shared.crm.account_keys import get_key_source
-from backend.app.shared.crm.identities import self_sender_id
 from backend.app.shared.backend.gui_session import get_client_status
 from backend.app.shared.backend import status as status_mod
 from backend.app.shared.backend.maafw_runner import run_node
@@ -114,8 +114,8 @@ def _user_status() -> dict:
     # resolve_encrypted_db_path still takes the GUI account lock. Observing
     # existence only needs the captured directory and selected seller.
     db_exists = bool(context.data_dir and context.self_ali_id and (
-        Path(context.data_dir) / "IMServiceDir" / "MessageSDK" / self_sender_id(context.self_ali_id) / "database" / "im.sqlite"
-    ).is_file())
+        encrypted_db_path(Path(context.data_dir), context.self_ali_id).is_file()
+    ))
     if get_account_context() != context:
         raise AppError("读取身份状态期间账号已切换，请刷新后重试。", status_code=409)
     return {

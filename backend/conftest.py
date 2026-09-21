@@ -98,7 +98,7 @@ def _cleanup_runtime():
 
     pools = sys.modules.get("backend.app.shared.mitm.pool")
     if pools is not None:
-        for name in ("UserInfoPool", "ProductCardPool", "GenericCardPool", "InquiryCardPool", "InputPendingPool"):
+        for name in ("UserInfoPool", "ProductCardPool", "GenericCardPool"):
             cls = getattr(pools, name)
             if cls._instance is not None:
                 with cls._instance._lock:

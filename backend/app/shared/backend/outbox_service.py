@@ -20,6 +20,12 @@ from backend.app.shared.backend import gui_session, maafw_runner as runner
 from backend.app.shared.backend.account_context import AccountContext, get_account_context
 from backend.app.shared.backend.gui_evidence import ClientFrame, compare_frame
 from backend.app.shared.crm.outbox_store import OutboxConflict, OutboxStore
+from backend.app.shared.crm.outbox_state import (
+    ACTIVE_COMPENSATABLE_STATUSES,
+    NON_EXECUTING_STATUSES,
+    is_compensatable,
+    is_gui_risk,
+)
 from backend.app.shared.utils.settings import resolve_backend_root
 from backend.app.task_queue import get_task_queue
 from backend.app.shared.utils.log_context import bind_log_context, capture_log_context, log_event
@@ -128,7 +134,6 @@ class OutboxService:
     def submit(
         self, context: AccountContext, conversation_id: int, contact_ali_id: str,
         login_id: str, content: str, action: str, idempotency_key: str,
-        *, draft_version: int | None = None,
     ) -> dict:
         self.start()
         with self._condition:
@@ -136,7 +141,6 @@ class OutboxService:
             record, created = self.store.create(
                 **self._scope(context), conversation_id=conversation_id, contact_ali_id=contact_ali_id,
                 login_id=login_id, content=content, action=action, idempotency_key=idempotency_key,
-                draft_version=draft_version,
                 origin_request_id=capture_log_context().get("request_id"), origin_account_epoch=context.epoch,
             )
         if not created:
@@ -243,7 +247,7 @@ class OutboxService:
             log_event("outbox.transition", outbox_id=record["id"], attempt=record["attempt"],
                       origin_request_id=record.get("origin_request_id"),
                       origin_account_epoch=record.get("origin_account_epoch"),
-                      status=status, phase=current["phase"], version=current["version"])
+                      status=status, version=current["version"])
         return current
 
     def _update(self, record: dict, **changes) -> dict:
@@ -264,7 +268,7 @@ class OutboxService:
             pending = self._pending_terminal_writes.get(record["id"])
             if pending is None or (record["attempt"], record["version"]) >= (pending["attempt"], pending["version"]):
                 self._pending_terminal_writes[record["id"]] = {
-                    name: record[name] for name in ("id", "seller", "data_dir", "attempt", "version", "status", "phase")
+                    name: record[name] for name in ("id", "seller", "data_dir", "attempt", "version", "status")
                 } | {"reason": reason}
             binding = self._attempts.get(record["id"])
             if binding is not None and binding.attempt == record["attempt"]:
@@ -280,11 +284,11 @@ class OutboxService:
                     current = self.store.get(task_id, seller=pending["seller"], data_dir=pending["data_dir"])
                     if (current is not None and current["attempt"] == pending["attempt"]
                             and current["version"] == pending["version"]
-                            and current["status"] in ("queued", "navigating", "awaiting_confirmation", "queued_send", "running")):
-                        risky = current["status"] in ("navigating", "running")
+                            and is_compensatable(current["status"])):
+                        risky = is_gui_risk(current["status"])
                         self._move(
                             current, "unknown" if risky else "failed", reason=pending["reason"],
-                            evidence={"phase": pending["phase"], "detail": pending["reason"]}, **_CLEAR_SCREENSHOT,
+                            evidence={"status": pending["status"], "detail": pending["reason"]}, **_CLEAR_SCREENSHOT,
                         )
                 except OutboxConflict:
                     # A newer version/attempt or a durable outcome supersedes this write.
@@ -373,7 +377,7 @@ class OutboxService:
                     if baseline is not None:
                         baseline["send_started_at"] = time.time()
                         baseline["sent_at"] = baseline["send_started_at"]
-                    record = self._move(record, "running", phase="input", baseline=baseline)
+                    record = self._move(record, "running", baseline=baseline)
                 ok, reason = runner.chat_input(record["content"])
                 if not ok:
                     raise RuntimeError(reason)
@@ -383,7 +387,7 @@ class OutboxService:
                         self._move(record, "filled", **_CLEAR_SCREENSHOT)
                         return True, "Text filled; no send click requested"
                     # Durable uncertainty barrier: a crash after this point cannot replay.
-                    record = self._update(record, may_have_sent=True, phase="click")
+                    record = self._update(record, may_have_sent=True)
                     self._accepting()
                     # stop() must acquire this same lock before it can return. Only
                     # native submission belongs here; never hold it during job.wait().
@@ -492,7 +496,7 @@ class OutboxService:
                         continue
                     try:
                         record = self.get(binding.context, task_id)
-                        if record and record["status"] in ("queued", "awaiting_confirmation", "queued_send"):
+                        if record and record["status"] in NON_EXECUTING_STATUSES:
                             self._fail_if_current(binding.context, record, "shutdown_before_execution")
                     except Exception:
                         logger.exception("Outbox shutdown persistence failed for {}; startup will recover it", task_id)
@@ -500,8 +504,8 @@ class OutboxService:
                     self._condition.wait(max(0, deadline - time.monotonic()))
                 for record in tuple(self._active.values()):
                     try:
-                        if record["status"] in ("queued", "navigating", "queued_send", "running"):
-                            risky = record["status"] in ("navigating", "running")
+                        if record["status"] in ACTIVE_COMPENSATABLE_STATUSES:
+                            risky = is_gui_risk(record["status"])
                             self._move(record, "unknown" if risky else "failed",
                                        reason="shutdown_execution_uncertain", **_CLEAR_SCREENSHOT)
                     except OutboxConflict:

@@ -32,7 +32,6 @@ export interface SendMessageInput {
   content: string;
   action: "test" | "send";
   idempotency_key: string;
-  draft_version?: number;
 }
 
 export interface OutboxTask {
@@ -45,7 +44,6 @@ export interface OutboxTask {
   status: "queued" | "navigating" | "awaiting_confirmation" | "queued_send" | "running" | "verifying" | "observed" | "filled" | "failed" | "unknown" | "cancelled";
   version: number;
   attempt: number;
-  phase: string;
   may_have_sent: boolean;
   reason: string | null;
   created_at: number;
@@ -65,12 +63,9 @@ export interface ExportConversationsInput {
   conversationIds: string[];
 }
 export interface ExportConversationsResult {
-  file_name: string;
+  archive_name: string | null;
   content: string;
-  archive_name?: string;
   missing?: string[];
-  fileName?: string;
-  archiveName?: string;
 }
 
 export interface ConversationRevision extends SourceSyncStatus {

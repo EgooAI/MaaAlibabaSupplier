@@ -3,11 +3,12 @@
 import { RobotOutlined, ShopOutlined } from "@ant-design/icons";
 import { Avatar, Card, Space, Typography } from "antd";
 import { renderMessageHtml } from "@/domain/chat/messageHtml";
+import { EMPTY_TEXT } from "@/components/empty";
 import type { AgentTestSession } from "@/types/agent";
 
 export function SessionMessages({ session }: { session: AgentTestSession }) {
   if (!session.messages.length) {
-    return <Typography.Text type="secondary">暂无消息</Typography.Text>;
+    return <Typography.Text type="secondary">{EMPTY_TEXT.messages}</Typography.Text>;
   }
 
   return (

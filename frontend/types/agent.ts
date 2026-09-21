@@ -56,11 +56,6 @@ export interface LlmLevelConfig {
   system_prompt: string;
   context: number;
   max_tool_rounds: number | null;
-  baseUrl?: string;
-  apiKey?: string;
-  modelName?: string;
-  systemPrompt?: string;
-  maxToolRounds?: number | null;
 }
 
 export interface AgentConfig {

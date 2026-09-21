@@ -136,7 +136,7 @@ def test_uncertain_native_completion_defers_rotation_but_result_error_does_not(s
         return Job()
 
     monkeypatch.setattr(runner._tasker, "post_task", post)
-    assert not gui_session.run_guarded(token, runner.click_send)[0]
+    assert not gui_session.run_guarded(token, lambda: runner.wait_send(runner.submit_send()))[0]
     monkeypatch.setattr(native_logs, "LOG_MAX_BYTES", 1)
     assert gui_session.run_guarded(token, lambda: True) is True
     observed = runner.get_native_log_status()
@@ -179,7 +179,7 @@ def test_uncertain_terminal_observation_does_not_skip_wait_and_defers_rotation(s
 
     job = Job(detail=SimpleNamespace(status=SimpleNamespace(succeeded=True)))
     monkeypatch.setattr(runner._tasker, "post_task", lambda *args: job)
-    assert gui_session.run_guarded(token, runner.click_send)[0]
+    assert gui_session.run_guarded(token, lambda: runner.wait_send(runner.submit_send()))[0]
     monkeypatch.setattr(native_logs, "LOG_MAX_BYTES", 1)
     assert gui_session.run_guarded(token, lambda: True) is True
     assert calls == ["wait"]
@@ -214,7 +214,7 @@ def test_policy_and_event_failure_cannot_skip_native_wait_or_replay(sdk, monkeyp
         monkeypatch.setattr(runner._native_logs, "status", fail)
     else:
         monkeypatch.setattr(runner, "log_event", fail)
-    assert gui_session.run_guarded(token, runner.click_send)[0]
+    assert gui_session.run_guarded(token, lambda: runner.wait_send(runner.submit_send()))[0]
     assert calls == ["post", "wait"]
     if failure != "event":
         assert "native_log_policy_unavailable" in runner.get_native_log_status()["warnings"]

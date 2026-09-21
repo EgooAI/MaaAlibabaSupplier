@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import { avatarColorOf, avatarInitialOf } from "@/domain/chat/avatarModel";
 import { conversationTimeLabel, dialogueCountOf, groupConversations } from "@/domain/chat/chatModel";
 import { InboxBadges } from "./InboxBadges";
+import { EMPTY_TEXT } from "@/components/empty";
 import type { ConversationGroupMode } from "@/domain/chat/chatModel";
 import type { Conversation } from "@/types/chatCanonical";
 
@@ -99,7 +100,7 @@ export function ConversationList({
             </div>
           </div>
         );
-      }) : <Empty description="暂无会话" />}
+      }) : <Empty description={EMPTY_TEXT.conversations} />}
     </Space>
   );
 }

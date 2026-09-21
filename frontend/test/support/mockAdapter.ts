@@ -253,7 +253,7 @@ export const mockBackend: OperationsBackend = {
     const task: OutboxTask = {
       id: crypto.randomUUID(), conversation_id: Number(conversationId), contact_ali_id: conversation.customer.aliId ?? "",
       login_id: conversation.customer.loginId ?? "", content, action, idempotency_key, status: "queued", version: 1,
-      attempt: 1, phase: "search", may_have_sent: false, reason: null, created_at: Date.now() / 1000, updated_at: Date.now() / 1000,
+      attempt: 1, may_have_sent: false, reason: null, created_at: Date.now() / 1000, updated_at: Date.now() / 1000,
       screenshot_id: null, screenshot_at: null, matched_message_id: null,
     };
     outboxStore.set(task.id, { scope: outboxScope(), task });

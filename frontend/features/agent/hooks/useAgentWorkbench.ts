@@ -15,8 +15,6 @@ function useAgentWorkbenchController() {
   const [loading, setLoading] = useState(true);
   const [mutatingIds, setMutatingIds] = useState<Set<string>>(new Set());
   const mutatingRef = useRef<Set<string>>(new Set());
-  // Keep single-id compat for existing callers (first mutating id).
-  const agentMutationId = mutatingIds.size ? [...mutatingIds][0] : undefined;
 
   const beginMutation = (id: string) => {
     if (mutatingRef.current.has(id)) return false;
@@ -178,7 +176,7 @@ function useAgentWorkbenchController() {
     });
   }
 
-  return { state, loading, saveLlmLevel, toggleAgent, saveAgent, createAgent, deleteAgent, resetSystemAgent, agentMutationId, mutatingIds, isAgentMutating: (id: string) => mutatingIds.has(id) };
+  return { state, loading, saveLlmLevel, toggleAgent, saveAgent, createAgent, deleteAgent, resetSystemAgent, mutatingIds, isAgentMutating: (id: string) => mutatingIds.has(id) };
 }
 
 type AgentWorkbench = ReturnType<typeof useAgentWorkbenchController>;

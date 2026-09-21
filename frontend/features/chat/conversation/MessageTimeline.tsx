@@ -4,6 +4,7 @@ import { InfoCircleOutlined, LoadingOutlined, ReloadOutlined, RobotOutlined, Sho
 import { Avatar, Button, Tooltip } from "antd";
 import { BusinessCardView } from "@/components/BusinessCardView";
 import { avatarColorOf, avatarInitialOf } from "@/domain/chat/avatarModel";
+import { isTranslatableMessage } from "@/domain/chat/chatModel";
 import { renderMessageHtml } from "@/domain/chat/messageHtml";
 import type { ChatMessage } from "@/types/chatCanonical";
 
@@ -34,7 +35,7 @@ export function MessageTimeline({
         const isSelfSide = message.role === "seller" || message.role === "system";
         const isSystem = message.role === "system" || message.role === "unknown";
         const card = message.card;
-        const canTranslate = message.role !== "card" && !card && Boolean(message.content.trim());
+        const canTranslate = isTranslatableMessage(message);
         const translation = canTranslate ? message.translatedContent : undefined;
         const pending = canTranslate && Boolean(pendingIds?.has(message.id));
         const failed = canTranslate && Boolean(failedIds?.has(message.id));

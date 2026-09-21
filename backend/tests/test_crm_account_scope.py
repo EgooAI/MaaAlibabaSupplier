@@ -1,17 +1,16 @@
 import sqlite3
-from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import closing
 from threading import Event
 
 import pytest
 from Crypto.Cipher import AES
 
-from backend.app.shared.backend import account_context
 from backend.app.shared.backend.im_chat_db import ContactConv, MessageRow, build_conversations, open_readonly
-from backend.app.shared.crm import ingest, queries, sync
+from backend.app.shared.crm import sync
 from backend.app.shared.crm.identities import message_external_id
 from backend.app.shared.mitm.pool import SelfInfo
-from backend.tests.test_im_db_isolation import KEY, committed
+from backend.tests.crm_helpers import conversations_for
+from backend.tests.test_im_db_isolation import KEY
 
 
 def conversation(seller, text="hello"):
@@ -31,7 +30,7 @@ def test_messages_with_same_source_id_survive_across_sellers(tmp_path):
     assert set(messages) == {message_external_id(seller, "msg_table", "1") for seller in ("A", "B")}
     assert len({message.sid for message in messages.values()}) == 2
     for seller, text in (("A", "A updated"), ("B", "for B")):
-        assert adapter.list_conversations(seller)[0].messages[0].content_label == text
+        assert conversations_for(adapter, seller)[0].messages[0].content_label == text
 
 
 def test_self_query_follows_selection_and_explicit_identity(tmp_path, monkeypatch):
@@ -48,13 +47,13 @@ def test_self_query_follows_selection_and_explicit_identity(tmp_path, monkeypatc
     assert adapter.get_self_info().ali_id == "A"
     selected["id"] = "B"
     assert adapter.get_self_info().ali_id == "B"
-    assert queries.get_self_info().ali_id == "B"
-    assert queries.get_self_info("A").ali_id == "A"
+    assert sync.CRMAdapter().get_self_info().ali_id == "B"
+    assert sync.CRMAdapter().get_self_info("A").ali_id == "A"
     assert adapter.get_self_info("missing") is None
     assert adapter.get_self_info("seller-A") is None
     assert adapter.get_self_info("") is None
     selected["id"] = ""
-    assert queries.get_self_info() is None
+    assert sync.CRMAdapter().get_self_info() is None
 
 
 def source_database(path):
@@ -101,90 +100,13 @@ def test_queued_sync_captures_source_and_self(tmp_path, monkeypatch):
     adapter = sync.CRMAdapter(target)
     assert adapter.get_self_info("A").ali_id == "A"
     assert adapter.get_self_info("B") is None
-    assert len(adapter.list_conversations("A")[0].messages) == 2
-    assert adapter.list_conversations("B") == []
+    assert len(conversations_for(adapter, "A")[0].messages) == 2
+    assert conversations_for(adapter, "B") == []
     with pytest.raises(ValueError, match="matching selected seller"):
         sync.sync_im_database(source, "A", SelfInfo(ali_id="B"))
 
 
-@pytest.fixture
-def selected_context(monkeypatch):
-    config = {"self_ali_id": "A", "alibaba_data_dir": "temporary-source"}
-    monkeypatch.setattr(account_context, "read_app_config", lambda: dict(config))
-    monkeypatch.setattr(account_context, "_context", None)
-    return config
-
-
-def install_middleware(monkeypatch, submit):
-    from backend.app.shared.backend import im_db_middleware
-
-    class Middleware:
-        def data_dir_status(self):
-            return {"state": "ok"}
-
-        def get_connection(self):
-            return object()
-
-        def sync_to_crm(self, wait=False):
-            assert wait is False
-            return submit()
-
-        def wait_for_sync(self, future):
-            return future.result(timeout=5)
-
-    monkeypatch.setattr(im_db_middleware, "get_im_db_middleware", Middleware)
-
-
-def test_ingest_returns_selected_identity_and_rejects_unselected(selected_context, monkeypatch):
-    future = Future()
-    future.set_result(committed(1))
-    install_middleware(monkeypatch, lambda: future)
-    requested = []
-    monkeypatch.setattr(ingest, "get_self_info", lambda seller: requested.append(seller) or SelfInfo(ali_id=seller))
-    assert ingest.refresh_chat_data().self_ali_id == "A"
-    selected_context["self_ali_id"] = "B"
-    assert ingest.refresh_chat_data(wait=True).self_ali_id == "B"
-    assert requested == ["A", "B"]
-    selected_context["self_ali_id"] = ""
-    state = ingest.refresh_chat_data()
-    assert not state.ready and state.reason == ingest.REASON_SELF_IDENTITY_NOT_SELECTED
-
-
-@pytest.mark.parametrize("change", ["seller", "directory", "epoch", "none"])
-def test_ingest_wait_releases_lock_and_rechecks_context(selected_context, monkeypatch, change):
-    def complete():
-        acquired = account_context.account_lock.acquire(timeout=2)
-        assert acquired, "ingest waited while holding account_lock"
-        try:
-            if change == "seller":
-                selected_context["self_ali_id"] = "B"
-            elif change == "directory":
-                selected_context["alibaba_data_dir"] = "other-temporary-source"
-            elif change == "epoch":
-                account_context.invalidate_account_context()
-        finally:
-            account_context.account_lock.release()
-        return committed(1)
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        install_middleware(monkeypatch, lambda: executor.submit(complete))
-        monkeypatch.setattr(ingest, "get_self_info", lambda seller: SelfInfo(ali_id=seller))
-        state = ingest.refresh_chat_data(wait=True)
-    assert state.ready is (change == "none")
-    if change != "none":
-        assert state.reason == ingest.REASON_ACCOUNT_CHANGED
-        assert state.self_ali_id == ""
-
-
-def test_ingest_propagates_sync_failure(selected_context, monkeypatch):
-    future = Future()
-    future.set_exception(RuntimeError("migration blocked"))
-    install_middleware(monkeypatch, lambda: future)
-    with pytest.raises(RuntimeError, match="migration blocked"):
-        ingest.refresh_chat_data(wait=True)
-
-
-def test_ingest_waits_for_actual_middleware_future(tmp_path, monkeypatch):
+def test_middleware_sync_commits_source_and_reads_conversations(tmp_path, monkeypatch):
     from backend.app.shared.backend import im_db_middleware
     from backend.app.shared.crm.account_keys import save_key
 
@@ -198,14 +120,13 @@ def test_ingest_waits_for_actual_middleware_future(tmp_path, monkeypatch):
     middleware.set_data_dir(str(client))
     middleware.set_self_ali_id("A")
     save_key("A", KEY, "manual")
-    assert not ingest.refresh_chat_data(wait=True).ready
+    assert not middleware.sync_status()["ready"]
     assert middleware.retry_connection() is not None
-    state = ingest.refresh_chat_data(wait=True)
-    assert state.ready and state.self_ali_id == "A"
     future = middleware.sync_to_crm()
-    assert future.done()
+    assert future is not None
     result = middleware.wait_for_sync(future)
     assert result["revision"] == 1
     assert result["applied_source_revision"] == middleware.sync_status()["source_revision"]
     assert result["inserted"] == 2
-    assert len(queries.list_conversations("A")[0].messages) == 2
+    assert len(conversations_for(sync.CRMAdapter(), "A")[0].messages) == 2
+    assert middleware.sync_status()["ready"]

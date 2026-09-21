@@ -150,7 +150,7 @@ def test_initialization_failure_can_recover(sdk, failure):
 ])
 def test_rejects_missing_partial_or_ambiguous_windows_and_recovers(sdk, windows):
     sdk.windows = windows
-    assert not run_connected(lambda: runner.chat_send("first"))[0]
+    assert not run_connected(lambda: runner.chat_input("first"))[0]
     assert not sdk.controllers
     assert not sdk.calls
 
@@ -201,7 +201,7 @@ def test_cached_window_is_rechecked(sdk, windows):
     token = connected_token()
     assert gui_session.run_guarded(token, lambda: runner.chat_input("first"))[0]
     sdk.windows = windows
-    assert not gui_session.run_guarded(token, lambda: runner.chat_send("second"))[0]
+    assert not gui_session.run_guarded(token, lambda: runner.chat_input("second"))[0]
     assert len(sdk.calls) == 1
     assert runner._tasker is None
 
@@ -213,7 +213,7 @@ def test_cached_window_is_rechecked(sdk, windows):
 @pytest.mark.parametrize("outcome", [False, None, RuntimeError("result unavailable")])
 def test_failed_task_is_not_replayed(sdk, outcome):
     sdk.outcome = outcome
-    assert not run_connected(lambda: runner.chat_send("first"))[0]
+    assert not run_connected(lambda: runner.chat_input("first"))[0]
     assert len(sdk.calls) == 1
     assert len(sdk.taskers) == 1
 
@@ -234,11 +234,15 @@ def assert_chat_calls(calls):
         assert override["ChatInput_SendMessage"]["enabled"] is send
 
 
+def _send_override(text: str):
+    return runner.run_node("ChatInput", runner.chat_input_override(text, send=True))
+
+
 def test_send_test_send_overrides_both_branches(sdk):
     token = connected_token()
-    assert gui_session.run_guarded(token, lambda: runner.chat_send("first"))[0]
+    assert gui_session.run_guarded(token, lambda: _send_override("first"))[0]
     assert gui_session.run_guarded(token, lambda: runner.chat_input("test"))[0]
-    assert gui_session.run_guarded(token, lambda: runner.chat_send("last"))[0]
+    assert gui_session.run_guarded(token, lambda: _send_override("last"))[0]
     assert_chat_calls(sdk.calls)
     assert len(sdk.taskers) == 1
 

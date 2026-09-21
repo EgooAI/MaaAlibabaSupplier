@@ -11,6 +11,7 @@ from backend.app.api.main import create_app
 from backend.tests.auth_client import authenticate
 from backend.app.api.routers import settings as settings_router
 from backend.app.shared.backend import im_db_middleware as mw_mod
+from backend.app.shared.backend.im_layout import looks_like_data_dir
 from backend.app.shared.backend.account_context import get_account_context
 from backend.app.shared.crm import account_keys
 from backend.app.shared.utils import app_config
@@ -80,7 +81,7 @@ class DataDirSettingsTestCase(unittest.TestCase):
 
     def test_status_ok_for_real_layout(self) -> None:
         layout = _make_layout(Path(self.temp_dir.name))
-        self.assertTrue(mw_mod.IMDBMiddleware.looks_like_data_dir(layout))
+        self.assertTrue(looks_like_data_dir(layout))
         mw = self._fresh_middleware()
         mw.set_data_dir(str(layout))
         status = mw.data_dir_status()

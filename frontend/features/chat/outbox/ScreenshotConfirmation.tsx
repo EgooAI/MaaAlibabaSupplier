@@ -5,7 +5,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import type { OutboxTask } from "@/types/chatOperations";
 import type { OperationsBackend } from "@/services/interfaces";
 import { AccountChangedError } from "@/services/accountSession";
-import { frameFresh } from "./outboxModel";
+import { frameFresh, SCREENSHOT_TTL_MS } from "./outboxModel";
 
 export function ScreenshotConfirmation({ task, seller, recipient, canOperate, backend, onTask, onClose }: {
   task: OutboxTask; seller: string; recipient: string; canOperate: boolean; backend: OperationsBackend;
@@ -39,7 +39,7 @@ export function ScreenshotConfirmation({ task, seller, recipient, canOperate, ba
           setError("任务或截图已变化，请重新查看并确认。");
           return;
         }
-        if (!frameFresh(current)) throw new Error("截图已过期或不可用（有效期 120 秒）。请刷新任务；若仍过期，可取消该任务后新建，或在安全失败状态下重试并重新截图。");
+        if (!frameFresh(current)) throw new Error(`截图已过期或不可用（有效期 ${SCREENSHOT_TTL_MS / 1000} 秒）。请刷新任务；若仍过期，可取消该任务后新建，或在安全失败状态下重试并重新截图。`);
         const blob = await backend.getOutboxScreenshot(id, current.screenshot_id!, current.version);
         if (disposed) return;
         if (!frameFresh(current)) throw new Error("截图已过期，请刷新任务。");
@@ -50,8 +50,8 @@ export function ScreenshotConfirmation({ task, seller, recipient, canOperate, ba
           url = undefined;
           setFrame(undefined);
           setLoaded(false);
-          setError("截图已过期（120 秒），请刷新任务后重新核对。读取不会自动重新截图或发送。");
-        }, current.screenshot_at! * 1000 + 120_000 - Date.now());
+          setError(`截图已过期（${SCREENSHOT_TTL_MS / 1000} 秒），请刷新任务后重新核对。读取不会自动重新截图或发送。`);
+        }, current.screenshot_at! * 1000 + SCREENSHOT_TTL_MS - Date.now());
       } catch (err) {
         if (!disposed && !(err instanceof AccountChangedError)) setError(err instanceof Error ? err.message : "截图加载失败，请刷新任务。");
       }
@@ -100,7 +100,7 @@ export function ScreenshotConfirmation({ task, seller, recipient, canOperate, ba
     {error && <Alert type="warning" title={error} />}
     {!frame && !error && <Typography.Text>正在读取任务和截图…</Typography.Text>}
     {frame && <>
-      <Typography.Paragraph type="secondary">截图时间：{new Date(frame.task.screenshot_at! * 1000).toLocaleString()} · 有效期 120 秒</Typography.Paragraph>
+      <Typography.Paragraph type="secondary">截图时间：{new Date(frame.task.screenshot_at! * 1000).toLocaleString()} · 有效期 {SCREENSHOT_TTL_MS / 1000} 秒</Typography.Paragraph>
       <Button size="small" onClick={() => setFullSize((value) => !value)}>{fullSize ? "适应宽度" : "查看原尺寸"}</Button>
       <div className="mt-2 max-h-[60vh] overflow-auto">
         {/* Authenticated PNG bytes must never be passed through an image proxy or cache. */}

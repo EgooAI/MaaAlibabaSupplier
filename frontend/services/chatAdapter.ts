@@ -1,5 +1,6 @@
 import type { BusinessCard } from "@/types/cards";
 import { formatDateTime } from "@/domain/time";
+import { stringField } from "@/domain/guards";
 import type { ConversationAnalysis, ConversationDetail, Conversation, ChatMessage, CustomerProfile } from "@/types/chatCanonical";
 import type { ConversationAggregateDto, ConversationAnalysisDto, ConversationMessageDto, CustomerViewDto } from "@/types/chatTransport";
 import type { InboxStateDto } from "@/types/inbox";
@@ -98,10 +99,10 @@ function deriveCustomerView(aggregate: ConversationAggregateDto): CustomerViewDt
     id: String(customer?.cid ?? account?.cid ?? aggregate.sid),
     ali_id: account?.account ?? null,
     name: customer?.name ?? account?.nickname ?? account?.account ?? "未知客户",
-    company: stringValue(extra.company) ?? "",
+    company: stringField(extra.company) ?? "",
     country: customer?.region ?? "",
-    email: stringValue(accountExtra.email) ?? "",
-    phone: stringValue(accountExtra.phone) ?? "",
+    email: stringField(accountExtra.email) ?? "",
+    phone: stringField(accountExtra.phone) ?? "",
     stage: "unknown" as const,
     tags: [],
     availability: "",
@@ -159,8 +160,4 @@ function displayContent(content: unknown, card?: BusinessCard) {
   } catch {
     return card ? "系统推荐卡片" : "";
   }
-}
-
-function stringValue(value: unknown) {
-  return typeof value === "string" && value.trim() ? value : undefined;
 }

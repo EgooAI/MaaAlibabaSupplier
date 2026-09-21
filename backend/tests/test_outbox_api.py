@@ -61,7 +61,7 @@ def confirm(client, task):
 
 @pytest.mark.parametrize("action,final", [("send", "verifying"), ("test", "filled")])
 def test_two_step_contract_png_and_immutable_content(client, outbox, sdk, action, final):
-    response = submit(client, action=action, draft_version=3)
+    response = submit(client, action=action)
     assert response.status_code == 200, response.text
     assert response.json()["code"] == 0
     assert set(response.json()["data"]) == {"outbox"}
@@ -70,7 +70,7 @@ def test_two_step_contract_png_and_immutable_content(client, outbox, sdk, action
     assert task["idempotency_key"] == "request-1"
     assert set(task) == {
         "id", "conversation_id", "contact_ali_id", "login_id", "content", "action",
-        "idempotency_key", "status", "version", "attempt", "phase", "may_have_sent",
+        "idempotency_key", "status", "version", "attempt", "may_have_sent",
         "reason", "created_at", "updated_at", "screenshot_id", "screenshot_at",
         "matched_message_id", "evidence",
     }
@@ -142,7 +142,7 @@ def test_concurrent_duplicate_and_recovery_with_stale_gui(client, outbox):
     connect(client)  # Same epoch, but the window generation has changed.
     assert submit(client).json()["data"]["outbox"] == task
     assert len(outbox.queue.jobs) == 1
-    for changes in ({"content": "changed"}, {"action": "test"}, {"draft_version": 1}):
+    for changes in ({"content": "changed"}, {"action": "test"}):
         assert submit(client, **changes).status_code == 409
     assert outbox.service.get(account_context.get_account_context(), task["id"])["content"] == "hello\r\nworld"
 
@@ -153,7 +153,6 @@ def test_concurrent_duplicate_and_recovery_with_stale_gui(client, outbox):
     {"content": " ", "action": "send", "idempotency_key": "key"},
     {"content": "hello", "action": "send", "idempotency_key": " "},
     {"content": "hello", "action": "send", "idempotency_key": "x" * 129},
-    {"content": "hello", "action": "send", "idempotency_key": "key", "draft_version": -1},
 ])
 def test_submit_validation_never_queues(client, outbox, payload):
     response = client.post("/api/conversations/1/messages", json=payload)
@@ -163,12 +162,13 @@ def test_submit_validation_never_queues(client, outbox, payload):
 
 
 def test_missing_conversation_or_login_never_queues(client, outbox, monkeypatch):
-    monkeypatch.setattr(conversations, "crm_get_conversation_detail", lambda *args: None)
+    adapter_cls = conversations.CRMAdapter
+    monkeypatch.setattr(adapter_cls, "get_conversation_detail", lambda *args: None)
     assert submit(client).status_code == 404
-    monkeypatch.setattr(conversations, "crm_get_conversation_detail", lambda *args: SimpleNamespace(contact_ali_id=""))
+    monkeypatch.setattr(adapter_cls, "get_conversation_detail", lambda *args: SimpleNamespace(contact_ali_id=""))
     assert submit(client).status_code == 503
-    monkeypatch.setattr(conversations, "crm_get_conversation_detail", lambda *args: SimpleNamespace(contact_ali_id="buyer"))
-    monkeypatch.setattr(conversations, "crm_get_user_info", lambda *args: SimpleNamespace(login_id="", alias="unsafe"))
+    monkeypatch.setattr(adapter_cls, "get_conversation_detail", lambda *args: SimpleNamespace(contact_ali_id="buyer"))
+    monkeypatch.setattr(adapter_cls, "get_user_info", lambda *args: SimpleNamespace(login_id="", alias="unsafe"))
     assert submit(client).status_code == 503
     assert outbox.queue.jobs == []
 

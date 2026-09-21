@@ -344,10 +344,10 @@ describe("http adapter contract", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: { outbox } })));
     globalThis.fetch = fetchMock;
 
-    const input = { conversationId: "42", content: "hello", action: "send" as const, idempotency_key: "key", draft_version: 2 };
+    const input = { conversationId: "42", content: "hello", action: "send" as const, idempotency_key: "key" };
     const result = await httpBackend.sendMessage(input);
     expect(result).toEqual({ outbox });
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ content: "hello", action: "send", idempotency_key: "key", draft_version: 2 });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ content: "hello", action: "send", idempotency_key: "key" });
   });
 
   it.each([undefined, "ChatInput_GoToInput", "ContactSearch_GoToSearch"] as const)("submits node entry %s and preserves the asynchronous receipt", async (entry) => {

@@ -7,6 +7,7 @@ import type { ApiResponse } from "@/types/common";
 import type { OperationsBackend } from "./interfaces";
 import { accountSession, AccountChangedError, captureAccount } from "./accountSession";
 import { authSession, captureAuth } from "./authSession";
+import { isPlainObject } from "@/domain/guards";
 
 const REQUEST_TIMEOUT_MS = 8000;
 const AI_TIMEOUT_MS = 75000;
@@ -28,10 +29,6 @@ export class ApiError extends Error {
     this.kind = options?.kind ?? (options?.status || options?.code ? "http" : options?.cause instanceof TypeError ? "transport" : "protocol");
     this.requestId = options?.requestId;
   }
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function parseApiResponse<T>(payload: unknown, path: string): T {

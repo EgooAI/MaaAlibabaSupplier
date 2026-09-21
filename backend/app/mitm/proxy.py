@@ -26,7 +26,7 @@ from backend.app.shared.mitm.parsers import (
     parse_inquiry_card,
     parse_query_customer_info,
 )
-from backend.app.shared.mitm.pool import UserInfo, get_generic_card_pool, get_inquiry_card_pool, get_product_card_pool, get_user_info_pool
+from backend.app.shared.mitm.pool import UserInfo, get_generic_card_pool, get_product_card_pool, get_user_info_pool
 from backend.app.shared.crm import sync_self_info, sync_user_info
 from backend.app.shared.utils.app_config import get_configured_self_ali_id
 from backend.app.shared.utils.logging import configure_logging
@@ -194,11 +194,11 @@ class TrafficRouter:
             get_product_card_pool().put(card)
             return
 
-        # Inquiry cards
+        # Inquiry cards have no reader in the product; keep them out of the
+        # generic pool so they are not rendered as unrelated cards.
         inquiry = parse_inquiry_card(event.response_body)
         if inquiry:
             logger.info("InquiryCard parsed ({} products)", len(inquiry.products))
-            get_inquiry_card_pool().put(inquiry)
             return
 
         # Other non-product cards: store as generic

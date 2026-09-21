@@ -53,6 +53,7 @@ from sqlalchemy.engine import URL
 from sqlmodel import Session
 
 from backend.app.shared.crm.identities import self_sender_id, session_key_prefix
+from backend.app.shared.crm.paths import default_crm_database_path
 from backend.app.shared.crm.sdk import Message, SessionMeta
 from backend.app.shared.crm.sync_store import canonical_source_dir, sync_state
 from backend.app.shared.crm.views import coerce_epoch
@@ -250,9 +251,7 @@ def write_inbox(
 class InboxStore:
     def __init__(self, database_path: Path | str | None = None) -> None:
         if database_path is None:
-            from backend.app.shared.crm.sync import _default_database_path
-
-            database_path = _default_database_path()
+            database_path = default_crm_database_path()
         self.database_path = Path(database_path).expanduser().resolve()
 
     @contextmanager

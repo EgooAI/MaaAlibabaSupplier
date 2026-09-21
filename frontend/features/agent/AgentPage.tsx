@@ -48,13 +48,13 @@ export function AgentPage({ category }: AgentPageProps) {
     }
   }
 
-  const isMutating = (id: string) => workbench.isAgentMutating?.(id) ?? workbench.agentMutationId === id;
+  const isMutating = (id: string) => workbench.isAgentMutating(id);
 
   return (
     <Space orientation="vertical" size="large" className="w-full">
       <AgentGroupTable category={category} agents={visibleAgents} loading={workbench.loading} isMutating={isMutating} onToggle={workbench.toggleAgent} onEdit={setEditingAgent} onCreate={category === "regular" ? () => setCreateOpen(true) : undefined} onDelete={(agent) => setPendingAgentAction({ agent, type: "delete" })} onReset={(agent) => setPendingAgentAction({ agent, type: "reset" })} />
 
-      <AgentEditModal agent={editingAgent} category={category} title={createOpen ? "新增普通 Agent" : undefined} open={Boolean(editingAgent) || createOpen} saving={Boolean(workbench.agentMutationId)} onClose={() => { setEditingAgent(undefined); setCreateOpen(false); }} onSave={handleSave} />
+      <AgentEditModal agent={editingAgent} category={category} title={createOpen ? "新增普通 Agent" : undefined} open={Boolean(editingAgent) || createOpen} saving={workbench.mutatingIds.size > 0} onClose={() => { setEditingAgent(undefined); setCreateOpen(false); }} onSave={handleSave} />
       <ActionConfirmModal
         title={pendingAgentAction?.type === "reset" ? "重置系统 Agent" : "删除普通 Agent"}
         open={Boolean(pendingAgentAction)}

@@ -9,6 +9,7 @@ import type { ReactNode } from "react";
 import { ProfileDrawer } from "./ProfileDrawer";
 import { PAGE_TITLES, resolveOpenKeys, resolveSelectedKey } from "./routes.config";
 import { useSelfInfo } from "./useSelfInfo";
+import { getDisplayName } from "@/domain/user";
 import { useAccount } from "@/features/account/AccountProvider";
 import { useAuth } from "@/features/auth/AuthProvider";
 
@@ -169,7 +170,7 @@ function AccountProfile() {
   return <>
     <Button type="text" className="flex items-center gap-2" aria-label="打开个人信息" onClick={() => setProfileOpen(true)}>
       <Avatar size="small" src={avatarSource || undefined} icon={<UserOutlined />} onError={() => { setAvatarSource(""); return true; }} />
-      <span className="max-w-40 truncate">{selfInfo ? [selfInfo.first_name, selfInfo.last_name].filter(Boolean).join(" ") || selfInfo.login_id : "个人信息"}</span>
+      <span className="max-w-40 truncate">{selfInfo ? getDisplayName(selfInfo) : "个人信息"}</span>
     </Button>
     <ProfileDrawer
         selfInfo={selfInfo}

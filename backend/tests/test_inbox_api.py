@@ -64,13 +64,13 @@ def test_read_snapshot_100_101_and_epoch_roundtrip(client, archive, monkeypatch)
     listing = data(client)
     sid = listing["items"][0]["sid"]
     assert listing["items"][0]["unread_count"] == 100
-    original = conversations.crm_get_conversation_detail
+    original = conversations.CRMAdapter.get_conversation_detail
 
-    def arrive_before_detail(*args):
+    def arrive_before_detail(adapter, *args):
         apply(("buyer", [row(101, at=T + 101)]))
-        return original(*args)
+        return original(adapter, *args)
 
-    monkeypatch.setattr(conversations, "crm_get_conversation_detail", arrive_before_detail)
+    monkeypatch.setattr(conversations.CRMAdapter, "get_conversation_detail", arrive_before_detail)
     detail = data(client, f"/api/conversations/{sid}")
     assert len(detail["messages"]) == 102
     assert detail["unread_count"] == 101

@@ -58,9 +58,17 @@ def connect(client):
 @pytest.fixture
 def chat(monkeypatch):
     monkeypatch.setattr(conversations, "_ready", lambda: "seller-a")
-    monkeypatch.setattr(conversations, "crm_get_conversation_detail", lambda *args: SimpleNamespace(contact_ali_id="buyer"))
-    monkeypatch.setattr(conversations, "crm_get_user_info", lambda *args: SimpleNamespace(login_id="buyer-login"))
-    monkeypatch.setattr(conversations, "CRMAdapter", lambda: object())
+
+    class FakeAdapter:
+        @staticmethod
+        def get_conversation_detail(*args):
+            return SimpleNamespace(contact_ali_id="buyer")
+
+        @staticmethod
+        def get_user_info(*args):
+            return SimpleNamespace(login_id="buyer-login")
+
+    monkeypatch.setattr(conversations, "CRMAdapter", FakeAdapter)
     monkeypatch.setattr(conversations, "_build_aggregate", lambda *args: {"sid": 1})
 
 
@@ -533,7 +541,7 @@ def test_send_rejects_missing_login_and_goto_rejects_unrelated_target(client, sd
     connect(client)
     response = client.post("/api/conversations/1/goto-contact", json={"login_id": "another-buyer"})
     assert response.status_code == 409
-    monkeypatch.setattr(conversations, "crm_get_user_info", lambda *args: SimpleNamespace(login_id=""))
+    monkeypatch.setattr(conversations.CRMAdapter, "get_user_info", lambda *args: SimpleNamespace(login_id=""))
     response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": "send", "idempotency_key": "key"})
     assert response.status_code == 503
     assert TaskQueue._instances.get(DEFAULT_QUEUE_NAME) is None

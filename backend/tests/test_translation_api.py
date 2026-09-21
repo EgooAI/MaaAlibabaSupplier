@@ -153,7 +153,7 @@ def test_context_load_failure_degrades_to_contextless_job(client, monkeypatch):
     calls = []
     monkeypatch.setattr(translation_jobs, "translate_texts_to_crm", _recorder(calls))
     monkeypatch.setattr(
-        "backend.app.shared.crm.queries.get_conversation_detail",
+        "backend.app.shared.crm.sync.CRMAdapter.get_conversation_detail",
         Mock(side_effect=RuntimeError("db boom")),
     )
     response = client.post("/api/messages/translations", json={"texts": ["hello"], "conversationId": 17})

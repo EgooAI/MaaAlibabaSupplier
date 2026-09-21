@@ -20,6 +20,7 @@ from pathlib import Path
 from starlette.responses import JSONResponse, Response
 
 from backend.app.api.envelope import err
+from backend.app.shared.utils.logging import ERROR_CATEGORIES, NATIVE_ENTRIES
 from backend.app.shared.utils.settings import resolve_backend_root, resolve_repo_root
 
 MAX_FILES = 24  # Includes the two generated records.
@@ -35,21 +36,6 @@ _DATE = r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?"
 _NATIVE = re.compile(rf"^\[({_DATE})\]\s*\[(TRC|DBG|INF|WRN|ERR|FTL|TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)\]", re.I)
 _YAK = re.compile(rf"^\[(TRACE|TRAC|DEBUG|DEBU|INFO|WARN|WARNING|ERROR|ERRO|FATAL|FATA)\]\s+\[?({_DATE}|\d{{4}}-\d{{2}}-\d{{2}}|\d{{2}}:\d{{2}}:\d{{2}})\]?", re.I)
 _INSTALLER = re.compile(rf"^({_DATE})\s+(.*)$")
-_KNOWN_ENTRIES = frozenset({
-    "ChatInput", "ChatInput_GoToInput", "ChatInput_SelectAll", "ChatInput_SelectAll_A",
-    "ChatInput_SelectAll_ReleaseCtrl", "ChatInput_ClearText", "ChatInput_InputText",
-    "ChatInput_SendOnly", "ChatInput_SendMessage", "ContactSearch", "ContactSearch_GoToSearch",
-    "ContactSearch_ClickSearchButton", "ContactSearch_ClearSearchBox", "ContactSearch_InputText",
-    "ContactSearch_PressEnter", "Diagnostics_ChatInput", "Diagnostics_ChatInput_Recognize",
-    "Diagnostics_ContactSearch", "Diagnostics_ContactSearch_Recognize",
-})
-_ERROR_CATEGORIES = {
-    "timeout": "timeout", "timed out": "timeout", "connection refused": "connection_refused",
-    "connection reset": "connection_reset", "permission denied": "permission_denied",
-    "recognition failed": "recognition_failed", "action failed": "action_failed",
-    "resource load failed": "resource_load_failed", "invalid argument": "invalid_argument",
-    "task failed": "task_failed", "job failed": "job_failed", "node failed": "node_failed",
-}
 
 
 @dataclass(frozen=True)
@@ -72,7 +58,7 @@ def _correlation(fields: dict) -> dict:
         elif isinstance(value, str) and re.fullmatch(r"\d{1,18}", value):
             result[key] = int(value)
     for key in ("entry", "node"):
-        if isinstance(fields.get(key), str) and fields[key] in _KNOWN_ENTRIES:
+        if isinstance(fields.get(key), str) and fields[key] in NATIVE_ENTRIES:
             result[key] = fields[key]
     source = fields.get("file", fields.get("source_file"))
     if isinstance(source, str):
@@ -83,7 +69,7 @@ def _correlation(fields: dict) -> dict:
     if isinstance(function, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_:.*<>]{0,95}(?:\(\))?", function):
         result["function"] = function
     category = fields.get("error_category")
-    if isinstance(category, str) and category in _ERROR_CATEGORIES.values():
+    if isinstance(category, str) and category in ERROR_CATEGORIES.values():
         result["error_category"] = category
     return result
 
@@ -128,7 +114,7 @@ def _native_context(tail: str) -> dict:
             fields[match[1]] = match[2]
             continue
         error_text = item if item is not None else tail
-        for prefix, category in _ERROR_CATEGORIES.items():
+        for prefix, category in ERROR_CATEGORIES.items():
             if re.match(re.escape(prefix) + r"(?=\s|:|\.|$)", error_text, re.I):
                 fields["error_category"] = category
                 break

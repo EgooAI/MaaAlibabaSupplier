@@ -108,11 +108,6 @@ export const llmLevels: LlmLevelConfig[] = Array.from({ length: 5 }, (_, level) 
   system_prompt: `Level ${level} agent prompt for Alibaba seller workflow.`,
   context: 12000 + level * 4000,
   max_tool_rounds: 3 + level,
-  baseUrl: "https://api.mock-llm.example/v1",
-  apiKey: `sk-mock-level-${level}-placeholder`,
-  modelName: level >= 3 ? "claude-sonnet-5" : "claude-haiku-4-5-20251001",
-  systemPrompt: `Level ${level} agent prompt for Alibaba seller workflow.`,
-  maxToolRounds: 3 + level,
 }));
 
 const llmLevel = llmLevels[3];

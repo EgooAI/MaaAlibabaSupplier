@@ -1,4 +1,5 @@
 import type { BusinessCard, GenericCard, InquiryCard, ProductCard } from "@/types/cards";
+import { isPlainObject, stringField } from "@/domain/guards";
 
 export function productCardToBusinessCard(card: ProductCard): BusinessCard {
   return {
@@ -99,12 +100,4 @@ function parseGenericPayload(rawJson: string): { title?: string; summary?: strin
   } catch {
     return { tags: [] };
   }
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-function stringField(value: unknown) {
-  return typeof value === "string" && value.trim() ? value : undefined;
 }

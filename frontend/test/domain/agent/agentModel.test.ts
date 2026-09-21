@@ -116,7 +116,7 @@ describe("agent model", () => {
       max_tool_rounds: null,
     };
     const level = documentToLlmLevelConfig(document);
-    expect(level.maxToolRounds).toBeNull();
+    expect(level.max_tool_rounds).toBeNull();
     expect(llmLevelToDocumentConfig(level)).toMatchObject({ level: 2, max_tool_rounds: null });
     expect(isValidToolRoundLimit(0)).toBe(false);
     expect(isValidToolRoundLimit(null)).toBe(true);

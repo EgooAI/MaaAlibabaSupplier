@@ -13,6 +13,7 @@ from backend.app.shared.crm.views import (
     resolve_role,
 )
 from backend.app.shared.mitm.pool import SelfInfo, UserInfo
+from backend.tests.crm_helpers import conversations_for
 
 SELF_ALI_ID = "10001"
 CONTACT_ALI_ID = "20002"
@@ -67,7 +68,7 @@ class ConversationAggregateTestCase(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_list_transmits_sid_and_contact(self) -> None:
-        convs = self.adapter.list_conversations(SELF_ALI_ID)
+        convs = conversations_for(self.adapter, SELF_ALI_ID)
         self.assertEqual(len(convs), 1)
         conv = convs[0]
         self.assertGreater(conv.sid, 0)
@@ -77,17 +78,17 @@ class ConversationAggregateTestCase(unittest.TestCase):
         self.assertEqual(len(conv.messages), 4)
 
     def test_detail_roundtrip_and_guards(self) -> None:
-        conv = self.adapter.list_conversations(SELF_ALI_ID)[0]
+        conv = conversations_for(self.adapter, SELF_ALI_ID)[0]
         detail = self.adapter.get_conversation_detail(SELF_ALI_ID, conv.sid)
         self.assertIsNotNone(detail)
         assert detail is not None
         self.assertEqual(detail.contact_ali_id, CONTACT_ALI_ID)
         self.assertIsNone(self.adapter.get_conversation_detail(SELF_ALI_ID, 999999))
         self.assertIsNone(self.adapter.get_conversation_detail("nope", conv.sid))
-        self.assertEqual(self.adapter.list_conversations(""), [])
+        self.assertEqual(conversations_for(self.adapter, ""), [])
 
     def test_roles_and_types(self) -> None:
-        conv = self.adapter.list_conversations(SELF_ALI_ID)[0]
+        conv = conversations_for(self.adapter, SELF_ALI_ID)[0]
         resolver = CrmResolver(SELF_ALI_ID)
         self.assertEqual(
             [(resolve_role(m, resolver), normalize_message_type(m)) for m in conv.messages],

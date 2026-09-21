@@ -4,6 +4,7 @@ import { ArrowDownOutlined, ArrowLeftOutlined, PlusOutlined } from "@ant-design/
 import { Alert, Button, Card, Empty, Form, Modal, Select, Space } from "antd";
 import { useState } from "react";
 import { ActionConfirmModal } from "@/components/ActionConfirmModal";
+import { EMPTY_TEXT } from "@/components/empty";
 import { SessionListPanel } from "@/components/SessionListPanel";
 import { MessageComposer } from "@/components/MessageComposer";
 import { SplitSessionLayout, useSplitSessionMobile } from "@/components/SplitSessionLayout";
@@ -68,7 +69,7 @@ export function AgentSessionsPage() {
           ))}
         </div>
       ) : (
-        <Empty description="暂无 Agent 会话" />
+        <Empty description={EMPTY_TEXT.agentSessions} />
       )}
     </SessionListPanel>
   );
@@ -124,7 +125,7 @@ export function AgentSessionsPage() {
           </div>
         </div>
       ) : (
-        <Empty description="请选择会话或新建会话" />
+        <Empty description={EMPTY_TEXT.selectSession} />
       )}
     </Card>
   );

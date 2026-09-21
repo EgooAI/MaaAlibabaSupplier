@@ -15,6 +15,7 @@ import struct
 import os
 from concurrent.futures import Future
 from contextlib import contextmanager
+from dataclasses import dataclass
 
 from loguru import logger
 import threading
@@ -33,7 +34,6 @@ from backend.app.shared.backend.sync_coordinator import SyncCoordinator
 from backend.app.shared.crm import sync_im_database
 from backend.app.shared.crm.sync_store import read_sync_state
 from backend.app.shared.crm.account_keys import KeyFormatError, get_key_hex, get_key_source, read_saved_key, save_key
-from backend.app.shared.crm.identities import self_sender_id, strip_icbu_suffix
 from backend.app.shared.utils.app_config import (
     CONFIG_KEY_ALIBABA_DATA_DIR,
     CONFIG_KEY_IM_DATA_REVISION,
@@ -44,6 +44,7 @@ from backend.app.shared.utils.app_config import (
     set_configured_self_ali_id,
     write_app_config,
 )
+from backend.app.shared.backend import im_layout
 from backend.app.shared.utils.env import get_env_str
 from backend.app.shared.utils.im_wal import WalError, checksum_chain, read_wal_header, rekey_wal_copy
 from backend.app.shared.utils.settings import resolve_backend_root
@@ -57,17 +58,28 @@ _MAX_BACKOFF = 30.0  # seconds
 # Disabling WAL refuses snapshots with frames instead of claiming completeness.
 _WAL_PIPELINE_ENV = "MAA_IM_WAL_PIPELINE"
 
-# Directory name to look for at each drive root when auto-detecting candidates.
-DATA_DIR_NAME = "AlibabaSupplierData"
-# Relative layout below the data dir proving it is a real Alibaba client dir.
-DATA_DIR_SIGNATURE = Path("IMServiceDir") / "MessageSDK"
-
 SOURCE_FILE = "file"
 SOURCE_NONE = "none"
 
 STATE_UNCONFIGURED = "unconfigured"
 STATE_INVALID = "invalid"
 STATE_OK = "ok"
+
+
+class CacheBuildError(Exception):
+    """Cache rebuild failed; detail/code feed the published source status."""
+
+    def __init__(self, detail: str, code: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.code = code
+
+
+@dataclass(frozen=True)
+class BuiltCache:
+    path: Path
+    frames: int
+    source: tuple
 
 
 class IMDBMiddleware:
@@ -218,17 +230,6 @@ class IMDBMiddleware:
             invalidate_account_context()
             self._select_sync_context()
 
-    @staticmethod
-    def looks_like_data_dir(path: Path) -> bool:
-        """True when *path* has the Alibaba client layout with at least one im.sqlite."""
-        try:
-            signature = path / DATA_DIR_SIGNATURE
-            if not signature.is_dir():
-                return False
-            return next(signature.glob("*/database/im.sqlite"), None) is not None
-        except OSError:
-            return False
-
     def data_dir_status(self) -> dict:
         """Return {state, path, source, detail} for the settings UI."""
         data_dir, source = self._data_dir, self._data_dir_source
@@ -246,7 +247,7 @@ class IMDBMiddleware:
                 "source": source,
                 "detail": "配置的目录不存在，请检查路径或重新选择",
             }
-        if not self.looks_like_data_dir(data_dir):
+        if not im_layout.looks_like_data_dir(data_dir):
             return {
                 "state": STATE_INVALID,
                 "path": str(data_dir),
@@ -272,25 +273,7 @@ class IMDBMiddleware:
             data_dir = self._data_dir
         if data_dir is None:
             return []
-        try:
-            entries = (data_dir / DATA_DIR_SIGNATURE).glob("*/database/im.sqlite")
-            found = []
-            for db_path in entries:
-                try:
-                    stat = db_path.stat()
-                except OSError:
-                    continue
-                found.append(
-                    {
-                        "ali_id": strip_icbu_suffix(db_path.parent.parent.name),
-                        "db_size": stat.st_size,
-                        "last_modified": stat.st_mtime,
-                    }
-                )
-        except OSError:
-            return []
-        found.sort(key=lambda item: item["last_modified"], reverse=True)
-        return found
+        return im_layout.scan_ali_ids(data_dir)
 
     # -- Path resolution ------------------------------------------------------
 
@@ -304,7 +287,7 @@ class IMDBMiddleware:
             logger.warning("尚未在设置页选择阿里账号身份，请选择后重试")
             return None
 
-        db_path = data_dir / "IMServiceDir" / "MessageSDK" / self_sender_id(ali_id) / "database" / "im.sqlite"
+        db_path = im_layout.encrypted_db_path(data_dir, ali_id)
         if not db_path.exists():
             logger.warning("Encrypted DB not found")
             return None
@@ -351,8 +334,7 @@ class IMDBMiddleware:
                 validation, detail, code = "unavailable", "所选账号没有已保存的 AES Key，请在设置中验证接入", "key_unavailable"
             else:
                 key, source = saved
-                db_path = (Path(context.data_dir) / DATA_DIR_SIGNATURE / self_sender_id(context.self_ali_id)
-                           / "database" / "im.sqlite")
+                db_path = im_layout.encrypted_db_path(Path(context.data_dir), context.self_ali_id)
                 try:
                     if not self._verify_source_key(key, db_path):
                         validation, detail, code = "invalid", "已保存的 AES Key 与当前源库不匹配，请在设置中更新密钥", "key_invalid"
@@ -535,30 +517,31 @@ class IMDBMiddleware:
             except OSError:
                 pass
 
-    def _rebuild_cache(self, db_path: Path, ali_id: str) -> tuple[Path, int] | None:
-        """Accept only a stable source pair whose captured bytes match the copy."""
-        self._build_error = ("缓存重建失败", "decrypt_error")
+    def _rebuild_cache(self, db_path: Path, ali_id: str) -> BuiltCache:
+        """Accept only a stable source pair whose captured bytes match the copy.
+
+        Raises CacheBuildError and never mutates the previous live cache.
+        """
         cached = self._cache_path_for(ali_id)
         try:
             captured = self._capture_source(db_path)
             if captured is None:
-                self._build_error = ("Source changed during capture", "source_changed")
-                return None
+                raise CacheBuildError("Source changed during capture", "source_changed")
             wal_copy = self._copy_source_pair(db_path, cached)
             copied = (self._crc32_of(cached), self._crc32_of(wal_copy) if wal_copy else 0)
             if self._capture_source(db_path) != captured or copied != captured[1:]:
-                self._build_error = ("Source changed during copy", "source_changed")
-                self._discard_build(cached)
-                return None
+                raise CacheBuildError("Source changed during copy", "source_changed")
         except OSError as exc:
             logger.opt(exception=True).warning("IM source copy failed; retaining previous cache")
-            self._build_error = (str(exc), "source_copy_error")
             self._discard_build(cached)
-            return None
+            raise CacheBuildError(str(exc), "source_copy_error") from exc
+        except CacheBuildError:
+            self._discard_build(cached)
+            raise
         crc = self._decrypt_db(cached, cached)
         if crc is None:
             self._discard_build(cached)
-            return None
+            raise CacheBuildError("缓存重建失败", "decrypt_error")
         frames = 0
         if wal_copy is not None:
             try:
@@ -591,20 +574,19 @@ class IMDBMiddleware:
                     main_page_size = 65536 if main_page_size == 1 else main_page_size
                     frames = rekey_wal_copy(wal_copy, self._key, main_page_size)
                     if frames and not self._wal_pipeline_enabled():
-                        self._build_error = ("WAL contains frames but its pipeline is disabled", "wal_disabled")
-                        self._discard_build(cached)
-                        return None
+                        raise CacheBuildError("WAL contains frames but its pipeline is disabled", "wal_disabled")
                 else:
                     wal_copy.unlink()
             except (WalError, OSError, struct.error) as exc:
-                self._build_error = (str(exc), "wal_error")
                 self._discard_build(cached)
-                return None
+                raise CacheBuildError(str(exc), "wal_error") from exc
+            except CacheBuildError:
+                self._discard_build(cached)
+                raise
         if not self._verify_cached_db(cached):
             self._discard_build(cached)
-            return None
-        self._built_source = captured
-        return cached, frames
+            raise CacheBuildError("缓存重建失败", "decrypt_error")
+        return BuiltCache(path=cached, frames=frames, source=captured)
 
     # -- Cache refresh ---------------------------------------------------------
 
@@ -787,24 +769,24 @@ class IMDBMiddleware:
         self._publish_source_status()
         started = time.perf_counter()
         logger.info("Decrypting IM database...")
-        built = self._rebuild_cache(db_path, ali_id)
-        if built is None:
-            self._note_failure(*self._build_error)
+        try:
+            built = self._rebuild_cache(db_path, ali_id)
+        except CacheBuildError as exc:
+            self._note_failure(exc.detail, exc.code)
             return self._cached_db_path is not None
-        cached, wal_frames = built
 
         try:
-            self._replace_connection(cached, ali_id)
+            self._replace_connection(built.path, ali_id)
         except sqlite3.Error as exc:
             logger.opt(exception=True).error("Failed to open cached IM database")
-            self._discard_build(cached)
+            self._discard_build(built.path)
             self._note_failure("缓存打开失败")
             return self._cached_db_path is not None
-        self._source_fingerprint, self._source_crc32, self._source_wal_crc32 = self._built_source
+        self._source_fingerprint, self._source_crc32, self._source_wal_crc32 = built.source
         self._source_dirty = False
-        self._note_success((time.perf_counter() - started) * 1000, wal_frames)
+        self._note_success((time.perf_counter() - started) * 1000, built.frames)
         self.sync_to_crm()
-        self._cleanup_stale_caches(cached)
+        self._cleanup_stale_caches(built.path)
         logger.info("IM database source snapshot refreshed")
         return True
 
@@ -924,8 +906,7 @@ class IMDBMiddleware:
             cached = self._cached_db_path
             if cached is None or self._source_fingerprint is None:
                 raise ValueError("source_cache_missing")
-            source = (Path(directory) / DATA_DIR_SIGNATURE / self_sender_id(context.self_ali_id)
-                      / "database" / "im.sqlite")
+            source = im_layout.encrypted_db_path(Path(directory), context.self_ali_id)
             captured = {
                 "path": cached,
                 "origin": {"seller": context.self_ali_id, "data_dir": directory,
@@ -1003,25 +984,3 @@ class IMDBMiddleware:
 
 def get_im_db_middleware() -> IMDBMiddleware:
     return IMDBMiddleware()
-
-
-def find_data_dir_candidates() -> list[str]:
-    """Scan drive roots (C:..Z:) for an ``AlibabaSupplierData`` dir with IM layout.
-
-    Existence checks only — no recursion, completes in milliseconds.
-    """
-    import string
-
-    found: list[str] = []
-    for letter in string.ascii_uppercase:
-        if letter < "C":
-            continue
-        candidate = Path(f"{letter}:/{DATA_DIR_NAME}")
-        try:
-            if not candidate.is_dir():
-                continue
-        except OSError:
-            continue
-        if IMDBMiddleware.looks_like_data_dir(candidate):
-            found.append(str(candidate.resolve()))
-    return found

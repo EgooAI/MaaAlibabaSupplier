@@ -285,7 +285,8 @@ def test_corrupt_archive_does_not_block_initialization_or_scope_change(tmp_path,
 
 
 def test_empty_database_is_ready_after_real_crm_sync(mw):
-    from backend.app.shared.crm.queries import get_self_info, list_conversations
+    from backend.app.shared.crm.sync import CRMAdapter
+    from backend.tests.crm_helpers import conversations_for
 
     encrypted_db(mw._data_dir)
     save_key("10001", KEY, "manual")
@@ -294,5 +295,6 @@ def test_empty_database_is_ready_after_real_crm_sync(mw):
     assert status["phase"] == "ready"
     assert status["revision"] > 0 and status["last_success"] is not None
     assert status["error_code"] == ""
-    assert get_self_info().ali_id == "10001"
-    assert list_conversations("10001") == []
+    adapter = CRMAdapter()
+    assert adapter.get_self_info().ali_id == "10001"
+    assert conversations_for(adapter, "10001") == []

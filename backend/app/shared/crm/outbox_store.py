@@ -19,27 +19,15 @@ from pathlib import Path
 from uuid import uuid4
 
 from backend.app.api.envelope import AppError
-
-
-STATUSES = (
-    "queued", "navigating", "awaiting_confirmation", "queued_send", "running",
-    "verifying", "observed", "filled", "failed", "unknown", "cancelled",
+from backend.app.shared.crm.outbox_state import (
+    EDITABLE_FIELDS,
+    PAYLOAD_FIELDS,
+    PENDING_STATUSES,
+    STATUSES,
+    TRANSITIONS,
+    is_recovery_uncertain,
 )
-PENDING_STATUSES = STATUSES[:6]
-_TRANSITIONS = {
-    "queued": {"navigating", "failed", "cancelled"},
-    "navigating": {"awaiting_confirmation", "failed", "unknown"},
-    "awaiting_confirmation": {"queued_send", "failed", "cancelled"},
-    "queued_send": {"awaiting_confirmation", "running", "failed", "cancelled"},
-    "running": {"verifying", "filled", "failed", "unknown"},
-    "verifying": {"observed", "failed", "unknown"},
-    "unknown": {"observed"},
-}
-_FIELDS = {
-    "phase", "may_have_sent", "reason", "screenshot_id", "screenshot_at",
-    "screenshot_digest", "baseline", "evidence",
-}
-_PAYLOAD = ("conversation_id", "contact_ali_id", "login_id", "content", "action", "draft_version")
+from backend.app.shared.crm.paths import default_crm_database_path
 
 
 class OutboxConflict(AppError):
@@ -78,9 +66,7 @@ def _record(row: sqlite3.Row) -> dict:
 class OutboxStore:
     def __init__(self, database_path: Path | str | None = None) -> None:
         if database_path is None:
-            from backend.app.shared.crm.sync import _default_database_path
-
-            database_path = _default_database_path()
+            database_path = default_crm_database_path()
         self.database_path = Path(database_path).expanduser().resolve()
 
     @contextmanager
@@ -123,7 +109,6 @@ class OutboxStore:
                     status TEXT NOT NULL CHECK(status IN ({statuses})),
                     version INTEGER NOT NULL CHECK(version >= 1),
                     attempt INTEGER NOT NULL CHECK(attempt >= 1),
-                    phase TEXT NOT NULL,
                     may_have_sent INTEGER NOT NULL CHECK(may_have_sent IN (0,1)),
                     reason TEXT,
                     created_at REAL NOT NULL,
@@ -134,7 +119,6 @@ class OutboxStore:
                     baseline TEXT,
                     evidence TEXT,
                     matched_message_id TEXT,
-                    draft_version INTEGER,
                     origin_request_id TEXT,
                     origin_account_epoch TEXT,
                     UNIQUE(seller, data_dir, idempotency_key),
@@ -145,6 +129,10 @@ class OutboxStore:
             for name in ("origin_request_id", "origin_account_epoch"):
                 if name not in columns:
                     conn.execute(f"ALTER TABLE app_outbox ADD COLUMN {name} TEXT")
+            for legacy in ("phase", "draft_version"):
+                if legacy in columns:
+                    # phase duplicated status; draft_version never had server-side draft state.
+                    conn.execute(f"ALTER TABLE app_outbox DROP COLUMN {legacy}")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS app_outbox_events (
                     id INTEGER PRIMARY KEY,
@@ -174,7 +162,7 @@ class OutboxStore:
     def create(
         self, *, seller: str, data_dir: str | Path, conversation_id: int,
         contact_ali_id: str, login_id: str, content: str, action: str,
-        idempotency_key: str, draft_version: int | None = None,
+        idempotency_key: str,
         origin_request_id: str | None = None, origin_account_epoch: str | None = None,
     ) -> tuple[dict, bool]:
         seller, directory = _scope(seller, data_dir)
@@ -182,12 +170,10 @@ class OutboxStore:
             raise ValueError("action must be send or test")
         if type(conversation_id) is not int or conversation_id < 1:
             raise ValueError("conversation_id must be a positive integer")
-        if draft_version is not None and (type(draft_version) is not int or draft_version < 0):
-            raise ValueError("draft_version must be a nonnegative integer or None")
         for value in (contact_ali_id, login_id, content, idempotency_key):
             if not isinstance(value, str) or not value.strip():
                 raise ValueError("Recipient, content and idempotency key must be nonempty strings")
-        payload = dict(zip(_PAYLOAD, (conversation_id, contact_ali_id, login_id, content, action, draft_version)))
+        payload = dict(zip(PAYLOAD_FIELDS, (conversation_id, contact_ali_id, login_id, content, action)))
         self.initialize()
         with self._connection(write=True) as conn:
             existing = conn.execute(
@@ -196,14 +182,14 @@ class OutboxStore:
             ).fetchone()
             if existing is not None:
                 record = _record(existing)
-                if any(record[name] != payload[name] for name in _PAYLOAD):
+                if any(record[name] != payload[name] for name in PAYLOAD_FIELDS):
                     raise OutboxConflict("Idempotency key already belongs to a different payload")
                 return record, False
             now = time.time()
             record = {
                 "id": uuid4().hex, "seller": seller, "data_dir": directory, **payload,
                 "idempotency_key": idempotency_key, "status": "queued", "version": 1,
-                "attempt": 1, "phase": "queued", "may_have_sent": False, "reason": None,
+                "attempt": 1, "may_have_sent": False, "reason": None,
                 "created_at": now, "updated_at": now, "screenshot_id": None,
                 "screenshot_at": None, "screenshot_digest": None, "baseline": None,
                 "evidence": None, "matched_message_id": None,
@@ -293,53 +279,56 @@ class OutboxStore:
             raise OutboxConflict("Local message is already claimed by another outbox task") from exc
         if cursor.rowcount != 1:
             raise OutboxConflict("Outbox status or version changed")
-        self._event(conn, previous, current, kind)
+        if kind != "update_fields":
+            self._event(conn, previous, current, kind)
         return current
 
     @staticmethod
-    def _validate_changes(previous: dict, changes: dict, *, transition: bool) -> None:
-        allowed = _FIELDS | {"status", "matched_message_id"} if transition else _FIELDS
+    def _validate_transition(previous: dict, status: object) -> None:
+        if not isinstance(status, str) or status not in TRANSITIONS.get(previous["status"], set()):
+            raise OutboxConflict(f"Invalid outbox transition: {previous['status']} -> {status}")
+        if (previous["status"] == "queued_send" and status == "awaiting_confirmation"
+                and previous["may_have_sent"]):
+            raise OutboxConflict("Only a queued task before input can request fresh confirmation")
+
+    @staticmethod
+    def _validate_editable(previous: dict, changes: dict, *, transition: bool) -> None:
+        allowed = EDITABLE_FIELDS | {"status", "matched_message_id"} if transition else EDITABLE_FIELDS
         if changes.keys() - allowed:
             raise ValueError(f"Fields are not editable: {sorted(changes.keys() - allowed)}")
-        current = {**previous, **changes}
-        status = current["status"]
-        if transition and (not isinstance(status, str) or status not in _TRANSITIONS.get(previous["status"], set())):
-            raise OutboxConflict(f"Invalid outbox transition: {previous['status']} -> {status}")
-        if transition and previous["status"] == "queued_send" and status == "awaiting_confirmation":
-            if previous["phase"] != "queued_send" or previous["may_have_sent"]:
-                raise OutboxConflict("Only a queued task before input can request fresh confirmation")
         if not transition and previous["status"] not in PENDING_STATUSES:
             raise OutboxConflict("Only pending tasks accept field updates")
+
+    @staticmethod
+    def _validate_values(previous: dict, current: dict) -> None:
         for name in ("baseline", "evidence"):
             if current[name] is not None and not isinstance(current[name], dict):
                 raise ValueError(f"{name} must be a JSON object or None")
             _json(current[name])
-        for name in ("phase", "reason", "screenshot_id", "screenshot_digest", "matched_message_id"):
+        for name in ("reason", "screenshot_id", "screenshot_digest", "matched_message_id"):
             value = current[name]
             if value is not None and (not isinstance(value, str) or not value):
                 raise ValueError(f"{name} must be a nonempty string or None")
-        if current["phase"] is None:
-            raise ValueError("phase is required")
         stamp = current["screenshot_at"]
         if stamp is not None and (type(stamp) not in (int, float) or not math.isfinite(stamp) or stamp < 0):
             raise ValueError("screenshot_at must be a nonnegative Unix timestamp")
         if (current["screenshot_id"] is None) != (stamp is None):
             raise ValueError("screenshot_id and screenshot_at must be supplied together")
-        if status in ("awaiting_confirmation", "queued_send") and current["screenshot_id"] is None:
+        if current["status"] in ("awaiting_confirmation", "queued_send") and current["screenshot_id"] is None:
             raise OutboxConflict("A confirmation screenshot is required")
         if type(current["may_have_sent"]) is not bool:
             raise ValueError("may_have_sent must be boolean")
         if previous["may_have_sent"] and not current["may_have_sent"]:
             raise OutboxConflict("Send uncertainty cannot be cleared")
-        if current["may_have_sent"] and (current["action"] != "send" or status in (
+        if current["may_have_sent"] and (current["action"] != "send" or current["status"] in (
             "queued", "navigating", "awaiting_confirmation", "queued_send", "filled", "cancelled",
         )):
             raise OutboxConflict("Send risk is incompatible with this action or status")
-        if status == "verifying" and (current["action"] != "send" or not current["may_have_sent"]):
+        if current["status"] == "verifying" and (current["action"] != "send" or not current["may_have_sent"]):
             raise OutboxConflict("Only a possible send can be verified")
-        if status == "filled" and current["action"] != "test":
+        if current["status"] == "filled" and current["action"] != "test":
             raise OutboxConflict("Only a test action can finish as filled")
-        if status == "observed":
+        if current["status"] == "observed":
             if (current["action"] != "send" or not current["may_have_sent"]
                     or not current["matched_message_id"] or not current["evidence"]):
                 raise OutboxConflict("Observed requires a possible send and local-message evidence")
@@ -359,8 +348,9 @@ class OutboxStore:
             raise ValueError("transition requires status")
         with self._connection(write=True) as conn:
             previous = self._expected(conn, id, seller, data_dir, expected_status, expected_version)
-            changes.setdefault("phase", changes["status"])
-            self._validate_changes(previous, changes, transition=True)
+            self._validate_transition(previous, changes["status"])
+            self._validate_editable(previous, changes, transition=True)
+            self._validate_values(previous, {**previous, **changes})
             return self._save(conn, previous, changes, "transition")
 
     def update_fields(
@@ -369,7 +359,8 @@ class OutboxStore:
     ) -> dict:
         with self._connection(write=True) as conn:
             previous = self._expected(conn, id, seller, data_dir, expected_status, expected_version)
-            self._validate_changes(previous, changes, transition=False)
+            self._validate_editable(previous, changes, transition=False)
+            self._validate_values(previous, {**previous, **changes})
             return self._save(conn, previous, changes, "update_fields")
 
     def retry(
@@ -380,7 +371,7 @@ class OutboxStore:
             if previous["may_have_sent"]:
                 raise OutboxConflict("A possibly sent task cannot be retried")
             return self._save(conn, previous, {
-                "status": "queued", "phase": "queued", "attempt": previous["attempt"] + 1,
+                "status": "queued", "attempt": previous["attempt"] + 1,
                 "reason": None, "screenshot_id": None, "screenshot_at": None, "screenshot_digest": None,
                 "baseline": None, "evidence": None, "matched_message_id": None,
             }, "retry")
@@ -414,13 +405,12 @@ class OutboxStore:
             recovered = []
             for row in rows:
                 previous = _record(row)
-                risky = previous["may_have_sent"] or previous["status"] in ("navigating", "running", "verifying")
-                status = "unknown" if risky else "failed"
-                reason = "restart_execution_uncertain" if risky else "restart_before_execution"
+                status = "unknown" if is_recovery_uncertain(previous["status"], previous["may_have_sent"]) else "failed"
+                reason = "restart_execution_uncertain" if status == "unknown" else "restart_before_execution"
                 if previous["status"] == "awaiting_confirmation":
                     status, reason = "failed", "restart_confirmation_lost"
                 recovered.append(self._save(conn, previous, {
-                    "status": status, "phase": "recovery", "reason": reason,
+                    "status": status, "reason": reason,
                     "screenshot_id": None, "screenshot_at": None, "screenshot_digest": None,
                 }, "recover"))
             return recovered

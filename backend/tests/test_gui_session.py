@@ -27,9 +27,7 @@ def test_status_polling_never_initializes_and_connect_has_zero_input(sdk):
 
 
 @pytest.mark.parametrize("operation", [
-    lambda: runner.chat_send("text"),
     lambda: runner.chat_input("text"),
-    lambda: runner.click_send(),
     lambda: runner.goto_contact("buyer"),
     lambda: runner.run_node("ChatInput_SendMessage"),
     lambda: runner.run_node("Diagnostics_Unknown"),
@@ -88,12 +86,12 @@ def test_poll_invalidates_session_without_rebinding_even_if_window_returns(sdk, 
     assert status["window_generation"] == ""
     sdk.windows = [window(1)]
     assert not gui_session.get_client_status()["connected"]
-    assert not gui_session.run_guarded(token, lambda: runner.chat_send("stale"))[0]
+    assert not gui_session.run_guarded(token, lambda: runner.chat_input("stale"))[0]
     assert len(sdk.controllers) == 1 and not sdk.calls
     new_status = gui_session.connect_client()
     assert new_status["window_generation"] != token.window_generation
     assert new_status["connected"]
-    assert not gui_session.run_guarded(token, lambda: runner.chat_send("stale"))[0]
+    assert not gui_session.run_guarded(token, lambda: runner.chat_input("stale"))[0]
     assert not sdk.calls
 
 
@@ -111,7 +109,7 @@ def test_window_changed_after_capture_is_rejected_at_execution(sdk, monkeypatch)
     observations = iter([[window(1)], [window(2)]])
     monkeypatch.setattr(runner.Toolkit, "find_desktop_windows", lambda: next(observations))
     token = gui_session.capture_gui_session(account_context.get_account_context().epoch)
-    assert not gui_session.run_guarded(token, lambda: runner.chat_send("stale"))[0]
+    assert not gui_session.run_guarded(token, lambda: runner.chat_input("stale"))[0]
     assert not sdk.calls
 
 
@@ -124,7 +122,7 @@ def test_repeated_capture_is_equal_until_same_window_reconnects(sdk):
     after = gui_session.connect_client()
     assert token.window_generation != after["window_generation"]
     assert len(sdk.controllers) == 1
-    assert not gui_session.run_guarded(token, lambda: runner.chat_send("stale"))[0]
+    assert not gui_session.run_guarded(token, lambda: runner.chat_input("stale"))[0]
     current = gui_session.capture_gui_session(token.epoch)
     assert current.window_generation == after["window_generation"]
     assert gui_session.run_guarded(current, lambda: True) is True
@@ -148,7 +146,7 @@ def test_discovery_error_invalidates_session_without_reconnecting(sdk):
     assert not status["connected"]
     assert "discovery failed" in status["detail"]
     sdk.fail = None
-    assert not gui_session.run_guarded(token, lambda: runner.chat_send("stale"))[0]
+    assert not gui_session.run_guarded(token, lambda: runner.chat_input("stale"))[0]
     assert len(sdk.controllers) == 1 and not sdk.calls
 
 
@@ -159,7 +157,7 @@ def test_diagnostic_rebind_also_invalidates_old_session(sdk):
     status = gui_session.get_client_status()
     assert status["connected"]
     assert status["window_generation"] != token.window_generation
-    assert not gui_session.run_guarded(token, lambda: runner.chat_send("stale"))[0]
+    assert not gui_session.run_guarded(token, lambda: runner.chat_input("stale"))[0]
     assert sdk.calls == [("Diagnostics_ChatInput", {})]
 
 
@@ -169,7 +167,7 @@ def test_window_change_after_navigation_stops_before_send_without_rebinding(sdk)
     def navigate_and_send():
         assert runner.goto_contact("buyer")[0]
         sdk.windows = [window(2)]
-        return runner.chat_send("must not send")
+        return runner.chat_input("must not send")
 
     success, reason = gui_session.run_guarded(token, navigate_and_send)
     assert not success and reason
@@ -211,7 +209,7 @@ def test_queued_stale_session_fails_before_invoking_closure(sdk, monkeypatch, ch
 
     def queued():
         invoked.append(True)
-        return runner.chat_send("stale")
+        return runner.chat_input("stale")
 
     success, reason = gui_session.run_guarded(token, queued)
     assert not success and reason
@@ -225,7 +223,7 @@ def test_token_is_immutable_and_all_binding_fields_are_checked(sdk):
         token.epoch = "changed"
     for field in ("self_ali_id", "data_dir", "epoch", "window_generation"):
         altered = replace(token, **{field: "changed"})
-        assert not gui_session.run_guarded(altered, lambda: runner.chat_send("forged"))[0]
+        assert not gui_session.run_guarded(altered, lambda: runner.chat_input("forged"))[0]
     assert not sdk.calls
 
 
@@ -238,7 +236,7 @@ def test_account_switch_is_rejected_for_the_entire_guarded_task(sdk):
         navigating.set()
         if not release.wait(5):
             raise TimeoutError("test gate not released")
-        return runner.chat_send("current")
+        return runner.chat_input("current")
 
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(gui_session.run_guarded, token, task)
@@ -256,7 +254,7 @@ def test_account_switch_is_rejected_for_the_entire_guarded_task(sdk):
         sdk.config["self_ali_id"] = "seller-b"
         account_context.invalidate_account_context()
     assert gui_session.get_client_status()["connected"]
-    assert not gui_session.run_guarded(token, lambda: runner.chat_send("stale"))[0]
+    assert not gui_session.run_guarded(token, lambda: runner.chat_input("stale"))[0]
 
 
 def test_guard_does_not_leak_after_failure_or_to_other_threads(sdk):
@@ -266,8 +264,8 @@ def test_guard_does_not_leak_after_failure_or_to_other_threads(sdk):
         raise RuntimeError("task failed")
 
     assert gui_session.run_guarded(token, fail) == (False, "task failed")
-    assert not runner.chat_send("unguarded")[0]
+    assert not runner.chat_input("unguarded")[0]
     with ThreadPoolExecutor(max_workers=1) as executor:
-        assert not executor.submit(runner.chat_send, "unguarded worker").result(timeout=2)[0]
+        assert not executor.submit(runner.chat_input, "unguarded worker").result(timeout=2)[0]
     assert not sdk.calls
-    assert gui_session.run_guarded(token, lambda: runner.chat_send("current"))[0]
+    assert gui_session.run_guarded(token, lambda: runner.chat_input("current"))[0]

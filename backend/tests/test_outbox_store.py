@@ -24,7 +24,7 @@ def create(store, scope, key="key-1", **changes):
     return store.create(**{
         **scope, "conversation_id": 1, "contact_ali_id": "buyer-1", "login_id": "buyer-login",
         "content": "  exact\r\nsubmitted \u5185\u5bb9  ", "action": "send",
-        "idempotency_key": key, "draft_version": 8, **changes,
+        "idempotency_key": key, **changes,
     })
 
 
@@ -59,6 +59,43 @@ def race(*calls):
     with ThreadPoolExecutor(max_workers=len(calls)) as pool:
         futures = [pool.submit(run, call) for call in calls]
         return [future.result(timeout=15) for future in futures]
+
+
+def test_initialize_migrates_away_legacy_phase_and_draft_version_columns(tmp_path):
+    path = tmp_path / "legacy.sqlite"
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute(
+            "CREATE TABLE app_outbox ("
+            "id TEXT PRIMARY KEY, seller TEXT NOT NULL, data_dir TEXT NOT NULL,"
+            "conversation_id INTEGER NOT NULL, contact_ali_id TEXT NOT NULL, login_id TEXT NOT NULL,"
+            "content TEXT NOT NULL, action TEXT NOT NULL, idempotency_key TEXT NOT NULL,"
+            "status TEXT NOT NULL, version INTEGER NOT NULL, attempt INTEGER NOT NULL,"
+            "phase TEXT NOT NULL, may_have_sent INTEGER NOT NULL, reason TEXT,"
+            "created_at REAL NOT NULL, updated_at REAL NOT NULL, screenshot_id TEXT,"
+            "screenshot_at REAL, screenshot_digest TEXT, baseline TEXT, evidence TEXT,"
+            "matched_message_id TEXT, draft_version INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO app_outbox (id, seller, data_dir, conversation_id, contact_ali_id, login_id,"
+            "content, action, idempotency_key, status, version, attempt, phase, may_have_sent,"
+            "created_at, updated_at, draft_version) VALUES"
+            "('legacy-task', 's', 'd', 1, 'buyer', 'login', 'text', 'send', 'key', 'queued', 1, 1,"
+            "'queued', 0, 1.0, 1.0, 8)"
+        )
+        conn.commit()
+    store = OutboxStore(path)
+    store.initialize()
+    with closing(sqlite3.connect(path)) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(app_outbox)")}
+        status = conn.execute("SELECT status FROM app_outbox WHERE id='legacy-task'").fetchone()[0]
+    assert "phase" not in columns
+    assert "draft_version" not in columns
+    assert status == "queued"
+    record, created = store.create(
+        seller="s", data_dir="d", conversation_id=1, contact_ali_id="buyer-2", login_id="login-2",
+        content="new text", action="send", idempotency_key="new-key",
+    )
+    assert created and record["status"] == "queued"
 
 
 def test_reads_do_not_create_database_directories_or_schema(tmp_path, scope):
@@ -146,7 +183,6 @@ def test_concurrent_idempotency_across_store_instances(store, scope):
 @pytest.mark.parametrize("changes", [
     {"content": "exact\r\nsubmitted \u5185\u5bb9"}, {"conversation_id": 2},
     {"contact_ali_id": "buyer-2"}, {"login_id": "new-login"}, {"action": "test"},
-    {"draft_version": 9}, {"draft_version": None},
 ])
 def test_payload_mismatch_is_409_without_mutation(store, scope, changes):
     task, _ = create(store, scope)
@@ -246,7 +282,7 @@ def test_fresh_confirmation_invalidates_old_confirmation_and_worker_versions(sto
         screenshot_digest=original["screenshot_digest"] if expired else "sha256:changed",
         reason="screenshot_expired_or_changed",
     )
-    assert refreshed["status"] == refreshed["phase"] == "awaiting_confirmation"
+    assert refreshed["status"] == "awaiting_confirmation"
     assert refreshed["version"] == queued["version"] + 1
     assert refreshed["attempt"] == original["attempt"]
     assert refreshed["may_have_sent"] is False
@@ -256,27 +292,17 @@ def test_fresh_confirmation_invalidates_old_confirmation_and_worker_versions(sto
     with pytest.raises(OutboxConflict):
         move(store, scope, original, "queued_send")
     with pytest.raises(OutboxConflict):
-        move(store, scope, queued, "running", phase="input")
+        move(store, scope, queued, "running")
     requeued = move(store, scope, refreshed, "queued_send")
     # The same status recurs, but an old callback still cannot start input.
     with pytest.raises(OutboxConflict):
-        move(store, scope, queued, "running", phase="input")
+        move(store, scope, queued, "running")
     with pytest.raises(OutboxConflict):
         move(store, scope, requeued, "awaiting_confirmation", may_have_sent=True)
     assert store.get(task["id"], **scope) == requeued
-    running = move(store, scope, requeued, "running", phase="input")
+    running = move(store, scope, requeued, "running")
     assert running["version"] == requeued["version"] + 1
     assert len(store.events(task["id"], **scope)) == running["version"]
-
-
-def test_queued_send_with_input_phase_cannot_return_to_confirmation(store, scope):
-    task, _ = create(store, scope)
-    task = advance(store, scope, task, "queued_send")
-    task = store.update_fields(task["id"], "queued_send", task["version"], **scope, phase="input")
-    with pytest.raises(OutboxConflict, match="before input"):
-        move(store, scope, task, "awaiting_confirmation")
-    assert store.get(task["id"], **scope) == task
-    assert len(store.events(task["id"], **scope)) == task["version"]
 
 
 @pytest.mark.parametrize("may_have_sent", [False, True])
@@ -284,13 +310,21 @@ def test_running_cannot_return_to_confirmation_even_if_changes_clear_risk(store,
     task, _ = create(store, scope)
     task = advance(store, scope, task, "running")
     task = store.update_fields(
-        task["id"], "running", task["version"], **scope,
-        phase="click" if may_have_sent else "input", may_have_sent=may_have_sent,
+        task["id"], "running", task["version"], **scope, may_have_sent=may_have_sent,
     )
     with pytest.raises(OutboxConflict):
         move(store, scope, task, "awaiting_confirmation", may_have_sent=False)
     assert store.get(task["id"], **scope) == task
-    assert len(store.events(task["id"], **scope)) == task["version"]
+    assert store.events(task["id"], **scope)[-1]["kind"] == "transition"
+
+
+def test_field_updates_are_not_recorded_as_transition_events(store, scope):
+    task, _ = create(store, scope)
+    assert len(store.events(task["id"], **scope)) == 1
+    updated = store.update_fields(task["id"], "queued", task["version"], **scope, reason="note")
+    assert updated["version"] == task["version"] + 1
+    events = store.events(task["id"], **scope)
+    assert len(events) == 1 and events[0]["kind"] == "create"
 
 
 @pytest.mark.parametrize("start,target", [
@@ -319,7 +353,7 @@ def test_screenshot_and_action_constraints_and_monotonic_send_risk(store, scope)
         move(store, scope, running, "filled")
     with pytest.raises(OutboxConflict):
         move(store, scope, running, "verifying")
-    marked = store.update_fields(running["id"], "running", running["version"], **scope, may_have_sent=True, phase="sending")
+    marked = store.update_fields(running["id"], "running", running["version"], **scope, may_have_sent=True)
     with pytest.raises(OutboxConflict):
         store.update_fields(marked["id"], "running", **scope, may_have_sent=False)
     with pytest.raises(OutboxConflict):
@@ -342,7 +376,7 @@ def test_screenshot_and_action_constraints_and_monotonic_send_risk(store, scope)
 
 @pytest.mark.parametrize("changes", [
     {"content": "changed"}, {"attempt": 99}, {"version": 10},
-    {"idempotency_key": "other"}, {"draft_version": 9}, {"status": "running"},
+    {"idempotency_key": "other"}, {"status": "running"},
     {"matched_message_id": "local-1"}, {"may_have_sent": "false"},
     {"baseline": []}, {"evidence": {"bad": float("nan")}},
     {"screenshot_id": "missing timestamp"}, {"screenshot_at": float("inf")},
@@ -363,11 +397,10 @@ def test_retry_clears_current_artifacts_but_preserves_complete_event_history(sto
         move(store, scope, failed, "queued")
     queued = store.retry(failed["id"], failed["version"], **scope)
     assert queued["attempt"] == 2
-    assert queued["status"] == queued["phase"] == "queued"
+    assert queued["status"] == "queued"
     for name in ("screenshot_id", "screenshot_at", "screenshot_digest", "baseline", "evidence", "reason", "matched_message_id"):
         assert queued[name] is None
     assert queued["content"] == task["content"]
-    assert queued["draft_version"] == 8
     events = store.events(task["id"], **scope)
     assert [event["version"] for event in events] == list(range(1, queued["version"] + 1))
     assert events[0]["previous"] is None
@@ -466,7 +499,7 @@ def test_unknown_possible_send_can_be_observed_later_but_never_replayed(store, s
 def test_restart_preserves_send_marker_and_recovers_all_seller_scopes(store, scope):
     task, _ = create(store, scope)
     task = advance(store, scope, task, "running")
-    marked = store.update_fields(task["id"], "running", task["version"], **scope, may_have_sent=True, phase="sending")
+    marked = store.update_fields(task["id"], "running", task["version"], **scope, may_have_sent=True)
     other_scope = {**scope, "seller": "other-seller"}
     other, _ = create(store, other_scope)
     recovered = {record["id"]: record for record in OutboxStore(store.database_path).recover()}

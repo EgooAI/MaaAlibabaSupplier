@@ -24,6 +24,7 @@ from sqlmodel import Field, SQLModel
 
 from backend.app.crm_sdk.core.base import BaseManager
 from backend.app.crm_sdk.utils.common import bootstrap_engine, get_database_lock, utc_now
+from backend.app.shared.crm.paths import default_crm_database_path
 
 AES_KEY_SIZES = (16, 24, 32)
 SQLITE_MAGIC = b"SQLite format 3\x00"
@@ -119,9 +120,7 @@ def read_saved_key(ali_id: str, database_path: Optional[Path | str] = None) -> t
     if not ali_id:
         return None
     if database_path is None:
-        from backend.app.shared.crm.sync import _default_database_path
-
-        database_path = _default_database_path()
+        database_path = default_crm_database_path()
     path = Path(database_path).resolve()
     try:
         path.stat()

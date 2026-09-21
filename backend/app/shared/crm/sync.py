@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from sqlalchemy import func, text
+from sqlalchemy import text
 from sqlmodel import Session, select
 
 from backend.app.shared.crm.identities import (
@@ -35,13 +35,12 @@ from backend.app.shared.crm.sdk import (
 )
 from backend.app.shared.crm.views import (
     CrmConversation,
-    CrmConversationDigest,
     CrmMessage,
-    coerce_epoch,
     message_display_text,
 )
 from backend.app.shared.crm.sync_store import canonical_source_dir, upsert_messages, write_sync_state
 from backend.app.shared.crm.inbox_store import _epoch, write_inbox
+from backend.app.shared.crm.paths import default_crm_database_path
 from backend.app.shared.mitm.pool import SelfInfo, UserInfo, get_user_info_pool
 from backend.app.shared.utils.log_context import bind_log_context, capture_log_context, log_event
 from uuid import uuid4
@@ -60,7 +59,7 @@ class CRMAdapter:
     def __init__(self, database_path: Path | str | None = None) -> None:
         from backend.app.shared.crm.migrations import migrate_message_ids
 
-        database_path = database_path or _default_database_path()
+        database_path = database_path or default_crm_database_path()
         migrate_message_ids(database_path)
         self.platforms = PlatformManager(database_path=database_path)
         self.customers = CustomerManager(database_path=database_path)
@@ -382,152 +381,6 @@ class CRMAdapter:
             rows.sort(key=lambda row: priority.get(row.type, 99))
             return session.get(Account, rows[0].aid)
 
-    def batch_load_conversation_maps(
-        self, aids: set[int], contact_keys: set[str]
-    ) -> tuple[dict[int, Any], dict[int, Any], dict[str, int]]:
-        """Batch preload for the conversation list: one session, few IN queries.
-
-        Returns (accounts by aid, customers by cid, contact key -> aid with the
-        same ali_id > login_id > encrypt_account_id priority as
-        :meth:`_account_by_any_mapping`. Mapping targets outside *aids* are
-        fetched as well so every contact resolves without extra round trips.
-        """
-        aid_list = sorted(aid for aid in aids if aid is not None)
-        key_list = sorted(key for key in contact_keys if key)
-        mapping_types = [MAPPING_ALI_ID, MAPPING_LOGIN_ID, MAPPING_ENCRYPT_ACCOUNT_ID]
-        priority = {MAPPING_ALI_ID: 0, MAPPING_LOGIN_ID: 1, MAPPING_ENCRYPT_ACCOUNT_ID: 2}
-        accounts: dict[int, Any] = {}
-        customers: dict[int, Any] = {}
-        key_to_aid: dict[str, int] = {}
-        with Session(self.engine) as session:
-            if aid_list:
-                for account in session.exec(select(Account).where(Account.aid.in_(aid_list))).all():
-                    if account.aid is not None:
-                        accounts[account.aid] = account
-            if key_list:
-                best: dict[str, Any] = {}
-                rows = session.exec(
-                    select(AccountMapping).where(
-                        AccountMapping.key.in_(key_list),
-                        AccountMapping.type.in_(mapping_types),
-                    )
-                ).all()
-                for row in rows:
-                    current = best.get(row.key or "")
-                    if current is None or priority.get(row.type, 99) < priority.get(current.type, 99):
-                        best[row.key or ""] = row
-                key_to_aid = {key: row.aid for key, row in best.items() if row.aid is not None}
-                missing = sorted({aid for aid in key_to_aid.values()} - set(accounts))
-                if missing:
-                    for account in session.exec(select(Account).where(Account.aid.in_(missing))).all():
-                        if account.aid is not None:
-                            accounts[account.aid] = account
-            cids = sorted({account.cid for account in accounts.values() if account.cid is not None})
-            if cids:
-                for customer in session.exec(select(Customer).where(Customer.cid.in_(cids))).all():
-                    if customer.cid is not None:
-                        customers[customer.cid] = customer
-        return accounts, customers, key_to_aid
-
-    def list_conversations(self, self_ali_id: str) -> list[CrmConversation]:
-        prefix = session_key_prefix(self_ali_id)
-        conversations: list[CrmConversation] = []
-        with Session(self.engine) as session:
-            session_statement = select(SessionMeta).where(SessionMeta.key.startswith(prefix))
-            sessions = [meta for meta in session.exec(session_statement).all() if meta.sid is not None]
-            if not sessions:
-                return []
-            sids = [meta.sid for meta in sessions if meta.sid is not None]
-            message_statement = select(Message).where(Message.sid.in_(sids))
-            grouped: dict[int, list] = {sid: [] for sid in sids}
-            for message in session.exec(message_statement).all():
-                if message.sid in grouped:
-                    grouped[message.sid].append(_crm_message_from_sdk(message))
-            for session_meta in sessions:
-                messages = grouped.get(session_meta.sid or 0, [])
-                messages.sort(
-                    key=lambda message: message.created_at.timestamp() if message.created_at else 0.0
-                )
-                if not messages:
-                    continue
-                contact_ali_id = str(session_meta.key or "").removeprefix(prefix)
-                conversations.append(CrmConversation(
-                    contact_ali_id=contact_ali_id,
-                    messages=messages,
-                    last_created_at=messages[-1].created_at,
-                    last_content_label=messages[-1].content_label,
-                    sid=session_meta.sid or 0,
-                    key=str(session_meta.key or ""),
-                    participants=tuple(session_meta.participants or []),
-                ))
-        conversations.sort(key=lambda conversation: coerce_epoch(conversation.last_created_at), reverse=True)
-        return conversations
-
-    def list_conversation_digests(self, self_ali_id: str) -> list[CrmConversationDigest]:
-        """List-path digests: latest pointer + non-system count per session.
-
-        Three light queries, zero message bodies: the multi-MB ``content`` JSON
-        blobs are projected inside SQLite (``json_extract``) instead of being
-        ORM-loaded and deserialized one by one in Python. Sessions without
-        messages are skipped, like :meth:`list_conversations`.
-        """
-        prefix = session_key_prefix(self_ali_id)
-        with Session(self.engine) as session:
-            metas = [
-                meta
-                for meta in session.exec(
-                    select(SessionMeta).where(SessionMeta.key.startswith(prefix))
-                ).all()
-                if meta.sid is not None
-            ]
-            if not metas:
-                return []
-            by_sid = {meta.sid: meta for meta in metas if meta.sid is not None}
-            sids = sorted(by_sid)
-            not_system = func.coalesce(func.json_extract(Message.content, "$.is_system"), 0) != 1
-            not_auto = func.coalesce(func.json_extract(Message.content, "$.is_auto_reply"), 0) != 1
-            ranked = (
-                select(
-                    Message.sid.label("sid"),
-                    Message.created_at.label("created_at"),
-                    func.json_extract(Message.content, "$.content_label").label("content_label"),
-                    func.json_extract(Message.content, "$.user_content_type").label("user_content_type"),
-                    func.row_number().over(
-                        partition_by=Message.sid,
-                        order_by=(Message.created_at.desc(), Message.external_mid.desc()),
-                    ).label("rn"),
-                ).where(Message.sid.in_(sids)).subquery()
-            )
-            latest = {
-                row["sid"]: row
-                for row in session.execute(select(ranked).where(ranked.c.rn == 1)).mappings().all()
-            }
-            counts = {
-                row["sid"]: row["n"]
-                for row in session.execute(
-                    select(Message.sid.label("sid"), func.count().label("n"))
-                    .where(Message.sid.in_(sids), not_system, not_auto)
-                    .group_by(Message.sid)
-                ).mappings().all()
-            }
-            digests = []
-            for sid, meta in by_sid.items():
-                row = latest.get(sid)
-                if row is None:
-                    continue
-                digests.append(CrmConversationDigest(
-                    contact_ali_id=str(meta.key or "").removeprefix(prefix),
-                    sid=sid,
-                    key=str(meta.key or ""),
-                    participants=tuple(meta.participants or []),
-                    latest_created_at=row["created_at"],
-                    latest_content_label=row["content_label"],
-                    latest_is_card=row["user_content_type"] == 10010,
-                    dialogue_count=int(counts.get(sid, 0)),
-                ))
-        digests.sort(key=lambda digest: coerce_epoch(digest.latest_created_at), reverse=True)
-        return digests
-
     def get_conversation_detail(self, self_ali_id: str, sid: int) -> CrmConversation | None:
         prefix = session_key_prefix(self_ali_id)
         with Session(self.engine) as session:
@@ -578,7 +431,7 @@ def sync_im_database(
     snapshot = self_info.model_copy(deep=True) if self_info is not None else SelfInfo(ali_id=self_ali_id)
     return _submit_sync(
         _sync_im_database_now, Path(db_path).resolve(), self_ali_id, snapshot,
-        _default_database_path().resolve(), source_revision, canonical_source_dir(data_dir),
+        default_crm_database_path().resolve(), source_revision, canonical_source_dir(data_dir),
     )
 
 
@@ -640,17 +493,6 @@ def _sync_im_database_now(
     return CRMAdapter(database_path).sync_conversations(
         conversations, self_info, source_revision=source_revision, data_dir=data_dir,
     )
-
-
-def _default_database_path() -> Path:
-    from backend.app.shared.utils.env import get_env_str
-    from backend.app.shared.utils.settings import CRM_DB_RELATIVE_DEFAULT, resolve_backend_root
-
-    raw = get_env_str("MAA_CRM_DB_PATH", CRM_DB_RELATIVE_DEFAULT)
-    path = Path(raw)
-    if not path.is_absolute():
-        path = resolve_backend_root() / path
-    return path
 
 
 def _display_name(info: UserInfo | SelfInfo) -> str:

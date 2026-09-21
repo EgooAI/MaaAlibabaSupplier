@@ -8,4 +8,5 @@ export const outboxLabels: Record<OutboxTask["status"], string> = {
 export const isTerminal = (task: OutboxTask) => ["observed", "filled", "failed", "unknown", "cancelled"].includes(task.status);
 export const canCancel = (task: OutboxTask) => ["queued", "awaiting_confirmation", "queued_send"].includes(task.status);
 export const canRetry = (task: OutboxTask) => task.status === "failed" && !task.may_have_sent;
-export const frameFresh = (task: OutboxTask, now = Date.now()) => task.status === "awaiting_confirmation" && Boolean(task.screenshot_id) && task.screenshot_at !== null && now >= task.screenshot_at * 1000 && now < task.screenshot_at * 1000 + 120_000;
+export const SCREENSHOT_TTL_MS = 120_000;
+export const frameFresh = (task: OutboxTask, now = Date.now()) => task.status === "awaiting_confirmation" && Boolean(task.screenshot_id) && task.screenshot_at !== null && now >= task.screenshot_at * 1000 && now < task.screenshot_at * 1000 + SCREENSHOT_TTL_MS;
