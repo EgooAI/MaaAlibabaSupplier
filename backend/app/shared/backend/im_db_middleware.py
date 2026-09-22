@@ -47,6 +47,7 @@ from backend.app.shared.utils.app_config import (
 from backend.app.shared.backend import im_layout
 from backend.app.shared.utils.env import get_env_str
 from backend.app.shared.utils.im_wal import WalError, checksum_chain, read_wal_header, rekey_wal_copy
+from backend.app.shared.utils.log_context import failure_report_due
 from backend.app.shared.utils.settings import resolve_backend_root
 
 _CACHE_TTL = 5.0  # seconds
@@ -128,7 +129,7 @@ class IMDBMiddleware:
                 try:
                     instance._source_revision = get_im_data_revision()
                 except Exception:
-                    logger.debug("IM数据版本号读取失败，从0开始")
+                    pass
                 instance._init_data_dir()
                 instance._select_sync_context()
                 cls._instance = instance
@@ -150,7 +151,7 @@ class IMDBMiddleware:
             try:
                 self._conn.close()
             except Exception:
-                logger.debug("IM缓存连接关闭失败，已忽略")
+                pass
             self._conn = None
         self._key = None
         self._key_ali_id = ""
@@ -281,10 +282,8 @@ class IMDBMiddleware:
         with account_lock, self._lock:
             data_dir = self._data_dir
         if data_dir is None:
-            logger.warning("阿里客户端数据目录未配置，请在设置页配置后重试")
             return None
         if not ali_id:
-            logger.warning("尚未在设置页选择阿里账号身份，请选择后重试")
             return None
 
         db_path = im_layout.encrypted_db_path(data_dir, ali_id)
@@ -690,7 +689,7 @@ class IMDBMiddleware:
             try:
                 old_conn.close()
             except Exception:
-                logger.debug("旧IM缓存连接关闭失败，已忽略")
+                pass
 
         self._conn = conn
         self._cached_db_path = cached
@@ -708,15 +707,18 @@ class IMDBMiddleware:
         try:
             write_app_config({CONFIG_KEY_IM_DATA_REVISION: self._source_revision})
         except OSError:
-            logger.debug("IM数据版本号持久化失败，仅保留内存值")
+            pass
 
     def _note_failure(self, detail: str, code: str = "decrypt_error") -> None:
+        previous_code = self._error_code
         self._consecutive_failures += 1
         delay = min(_MIN_REFRESH_INTERVAL * (2 ** min(self._consecutive_failures - 1, 4)), _MAX_BACKOFF)
         self._backoff_until = time.time() + delay
         self._last_error = detail
         self._error_code = code
-        logger.warning("IM source refresh failed ({} consecutive failures), retry in {}s", self._consecutive_failures, delay)
+        if failure_report_due(self._consecutive_failures, changed=code != previous_code):
+            logger.warning("IM source refresh failed ({} consecutive failures), retry in {}s",
+                           self._consecutive_failures, delay)
 
     def _refresh(self) -> bool:
         with account_lock, self._lock:

@@ -28,7 +28,7 @@ from backend.app.shared.crm.outbox_state import (
 )
 from backend.app.shared.utils.settings import resolve_backend_root
 from backend.app.task_queue import get_task_queue
-from backend.app.shared.utils.log_context import bind_log_context, capture_log_context, log_event
+from backend.app.shared.utils.log_context import bind_log_context, capture_log_context, failure_report_due, log_event
 
 
 SCREENSHOT_TTL = 120.0
@@ -471,15 +471,22 @@ class OutboxService:
             return observed
 
     def _verify_loop(self) -> None:
+        failures = 0
         try:
             while not self._stopping.wait(RECONCILE_INTERVAL):
                 self._observe_verifier("reconciling")
                 try:
                     self.reconcile_once()
                 except Exception as exc:
+                    failures += 1
                     self._observe_verifier("waiting", last_error=type(exc).__name__)
-                    logger.exception("Outbox local-source reconciliation failed")
+                    # A persistent local-source failure must not log every 2 seconds.
+                    if failure_report_due(failures):
+                        logger.exception("Outbox local-source reconciliation failed")
                 else:
+                    if failures:
+                        log_event("outbox.reconcile_recovered", count=failures)
+                    failures = 0
                     with self._observation_lock:
                         self._observation["completed_iterations"] += 1
                     self._observe_verifier("waiting", last_progress_at=time.time(), last_error=None)

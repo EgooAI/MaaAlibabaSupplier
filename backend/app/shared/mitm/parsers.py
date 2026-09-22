@@ -21,7 +21,7 @@ def _try_decode_base64(body: bytes) -> bytes:
             if b"{" in decoded:
                 return decoded
         except Exception:
-            logger.debug("body不是base64，按原值处理")
+            pass
     return body
 
 
@@ -42,13 +42,11 @@ def _unwrap_jsonp(body: bytes) -> dict | None:
         start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1 or end <= start:
-        logger.debug("JSONP unwrap: no JSON found ({} bytes)", len(body))
         return None
     extracted = text[start : end + 1]
     try:
         return json.loads(extracted)
-    except json.JSONDecodeError as e:
-        logger.debug("JSONP unwrap: JSON parse failed at char {}", e.pos)
+    except json.JSONDecodeError:
         return None
 
 
@@ -57,7 +55,6 @@ def _parse_json(body: bytes) -> dict | None:
     try:
         return json.loads(body)
     except json.JSONDecodeError:
-        logger.opt(exception=True).debug("JSON parse failed")
         return None
 
 
@@ -100,8 +97,6 @@ def parse_query_customer_info(body: bytes, url_buyer_login_id: str = "") -> User
 
     if not login_id:
         logger.warning("queryCustomerInfo: no login_id found (buyer={}, crm={})", bool(buyer), bool(crm))
-
-    logger.info("queryCustomerInfo parsed")
 
     return UserInfo(
         # ali_id is NOT available from queryCustomerInfo (CRM API).
@@ -213,12 +208,10 @@ def parse_fetch_card(body: bytes) -> ProductCard | None:
 
     card_list = (data.get("data") or {}).get("fbCardList") or []
     if not card_list:
-        logger.info("fetchcard: fbCardList empty")
         return None
 
     card_data = card_list[0].get("data") or {}
     if not card_data:
-        logger.info("fetchcard: card[0].data empty")
         return None
 
     # fbCardList may contain different card types (product, RFQ, etc.)

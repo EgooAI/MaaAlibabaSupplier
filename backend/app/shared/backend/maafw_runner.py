@@ -268,10 +268,8 @@ def run_node(entry: str, pipeline_override: dict | None = None) -> tuple[bool, s
             detail = _wait_native(job).get()
             _log_native_job("maa.succeeded" if detail and detail.status.succeeded else "maa.failed", job, entry)
             if detail and detail.status.succeeded:
-                logger.info("MaaFW node '{}' succeeded", entry)
                 return True, "GUI 操作完成（不代表平台已确认发送）"
             msg = f"状态: {detail.status}" if detail else "无返回"
-            logger.warning("MaaFW node '{}' failed: {}", entry, msg)
             return False, msg
         except Exception as exc:
             logger.opt(exception=True).error("MaaFW node execution failed")

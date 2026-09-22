@@ -613,7 +613,7 @@ def analysis(conversation_id: int) -> dict:
     try:
         payload = json.loads(raw)
     except (json.JSONDecodeError, TypeError, ValueError):
-        logger.warning("分析结果格式错误")
+        # The 502 response is recorded by http.access; no second record here.
         raise AppError("分析结果格式错误", status_code=502)
     if not isinstance(payload, dict):
         raise AppError("分析结果格式错误", status_code=502)

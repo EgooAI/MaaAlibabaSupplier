@@ -21,6 +21,7 @@ import backend.app.agent.nodes.auxi.copy_text
 import backend.app.agent.nodes.auxi.read_clipboard
 import backend.app.agent.nodes.auxi.send_message
 from backend.app.shared.utils.env import load_workdir_env
+from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.utils.logging import configure_logging
 
 
@@ -29,7 +30,7 @@ def main() -> None:
     configure_logging(source="agent")
 
     if len(sys.argv) < 2:
-        logger.error("Usage: python main.py <socket_id>")
+        log_event("agent.usage_error")
         sys.exit(1)
 
     socket_id = sys.argv[-1]
@@ -50,7 +51,7 @@ def main() -> None:
     def _request_shutdown(signum: int, _frame: object) -> None:
         if shutdown_requested.is_set():
             raise KeyboardInterrupt
-        logger.info("[agent] received signal {}; shutting down...", signum)
+        log_event("agent.signal", signal=signum)
         threading.Thread(target=_shutdown_agent_server, daemon=True, name="shutdown").start()
 
     signal.signal(signal.SIGINT, _request_shutdown)

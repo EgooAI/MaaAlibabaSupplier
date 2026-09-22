@@ -16,6 +16,7 @@ from backend.app.shared.agent.chat_history_content import (
 )
 from backend.app.shared.agent.inputs import build_chat_dialog_input
 from backend.app.shared.agent.runner import run_chat_tool_agent
+from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.agent.system_agents import SYSTEM_AGENT_APIDS, SYSTEM_AGENT_DEFINITIONS
 from backend.app.shared.agent.system_presets import system_agent_presets
 from backend.app.shared.crm.sdk import (
@@ -63,12 +64,12 @@ def _refresh_llm_runtime() -> None:
     try:
         from agent_pipeline.llm_api import register_default_llms
     except ImportError:
-        logger.warning("agent_pipeline.llm_api不可用，跳过LLM运行时注册")
+        log_event("agent.registration_skipped", reason="llm_api_unavailable")
         return
     try:
         register_default_llms()
     except Exception:
-        logger.exception("LLM运行时注册失败")
+        logger.exception("LLM runtime registration failed")
 
 
 def _db_preset_to_dict(preset: AgentPreset, *, enabled: bool = True, updated_at: str = "") -> dict:

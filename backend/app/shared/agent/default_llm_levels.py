@@ -7,9 +7,8 @@ Agent 因 level 未注册而不可用。本模块在每次启动时补上缺失�
 
 from __future__ import annotations
 
-from loguru import logger
-
 from backend.app.shared.crm.sdk import LLMApiConfig, LLMApiConfigManager
+from backend.app.shared.utils.log_context import log_event
 
 DEFAULT_SEEDED_LLM_LEVEL = 0
 
@@ -22,9 +21,7 @@ def ensure_default_llm_levels_seeded() -> None:
     manager.upsert_config(
         LLMApiConfig(level=DEFAULT_SEEDED_LLM_LEVEL, base_url="", api_key="", model_name="")
     )
-    logger.info(
-        "Seeded default LLM level {} into {}", DEFAULT_SEEDED_LLM_LEVEL, manager.database_path
-    )
+    log_event("config.seeded", count=1, entry="llm_level")
 
 
 __all__ = ["DEFAULT_SEEDED_LLM_LEVEL", "ensure_default_llm_levels_seeded"]

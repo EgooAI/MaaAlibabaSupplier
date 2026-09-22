@@ -28,6 +28,30 @@ from backend.app.api.envelope import err
 from backend.app.shared.utils.log_context import bind_log_context, log_event
 from backend.app.shared.utils.settings import FRONTEND_DEV_ORIGINS, resolve_backend_root
 
+# Successful read requests below this threshold are described by aggregate
+# counters instead of one JSON record each; slower reads stay individually
+# visible so latency regressions remain diagnosable.
+SLOW_REQUEST_MS = 1000.0
+_OBSERVATION_LOCK = threading.Lock()
+_OBSERVATION = {"requests": 0, "reads": 0, "writes": 0, "errors": 0, "slow": 0, "observed_at": None}
+
+
+def http_observations() -> dict:
+    """Process-lifetime request counters; nonblocking, no I/O, no request data."""
+    with _OBSERVATION_LOCK:
+        return dict(_OBSERVATION)
+
+
+def _record_request(method: str | None, status: int, duration_ms: float) -> None:
+    with _OBSERVATION_LOCK:
+        _OBSERVATION["requests"] += 1
+        _OBSERVATION["reads" if method in {"GET", "HEAD", "OPTIONS"} else "writes"] += 1
+        if status >= 400:
+            _OBSERVATION["errors"] += 1
+        if duration_ms >= SLOW_REQUEST_MS:
+            _OBSERVATION["slow"] += 1
+        _OBSERVATION["observed_at"] = time.time()
+
 
 @dataclass(frozen=True)
 class AuthConfig:
@@ -157,8 +181,14 @@ class AuthMiddleware:
                 await self._handle(scope, receive, observe)
             finally:
                 route = getattr(scope.get("route"), "path", None)
-                log_event("http.access", method=scope.get("method"), route=route or "unmatched",
-                          status=status, duration_ms=(time.monotonic() - start) * 1000)
+                method = scope.get("method")
+                duration_ms = (time.monotonic() - start) * 1000
+                _record_request(method, status, duration_ms)
+                # Keep one record for writes, failures and slow reads only;
+                # successful fast reads live in http_observations().
+                if method not in {"GET", "HEAD"} or status >= 400 or duration_ms >= SLOW_REQUEST_MS:
+                    log_event("http.access", method=method, route=route or "unmatched",
+                              status=status, duration_ms=duration_ms)
 
     async def _handle(self, scope: Scope, receive: Receive, send: Send) -> None:
         path = get_route_path(scope) if scope["type"] in {"http", "websocket"} else ""
@@ -259,10 +289,9 @@ class AuthMiddleware:
             # Do not log exception locals: login bodies and bearer tokens are secrets.
             await reject(500, "Internal server error")
         finally:
-            # Successful reads are fully described by http.access; keep the
-            # second record for writes and abnormal outcomes only.
-            if (scope["method"] not in {"GET", "HEAD"} or status is None or status >= 400
-                    or not complete or disconnected or send_failed):
+            # http.access already carries writes, errors and slow reads; a
+            # second record is useful only when completion itself was abnormal.
+            if status is None or not complete or disconnected or send_failed:
                 log_event("http.response", status=status, complete=complete,
                           disconnected=disconnected, send_failed=send_failed)
             pending = scope["state"].pop("update_handoff", None)

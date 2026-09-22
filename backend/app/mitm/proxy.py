@@ -29,6 +29,7 @@ from backend.app.shared.mitm.parsers import (
 from backend.app.shared.mitm.pool import UserInfo, get_generic_card_pool, get_product_card_pool, get_user_info_pool
 from backend.app.shared.crm import sync_self_info, sync_user_info
 from backend.app.shared.utils.app_config import get_configured_self_ali_id
+from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.utils.logging import configure_logging
 from backend.app.shared.utils.env import get_env_int, get_env_str
 from backend.app.shared.utils.settings import MITM_RECEIVER_HOST_DEFAULT, MITM_RECEIVER_PORT_DEFAULT
@@ -105,9 +106,19 @@ class ReusableThreadingHTTPServer(ThreadingHTTPServer):
 
 
 class TrafficRouter:
+    # One structured event per matched request; the event name identifies the
+    # API surface and `count` carries how many items were parsed from it.
+    _EVENTS = {
+        "queryCustomerInfo": "mitm.query_customer_info",
+        "getuserinfobyparams": "mitm.user_info_batch",
+        "icbu.im.id.get": "mitm.user_info_id",
+        "contact.extinfo.get": "mitm.contact_extinfo",
+        "fetchcard": "mitm.fetch_card",
+    }
+
     def __init__(self, url_filters: list[str] | None = None) -> None:
         self.url_filters = url_filters or []
-        self._routes: list[tuple[str, Callable[[_TrafficEvent], None]]] = [
+        self._routes: list[tuple[str, Callable[[_TrafficEvent], int]]] = [
             ("queryCustomerInfo", self._handle_query_customer_info),
             ("getuserinfobyparams", self._handle_get_user_info_by_params),
             ("icbu.im.id.get", self._handle_im_id_get),
@@ -128,45 +139,46 @@ class TrafficRouter:
         keyword, handler = route
 
         if not event.response_body:
-            logger.debug("MITM event matched {} but response_body is empty", keyword)
             return
 
-        logger.info("MITM event matched {}", keyword)
-        handler(event)
+        count = handler(event)
+        if count:
+            log_event(self._EVENTS[keyword], count=count)
 
-    def _match_route(self, event: _TrafficEvent) -> tuple[str, Callable[[_TrafficEvent], None]] | None:
+    def _match_route(self, event: _TrafficEvent) -> tuple[str, Callable[[_TrafficEvent], int]] | None:
         for keyword, handler in self._routes:
             if keyword in event.route_target:
                 return keyword, handler
         return None
 
-    def _handle_query_customer_info(self, event: _TrafficEvent) -> None:
+    def _handle_query_customer_info(self, event: _TrafficEvent) -> int:
         qs = parse_qs(urlparse(event.url).query)
         buyer_login_id = (qs.get("buyerLoginId") or [""])[0]
         info = parse_query_customer_info(event.response_body, url_buyer_login_id=buyer_login_id)
-        if info:
-            logger.info("UserInfo parsed (CRM)")
-            get_user_info_pool().put(info)
-            sync_user_info(info)
+        if not info:
+            return 0
+        get_user_info_pool().put(info)
+        sync_user_info(info)
+        return 1
 
     @staticmethod
-    def _put_users(users: list[UserInfo], source: str) -> None:
+    def _put_users(users: list[UserInfo]) -> int:
         pool = get_user_info_pool()
         for user in users:
-            logger.info("UserInfo parsed ({})", source)
             pool.put(user)
             sync_user_info(user)
+        return len(users)
 
-    def _handle_get_user_info_by_params(self, event: _TrafficEvent) -> None:
-        self._put_users(parse_get_user_info_by_params(event.response_body), "batch")
+    def _handle_get_user_info_by_params(self, event: _TrafficEvent) -> int:
+        return self._put_users(parse_get_user_info_by_params(event.response_body))
 
-    def _handle_im_id_get(self, event: _TrafficEvent) -> None:
-        self._put_users(parse_im_id_get(event.response_body), "ID")
+    def _handle_im_id_get(self, event: _TrafficEvent) -> int:
+        return self._put_users(parse_im_id_get(event.response_body))
 
-    def _handle_contact_extinfo_get(self, event: _TrafficEvent) -> None:
+    def _handle_contact_extinfo_get(self, event: _TrafficEvent) -> int:
         accounts = parse_contact_extinfo_get(event.response_body)
         if not accounts:
-            return
+            return 0
 
         selected_ali_id = get_configured_self_ali_id()
         user_pool = get_user_info_pool()
@@ -185,28 +197,27 @@ class TrafficRouter:
             if selected_ali_id and account.ali_id == selected_ali_id:
                 logger.info("SelfInfo parsed for selected account")
                 sync_self_info(account)
+        return len(accounts)
 
     @staticmethod
-    def _handle_fetch_card(event: _TrafficEvent) -> None:
+    def _handle_fetch_card(event: _TrafficEvent) -> int:
         card = parse_fetch_card(event.response_body)
         if card:
-            logger.info("ProductCard parsed")
             get_product_card_pool().put(card)
-            return
+            return 1
 
         # Inquiry cards have no reader in the product; keep them out of the
         # generic pool so they are not rendered as unrelated cards.
         inquiry = parse_inquiry_card(event.response_body)
         if inquiry:
-            logger.info("InquiryCard parsed ({} products)", len(inquiry.products))
-            return
+            return len(inquiry.products)
 
         # Other non-product cards: store as generic
         generic = parse_generic_card(event.response_body, source_url=event.url)
         pool = get_generic_card_pool()
         for gc in generic:
-            logger.info("GenericCard parsed")
             pool.put(gc)
+        return len(generic)
 
 
 class TrafficHandler(BaseHTTPRequestHandler):
@@ -271,10 +282,9 @@ class TrafficHandler(BaseHTTPRequestHandler):
         if code == 401:
             self.send_header("WWW-Authenticate", "Bearer")
         self.end_headers()
-        logger.debug("MITM response status={}", code)
 
     def log_message(self, format: str, *args: Any) -> None:
-        pass  # suppressed — _respond handles logging
+        pass  # suppressed — responses are not logged per request
 
 
 def create_receiver(

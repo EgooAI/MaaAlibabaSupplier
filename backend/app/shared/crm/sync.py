@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import Future
@@ -438,15 +439,15 @@ def sync_im_database(
 def _submit_sync(func, *args: Any) -> Future:
     context = capture_log_context()
     context.setdefault("sync_id", uuid4().hex)
+    started = time.perf_counter()
 
     def run():
         with bind_log_context(**context):
-            log_event("crm.started")
             return func(*args)
 
     def completed(done):
         with bind_log_context(**context):
-            _log_sync_failure(done)
+            _log_sync_failure(done, (time.perf_counter() - started) * 1000)
 
     with bind_log_context(**context):
         log_event("crm.submitted")
@@ -455,15 +456,15 @@ def _submit_sync(func, *args: Any) -> Future:
     return future
 
 
-def _log_sync_failure(future) -> None:
+def _log_sync_failure(future, duration_ms: float | None = None) -> None:
     try:
         result = future.result()
         fields = {key: result[key] for key in ("revision", "inserted", "updated", "unchanged")
                   if key in result} if isinstance(result, dict) else {}
-        log_event("crm.committed", **fields)
-    except Exception:
+        log_event("crm.committed", duration_ms=duration_ms, **fields)
+    except Exception as exc:
         logger.exception("Failed to sync data into CRM SDK")
-        log_event("crm.failed")
+        log_event("crm.failed", exception_type=type(exc).__name__)
 
 
 def _sync_user_info_now(info: UserInfo) -> None:

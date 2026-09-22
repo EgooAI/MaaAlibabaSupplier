@@ -41,7 +41,7 @@ ERROR_CATEGORIES = {
 }
 _FIELDS = frozenset({
     "run_id", "run_number", "run_attempt", "request_id", "origin_request_id", "account_epoch", "origin_account_epoch",
-    "queue_task_id", "queue", "outbox_id", "attempt", "version", "phase", "status", "reason",
+    "queue_task_id", "outbox_id", "attempt", "version", "phase", "status", "reason",
     "native_job_id", "native_runtime_id", "native_log_session_id", "sync_id", "source_revision", "revision",
     "inserted", "updated", "unchanged", "count", "duration_ms", "method", "route",
     "complete", "disconnected", "send_failed", "entry", "exception_type", "signal", "component",
@@ -50,7 +50,7 @@ _RUNTIME_MESSAGES = (
     "Queued task failed", "request failed", "translation query failed", "translation chunk failed",
     "failed to load translation context", "Translation agent omitted an item",
     "Unhandled account API error", "Unhandled API error", "node diagnostic failed",
-    "Outbox operation failed", "Outbox terminal write deferred", "Outbox local-source reconciliation failed",
+    "Outbox terminal write deferred", "Outbox local-source reconciliation failed",
     "Outbox shutdown persistence failed", "Outbox shutdown write failed",
     "Outbox verifier has not stopped", "Outbox GUI attempt still running after shutdown timeout",
     "IM sync service tick failed", "IM source refresh failed", "IM database source snapshot refreshed",
@@ -61,29 +61,28 @@ _RUNTIME_MESSAGES = (
     "Decrypting IM database...", "Failed to open cached IM database",
     "Legacy key file has invalid size, skipping", "Migrated legacy AES key file into database",
     "Retrieving AES key from process memory...", "AES key retrieved successfully",
+    "Failed to retrieve DB key from live process",
     "Encrypted DB size is not a multiple of 16 bytes", "Skipping corrupt pool record",
-    "Skipping corrupt user pool record", "JSON parse failed", "JSONP unwrap: no JSON found",
-    "JSONP unwrap: JSON parse failed", "queryCustomerInfo parsed", "queryCustomerInfo: response did not report success",
+    "Skipping corrupt user pool record", "queryCustomerInfo: response did not report success",
     "queryCustomerInfo: buyerInfo is empty", "queryCustomerInfo: no login_id found",
-    "queryCustomerInfo: JSONP unwrap returned None", "fetchcard: fbCardList empty", "fetchcard: card[0].data empty",
-    "UserInfo parsed", "SelfInfo parsed for selected account", "ProductCard parsed", "InquiryCard parsed",
-    "GenericCard parsed", "MITM event matched", "MITM response status", "MITM receiver thread started",
-    "MITM v4 receiver listening", "Failed to process Yak MITM event", "Yak MITM proxy terminated",
+    "queryCustomerInfo: JSONP unwrap returned None",
+    "SelfInfo parsed for selected account", "MITM receiver thread started",
+    "MITM v4 receiver listening", "Failed to process Yak MITM event",
     "Yak MITM script not found; proxy was not created", "Yak executable not found; proxy was not created",
     "Failed to create Yak MITM proxy process", "Yak MITM proxy exited during startup",
-    "Yak MITM proxy process created", "MaaPiCli process created", "MaaPiCli process exited",
-    "MaaPiCli exit observation failed", "MaaPiCli exit observation unavailable",
     "MaaPiCli termination not confirmed", "MaaPiCli output drain is still pending",
     "MaaFW runner init failed", "MaaFW node execution failed", "MaaFW send wait failed",
-    "MaaFW send submission failed", "Failed to start MaaFW", "Outbox shutdown failed",
+    "Failed to start MaaFW", "Outbox shutdown failed",
     "GUI task queue shutdown failed", "IM sync shutdown failed", "MaaFW shutdown failed",
     "Yak MITM shutdown failed", "MITM receiver shutdown failed", "Task queue",
+    "Authentication storage unavailable", "Unhandled authentication middleware error",
+    "LLM runtime registration failed",
     "Shutdown requested via API; stopping uvicorn server", "Failed to shut down Maa AgentServer",
     "[agent] stopping Maa AgentServer...", "[agent] interrupted; shutting down...",
     "[agent] AgentServer.join() still blocking after shutdown; forcing exit",
     "Started server process", "Finished server process", "Waiting for application startup.",
     "Application startup complete.", "Application startup failed. Exiting.", "Shutting down",
-    "Waiting for application shutdown.", "Application shutdown complete.", "HTTP Request:",
+    "Waiting for application shutdown.", "Application shutdown complete.", "Uvicorn running on",
 )
 _SANITIZATION_FAILURE = '{"schema":1,"level":"ERROR","event":"logging.sanitization_failed","message":"logging.sanitization_failed","context":{}}'
 
@@ -319,7 +318,7 @@ def sanitize_diagnostic_record(line: str, source: str = "application") -> str | 
                 return json.dumps({"schema": 1, "source": source, "time": native[1],
                                    "level": native[2].upper(), "event": "native.record",
                                    "context": _native_context(line[native.end():])})
-            if yak:
+            if yak and yak[1].upper() in {"WARN", "WARNING", "ERROR", "FATAL"}:
                 return json.dumps({"schema": 1, "source": source, "time": yak[2],
                                    "level": yak[1].upper(), "event": "yak.record"})
             if source == "yak":
@@ -461,4 +460,8 @@ def configure_logging(*, source: str = "application") -> None:
         logger.add(log_dir / filename, rotation=_log_rotation(), retention=_retain_logs, enqueue=True,
                    encoding="utf-8", **options)
         logging.basicConfig(handlers=[_InterceptHandler()], level=logging.INFO, force=True)
+        # Third-party request logging duplicates explicit instrumentation while
+        # its sanitized message carries no URL, status or duration.
+        for noisy in ("httpx", "httpcore", "urllib3"):
+            logging.getLogger(noisy).setLevel(logging.WARNING)
         _CONFIGURED = True

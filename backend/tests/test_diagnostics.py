@@ -371,10 +371,14 @@ def test_runtime_build_and_observation_allowlists_are_noninitializing(monkeypatc
         "token": "private-token", "repository": "private-repository", "path": "private-path"}))
     monkeypatch.setattr(diag, "runtime_observations", lambda: {
         "gui_initialized": False, "shutdown_requested": True, "native_switch_uncertain": True,
+        "http": {"requests": 5, "reads": 3, "writes": 2, "errors": 1, "slow": 1,
+                 "observed_at": 123.0, "private": "private-value"},
         "password": "private-secret", "sync_initialized": "private-value"})
     runtime = json.loads(unpack(diag.build_bundle())["runtime.json"])
     assert runtime["build"] == {"status": "available", "version": "v1.2.3", "sha": "a" * 40, "run_id": 123, "run_number": 4}
-    assert runtime["observations"] == {"gui_initialized": False, "shutdown_requested": True, "native_switch_uncertain": True}
+    assert runtime["observations"] == {
+        "gui_initialized": False, "shutdown_requested": True, "native_switch_uncertain": True,
+        "http": {"requests": 5, "reads": 3, "writes": 2, "errors": 1, "slow": 1}, "http_observed_at": 123.0}
     assert "private" not in json.dumps(runtime)
 
 

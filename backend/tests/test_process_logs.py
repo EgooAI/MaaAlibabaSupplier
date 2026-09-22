@@ -200,13 +200,12 @@ def test_emergency_failure_contains_type_and_frames_but_no_values(monkeypatch, t
 
 
 @pytest.mark.parametrize("immediate", [True, False])
-def test_cli_process_creation_and_exit_are_observed_without_readiness_claim(monkeypatch, tmp_path, immediate):
+def test_cli_process_start_is_recorded_once_without_readiness_claim(monkeypatch, tmp_path, immediate):
     executable = tmp_path / "deps" / "bin" / "MaaPiCli.exe"
     executable.parent.mkdir(parents=True)
     executable.touch()
     (tmp_path / "assets").mkdir()
     exited = threading.Event()
-    observed = threading.Event()
     process = SimpleNamespace(pid=123, stdout=io.BytesIO(record("completed")))
     process.poll = lambda: 7 if immediate or exited.is_set() else None
 
@@ -219,21 +218,20 @@ def test_cli_process_creation_and_exit_are_observed_without_readiness_claim(monk
     process.kill = exited.set
     popen = Mock(return_value=process)
     monkeypatch.setattr(maafw_process.subprocess, "Popen", popen)
-    logger = Mock()
-    logger.warning.side_effect = lambda *args: observed.set()
-    monkeypatch.setattr(maafw_process, "logger", logger)
+    events = []
+    monkeypatch.setattr(maafw_process, "log_event",
+                        lambda event, **fields: events.append((event, fields)))
     manager = maafw_process.MaaFWProcess(tmp_path)
     try:
         if immediate:
             with pytest.raises(maafw_process.MaaFWProcessError, match="exited during startup.*readiness was not verified"):
                 manager.start()
-            logger.info.assert_not_called()
+            assert events == []
         else:
             manager.start()
-            assert "readiness is not verified" in logger.info.call_args.args[0]
+            # A normal early exit is not a warning; only the start is recorded.
+            assert events == [("process.started", {"component": "maafw_cli", "pid": 123})]
             exited.set()
-            assert observed.wait(3)
-            assert "process exited" in logger.warning.call_args.args[0]
         assert popen.call_args.kwargs["stdout"] == maafw_process.subprocess.PIPE
         assert popen.call_args.kwargs["bufsize"] == 0
         child = popen.call_args.kwargs["env"]

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import threading
 from pathlib import Path
 
 from loguru import logger
 
+from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.utils.process_logs import attach_process_log, colorless_child_env, finish_process_log
 
 # Console-subsystem children (MaaPiCli.exe) pop their own console window when
@@ -26,7 +26,6 @@ class MaaFWProcess:
         self.executable = self.backend_root / "deps" / "bin" / "MaaPiCli.exe"
         self.workdir = self.backend_root / "assets"
         self.process: subprocess.Popen | None = None
-        self._stopping = threading.Event()
 
     def start(self) -> None:
         if self.process is not None and self.process.poll() is None:
@@ -41,7 +40,6 @@ class MaaFWProcess:
 
         command = [str(self.executable)]
         log_path = self.backend_root / "data" / "logs" / "maafw_cli.log"
-        self._stopping = threading.Event()
         try:
             self.process = subprocess.Popen(
                 command,
@@ -61,26 +59,13 @@ class MaaFWProcess:
         if code is not None:
             finish_process_log(process)
             raise MaaFWProcessError(f"MaaPiCli exited during startup (code={code}); readiness was not verified")
-        logger.info("MaaPiCli process created (pid={}); CLI readiness is not verified", process.pid)
-        stopping = self._stopping
-
-        def observe_exit() -> None:
-            try:
-                code = process.wait()
-                if not stopping.is_set():
-                    logger.warning("MaaPiCli process exited (code={}); CLI readiness was not verified", code)
-            except Exception as exc:
-                logger.warning("MaaPiCli exit observation failed ({})", type(exc).__name__)
-
-        try:
-            threading.Thread(target=observe_exit, daemon=True, name="maafw-cli-exit").start()
-        except RuntimeError:
-            logger.warning("MaaPiCli exit observation unavailable; CLI readiness is not verified")
+        # The CLI owns no readiness contract and normally exits once its stdin
+        # closes; only its start and an explicit stop are worth recording.
+        log_event("process.started", component="maafw_cli", pid=process.pid)
 
     def stop(self) -> None:
         process = self.process
         self.process = None
-        self._stopping.set()
         if process is None:
             return
         try:

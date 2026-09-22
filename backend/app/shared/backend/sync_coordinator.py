@@ -14,7 +14,9 @@ from loguru import logger
 
 from backend.app.shared.backend.account_context import AccountContext
 from backend.app.shared.crm.sync_store import canonical_source_dir
-from backend.app.shared.utils.log_context import bind_log_context, capture_log_context, log_event
+from backend.app.shared.utils.log_context import (
+    bind_log_context, capture_log_context, failure_report_due, log_event,
+)
 
 
 @dataclass
@@ -113,7 +115,6 @@ class SyncCoordinator:
         self._state.update(pending=False, syncing=True, phase="syncing", last_attempt=self._clock())
         try:
             with bind_log_context(**target.log_context):
-                log_event("sync.dispatched")
                 future = self._submit(target)
             if not isinstance(future, Future):
                 raise TypeError("CRM sync must return a Future")
@@ -126,7 +127,6 @@ class SyncCoordinator:
 
     def _complete(self, target):
         with bind_log_context(**target.log_context):
-            log_event("sync.callback")
             self._completed.put(target)
             self.wake.set()
 
@@ -270,6 +270,7 @@ class SyncService:
         self.middleware.sync_tick(stop=self._stop)
 
     def _run(self):
+        failures = 0
         try:
             while not self._stop.is_set():
                 self.middleware._coordinator.wake.clear()
@@ -277,9 +278,15 @@ class SyncService:
                 try:
                     self.tick()
                 except Exception as exc:
+                    failures += 1
                     self._observe("waiting", last_error=type(exc).__name__)
-                    logger.exception("IM sync service tick failed")
+                    # A persistent failure must not produce one stack per tick.
+                    if failure_report_due(failures):
+                        logger.exception("IM sync service tick failed")
                 else:
+                    if failures:
+                        log_event("sync.tick_recovered", count=failures)
+                    failures = 0
                     with self._observation_lock:
                         self._observation["completed_iterations"] += 1
                     self._observe("waiting", last_progress_at=self._clock(), last_error=None)

@@ -201,6 +201,9 @@ def runtime_observations() -> dict:
             workers[name] = queues.TaskQueue.observations(name)
     result["workers"] = workers
     result["updater"] = _updater_observation()
+    auth = sys.modules.get("backend.app.api.auth")
+    if auth is not None:
+        result["http"] = auth.http_observations()
     return result
 
 
@@ -265,6 +268,14 @@ def _runtime_summary(deadline: float) -> dict:
             version = updater.get("last_result_version")
             if isinstance(version, str) and _SAFE_VERSION.fullmatch(version):
                 result["updater"]["last_result_version"] = version
+        http = values.get("http")
+        if isinstance(http, dict):
+            counters = {key: http[key] for key in ("requests", "reads", "writes", "errors", "slow")
+                        if type(http.get(key)) is int and 0 <= http[key] < 2**63}
+            result["observations"]["http"] = counters
+            observed_at = http.get("observed_at")
+            if type(observed_at) in (int, float) and 0 <= observed_at < 2**63:
+                result["observations"]["http_observed_at"] = observed_at
     except Exception:
         result["observations_status"] = "unavailable"
     path = resolve_repo_root() / "build-info.json"

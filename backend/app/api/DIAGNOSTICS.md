@@ -66,7 +66,9 @@ Missing or rotated files do not fail the whole download.
 The runtime summary includes generation time, Python/platform, and validated build
 version, commit SHA and Actions numeric identity from fixed `build-info.json` (16 KiB
 maximum). Other build fields are omitted. Passive observations report loaded modules,
-source-check/verifier progress and queue lifecycle without creating workers. Account
+source-check/verifier progress and queue lifecycle without creating workers. Process-lifetime
+HTTP counters (`requests`, `reads`, `writes`, `errors`, `slow`) and their last observation
+time come from the same cached snapshot. Account
 context and free-form worker errors are excluded. Native retention includes bounded observed
 session/log counts, active-session knowledge, available cached retention policy/state,
 and explicit `inventory_complete=false`; it is not an exhaustive disk inventory.
@@ -79,7 +81,8 @@ noninitializing, nonblocking cached getters. Accepted values are booleans named
 `sync_initialized`, `outbox_initialized`, `shutdown_requested`, `native_switch_uncertain`,
 `native_retention_budget_exceeded`; nonnegative numeric `native_max_bytes`,
 `native_retained_bytes`, `native_max_age_days`; and a validated `native_active_session`
-identifier. Unknown keys/values are discarded. The collector also reports a passive
+identifier. Unknown keys/values are discarded. Process-lifetime HTTP counters are read
+from the already-loaded auth module only. The collector also reports a passive
 updater segment when its singleton already exists: supported, phase, handoff, a
 boolean error flag, candidate run ID and a validated last-result status/version.
 Free-form updater errors are excluded. The collector connects the loaded runner's
@@ -95,6 +98,8 @@ and entry/node names from the application's known pipeline allowlist. Text parsi
 consumes only contiguous recognized leading metadata and stops before unknown bodies;
 it never searches OCR/text/payload bodies for apparent IDs. Structured native/Yak
 records are re-sanitized and typed correlation fields are validated independently.
+INFO-level Yak records carry no body and are dropped; warning and error records are
+retained as `yak.record`.
 Installer headers contribute timestamps and fixed event labels. Updater results
 contribute a recognized status and a validated version. Unknown
 bodies, exception messages, stack locals, paths, payloads and IPC are never copied raw.
@@ -114,6 +119,12 @@ file per writer. Child Yak/CLI output has the same size/count limits; first-writ
 age sidecars preserve its daily rotation and seven-day expiry across restarts.
 Child cleanup runs on accepted writes. Idle files are not deleted by a background
 timer. Disk failures can prevent cleanup and cause diagnostic records to be lost.
+Successful fast HTTP reads are counted instead of written: one `http.access` record
+covers writes, 4xx/5xx responses and reads slower than one second, and only abnormal
+response completion adds `http.response`. Third-party HTTP client loggers are limited
+to warnings so outbound calls cannot duplicate structured records. Repeating
+background failures are reported on their first occurrence, on a changed failure mode
+and then every tenth attempt.
 
 Maa native logging remains enabled in owned session directories, with a 256 MiB
 retention budget, seven-day age policy and 128-session limit. Only safely closed

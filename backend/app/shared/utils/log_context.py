@@ -43,3 +43,12 @@ def log_event(event: str, **fields) -> None:
         logger.bind(event=event, context=context).opt(depth=1).info(event)
     except Exception:
         pass
+
+
+def failure_report_due(failures: int, *, changed: bool = False) -> bool:
+    """Report the first failure, a changed mode, then only every tenth repeat.
+
+    A permanently failing background loop must stay observable without logging
+    once per iteration for the lifetime of the process.
+    """
+    return failures == 1 or changed or failures % 10 == 0

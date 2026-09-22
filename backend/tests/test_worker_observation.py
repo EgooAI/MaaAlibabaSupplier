@@ -248,6 +248,46 @@ def test_valid_key_health_requires_current_successful_source_observation(mw, sub
     assert identity()["status"] == "warning"
 
 
+def test_sync_service_latches_repeated_tick_failures_and_reports_recovery(mw, monkeypatch):
+    from unittest.mock import Mock
+
+    release, reached, recovered = Event(), Event(), Event()
+    state = {"calls": 0}
+
+    def fail(**kwargs):
+        state["calls"] += 1
+        if state["calls"] >= 10:
+            reached.set()
+            assert release.wait(5)
+        raise OSError("expected")
+
+    events = []
+
+    def record_event(event, **fields):
+        events.append((event, fields))
+        if event == "sync.tick_recovered":
+            recovered.set()
+
+    logger = Mock()
+    monkeypatch.setattr(sync_module, "logger", logger)
+    monkeypatch.setattr(sync_module, "log_event", record_event)
+    monkeypatch.setattr(mw, "sync_tick", fail)
+    service = sync_module.SyncService(mw, interval=0.01)
+    service.start()
+    try:
+        assert reached.wait(5)
+        # Nine silent repeats after the first stack; the tenth reports again.
+        assert logger.exception.call_count == 1
+        monkeypatch.setattr(mw, "sync_tick", lambda **kwargs: None)
+        release.set()
+        assert recovered.wait(5)
+        assert logger.exception.call_count == 2
+        assert [fields for event, fields in events if event == "sync.tick_recovered"] == [{"count": 10}]
+    finally:
+        release.set()
+        service.stop()
+
+
 def test_worker_exception_is_observed_without_counting_successful_progress(mw, monkeypatch):
     now = [100.0]
     waiting = Event()

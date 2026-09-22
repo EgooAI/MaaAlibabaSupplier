@@ -172,7 +172,7 @@ def test_startup_event_retains_caller_and_typed_process_fields(logs):
     with bind_log_context(origin_request_id="request-origin", native_log_session_id="session-123"):
         log_event("process.started", component="maafw_cli", phase="startup", pid=123,
                   port=8084, exit_code=-1, tcp_reachable=False, body="PRIVATE_BODY")
-    logger.info("MaaPiCli process created (pid={}); CLI readiness is not verified", 123)
+    logger.info("MITM receiver thread started on {}:{}", "127.0.0.1", 8084)
     record = logs[0][0]
     assert record["logger"] == __name__ and record["file"] == "test_logging_context.py"
     assert record["function"] == "test_startup_event_retains_caller_and_typed_process_fields"
@@ -183,7 +183,7 @@ def test_startup_event_retains_caller_and_typed_process_fields(logs):
     assert expected.items() <= record["context"].items()
     exported = json.loads(transport.sanitize_diagnostic_record(json.dumps(record)))
     assert expected.items() <= exported["context"].items()
-    assert logs[0][1]["message"] == "MaaPiCli process created"
+    assert logs[0][1]["message"] == "MITM receiver thread started"
     assert "PRIVATE" not in json.dumps(logs[0])
     assert transport.safe_fields({"pid": True, "exit_code": "PRIVATE", "port": 65536,
                                   "tcp_reachable": "PRIVATE", "error_category": "PRIVATE"}) == {}
@@ -473,17 +473,20 @@ def test_auth_access_uses_template_and_same_request_context_on_success_and_rejec
         assert response.json()["request_id"] == response.headers["X-Request-ID"]
         rejected = client.get("/api/probe/PRIVATE_ID?token=PRIVATE_QUERY")
         assert rejected.status_code == 401
+    # A successful fast read emits no access record; its request context is
+    # observable through the route's own event.
+    executed = [r for r in logs[0] if r["event"] == "probe.executed"]
+    assert executed[0]["context"]["request_id"] == response.headers["X-Request-ID"]
     events = [r for r in logs[0] if r["event"] == "http.access"]
-    assert [r["context"]["route"] for r in events] == ["/api/probe/{customer}", "unmatched"]
-    assert events[0]["context"]["request_id"] == response.headers["X-Request-ID"]
-    assert events[1]["context"]["request_id"] == rejected.headers["X-Request-ID"]
-    responses = [r for r in logs[0] if r["event"] == "http.response"]
-    assert [r["context"]["status"] for r in responses] == [401]
+    assert [r["context"]["route"] for r in events] == ["unmatched"]
+    assert events[0]["context"]["status"] == 401
+    assert events[0]["context"]["request_id"] == rejected.headers["X-Request-ID"]
+    assert [r for r in logs[0] if r["event"] == "http.response"] == []
     assert "PRIVATE" not in json.dumps(logs[0])
     assert token not in json.dumps(logs[0])
 
 
-def test_http_response_is_recorded_for_writes_but_not_successful_reads(logs, tmp_path):
+def test_http_access_records_writes_and_errors_but_not_fast_reads(logs, tmp_path):
     from backend.app.api.auth import AuthConfig, AuthMiddleware, LoginLimiter, SessionStore
 
     app = FastAPI()
@@ -498,18 +501,47 @@ def test_http_response_is_recorded_for_writes_but_not_successful_reads(logs, tmp
     def write():
         return {"ok": True}
 
+    @app.get("/api/boom")
+    def boom():
+        raise RuntimeError("expected failure")
+
     app.add_middleware(AuthMiddleware, store=store, limiter=LoginLimiter())
+    auth_module = transport.sys.modules["backend.app.api.auth"]
+    before = auth_module.http_observations()
     with TestClient(app) as client:
         headers = {"Authorization": f"Bearer {token}"}
         assert client.get("/api/probe", headers=headers).status_code == 200
         assert client.post("/api/probe", headers=headers).status_code == 200
+        assert client.get("/api/boom", headers=headers).status_code == 500
     accesses = [r for r in logs[0] if r["event"] == "http.access"]
-    responses = [r for r in logs[0] if r["event"] == "http.response"]
-    read = next(r for r in accesses if r["context"]["method"] == "GET")
-    write = next(r for r in accesses if r["context"]["method"] == "POST")
-    assert len(responses) == 1
-    assert responses[0]["context"]["request_id"] == write["context"]["request_id"]
-    assert responses[0]["context"]["request_id"] != read["context"]["request_id"]
+    assert sorted((r["context"]["method"], r["context"]["status"]) for r in accesses) == [("GET", 500), ("POST", 200)]
+    assert [r for r in logs[0] if r["event"] == "http.response"] == []
+    counters = auth_module.http_observations()
+    delta = tuple(counters[key] - before[key] for key in ("requests", "reads", "writes", "errors"))
+    assert delta == (3, 2, 1, 1)
+
+
+def test_slow_successful_reads_are_recorded(logs, tmp_path, monkeypatch):
+    from backend.app.api import auth as auth_module
+    from backend.app.api.auth import AuthConfig, AuthMiddleware, LoginLimiter, SessionStore
+
+    monkeypatch.setattr(auth_module, "SLOW_REQUEST_MS", 0.0)
+    app = FastAPI()
+    store = SessionStore(AuthConfig(b"a" * 32, tmp_path / "auth.sqlite"))
+    token = store.issue()
+
+    @app.get("/api/probe")
+    def probe():
+        return {"ok": True}
+
+    app.add_middleware(AuthMiddleware, store=store, limiter=LoginLimiter())
+    before = auth_module.http_observations()
+    with TestClient(app) as client:
+        assert client.get("/api/probe", headers={"Authorization": f"Bearer {token}"}).status_code == 200
+    accesses = [r for r in logs[0] if r["event"] == "http.access"]
+    assert [(r["context"]["method"], r["context"]["status"]) for r in accesses] == [("GET", 200)]
+    assert accesses[0]["context"]["duration_ms"] >= 0
+    assert auth_module.http_observations()["slow"] - before["slow"] == 1
 
 
 @pytest.mark.parametrize("fails", [False, True])
@@ -528,9 +560,9 @@ def test_crm_executor_and_completion_callback_retain_submission_context(monkeypa
             raise ValueError("PRIVATE_CRM_PAYLOAD")
         return {"revision": 3}
 
-    def callback(future):
+    def callback(future, duration_ms=None):
         observed.append(capture_log_context())
-        original(future)
+        original(future, duration_ms)
         completed.set()
 
     monkeypatch.setattr(sync, "_log_sync_failure", callback)
@@ -550,3 +582,65 @@ def test_crm_executor_and_completion_callback_retain_submission_context(monkeypa
             assert "PRIVATE_CRM_PAYLOAD" not in json.dumps(logs[0])
         finally:
             release.set()
+
+
+def test_account_context_change_emits_new_epoch_event(logs):
+    from backend.app.shared.backend import account_context
+
+    previous = account_context.get_account_context().epoch
+    account_context.invalidate_account_context()
+    events = [r for r in logs[0] if r["event"] == "account.changed"]
+    assert len(events) == 1
+    current = account_context.get_account_context()
+    assert events[0]["context"]["account_epoch"] == current.epoch != previous
+    assert "PRIVATE" not in json.dumps(events[0])
+
+
+def test_failure_report_due_reports_first_changed_and_tenth_attempts():
+    from backend.app.shared.utils.log_context import failure_report_due
+
+    assert failure_report_due(1)
+    assert not failure_report_due(2)
+    assert not failure_report_due(9)
+    assert failure_report_due(10)
+    assert failure_report_due(5, changed=True)
+
+
+def test_application_log_call_sites_are_audited_against_the_allowlist():
+    import ast
+
+    from backend.app.shared.utils.logging import _RUNTIME_MESSAGES
+    from backend.app.shared.utils.settings import resolve_repo_root
+
+    def logger_base(node):
+        while isinstance(node, (ast.Attribute, ast.Call)):
+            node = node.value if isinstance(node, ast.Attribute) else node.func
+        return getattr(node, "id", "")
+
+    levels = {"info", "success", "warning", "error", "exception", "critical"}
+    uncovered, dead = [], []
+    for path in sorted((resolve_repo_root() / "backend" / "app").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            level = node.func.attr
+            if logger_base(node.func) != "logger" or level not in levels | {"debug", "trace"} or not node.args:
+                continue
+            if level in {"debug", "trace"}:
+                dead.append(f"{path.name}:{node.lineno}")
+                continue
+            argument = node.args[0]
+            if isinstance(argument, ast.JoinedStr):
+                head = next((part.value for part in argument.values
+                             if isinstance(part, ast.Constant) and isinstance(part.value, str)), "")
+            elif isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+                head = argument.value
+            else:
+                continue
+            if head and not any(head.startswith(message) for message in _RUNTIME_MESSAGES):
+                uncovered.append(f"{path.name}:{node.lineno}: {head!r}")
+    # The INFO sink makes debug/trace calls unreachable; new messages must be
+    # either allowlisted or emitted as a structured log_event instead.
+    assert not dead, f"unreachable debug logging: {dead}"
+    assert not uncovered, f"messages missing from _RUNTIME_MESSAGES: {uncovered}"

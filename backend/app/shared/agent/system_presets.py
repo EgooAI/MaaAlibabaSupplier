@@ -7,8 +7,6 @@
 
 from __future__ import annotations
 
-from loguru import logger
-
 from backend.app.shared.agent.inputs import TRANSLATION_PROTOCOL_RULES
 from backend.app.shared.agent.system_agents import (
     CHAT_CUSTOMER_INTENT_AGENT_APID,
@@ -99,11 +97,11 @@ def ensure_system_agents_seeded() -> None:
     """Upsert all system agent presets, overwriting any drifted records.
 
     每次启动调用，幂等覆盖：预设数据始终与程序内置版本保持一致。
+    Failures propagate and abort startup; a successful no-op is not logged.
     """
     manager = AgentPresetManager()
     for payload in system_agent_presets():
         manager.upsert_agent_preset(AgentPreset(**payload))
-    logger.info("Seeded {} system agent presets into {}", len(_SYSTEM_AGENT_PROMPTS), manager.database_path)
 
 
 __all__ = ["ensure_system_agents_seeded", "system_agent_presets"]

@@ -33,6 +33,7 @@ from backend.app.shared.agent.default_llm_levels import ensure_default_llm_level
 from backend.app.api.server import run as run_api
 from backend.app.api.auth import validate_auth_config
 from backend.app.shared.utils.env import load_workdir_env
+from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.utils.logging import configure_logging
 from backend.app.shared.utils.process_logs import (
     attach_process_log, colorless_child_env, finish_process_log, report_startup_failure,
@@ -140,12 +141,8 @@ def _start_yak_mitm(
         finish_process_log(proc)
         logger.error("Yak MITM proxy exited during startup (code={}); proxy readiness was not verified", code)
         return None
-    if not reachable:
-        logger.warning("Yak MITM proxy port {}:{} not ready yet, continuing", proxy_host, proxy_port)
-    logger.info(
-        "Yak MITM proxy process created (pid={}, TCP reachable={}); application readiness is not verified",
-        proc.pid, reachable,
-    )
+    # A slow listener shows up as tcp_reachable=false, not as a separate warning.
+    log_event("process.started", component="yak", pid=proc.pid, tcp_reachable=reachable)
     return proc
 
 
@@ -222,7 +219,7 @@ def _main() -> None:
                                 except subprocess.TimeoutExpired:
                                     yak_proc.kill()
                                     yak_proc.wait(timeout=5.0)
-                                logger.info("Yak MITM proxy terminated")
+                                log_event("process.stopped", component="yak")
                         except Exception:
                             logger.exception("Yak MITM shutdown failed")
                         finally:

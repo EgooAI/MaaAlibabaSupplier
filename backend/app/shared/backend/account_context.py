@@ -6,6 +6,7 @@ from threading import RLock
 from uuid import uuid4
 
 from backend.app.shared.utils.app_config import read_app_config
+from backend.app.shared.utils.log_context import log_event
 
 
 account_lock = RLock()
@@ -23,6 +24,12 @@ class AccountContext:
         return asdict(self)
 
 
+def _switched(previous: str | None) -> None:
+    # Record only the opaque new epoch; the selected identity stays out of logs.
+    if previous is not None:
+        log_event("account.changed", account_epoch=_context.epoch)
+
+
 def get_account_context() -> AccountContext:
     global _context
     with _context_lock:
@@ -30,15 +37,20 @@ def get_account_context() -> AccountContext:
         ali_id = str(config.get("self_ali_id") or "").strip()
         data_dir = str(config.get("alibaba_data_dir") or "").strip()
         if _context is None or (_context.self_ali_id, _context.data_dir) != (ali_id, data_dir):
+            previous = _context.epoch if _context is not None else None
             _context = AccountContext(ali_id, data_dir, uuid4().hex)
+            _switched(previous)
         return _context
 
 
 def invalidate_account_context() -> AccountContext:
     global _context
     with _context_lock:
+        previous = _context.epoch if _context is not None else None
         _context = None
-        return get_account_context()
+        context = get_account_context()
+        _switched(previous)
+        return context
 
 
 @contextmanager

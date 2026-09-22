@@ -16,7 +16,7 @@ from backend.app.api.auth import LOGIN_LIMITER, AuthMiddleware, SessionStore, va
 from backend.app.api.envelope import AppError, err, user_message
 from backend.app.shared.backend.account_context import get_account_context
 from backend.app.shared.utils.settings import FRONTEND_DEV_ORIGINS, resolve_repo_root
-from backend.app.shared.utils.log_context import bind_log_context, log_event
+from backend.app.shared.utils.log_context import bind_log_context
 
 from backend.app.api.routers import agent, app as app_router, auth, conversations, messages, outbox, self, settings, status
 
@@ -77,7 +77,8 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
-        log_event("http.rejected", status=exc.status_code, exception_type=type(exc).__name__)
+        # The error response is already recorded by AuthMiddleware's http.access
+        # (status, route, duration); no separate rejection record is emitted.
         return JSONResponse(status_code=exc.status_code, content=err(user_message(exc.message), exc.code))
 
     @app.exception_handler(RequestValidationError)
