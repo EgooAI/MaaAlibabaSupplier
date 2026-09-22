@@ -1,4 +1,4 @@
-name: install
+name: Install
 
 on:
   push:
@@ -92,7 +92,18 @@ jobs:
         shell: bash
         run: python tools/install_1_frontend.py --export
 
-      - name: Prepare bundled Python and backend dependencies
+      - name: Resolve bundled Python
+        id: bundled_python_asset
+        shell: bash
+        run: python tools/install_2_backend.py --resolve-asset --github-output "$GITHUB_OUTPUT"
+
+      - name: Cache bundled Python
+        uses: actions/cache@v6
+        with:
+          path: .portable/downloads
+          key: pbs-${{ runner.os }}-${{ steps.bundled_python_asset.outputs.python_asset }}
+
+      - name: Prepare backend dependencies
         id: bundled_python
         shell: bash
         run: python tools/install_2_backend.py --github-output "$GITHUB_OUTPUT"
@@ -103,7 +114,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python tools/install_3_maafw.py
 
-      - name: Prepare Yak CLI and compile MITM script
+      - name: Prepare Yak CLI and compile Yak script
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

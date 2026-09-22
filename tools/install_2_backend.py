@@ -2,10 +2,11 @@
 
 Default: download the latest CPython 3.12 (minor-pinned, no overrides) from
 python-build-standalone into .portable/python, then pip install
-backend/app/requirements.txt into it.
+backend/app/requirements.txt into it. Archives are reused from
+.portable/downloads, which CI caches.
 
 Usage:
-  python tools/install_2_backend.py [--into [PYTHON]] [--dev] [--github-output PATH]
+  python tools/install_2_backend.py [--into [PYTHON]] [--dev] [--github-output PATH] [--resolve-asset]
 
 Outputs (when --github-output is given; consumed by CI to wire tools/install.py):
   python_exec_relpath
@@ -37,20 +38,26 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dev", action="store_true", help="Also install pytest")
     parser.add_argument("--github-output", type=Path, help="File to write CI outputs to")
+    parser.add_argument("--resolve-asset", action="store_true", help="Resolve the portable Python asset for CI cache keys and exit")
     return parser.parse_args()
+
+
+def resolve_python_asset() -> dict:
+    release = common.github_latest_release(common.PBS_REPO)
+    asset = next((item for item in release.get("assets", []) if PYTHON_ASSET_PATTERN.match(item["name"])), None)
+    if asset is None:
+        common.fail(f"No cpython {common.PYTHON_MINOR}.x windows-msvc install_only archive in {common.PBS_REPO} latest release.")
+    common.log(f"Resolved {asset['name']} (release {release.get('tag_name')})")
+    return asset
 
 
 def prepare_portable() -> Path:
     python_dir = common.PORTABLE_DIR / "python"
     python_exe = python_dir / "python.exe"
     if not python_exe.exists():
-        release = common.github_latest_release(common.PBS_REPO)
-        asset = next((item for item in release.get("assets", []) if PYTHON_ASSET_PATTERN.match(item["name"])), None)
-        if asset is None:
-            common.fail(f"No cpython {common.PYTHON_MINOR}.x windows-msvc install_only archive in {common.PBS_REPO} latest release.")
-        common.log(f"Resolved {asset['name']} (release {release.get('tag_name')})")
+        asset = resolve_python_asset()
         with common.temp_directory() as temp_dir:
-            archive = common.download(asset["browser_download_url"], temp_dir / asset["name"])
+            archive = common.cached_download(asset["browser_download_url"], asset["name"])
             common.extract_targz(archive, temp_dir / "extract")
             common.install_tree(common.find_normalized_root(temp_dir / "extract"), python_dir)
     if not python_exe.exists():
@@ -63,6 +70,11 @@ def prepare_portable() -> Path:
 def main() -> int:
     args = parse_args()
     common.log(f"=== Stage 2: backend (into={args.into}) ===")
+
+    if args.resolve_asset:
+        asset = resolve_python_asset()
+        common.write_github_output(args.github_output, {"python_asset": asset["name"]})
+        return 0
 
     if args.into is None:
         python_exe = prepare_portable().resolve()

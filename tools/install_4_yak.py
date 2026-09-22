@@ -1,6 +1,6 @@
 """Stage 4: download a portable Yak CLI and (re)compile the MITM script.
 
-Default: download the latest yak_windows_amd64.exe from yaklang/yaklang
+Default: download the pinned Yak 1.4.* yak_windows_amd64.exe from yaklang/yaklang
 (sha256-verified) into .portable/yak. Compilation is opt-in because the
 compiled backend/yak_mitm.yakc is tracked in git and yakc output is not
 deterministic; use --compile to refresh it explicitly.
@@ -38,7 +38,7 @@ def install_cli() -> Path:
         common.log(f"Reusing existing Yak CLI: {yak_exe}")
         return yak_exe
 
-    release = common.github_latest_release(common.YAK_REPO)
+    release = common.github_release_by_tag_pattern(common.YAK_REPO, common.YAK_VERSION)
     with common.temp_directory() as temp_dir:
         archive = common.download_release_asset(release, f"^{re.escape(YAK_ASSET)}$", temp_dir / YAK_ASSET)
         shasums = common.download_release_asset(release, f"^{re.escape(YAK_SHA_ASSET)}$", temp_dir / YAK_SHA_ASSET)

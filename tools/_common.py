@@ -13,6 +13,7 @@ the CI value for the latter is written to GITHUB_OUTPUT by install_2_backend.py.
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import json
 import os
 import re
@@ -36,6 +37,7 @@ PORTABLE_DIR = REPO_ROOT / ".portable"
 PYTHON_MINOR = "3.12"
 NODE_MAJOR = "22"
 MAAFW_VERSION = "v5.10.0"
+YAK_VERSION = "1.4.*"
 
 PBS_REPO = "astral-sh/python-build-standalone"
 YAK_REPO = "yaklang/yaklang"
@@ -89,6 +91,15 @@ def github_release_by_tag(repository: str, tag: str) -> dict:
     return fetch_json(f"{GITHUB_API}/repos/{repository}/releases/tags/{tag}")
 
 
+def github_release_by_tag_pattern(repository: str, pattern: str) -> dict:
+    """Newest release whose tag matches the glob ``pattern``; prereleases included."""
+    releases = fetch_json(f"{GITHUB_API}/repos/{repository}/releases?per_page=100")
+    for release in releases:
+        if fnmatch.fnmatchcase(release.get("tag_name", ""), pattern):
+            return release
+    fail(f"No release tag matching {pattern!r} in {repository}.")
+
+
 def asset_by_pattern(release: dict, pattern: str) -> dict:
     regex = re.compile(pattern)
     for asset in release.get("assets", []):
@@ -103,6 +114,18 @@ def download(url: str, destination: Path) -> Path:
     log(f"Downloading {url}")
     with urllib.request.urlopen(_request(url), timeout=300) as response, destination.open("wb") as target:
         shutil.copyfileobj(response, target)
+    return destination
+
+
+def cached_download(url: str, filename: str) -> Path:
+    """Reuse an archive across runs; CI caches PORTABLE_DIR/downloads with it."""
+    destination = PORTABLE_DIR / "downloads" / filename
+    if destination.is_file():
+        log(f"Using cached {filename}")
+        return destination
+    partial = destination.with_name(destination.name + ".part")
+    download(url, partial)
+    os.replace(partial, destination)
     return destination
 
 
