@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import secrets
 import shutil
 import socket
@@ -36,7 +35,7 @@ from backend.app.api.auth import validate_auth_config
 from backend.app.shared.utils.env import load_workdir_env
 from backend.app.shared.utils.logging import configure_logging
 from backend.app.shared.utils.process_logs import (
-    attach_process_log, finish_process_log, report_startup_failure,
+    attach_process_log, colorless_child_env, finish_process_log, report_startup_failure,
 )
 from backend.app.shared.backend.sync_coordinator import start_sync_service, stop_sync_service
 from backend.app.shared.backend.outbox_service import start_outbox_service, stop_outbox_service
@@ -103,7 +102,7 @@ def _start_yak_mitm(
 ) -> subprocess.Popen | None:
     """Start the Yak MITM proxy via ``yak yak_mitm.yak`` in a subprocess."""
     host = validate_receiver_config(host, port, internal_token)
-    child_env = os.environ.copy()
+    child_env = colorless_child_env()
     child_env["MAA_MITM_INTERNAL_TOKEN"] = internal_token
     child_env["MITM_RECEIVER_HOST"] = host
     child_env["MITM_RECEIVER_PORT"] = str(port)

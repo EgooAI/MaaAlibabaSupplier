@@ -135,14 +135,16 @@ class WindowsUpdateRuntime:
             if key in {"MAA_MITM_INTERNAL_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"}:
                 env.pop(key)
         try:
-            process = subprocess.Popen(
-                [self.powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-                 "-File", str(stage / "update-helper.ps1"), "-Stage", str(stage)],
-                cwd=str(stage), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, close_fds=True,
-                creationflags=CREATE_BREAKAWAY_FROM_JOB | subprocess.CREATE_NO_WINDOW
-                | subprocess.CREATE_NEW_PROCESS_GROUP,
-            )
+            # Keep PowerShell's own error text locally; diagnostics never exports it.
+            with (stage / "helper.log").open("ab") as helper_log:
+                process = subprocess.Popen(
+                    [self.powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                     "-File", str(stage / "update-helper.ps1"), "-Stage", str(stage)],
+                    cwd=str(stage), env=env, stdin=subprocess.DEVNULL,
+                    stdout=helper_log, stderr=subprocess.STDOUT, close_fds=True,
+                    creationflags=CREATE_BREAKAWAY_FROM_JOB | subprocess.CREATE_NO_WINDOW
+                    | subprocess.CREATE_NEW_PROCESS_GROUP,
+                )
         except OSError:
             raise UpdateError("The updater helper could not be started.") from None
         self.stage, self.process, self.nonce = stage, process, nonce

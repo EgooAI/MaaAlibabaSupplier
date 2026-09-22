@@ -40,8 +40,8 @@ ERROR_CATEGORIES = {
     "task failed": "task_failed", "job failed": "job_failed", "node failed": "node_failed",
 }
 _FIELDS = frozenset({
-    "run_id", "request_id", "origin_request_id", "account_epoch", "origin_account_epoch",
-    "queue_task_id", "queue", "outbox_id", "attempt", "version", "phase", "status",
+    "run_id", "run_number", "run_attempt", "request_id", "origin_request_id", "account_epoch", "origin_account_epoch",
+    "queue_task_id", "queue", "outbox_id", "attempt", "version", "phase", "status", "reason",
     "native_job_id", "native_runtime_id", "native_log_session_id", "sync_id", "source_revision", "revision",
     "inserted", "updated", "unchanged", "count", "duration_ms", "method", "route",
     "complete", "disconnected", "send_failed", "entry", "exception_type", "signal", "component",

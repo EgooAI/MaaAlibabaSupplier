@@ -7,7 +7,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from backend.app.shared.utils.process_logs import attach_process_log, finish_process_log
+from backend.app.shared.utils.process_logs import attach_process_log, colorless_child_env, finish_process_log
 
 # Console-subsystem children (MaaPiCli.exe) pop their own console window when
 # the parent is pythonw (no console); hide it on Windows.
@@ -51,6 +51,7 @@ class MaaFWProcess:
                 stderr=subprocess.STDOUT,
                 bufsize=0,
                 creationflags=CREATE_NO_WINDOW,
+                env=colorless_child_env(),
             )
             attach_process_log(self.process, log_path, source="maafw_cli")
         except OSError as exc:

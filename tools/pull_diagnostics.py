@@ -9,6 +9,9 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
+import ssl
+import urllib.error
 import urllib.parse
 import urllib.request
 import warnings
@@ -99,6 +102,23 @@ def download(base_url: str, token: str, destination: Path) -> None:
         partial.unlink(missing_ok=True)
 
 
+def classify_failure(exc: BaseException) -> str:
+    """Return one fixed category. Never echo URLs, values, headers or credentials."""
+    if isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, ssl.SSLCertVerificationError):
+        return "TLS certificate verification failed; the server certificate is not trusted by this interpreter."
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"The server rejected the request (HTTP {exc.code})."
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return "The request timed out."
+    if isinstance(exc, urllib.error.URLError):
+        return "Could not connect to the server."
+    if isinstance(exc, zipfile.BadZipFile):
+        return "The downloaded archive is not a valid ZIP file."
+    if isinstance(exc, ValueError):
+        return "The request or the downloaded archive was rejected."
+    return "Diagnostic download failed."
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path, help="New ZIP filename (parent directory must exist)")
@@ -111,9 +131,9 @@ def main() -> None:
             warnings.simplefilter("error", getpass.GetPassWarning)
             token = os.environ.get(args.token_env, "") if args.token_env else getpass.getpass("Existing API Bearer token: ")
         download(args.base_url, token.strip(), args.output)
-    except (Exception, KeyboardInterrupt):
+    except (Exception, KeyboardInterrupt) as exc:
         # HTTP errors, URLs and exception locals can contain credentials. Never echo them.
-        parser.exit(1, "Diagnostic download failed; check authentication, server availability and output location.\n")
+        parser.exit(1, classify_failure(exc) + "\n")
     print("Diagnostic ZIP downloaded and validated.")
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import re
 import stat
 import sys
@@ -32,6 +33,16 @@ def check_plain_path(path: Path) -> None:
                 raise ValueError("Diagnostic path contains a reparse point")
         except FileNotFoundError:
             continue
+
+
+_COLORLESS_ENV = {"NO_COLOR": "1", "TERM": "dumb", "CLICOLOR": "0", "CLICOLOR_FORCE": "0"}
+
+
+def colorless_child_env(env: dict | None = None) -> dict:
+    """Force plain child output; some tools emit SGR even through a pipe."""
+    child = dict(os.environ if env is None else env)
+    child.update(_COLORLESS_ENV)
+    return child
 
 
 def bounded_lines(

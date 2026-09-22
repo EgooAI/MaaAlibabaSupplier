@@ -25,8 +25,10 @@ Ownership markers are required, read with a fixed bound, and never exported.
 Recognized timestamp, numbered and `.bak.log` rotations are included. The updater's per-install staging
 directory contributes `last-result.json` and `installer.log` from up to four recent
 UUID stage directories. Only those exact updater filenames are eligible; bootstrap,
-request, ready and other IPC files are excluded. Development preview backend/frontend
-`.log` and `.log.err` files under the repository's `debug` directory are optional.
+request, ready and other IPC files are excluded. PowerShell helper output is kept
+beside its stage for local inspection but is never exported. Development preview
+backend/frontend `.log` and `.log.err` files under the repository's `debug` directory
+are optional.
 
 One newest available file from each key source precedes additional rotations; optional
 development output comes last. Files use their latest bounded tail, with a partial
@@ -50,7 +52,9 @@ the newest rotation beyond a capped scan may be omitted.
   closure and response transmission are outside this collection deadline.
 
 The manifest records source availability, scan limits, included aliases, file/session
-limit omissions and unavailable/unsafe candidate attempts. Each file reports physical
+limit omissions and unavailable/unsafe candidate attempts with a fixed category
+breakdown. Pre-schema records whose text cannot be exported are deduplicated by
+level/logger/function/line so one repeated line cannot consume the bundle budget. Each file reports physical
 bytes read (including BOM probes), snapshot size/change observations, source encoding,
 tail truncation, discarded prefix bytes, rejected-record reasons, output truncation,
 unprocessed read bytes and deadline interruption. `omitted_records_exact=false` means
@@ -75,7 +79,10 @@ noninitializing, nonblocking cached getters. Accepted values are booleans named
 `sync_initialized`, `outbox_initialized`, `shutdown_requested`, `native_switch_uncertain`,
 `native_retention_budget_exceeded`; nonnegative numeric `native_max_bytes`,
 `native_retained_bytes`, `native_max_age_days`; and a validated `native_active_session`
-identifier. Unknown keys/values are discarded. The collector connects the loaded runner's
+identifier. Unknown keys/values are discarded. The collector also reports a passive
+updater segment when its singleton already exists: supported, phase, handoff, a
+boolean error flag, candidate run ID and a validated last-result status/version.
+Free-form updater errors are excluded. The collector connects the loaded runner's
 cached log-policy status and the existing sync, verifier and queue observations. Native
 policy failures, uncertainty, outstanding jobs and the last observation time are included.
 No getter that initializes, scans a tree,
@@ -89,7 +96,7 @@ consumes only contiguous recognized leading metadata and stops before unknown bo
 it never searches OCR/text/payload bodies for apparent IDs. Structured native/Yak
 records are re-sanitized and typed correlation fields are validated independently.
 Installer headers contribute timestamps and fixed event labels. Updater results
-contribute a recognized status only. Unknown
+contribute a recognized status and a validated version. Unknown
 bodies, exception messages, stack locals, paths, payloads and IPC are never copied raw.
 Structured application telemetry and sanitized stack frame metadata remain useful for
 correlation. This deliberately omits detail that may exist in the original logs.

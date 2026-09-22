@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import zipfile
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -122,6 +123,46 @@ def _native_context(tail: str) -> dict:
     return _correlation(fields)
 
 
+_UPDATER_PHASES = {"idle", "checking", "available", "downloading", "ready", "installing", "error"}
+_UPDATER_RESULTS = {"installed", "error", "reboot_required", "cancelled", "installing"}
+_SAFE_VERSION = re.compile(r"v?[A-Za-z0-9][A-Za-z0-9._+-]{0,127}")
+
+
+def _updater_observation() -> dict | None:
+    """Passive snapshot of the existing singleton; never initializes the updater."""
+    module = sys.modules.get("backend.app.updater")
+    instance = getattr(module, "_instance", None) if module is not None else None
+    if instance is None:
+        return None
+    try:
+        state = instance.snapshot()
+    except Exception:
+        return None
+    if not isinstance(state, dict):
+        return None
+    safe = {}
+    if type(state.get("supported")) is bool:
+        safe["supported"] = state["supported"]
+    phase = state.get("phase")
+    if phase in _UPDATER_PHASES:
+        safe["phase"] = phase
+        safe["handoff"] = phase == "installing"
+    safe["has_error"] = bool(state.get("error"))
+    candidate = state.get("candidate")
+    if isinstance(candidate, dict):
+        run_id = candidate.get("run_id")
+        if type(run_id) is int and 0 <= run_id < 2**63:
+            safe["candidate_run_id"] = run_id
+    last = state.get("last_result")
+    if isinstance(last, dict):
+        if last.get("status") in _UPDATER_RESULTS:
+            safe["last_result_status"] = last["status"]
+        version = last.get("version")
+        if isinstance(version, str) and _SAFE_VERSION.fullmatch(version):
+            safe["last_result_version"] = version
+    return safe
+
+
 def runtime_observations() -> dict:
     """Integration hook: cached, noninitializing, nonblocking observations only."""
     names = {"api_loaded": "backend.app.api.main", "gui_loaded": "backend.app.shared.backend.maafw_runner",
@@ -159,6 +200,7 @@ def runtime_observations() -> dict:
         for name in ("maafw", "translation"):
             workers[name] = queues.TaskQueue.observations(name)
     result["workers"] = workers
+    result["updater"] = _updater_observation()
     return result
 
 
@@ -207,6 +249,22 @@ def _runtime_summary(deadline: float) -> dict:
             # Account context and free-form errors must never enter the bundle.
             safe["has_error"] = bool(state.get("last_error"))
             result["workers"][name] = safe
+        updater = values.get("updater")
+        result["updater"] = {"initialized": isinstance(updater, dict)}
+        if isinstance(updater, dict):
+            for key in ("supported", "handoff", "has_error"):
+                if type(updater.get(key)) is bool:
+                    result["updater"][key] = updater[key]
+            if updater.get("phase") in _UPDATER_PHASES:
+                result["updater"]["phase"] = updater["phase"]
+            run_id = updater.get("candidate_run_id")
+            if type(run_id) is int and 0 <= run_id < 2**63:
+                result["updater"]["candidate_run_id"] = run_id
+            if updater.get("last_result_status") in _UPDATER_RESULTS:
+                result["updater"]["last_result_status"] = updater["last_result_status"]
+            version = updater.get("last_result_version")
+            if isinstance(version, str) and _SAFE_VERSION.fullmatch(version):
+                result["updater"]["last_result_version"] = version
     except Exception:
         result["observations_status"] = "unavailable"
     path = resolve_repo_root() / "build-info.json"
@@ -390,6 +448,17 @@ def _metadata(line: str, kind: str) -> str | None:
     return json.dumps(record, ensure_ascii=True, separators=(",", ":")) if record else None
 
 
+_MAX_LEGACY_ORIGINS = 256
+
+
+def _legacy_origin(safe: str) -> tuple | None:
+    """Dedupe key for pre-schema log lines whose text is never exported."""
+    record = json.loads(safe)
+    if record.get("event") != "legacy.message":
+        return None
+    return record.get("level"), record.get("logger"), record.get("function"), record.get("line")
+
+
 def _read_recent(path, info, kind, budget, deadline=None):
     expired = lambda: deadline is not None and time.monotonic() >= deadline
     details = {"read_bytes": 0, "tail_truncated": False, "omitted_records": 0,
@@ -445,6 +514,7 @@ def _read_recent(path, info, kind, budget, deadline=None):
 
     result = bytearray()
     processed = 0
+    legacy_origins = set()
     for raw_line in lines():
         if start and processed == 0 and kind != "result":
             processed += len(raw_line)
@@ -476,6 +546,12 @@ def _read_recent(path, info, kind, budget, deadline=None):
                 safe = None
             if safe is None:
                 reason = "unrecognized"
+            elif kind == "application":
+                origin = _legacy_origin(safe)
+                if origin is not None and origin in legacy_origins:
+                    reason = "duplicate"
+                elif origin is not None and len(legacy_origins) < _MAX_LEGACY_ORIGINS:
+                    legacy_origins.add(origin)
         if reason:
             details["omitted_records"] += 1
             details["omission_reasons"][reason] = details["omission_reasons"].get(reason, 0) + 1
@@ -491,6 +567,18 @@ def _read_recent(path, info, kind, budget, deadline=None):
     return result, details
 
 
+def _skip_reason(exc: OSError) -> str:
+    """Categorize a rejected candidate without exposing its path."""
+    text = str(exc)
+    if "Unsafe" in text:
+        return "unsafe_path"
+    if "Not a" in text:
+        return "nonregular"
+    if "rotated" in text or "changed" in text:
+        return "rotated"
+    return "unavailable"
+
+
 def build_bundle() -> bytes:
     deadline = time.monotonic() + COLLECTION_SECONDS
     expired = lambda: time.monotonic() >= deadline
@@ -499,7 +587,7 @@ def build_bundle() -> bytes:
     scans = {}
     scan_remaining = MAX_SCAN_ENTRIES
     scan_limited = False
-    skipped_candidates = 0
+    skipped_reasons = Counter()
     installer_omitted = 0
 
     def entries(directory):
@@ -533,8 +621,8 @@ def build_bundle() -> bytes:
                 try:
                     info = _safe_stat(stage / name, directory=True)
                     candidates.append((info.st_mtime_ns, stage / name))
-                except OSError:
-                    pass
+                except OSError as exc:
+                    skipped_reasons[_skip_reason(exc)] += 1
         # Updater extraction puts installer.log next to the installer in the stage.
         installer_omitted = max(0, len(candidates) - 4)
         for _, directory in sorted(candidates, reverse=True)[:4]:
@@ -561,8 +649,8 @@ def build_bundle() -> bytes:
                     closed = None
                 state = "active" if name == active else "closed" if closed else "open_or_unclosed"
                 sessions.append((state != "closed", name == active, session_info.st_mtime_ns, session, state))
-            except OSError:
-                skipped_candidates += 1
+            except OSError as exc:
+                skipped_reasons[_skip_reason(exc)] += 1
                 continue
     chosen_sessions = sorted(sessions, reverse=True)[:4]
     for _, _, _, session, state in chosen_sessions:
@@ -586,8 +674,8 @@ def build_bundle() -> bytes:
             path = source.directory / name
             try:
                 found[path] = _safe_stat(path)
-            except OSError:
-                skipped_candidates += 1
+            except OSError as exc:
+                skipped_reasons[_skip_reason(exc)] += 1
                 continue
         by_source.setdefault(source.name, []).extend((source, path, info) for path, info in found.items())
     groups = [sorted(group, key=lambda item: (item[0].session_state == "active",
@@ -606,7 +694,8 @@ def build_bundle() -> bytes:
     manifest = {"schema_version": 1, "policy": "recent-metadata-only", "sources": source_status,
                 "scan_limited": scan_limited, "discovery_incomplete": expired() or scan_limited,
                 "omitted_files_file_limit": file_limit_omitted,
-                "unavailable_or_unsafe_candidates": skipped_candidates,
+                "unavailable_or_unsafe_candidates": sum(skipped_reasons.values()),
+                "unavailable_or_unsafe_categories": dict(sorted(skipped_reasons.items())),
                 "omitted_installer_stages": installer_omitted,
                 "omitted_native_sessions": max(0, len(sessions) - len(chosen_sessions)),
                 "files": [], "limits": {"collection_seconds": COLLECTION_SECONDS,
@@ -631,7 +720,8 @@ def build_bundle() -> bytes:
                     entry["status"] = "unavailable_or_rotated"
                 else:
                     remaining -= max(details["read_bytes"], len(data))
-                    archive.writestr(entry["file"], data)
+                    if data:
+                        archive.writestr(entry["file"], data)
                     entry.update(details, status="included", exported_bytes=len(data))
                     del data
                 manifest["files"].append(entry)

@@ -459,6 +459,86 @@ def test_interrupted_installing_result_is_ignored(manager):
     assert fresh.snapshot()["last_result"] is None
 
 
+def test_interrupted_installing_result_emits_startup_event(manager, monkeypatch):
+    path = updates.staging_base(manager.install)
+    path.mkdir(parents=True)
+    updates.atomic_json(path / "last-result.json",
+                        {"status": "installing", "message": "pending", "version": "v1.2.3"})
+    events = []
+    monkeypatch.setattr(updates, "log_event", lambda event, **fields: events.append((event, fields)))
+    updates.Updater(manager.install)
+    assert events == [("update.result", {"status": "interrupted", "version": "v1.2.3"})]
+
+
+def test_snapshot_emits_result_event_only_when_the_terminal_result_changes(manager, monkeypatch):
+    events = []
+    monkeypatch.setattr(updates, "log_event", lambda event, **fields: events.append((event, fields)))
+    manager.runtime.result.return_value = {"status": "installed", "message": "ok", "version": "v1.2.3"}
+    manager.snapshot()
+    manager.snapshot()
+    assert events == [("update.result", {"status": "installed", "version": "v1.2.3"})]
+
+
+def test_update_lifecycle_events_cover_check_download_and_handoff(manager, monkeypatch, tmp_path):
+    events = []
+    monkeypatch.setattr(updates, "log_event", lambda event, **fields: events.append((event, fields)))
+    source = archive(tmp_path)
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    github = remote(monkeypatch, artifacts=[artifact(digest="sha256:" + digest)])
+    manager._check()
+    assert ("update.check", {"status": "candidate", "run_id": 21, "run_number": 13, "run_attempt": 1}) in events
+
+    def download(path, target, progress):
+        data = source.read_bytes()
+        target.write_bytes(data)
+        progress(len(data), len(data))
+        return digest
+
+    github.download.side_effect = download
+    state = manager.download(manager.state["candidate"]["id"])
+    assert state["phase"] == "downloading"
+    wait_operation(manager)
+    assert ("update.download", {"status": "started", "run_id": 21}) in events
+    ready = [fields for event, fields in events if event == "update.download" and fields["status"] == "ready"]
+    assert ready == [{"status": "ready", "run_id": 21, "count": source.stat().st_size}]
+
+    manager.install_update(manager.state["candidate"]["id"])
+    assert ("update.handoff", {"status": "accepted", "version": "v1.2.3"}) in events
+    manager.arm(manager._handoff_id)
+    assert ("update.handoff", {"status": "go"}) in events
+
+
+def test_current_build_check_is_recorded_without_a_candidate(manager, monkeypatch):
+    events = []
+    monkeypatch.setattr(updates, "log_event", lambda event, **fields: events.append((event, fields)))
+    remote(monkeypatch, runs=[run(run_number=12, id=20)])
+    manager._check()
+    assert events == [("update.check", {"status": "current", "run_id": 20})]
+
+
+def test_cancelled_and_rejected_handoffs_record_their_reason(manager, monkeypatch):
+    events = []
+    monkeypatch.setattr(updates, "log_event", lambda event, **fields: events.append((event, fields)))
+    make_ready(manager)
+    manager.runtime.start.side_effect = updates.UpdateError("The updater helper did not accept the installation.")
+    with pytest.raises(AppError):
+        manager.install_update("opaque")
+    assert ("update.handoff", {"status": "rejected", "reason": "start_failed",
+                               "exception_type": "UpdateError", "version": "v1.2.3"}) in events
+
+    manager.runtime.start.side_effect = None
+    make_ready(manager)
+    manager.install_update("opaque")
+    manager.runtime.failed.return_value = True
+    assert not manager.writes_blocked()
+    assert ("update.handoff", {"status": "cancelled", "reason": "helper_exited"}) in events
+
+    make_ready(manager)
+    operation = manager.install_update("opaque")
+    manager.cancel_install(operation)
+    assert ("update.handoff", {"status": "cancelled", "reason": "response_failed"}) in events
+
+
 def test_snapshot_does_not_read_result_file_during_handoff(manager):
     make_ready(manager)
     manager.install_update("opaque")

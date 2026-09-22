@@ -259,8 +259,12 @@ class AuthMiddleware:
             # Do not log exception locals: login bodies and bearer tokens are secrets.
             await reject(500, "Internal server error")
         finally:
-            log_event("http.response", status=status, complete=complete,
-                      disconnected=disconnected, send_failed=send_failed)
+            # Successful reads are fully described by http.access; keep the
+            # second record for writes and abnormal outcomes only.
+            if (scope["method"] not in {"GET", "HEAD"} or status is None or status >= 400
+                    or not complete or disconnected or send_failed):
+                log_event("http.response", status=status, complete=complete,
+                          disconnected=disconnected, send_failed=send_failed)
             pending = scope["state"].pop("update_handoff", None)
             if pending is not None:
                 updater, operation_id = pending

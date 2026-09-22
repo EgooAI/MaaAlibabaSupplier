@@ -56,6 +56,7 @@ def test_file_stderr_export_keep_events_without_payloads_or_exception_values(log
         assert output
         for value in (secret, "BODY_CANARY", "TOKEN_CANARY", "URL_CANARY", "AUTH_CANARY", "HIDDEN"):
             assert value not in output
+    assert "\x1b" not in stderr.getvalue() and "\x1b" not in file_text
     assert records[0]["context"]["request_id"] == "req-one"
     assert records[0]["context"]["outbox_id"] == "outbox-one"
     failure = records[1]["exception"]
@@ -476,8 +477,39 @@ def test_auth_access_uses_template_and_same_request_context_on_success_and_rejec
     assert [r["context"]["route"] for r in events] == ["/api/probe/{customer}", "unmatched"]
     assert events[0]["context"]["request_id"] == response.headers["X-Request-ID"]
     assert events[1]["context"]["request_id"] == rejected.headers["X-Request-ID"]
+    responses = [r for r in logs[0] if r["event"] == "http.response"]
+    assert [r["context"]["status"] for r in responses] == [401]
     assert "PRIVATE" not in json.dumps(logs[0])
     assert token not in json.dumps(logs[0])
+
+
+def test_http_response_is_recorded_for_writes_but_not_successful_reads(logs, tmp_path):
+    from backend.app.api.auth import AuthConfig, AuthMiddleware, LoginLimiter, SessionStore
+
+    app = FastAPI()
+    store = SessionStore(AuthConfig(b"a" * 32, tmp_path / "auth.sqlite"))
+    token = store.issue()
+
+    @app.get("/api/probe")
+    def probe():
+        return {"ok": True}
+
+    @app.post("/api/probe")
+    def write():
+        return {"ok": True}
+
+    app.add_middleware(AuthMiddleware, store=store, limiter=LoginLimiter())
+    with TestClient(app) as client:
+        headers = {"Authorization": f"Bearer {token}"}
+        assert client.get("/api/probe", headers=headers).status_code == 200
+        assert client.post("/api/probe", headers=headers).status_code == 200
+    accesses = [r for r in logs[0] if r["event"] == "http.access"]
+    responses = [r for r in logs[0] if r["event"] == "http.response"]
+    read = next(r for r in accesses if r["context"]["method"] == "GET")
+    write = next(r for r in accesses if r["context"]["method"] == "POST")
+    assert len(responses) == 1
+    assert responses[0]["context"]["request_id"] == write["context"]["request_id"]
+    assert responses[0]["context"]["request_id"] != read["context"]["request_id"]
 
 
 @pytest.mark.parametrize("fails", [False, True])

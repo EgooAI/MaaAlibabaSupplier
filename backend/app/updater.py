@@ -20,6 +20,7 @@ import zipfile
 from pathlib import Path
 
 from backend.app.api.envelope import AppError
+from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.utils.settings import resolve_repo_root
 
 APP_ID = "580868F7-B96A-4214-829A-609D552F2C3A"
@@ -239,6 +240,10 @@ class Updater:
                     and all(isinstance(result.get(key), str) for key in ("status", "message"))
                     and (result.get("version") is None or isinstance(result["version"], str))):
                 self.state["last_result"] = {key: result.get(key) for key in ("status", "message", "version")}
+            elif result.get("status") == "installing":
+                # The previous process did not finish its handoff; expose that in
+                # logs without presenting it as an active installation.
+                log_event("update.result", status="interrupted", version=result.get("version"))
         except (OSError, ValueError, UpdateError):
             pass
 
@@ -266,11 +271,12 @@ class Updater:
             # the broker may write it would only race and show stale attempts.
             if self.runtime is not None and not self.handoff.is_set():
                 result = self.runtime.result()
-                if result is not None:
+                if result is not None and result != self.state["last_result"]:
                     self.state["last_result"] = result
+                    log_event("update.result", status=result["status"], version=result.get("version"))
             return copy.deepcopy(self.state)
 
-    def _cancel_install_locked(self, message: str) -> None:
+    def _cancel_install_locked(self, message: str, reason: str) -> None:
         try:
             self.runtime.cancel()
         except OSError:
@@ -281,13 +287,18 @@ class Updater:
         # Before the commit nothing was stopped and the verified installer is
         # untouched, so a cancelled or failed attempt stays installable.
         self.state.update(phase="ready" if self.prepared is not None else "error", error=message)
+        log_event("update.handoff", status="cancelled", reason=reason)
 
     def writes_blocked(self) -> bool:
         """Reconcile from the write gate and watchdog, independently of GET."""
         with self.lock:
-            if self.handoff.is_set() and (self.runtime.failed() or (
-                    not self._armed and time.monotonic() >= self._handoff_deadline)):
-                self._cancel_install_locked("The independent update helper stopped or the handoff expired.")
+            if self.handoff.is_set():
+                if self.runtime.failed():
+                    self._cancel_install_locked("The updater helper stopped; the application was not stopped.",
+                                                "helper_exited")
+                elif not self._armed and time.monotonic() >= self._handoff_deadline:
+                    self._cancel_install_locked("The update handoff expired; the application was not stopped.",
+                                                "handoff_expired")
             return self.handoff.is_set()
 
     def _admit(self) -> None:
@@ -306,6 +317,7 @@ class Updater:
                 with self.lock:
                     self.state.update(phase="error", error=str(exc) if isinstance(exc, UpdateError)
                                       else "Update operation failed. Check access, disk space, and artifact availability.")
+                log_event("update.failed", phase=phase, status="failed", exception_type=type(exc).__name__)
         response = copy.deepcopy(self.state)
         try:
             threading.Thread(target=run, daemon=True, name="manual-updater").start()
@@ -343,6 +355,7 @@ class Updater:
                 (run["run_number"], run["run_attempt"]) <= (self.build["run_number"], self.build["run_attempt"])):
             with self.lock:
                 self.state["phase"] = "idle"
+            log_event("update.check", status="current", run_id=self.build.get("run_id"))
             return
         artifacts = []
         for page in range(1, 11):
@@ -370,6 +383,8 @@ class Updater:
         with self.lock:
             self.selected = selected
             self.state.update(phase="available", candidate=candidate)
+        log_event("update.check", status="candidate", run_id=run["id"],
+                  run_number=run["run_number"], run_attempt=run["run_attempt"])
 
     def _candidate(self, candidate_id: str) -> None:
         if not self.state["candidate"] or candidate_id != self.state["candidate"]["id"]:
@@ -381,6 +396,7 @@ class Updater:
             self._candidate(candidate_id)
             self.prepared = None
             self.state.update(downloaded_bytes=0, total_bytes=None)
+            log_event("update.download", status="started", run_id=self.selected.get("run_id"))
             return self._start("downloading", self._download)
 
     def _download(self) -> None:
@@ -402,6 +418,8 @@ class Updater:
             self.prepared = (installer, prepared)
             self.state["candidate"]["version"] = prepared["version"]
             self.state["phase"] = "ready"
+            count = self.state["downloaded_bytes"]
+        log_event("update.download", status="ready", run_id=selected["run_id"], count=count)
 
     def install_update(self, candidate_id: str) -> str:
         with self.lock:
@@ -426,6 +444,7 @@ class Updater:
             self.runtime.start(installer, prepared)
             with self.lock:
                 self._handoff_deadline = time.monotonic() + 15.0
+            log_event("update.handoff", status="accepted", version=prepared.get("version"))
 
             def reconcile():
                 while not finished.wait(0.1):
@@ -449,13 +468,16 @@ class Updater:
                 pass
             message = (str(exc) if isinstance(exc, UpdateError)
                        else "Update handoff failed; the application was not stopped.")
+            log_event("update.handoff", status="rejected", reason="start_failed",
+                      exception_type=type(exc).__name__, version=prepared.get("version"))
             raise AppError(message, status_code=503) from None
         return operation_id
 
     def cancel_install(self, operation_id: str) -> None:
         with self.lock:
             if self._handoff_id == operation_id and not self._armed:
-                self._cancel_install_locked("Update handoff was cancelled; the application was not stopped.")
+                self._cancel_install_locked("Update handoff was cancelled; the application was not stopped.",
+                                            "response_failed")
 
     def arm(self, operation_id: str) -> None:
         with self.lock:
@@ -466,8 +488,10 @@ class Updater:
                     raise UpdateError("Update handoff expired.")
                 self.runtime.arm()
                 self._armed = True
+                log_event("update.handoff", status="go")
             except Exception:
-                self._cancel_install_locked("Updater handoff failed; the application was not stopped.")
+                self._cancel_install_locked("Updater handoff failed; the application was not stopped.",
+                                            "helper_unavailable")
 
 
 _instance: Updater | None = None

@@ -4,10 +4,15 @@ import io
 import json
 import os
 from pathlib import Path
+import ssl
 import stat
+import sys
 import threading
+import time
+import types
 from types import SimpleNamespace
 from unittest.mock import Mock
+import urllib.error
 import zipfile
 
 import pytest
@@ -402,6 +407,59 @@ def test_runtime_collects_cached_workers_and_active_native_session_without_paylo
     assert "private" not in json.dumps(runtime)
 
 
+def test_runtime_reports_passive_updater_state_without_free_text(monkeypatch):
+    updater = types.ModuleType("backend.app.updater")
+    updater._instance = SimpleNamespace(snapshot=lambda: {
+        "supported": True, "phase": "installing", "error": "private-path",
+        "candidate": {"run_id": 42, "version": "private-candidate"},
+        "last_result": {"status": "installing", "message": "private-message", "version": "v1.2.3"}})
+    monkeypatch.setitem(sys.modules, "backend.app.updater", updater)
+    runtime = diag._runtime_summary(time.monotonic() + 5)
+    assert runtime["updater"] == {"initialized": True, "supported": True, "handoff": True, "has_error": True,
+                                  "phase": "installing", "candidate_run_id": 42,
+                                  "last_result_status": "installing", "last_result_version": "v1.2.3"}
+    assert "private" not in json.dumps(runtime)
+
+
+def test_runtime_does_not_initialize_an_absent_updater(monkeypatch):
+    updater = types.ModuleType("backend.app.updater")
+    updater._instance = None
+    monkeypatch.setitem(sys.modules, "backend.app.updater", updater)
+    assert diag._runtime_summary(time.monotonic() + 5)["updater"] == {"initialized": False}
+
+
+def test_legacy_records_deduplicate_by_origin_and_keep_distinct_sources():
+    path = write(diag.resolve_backend_root() / "data/logs/api.log",
+                 "2026-09-20 12:00:00 | INFO | vendor.client:send:477 - first\n"
+                 "2026-09-20 12:00:01 | INFO | vendor.client:send:477 - second\n"
+                 "2026-09-20 12:00:02 | WARNING | vendor.client:drop:9 - third\n")
+    data, details = diag._read_recent(path, path.stat(), "application", diag.MAX_FILE_BYTES)
+    records = [json.loads(line) for line in data.decode().splitlines()]
+    assert [(item["level"], item["function"]) for item in records] == [("INFO", "send"), ("WARNING", "drop")]
+    assert details["omitted_records"] == 1 and details["omission_reasons"] == {"duplicate": 1}
+
+
+@pytest.mark.parametrize("message, category", [
+    ("Unsafe diagnostic path", "unsafe_path"),
+    ("Not a private regular file", "nonregular"),
+    ("Diagnostic file rotated", "rotated"),
+    ("Diagnostic path changed", "rotated"),
+    ("unexpected failure", "unavailable"),
+])
+def test_candidate_skip_reasons_are_fixed_categories(message, category):
+    assert diag._skip_reason(OSError(message)) == category
+
+
+def test_empty_sources_keep_manifest_entries_without_zip_payloads():
+    write(diag.resolve_backend_root() / "debug/maafw.log", "unrecognized private body\n")
+    content = unpack(diag.build_bundle())
+    manifest = json.loads(content["manifest.json"])
+    entry = next(item for item in manifest["files"] if item["source"] == "cli-legacy")
+    assert entry["status"] == "included" and entry["exported_bytes"] == 0
+    assert entry["file"] not in content
+    assert "private" not in json.dumps(manifest)
+
+
 def test_cooperative_deadline_preserves_zip_and_reports_unprocessed_records(monkeypatch):
     write(diag.resolve_backend_root() / "debug/maafw.log", NATIVE * 10)
     write(diag.resolve_backend_root() / "debug/maa.log", NATIVE)
@@ -642,6 +700,22 @@ def test_build_failure_releases_admission_and_does_not_echo(monkeypatch):
 def test_pull_rejects_unsafe_origin_before_network(url):
     with pytest.raises(ValueError):
         pull.endpoint(url)
+
+
+@pytest.mark.parametrize("exc, expected", [
+    (urllib.error.HTTPError("https://private.example", 401, "private-reason", {}, None), "HTTP 401"),
+    (urllib.error.HTTPError("https://private.example", 429, "private-reason", {}, None), "HTTP 429"),
+    (urllib.error.HTTPError("https://private.example", 503, "private-reason", {}, None), "HTTP 503"),
+    (urllib.error.URLError(ssl.SSLCertVerificationError("private-certificate")), "TLS certificate"),
+    (urllib.error.URLError(ConnectionRefusedError()), "Could not connect"),
+    (TimeoutError("private-timeout"), "timed out"),
+    (zipfile.BadZipFile("private-archive"), "ZIP"),
+    (ValueError("private-value"), "rejected"),
+])
+def test_pull_failure_categories_are_fixed_and_never_echo(exc, expected):
+    message = pull.classify_failure(exc)
+    assert expected in message
+    assert "private" not in message
 
 
 @pytest.mark.parametrize("failure", [None, "invalid_zip", "truncated", "oversized", "occupied_partial", "interrupted"])

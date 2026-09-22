@@ -88,6 +88,8 @@ def test_start_spawns_single_use_breakaway_broker(native, monkeypatch, tmp_path)
     assert str(owner.stage / "update-helper.ps1") in command
     assert owner.stage.is_relative_to(tmp_path / "external")
     assert spawn.call_args.kwargs["creationflags"] == runtime.CREATE_BREAKAWAY_FROM_JOB | 0x08000200
+    assert spawn.call_args.kwargs["stderr"] is runtime.subprocess.STDOUT
+    assert (owner.stage / "helper.log").is_file()
     assert "MAA_MITM_INTERNAL_TOKEN" not in spawn.call_args.kwargs["env"]
     assert spawn.call_args.kwargs["env"]["MAA_AUTH_SECRET_SHA256"] == "test-digest"
     bootstrap = updater.read_json(owner.stage / "bootstrap.json")

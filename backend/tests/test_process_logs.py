@@ -170,6 +170,17 @@ def test_bounded_reader_preserves_utf8_and_omits_budget_fragment():
     assert list(process_logs.bounded_lines(io.BytesIO(b"whole\npartial-secret"), max_read_bytes=10)) == ["whole"]
 
 
+def test_colorless_child_env_overrides_user_environment_without_mutation(monkeypatch):
+    monkeypatch.setenv("NO_COLOR", "0")
+    monkeypatch.setenv("TERM", "xterm-256color")
+    base = {"PATH": "keep", "CLICOLOR_FORCE": "1"}
+    child = process_logs.colorless_child_env(base)
+    assert child == {"PATH": "keep", "NO_COLOR": "1", "TERM": "dumb",
+                     "CLICOLOR": "0", "CLICOLOR_FORCE": "0"}
+    assert base == {"PATH": "keep", "CLICOLOR_FORCE": "1"}
+    assert process_logs.colorless_child_env()["NO_COLOR"] == "1"
+
+
 def test_emergency_failure_contains_type_and_frames_but_no_values(monkeypatch, tmp_path):
     stderr = io.StringIO()
     monkeypatch.setattr(process_logs.sys, "stderr", stderr)
@@ -225,6 +236,9 @@ def test_cli_process_creation_and_exit_are_observed_without_readiness_claim(monk
             assert "process exited" in logger.warning.call_args.args[0]
         assert popen.call_args.kwargs["stdout"] == maafw_process.subprocess.PIPE
         assert popen.call_args.kwargs["bufsize"] == 0
+        child = popen.call_args.kwargs["env"]
+        assert child["NO_COLOR"] == "1" and child["TERM"] == "dumb"
+        assert child["CLICOLOR"] == "0" and child["CLICOLOR_FORCE"] == "0"
         assert process_logs.finish_process_log(process)
         assert (tmp_path / "data" / "logs" / "maafw_cli.log").exists()
     finally:

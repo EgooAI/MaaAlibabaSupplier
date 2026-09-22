@@ -8,7 +8,7 @@
      frontend from PORT / FRONTEND_PORT / MAA_WEB_PORT (.env, default 3000).
   2. Tree-kills (taskkill /T /F) every process listening on those ports,
      which also takes down backend-spawned children (MaaFW, Yak).
-  3. Starts `python -m backend.app.main` (repo root) and `pnpm dev`
+  3. Starts `python -X utf8 -m backend.app.main` (repo root) and `pnpm dev`
      (frontend/), detached with logs under debug/. The dev server's /api
      proxy is pinned to the just-started backend via BACKEND_ORIGIN
      (next.config.ts defaults it to 127.0.0.1:8000, which may be a stale
@@ -177,7 +177,7 @@ $startBackend = ($Only -eq "all" -or $Only -eq "backend")
 $startFrontend = ($Only -eq "all" -or $Only -eq "frontend")
 
 if ($DryRun) {
-    Write-Host "backend port:  $backendPort (python: $pythonExe -m backend.app.main)"
+    Write-Host "backend port:  $backendPort (python: $pythonExe -X utf8 -m backend.app.main)"
     Write-Host "frontend port: $frontendPort (pnpm: $pnpmCmd dev --port $frontendPort)"
     foreach ($entry in @(@{ Label = "backend"; Port = $backendPort; Wanted = $startBackend },
                          @{ Label = "frontend"; Port = $frontendPort; Wanted = $startFrontend })) {
@@ -202,8 +202,12 @@ if ($startFrontend) { Stop-PortListeners -Port $frontendPort -Label "frontend" }
 
 if ($startBackend) {
     $backendLog = Join-Path $DebugDir "dev-preview-backend.log"
-    Write-Host "[backend] starting: $pythonExe -m backend.app.main (log: debug/dev-preview-backend.log)"
-    $backendProc = Start-Process -FilePath $pythonExe -ArgumentList "-u", "-m", "backend.app.main" `
+    Write-Host "[backend] starting: $pythonExe -X utf8 -m backend.app.main (log: debug/dev-preview-backend.log)"
+    $env:PYTHONUTF8 = "1"
+    $env:PYTHONIOENCODING = "utf-8"
+    $env:NO_COLOR = "1"
+    $env:TERM = "dumb"
+    $backendProc = Start-Process -FilePath $pythonExe -ArgumentList "-X", "utf8", "-u", "-m", "backend.app.main" `
         -WorkingDirectory $RepoRoot -WindowStyle Hidden -PassThru `
         -RedirectStandardOutput $backendLog -RedirectStandardError ($backendLog + ".err")
     Write-Host "[backend] PID $($backendProc.Id), waiting for port $backendPort ..."
