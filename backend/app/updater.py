@@ -235,7 +235,7 @@ class Updater:
                       "error": None, "last_result": None}
         try:
             result = read_json(staging_base(self.install) / "last-result.json")
-            if (result.get("status") in {"installed", "error", "installing", "reboot_required"}
+            if (result.get("status") in {"installed", "error", "reboot_required"}
                     and all(isinstance(result.get(key), str) for key in ("status", "message"))
                     and (result.get("version") is None or isinstance(result["version"], str))):
                 self.state["last_result"] = {key: result.get(key) for key in ("status", "message", "version")}
@@ -262,7 +262,9 @@ class Updater:
     def snapshot(self) -> dict:
         self.writes_blocked()
         with self.lock:
-            if self.runtime is not None:
+            # A live handoff reports its own phase; reading the result file while
+            # the broker may write it would only race and show stale attempts.
+            if self.runtime is not None and not self.handoff.is_set():
                 result = self.runtime.result()
                 if result is not None:
                     self.state["last_result"] = result
@@ -276,8 +278,9 @@ class Updater:
         self._handoff_finished.set()
         self._handoff_id = None
         self.handoff.clear()
-        self.prepared = None
-        self.state.update(phase="error", error=message)
+        # Before the commit nothing was stopped and the verified installer is
+        # untouched, so a cancelled or failed attempt stays installable.
+        self.state.update(phase="ready" if self.prepared is not None else "error", error=message)
 
     def writes_blocked(self) -> bool:
         """Reconcile from the write gate and watchdog, independently of GET."""
@@ -301,11 +304,6 @@ class Updater:
                 operation()
             except Exception as exc:
                 with self.lock:
-                    if phase == "downloading" and self.runtime is not None:
-                        try:
-                            self.runtime.cancel()
-                        except OSError:
-                            pass
                     self.state.update(phase="error", error=str(exc) if isinstance(exc, UpdateError)
                                       else "Update operation failed. Check access, disk space, and artifact availability.")
         response = copy.deepcopy(self.state)
@@ -319,8 +317,6 @@ class Updater:
     def check(self) -> dict:
         with self.lock:
             self._admit()
-            if self.runtime is not None:
-                self.runtime.cancel()
             self.selected = self.prepared = None
             self.state.update(candidate=None, downloaded_bytes=0, total_bytes=None)
             return self._start("checking", self._check)
@@ -383,8 +379,6 @@ class Updater:
         with self.lock:
             self._admit()
             self._candidate(candidate_id)
-            if self.runtime is not None:
-                self.runtime.cancel()
             self.prepared = None
             self.state.update(downloaded_bytes=0, total_bytes=None)
             return self._start("downloading", self._download)
@@ -404,7 +398,6 @@ class Updater:
         verified = stage / "artifact.zip"
         os.replace(archive, verified)
         installer, prepared = unpack_verified(verified, stage, selected)
-        self.runtime.prepare_long(installer, prepared)
         with self.lock:
             self.prepared = (installer, prepared)
             self.state["candidate"]["version"] = prepared["version"]
@@ -416,17 +409,23 @@ class Updater:
             self._candidate(candidate_id)
             if self.state["phase"] != "ready" or self.prepared is None or self.runtime is None:
                 raise AppError("Download and verify the update before installing.", status_code=409)
+            # A finished attempt must not be mistaken for the one about to start.
+            self.runtime.reset()
             self.handoff.set()
             operation_id = self._handoff_id = uuid.uuid4().hex
             finished = self._handoff_finished = threading.Event()
-            self._handoff_deadline = time.monotonic() + 15.0
+            # Bounded only after the broker accepted; start() bounds the wait.
+            self._handoff_deadline = float("inf")
             self._armed = False
             self.state.update(phase="installing", error=None)
             installer, prepared = self.prepared
-        # No state/account/GUI lock is held while validating the already locked
-        # installer. prepare() does not hash, sleep, or wait for the helper.
+        # No state/account/GUI lock is held while this attempt's single-use
+        # broker starts. Failure restores the ready candidate for an immediate
+        # retry: nothing was stopped and the installer file is untouched.
         try:
-            self.runtime.prepare(installer, prepared)
+            self.runtime.start(installer, prepared)
+            with self.lock:
+                self._handoff_deadline = time.monotonic() + 15.0
 
             def reconcile():
                 while not finished.wait(0.1):
@@ -437,9 +436,20 @@ class Updater:
                     self.writes_blocked()
 
             threading.Thread(target=reconcile, daemon=True, name="update-handoff").start()
-        except Exception:
-            self.cancel_install(operation_id)
-            raise AppError(self.state["error"], status_code=503) from None
+        except Exception as exc:
+            with self.lock:
+                if self._handoff_id == operation_id:
+                    self._handoff_finished.set()
+                    self._handoff_id = None
+                    self.handoff.clear()
+                    self.state.update(phase="ready", error=None)
+            try:
+                self.runtime.cancel()
+            except OSError:
+                pass
+            message = (str(exc) if isinstance(exc, UpdateError)
+                       else "Update handoff failed; the application was not stopped.")
+            raise AppError(message, status_code=503) from None
         return operation_id
 
     def cancel_install(self, operation_id: str) -> None:

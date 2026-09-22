@@ -357,8 +357,12 @@ def _metadata(line: str, kind: str) -> str | None:
             value = json.loads(line)
         except (ValueError, RecursionError):
             return None
-        if isinstance(value, dict) and value.get("status") in ("installed", "reboot_required", "error", "cancelled"):
+        if isinstance(value, dict) and value.get("status") in ("installed", "reboot_required", "error",
+                                                               "cancelled", "installing"):
             record = {"event": "update_result", "status": value["status"]}
+            version = value.get("version")
+            if isinstance(version, str) and re.fullmatch(r"v?[A-Za-z0-9][A-Za-z0-9._+-]{0,127}", version):
+                record["version"] = version
     elif match := _NATIVE.match(line):
         record = {"time": match[1], "level": match[2].upper(), "event": "native_record"}
         record["context"] = _native_context(line[match.end():])

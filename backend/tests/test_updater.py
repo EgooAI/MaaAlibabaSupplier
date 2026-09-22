@@ -146,7 +146,7 @@ def test_missing_ambiguous_or_unverifiable_artifact_never_stops_app(manager, mon
     manager.check()
     wait_operation(manager)
     assert manager.snapshot()["phase"] == "error"
-    manager.runtime.prepare.assert_not_called()
+    manager.runtime.start.assert_not_called()
     assert not manager.handoff.is_set()
 
 
@@ -196,7 +196,7 @@ def test_verified_download_uses_github_identity_and_filename_version(manager, mo
                              run_number=run()["run_number"], run_attempt=run()["run_attempt"],
                              installer_sha256=hashlib.sha256(installer.read_bytes()).hexdigest())
     assert {path.name for path in installer.parent.iterdir()} == {"artifact.zip", installer.name}
-    manager.runtime.prepare_long.assert_called_once_with(installer, expected)
+    manager.runtime.start.assert_not_called()
     assert not manager.handoff.is_set()
 
 
@@ -220,7 +220,7 @@ def test_bad_zip_digest_blocks_extraction(manager, monkeypatch, tmp_path):
     assert manager.snapshot()["phase"] == "error"
     unpack.assert_not_called()
     assert manager.prepared is None
-    manager.runtime.prepare_long.assert_not_called()
+    manager.runtime.start.assert_not_called()
 
 
 @pytest.mark.parametrize("name", ["../escape.exe", "dir/setup.exe", "dir\\setup.exe", "C:setup.exe",
@@ -372,7 +372,7 @@ def test_install_auth_gate_no_account_lock_and_arms_after_response(manager, monk
         authenticate(client)
         response = client.post("/api/app/update/install", json={"candidate_id": "opaque", "confirm": True})
         assert response.status_code == 200 and response.json()["data"] == {"accepted": True}
-        manager.runtime.prepare.assert_called_once_with(*manager.prepared)
+        manager.runtime.start.assert_called_once_with(*manager.prepared)
         manager.runtime.arm.assert_called_once()
         assert manager.handoff.is_set()
         assert client.get("/api/app/update").status_code == 200
@@ -392,7 +392,7 @@ def test_install_rejects_missing_confirmation_and_browser_targets(manager, body)
     with TestClient(main.create_app()) as client:
         authenticate(client)
         assert client.post("/api/app/update/install", json=body).status_code == 422
-    manager.runtime.prepare.assert_not_called()
+    manager.runtime.start.assert_not_called()
 
 
 def test_stale_candidate_and_handshake_failure_leave_app_running(manager):
@@ -400,13 +400,14 @@ def test_stale_candidate_and_handshake_failure_leave_app_running(manager):
     with pytest.raises(AppError) as exc:
         manager.install_update("stale")
     assert exc.value.status_code == 409 and not manager.handoff.is_set()
-    manager.runtime.prepare.side_effect = RuntimeError("secret/path")
+    manager.runtime.start.side_effect = RuntimeError("secret/path")
     with pytest.raises(AppError) as exc:
         manager.install_update("opaque")
     assert exc.value.status_code == 503 and "secret" not in exc.value.message
     manager.runtime.cancel.assert_called_once()
     manager.runtime.arm.assert_not_called()
     assert not manager.handoff.is_set()
+    assert manager.state["phase"] == "ready" and manager.prepared is not None
 
 
 def test_second_install_rejected_during_handshake_without_blocking_observation(manager):
@@ -417,7 +418,7 @@ def test_second_install_rejected_during_handshake_without_blocking_observation(m
         entered.set()
         assert release.wait(3)
 
-    manager.runtime.prepare.side_effect = prepare
+    manager.runtime.start.side_effect = prepare
     with ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(manager.install_update, "opaque")
         try:
@@ -435,8 +436,9 @@ def test_cancelled_handoff_unblocks_next_write_without_observation(manager):
     manager.install_update("opaque")
     manager.runtime.failed.return_value = True
     assert not manager.writes_blocked()
-    assert manager.state["phase"] == "error"
+    assert manager.state["phase"] == "ready"
     assert not manager.handoff.is_set()
+    assert manager.prepared is not None
 
 
 def test_durable_result_loaded_without_network(manager):
@@ -446,6 +448,23 @@ def test_durable_result_loaded_without_network(manager):
     updates.atomic_json(path / "last-result.json", result)
     fresh = updates.Updater(manager.install)
     assert fresh.snapshot()["last_result"] == result
+
+
+def test_interrupted_installing_result_is_ignored(manager):
+    path = updates.staging_base(manager.install)
+    path.mkdir(parents=True)
+    updates.atomic_json(path / "last-result.json",
+                        {"status": "installing", "message": "pending", "version": "v1.2.3"})
+    fresh = updates.Updater(manager.install)
+    assert fresh.snapshot()["last_result"] is None
+
+
+def test_snapshot_does_not_read_result_file_during_handoff(manager):
+    make_ready(manager)
+    manager.install_update("opaque")
+    manager.snapshot()
+    manager.runtime.result.assert_not_called()
+    manager.cancel_install(manager._handoff_id)
 
 
 def test_powershell_preference_and_command_fallback(monkeypatch, tmp_path):
@@ -513,7 +532,7 @@ def test_real_asgi_delayed_outer_body_send_finishes_before_arm(manager):
     manager.runtime.arm.side_effect = lambda: delivered.append("armed")
     asyncio.run(asgi_install(main.create_app(), send))
     assert delivered == [True, "armed"]
-    manager.runtime.prepare.assert_called_once()
+    manager.runtime.start.assert_called_once()
     manager.runtime.cancel.assert_not_called()
 
 
@@ -530,11 +549,11 @@ def test_real_asgi_send_failure_or_cancellation_releases_uncommitted_handoff(man
 
     with pytest.raises((Exception, asyncio.CancelledError)):
         asyncio.run(asgi_install(main.create_app(), send))
-    manager.runtime.prepare.assert_called_once()
+    manager.runtime.start.assert_called_once()
     manager.runtime.arm.assert_not_called()
     manager.runtime.cancel.assert_called_once()
     assert not manager.handoff.is_set()
-    assert manager.state["phase"] == "error"
+    assert manager.state["phase"] == "ready"
 
 
 @pytest.mark.parametrize("failure", ["exception", "error_status"])
@@ -565,7 +584,7 @@ def test_real_basehttp_failure_after_prepare_cancels_before_next_write(manager, 
 
     asyncio.run(asgi_install(app, send))
     assert messages[0]["status"] in {500, 503}
-    manager.runtime.prepare.assert_called_once()
+    manager.runtime.start.assert_called_once()
     manager.runtime.cancel.assert_called_once()
     manager.runtime.arm.assert_not_called()
     assert not manager.handoff.is_set()
@@ -596,7 +615,7 @@ def test_real_asgi_disconnect_without_send_error_cancels(manager):
             await asyncio.sleep(0.05)
 
     asyncio.run(asgi_install(app, send, disconnect=True))
-    manager.runtime.prepare.assert_called_once()
+    manager.runtime.start.assert_called_once()
     manager.runtime.arm.assert_not_called()
     manager.runtime.cancel.assert_called_once()
     assert not manager.handoff.is_set()
@@ -608,7 +627,7 @@ def test_watchdog_reconciles_helper_failure_without_any_http_request(manager):
     manager.runtime.failed.return_value = True
     assert manager._handoff_finished.wait(2)
     assert not manager.handoff.is_set()
-    assert manager.state["phase"] == "error"
+    assert manager.state["phase"] == "ready"
 
 
 def test_response_finishing_after_pending_lease_expiry_cannot_arm(manager):
@@ -622,7 +641,7 @@ def test_response_finishing_after_pending_lease_expiry_cannot_arm(manager):
             assert not manager.handoff.is_set()
 
     asyncio.run(asgi_install(main.create_app(), send))
-    manager.runtime.prepare.assert_called_once()
+    manager.runtime.start.assert_called_once()
     manager.runtime.arm.assert_not_called()
     manager.runtime.cancel.assert_called_once()
 
@@ -659,7 +678,7 @@ def test_stale_response_callbacks_cannot_arm_or_cancel_new_handoff(manager):
 
 
 @pytest.mark.parametrize("fail", [False, True])
-def test_download_remains_active_and_writes_available_during_helper_hash(manager, monkeypatch, tmp_path, fail):
+def test_download_verifies_without_starting_a_broker(manager, monkeypatch, tmp_path, fail):
     source = archive(tmp_path)
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     github = remote(monkeypatch, artifacts=[artifact(digest="sha256:" + digest)])
@@ -667,40 +686,27 @@ def test_download_remains_active_and_writes_available_during_helper_hash(manager
 
     def download(path, target, progress):
         target.write_bytes(source.read_bytes())
-        return digest
-
-    entered, release = threading.Event(), threading.Event()
-
-    def prepare_long(*args):
-        entered.set()
-        assert release.wait(3)
-        if fail:
-            raise updates.UpdateError("Simulated hash failure")
+        return digest if not fail else "0" * 64
 
     github.download.side_effect = download
-    manager.runtime.prepare_long.side_effect = prepare_long
     manager.download(manager.state["candidate"]["id"])
-    try:
-        assert entered.wait(2)
-        assert manager.snapshot()["phase"] == "downloading"
-        assert not manager.writes_blocked()
-        manager.runtime.prepare.assert_not_called()
-    finally:
-        release.set()
-        wait_operation(manager)
+    wait_operation(manager)
     assert manager.state["phase"] == ("error" if fail else "ready")
-    if fail:
-        assert manager.prepared is None
-        assert manager.runtime.cancel.call_count == 2  # prior preparation, failed preparation
+    assert manager.prepared is None if fail else manager.prepared is not None
+    manager.runtime.start.assert_not_called()
+    assert not manager.writes_blocked()
 
 
-@pytest.mark.parametrize("operation", ["check", "download"])
-def test_new_operation_cancels_previous_helper_file_lock(manager, monkeypatch, operation):
+def test_failed_broker_start_keeps_candidate_ready_for_retry(manager):
     make_ready(manager)
-    monkeypatch.setattr(manager, "_start", lambda *args: manager.state.copy())
-    if operation == "check":
-        manager.check()
-    else:
-        manager.download("opaque")
-    manager.runtime.cancel.assert_called_once()
-    assert manager.prepared is None
+    manager.runtime.start.side_effect = updates.UpdateError("The updater helper did not accept the installation.")
+    with pytest.raises(AppError) as exc:
+        manager.install_update("opaque")
+    assert exc.value.status_code == 503
+    assert not manager.handoff.is_set()
+    assert manager.state["phase"] == "ready" and manager.prepared is not None
+
+    manager.runtime.start.side_effect = None
+    manager.install_update("opaque")
+    assert manager.handoff.is_set()
+    assert manager.runtime.start.call_count == 2

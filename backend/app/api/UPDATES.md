@@ -51,11 +51,13 @@ PowerShell executable under `%SystemRoot%`. The selected runtime must be outside
 the application installation. The helper supports PowerShell 7 and Windows
 PowerShell 5.1 and does not depend on the bundled Python being replaced.
 
-Before launching application children, the main process starts a local helper
-and joins a non-breakaway Windows Job Object. Its MaaFW, agent, Yak, and later
-descendants inherit containment; the helper remains outside. This helper only
-waits for local manual commands and never checks GitHub on a timer. If Windows
-containment or the external shell is unavailable, updating fails closed.
+Before launching application children, the main process creates and joins a
+Windows Job Object. Its MaaFW, agent, Yak, and later descendants inherit
+containment. The job allows breakaway children, and each confirmed installation
+starts one single-use helper outside containment; the helper never outlives its
+attempt and is never a member of the job it terminates. No helper runs between
+updates, and the updater never checks GitHub on a timer. If Windows containment
+or the external shell is unavailable, updating fails closed.
 
 Use the same logged-in Windows desktop user as the application. This updater
 does not add a Windows service, request elevation, or bypass GUI confirmation.
@@ -69,8 +71,8 @@ envelopes. No seller epoch or idle-task gate is required.
 | --- | --- | --- |
 | `GET /api/app/update` | None | Local build, source, progress, candidate and previous result |
 | `POST /api/app/update/check` | `{}` | Starts one asynchronous GitHub check |
-| `POST /api/app/update/download` | `{"candidate_id":"..."}` | Starts download and helper verification |
-| `POST /api/app/update/install` | `{"candidate_id":"...","confirm":true}` | Commits handoff of an already verified candidate |
+| `POST /api/app/update/download` | `{"candidate_id":"..."}` | Starts download and local verification |
+| `POST /api/app/update/install` | `{"candidate_id":"...","confirm":true}` | Starts the single-use helper for an already verified candidate |
 
 Candidates have opaque server-generated IDs. The browser cannot submit an
 installer URL, executable path, process ID, or command. Duplicate active
@@ -80,23 +82,26 @@ operations receive 409. The phases are `idle`, `checking`, `available`,
 Download and verification run while the application remains usable. The updater
 checks GitHub's ZIP digest before extracting a bounded, flat, single-file archive.
 It rejects unsafe entries, empty installers, unexpected filenames, and extra files.
-The updater computes the extracted installer's SHA-256 locally; the helper checks
-that hash under a retained read-only file lock to detect replacement between
-extraction and handoff. This potentially slow step belongs to `downloading`, so
-PowerShell 5.1 hashing does not time out a short HTTP install request. A 100%
-download can therefore still be undergoing verification.
+The updater computes the extracted installer's SHA-256 locally. No helper is
+started and no file lock is held between download and install; a 100% download is
+a ready candidate.
 
-Confirmation starts a short handoff lease and blocks new API writes. The outer
-ASGI layer arms termination only after the successful acceptance response has
-finished sending. A response failure, cancelled request, helper failure, or
-expired unarmed lease releases handoff without requiring a status-page visit.
-This cannot guarantee the browser received the response over the network; an
-ambiguous network failure is shown as uncertain rather than automatically retried.
+Confirmation starts one single-use helper for that attempt and blocks new API
+writes. The helper validates the application identity, the installer location and
+the commit files, then acknowledges; the outer ASGI layer commits termination
+only after the successful acceptance response has finished sending. A response
+failure, cancelled request, helper failure, or missing commit releases the
+handoff without requiring a status-page visit. A dead helper fails only its own
+attempt: the next confirmation starts a new one without downloading again. This
+cannot guarantee the browser received the response over the network; an ambiguous
+network failure is shown as uncertain rather than automatically retried.
 
-The helper then terminates the owned Windows Job immediately. It **does not
-wait for business tasks to finish**. It does wait up to ten seconds for process
-termination and file-handle release before replacing files. No global process-name
-kill is used, and the separately running Alibaba Supplier client is not targeted.
+The helper verifies the installer hash under a retained read-only file lock,
+then terminates the owned Windows Job immediately and waits for the application
+process itself to exit. It **does not wait for business tasks to finish**. If the
+application does not stop, the helper records an error and does not run the
+installer. No global process-name kill is used, and the separately running
+Alibaba Supplier client is not targeted.
 
 The helper runs the installer with:
 
@@ -155,13 +160,15 @@ Staging and results live outside the installation:
 ```text
 %LOCALAPPDATA%/MaaAlibabaSupplierUpdater/<installation-path-hash>/
     last-result.json
-    <unique-stage>/artifact.zip
-    <unique-stage>/<installer>.exe
-    <unique-stage>/installer.log
-    <helper-stage>/update-helper.ps1
+    <download-stage>/artifact.zip
+    <download-stage>/<installer>.exe
+    <download-stage>/installer.log
+    <broker-stage>/update-helper.ps1
+    <broker-stage>/request.json, accepted.json, go.json, cancel.json
 ```
 
-The backend exposes the last result when it next runs. Downloads and logs are
+The backend exposes the last terminal result when it next runs; an interrupted
+`installing` record is ignored rather than shown as active. Downloads and logs are
 retained for diagnosis; this version does not automatically purge staging data.
 
 Inno Setup performs an in-place upgrade. It preserves an existing `.env` and

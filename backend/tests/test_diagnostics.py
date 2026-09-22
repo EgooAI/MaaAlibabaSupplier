@@ -51,7 +51,7 @@ def fixture_sources():
         text = {"application": APPLICATION, "native": NATIVE,
                 "yak": "[!] Forwarding to Python failed: HTTP 503\n[!] payload error: private-yak\n",
                 "startup": "Backend startup failed: private-exception\n",
-                "result": '{"status":"installed","message":"private-updater","version":"private-version"}'}[source.kind]
+                "result": '{"status":"installed","message":"private-updater","version":"v1.2.3"}'}[source.kind]
         write(source.directory / filename, text)
         expected.add(source.name)
     write(stage / ("a" * 32) / "installer.log", "2026-09-20 12:34:56.123 Installation process succeeded.\n"
@@ -89,6 +89,7 @@ def test_authenticated_zip_includes_all_sources_without_account_or_raw_data(monk
         assert b"abcd1234" in combined and b'"ValueError"' in combined
         assert b'"native_record"' in combined and b'"forward_http_error"' in combined
         assert b'"installation_succeeded"' in combined and b'"installed"' in combined
+        assert b'"update_result"' in combined and b'"v1.2.3"' in combined
         assert len(content) <= 24
         client.post("/api/auth/logout")
         assert client.get(URL).status_code == 401
@@ -204,6 +205,15 @@ def test_unknown_bodies_oversized_lines_and_stack_locals_are_omitted():
     assert b"private" not in data
     monkey_record = '{"status":"installed","message":"private-result"}'
     assert "private" not in diag._metadata(monkey_record, "result")
+
+
+def test_interrupted_update_result_exports_status_and_safe_version():
+    record = json.loads(diag._metadata(
+        '{"status":"installing","message":"private-message","version":"v0.0.0-ci.260921-7f5bbc9"}', "result"))
+    assert record == {"event": "update_result", "status": "installing", "version": "v0.0.0-ci.260921-7f5bbc9"}
+    assert "version" not in json.loads(diag._metadata(
+        '{"status":"installing","message":"private-message","version":"../private/escape"}', "result"))
+    assert diag._metadata('{"status":"whatever","message":"private-message"}', "result") is None
 
 
 def test_native_backup_names_and_actual_four_mib_tail():
