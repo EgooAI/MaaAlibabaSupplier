@@ -52,7 +52,7 @@ APP -> 127.0.0.1:8084 Yak/Yakit MITM -> 127.0.0.1:8085 Python receiver -> parser
 
 目标软件的加密 IM 库（非本程序库）。设置页配置的数据目录下 `{ali_id}@icbu/database/im.sqlite`；解密见 `shared/utils/im_db_decryptor.py`。
 
-`im_db_middleware.py`：密钥懒加载 + 带时效的解密缓存。可用条件：设置页已选身份、有对应 AES Key、解密成功。身份唯一来源为设置页手选（`app_config.json: self_ali_id`），MITM 只做联系人/profile 富化，不提供身份。
+`im_db_middleware.py`：密钥懒加载 + 带时效的解密缓存。可用条件：设置页已选身份、有对应 AES Key、解密成功。身份唯一来源为设置页手选（`app_config.json: self_ali_id`），MITM 只做联系人/profile 富化，不提供身份。同一账号的实例 profile 目录（`{ali_id}@icbu_{n}`）与规范目录视为同一身份，按最近写入解析活动源；旧 profile 冻结而新 profile 持续写入时不再误判为“新鲜”。
 
 聊天页经 CRM 读会话/消息，不直连 IM middleware。启动时后台自动读取所选账号已保存的密钥，试解密当前源库头；通过后恢复同步，不依赖页面开启。验证状态不沿用历史标记，CRM 提交完成后才恢复同步就绪。首次接入、设置变更或密钥缺失/无效时，由设置页显式验证。可见聊天/批量页面每 10 秒只观察已提交版本；密钥失效后停止自动刷新，所选账号的存档仍可读并提示可能过期。
 

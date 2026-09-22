@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from backend.app.shared.crm.identities import self_sender_id
+from backend.app.shared.crm.identities import sender_matches
 from backend.app.shared.utils.crm_time import coerce_epoch, format_created_at
 
 
@@ -49,10 +49,10 @@ CARD_CONTENT_TYPE = 10010
 
 class CrmResolver:
     def __init__(self, self_ali_id: str = "") -> None:
-        self._self_sender_id = self_sender_id(self_ali_id) if self_ali_id else ""
+        self._self_ali_id = self_ali_id
 
     def is_self(self, sender_id: str | None) -> bool:
-        return bool(self._self_sender_id and sender_id == self._self_sender_id)
+        return sender_matches(sender_id, self._self_ali_id)
 
 
 def is_card_message(message: CrmMessage) -> bool:

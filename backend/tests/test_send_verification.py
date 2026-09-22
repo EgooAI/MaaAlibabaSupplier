@@ -36,6 +36,15 @@ def test_unique_new_message_is_observed_without_mutation(case):
     assert json.loads(json.dumps(result)) == result
 
 
+def test_instance_profile_sender_and_cid_still_observe_the_send(case):
+    record, snapshot = case
+    message = snapshot["messages"][0]
+    message["sender_id"] = "10001@icbu_1"
+    message["cid"] = "10001@icbu_1-20002#suffix"
+    result = match_outbox(record, snapshot, [])
+    assert result["status"] == "observed" and result["matched_message_id"] == "msg_a:new"
+
+
 def test_repeated_text_already_in_baseline_is_not_new(case):
     record, snapshot = case
     snapshot["messages"][0]["id"] = "msg_a:old"

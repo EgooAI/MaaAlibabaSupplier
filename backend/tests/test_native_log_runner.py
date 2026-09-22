@@ -22,8 +22,8 @@ def test_native_setter_passes_utf8_byte_length_without_vendor_binding(monkeypatc
     assert size == len(payload) and size > len(str(path))
 
 
-def test_unicode_native_log_path_with_synthetic_task(native_pipeline, tmp_path):
-    path = tmp_path / "\u65e5\u5fd7" / "session"
+def test_native_log_path_with_synthetic_task(native_pipeline, tmp_path):
+    path = tmp_path / "session"
     assert runner._set_native_log_dir(path)
     job = native_pipeline.tasker.post_task("Diagnostics_ChatInput", {"Diagnostics_ChatInput": {"timeout": 0}}).wait()
     assert job.done

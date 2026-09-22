@@ -116,6 +116,21 @@ def test_unsupported_type_keeps_activity_direction_and_safe_placeholder(snapshot
     assert conversation_transcript(conversation.messages, CrmResolver("seller"))[0][2] == label
 
 
+def test_instance_profile_suffix_keeps_seller_direction_and_contact(snapshot):
+    source, target, _, apply = snapshot
+    add_source(source, [
+        source_row(1, "from buyer", timestamp=1756720000, cid="buyer-seller@icbu_1", sender="buyer@icbu"),
+        source_row(2, "from seller", timestamp=1756720001, cid="seller@icbu_1-buyer", sender="seller@icbu_1"),
+    ])
+    assert apply()["inserted"] == 2
+    adapter = sync.CRMAdapter(target)
+    conversation = conversations_for(adapter, "seller")[0]
+    assert conversation.contact_ali_id == "buyer"
+    roles = [resolve_role(message, CrmResolver("seller")) for message in conversation.messages]
+    assert roles == ["buyer", "seller"]
+    adapter.engine.dispose()
+
+
 @pytest.mark.parametrize("existing", [False, True])
 @pytest.mark.parametrize("failure_stage", ["batch", "metadata"])
 def test_failure_rolls_back_all_crm_rows_and_revision(snapshot, monkeypatch, existing, failure_stage):

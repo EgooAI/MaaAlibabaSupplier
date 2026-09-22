@@ -101,3 +101,13 @@ def test_source_revision_does_not_publish_committed_revision(mw, submissions):
     assert status["source_revision"] > 0
     assert status["revision"] == status["applied_source_revision"] == 0
     assert status["freshness"] == "syncing"
+
+
+def test_instance_profile_suffix_is_selected_as_the_source(mw, submissions):
+    source = encrypted_db(mw._data_dir, profile="10001@icbu_1")
+    save_key("10001", KEY, "manual")
+    assert mw.retry_connection() is not None
+    assert mw.resolve_encrypted_db_path("10001") == source
+    assert mw.key_validation_status() == "valid"
+    assert len(submissions) == 1 and submissions[0][1] == "10001"
+    assert mw.sync_status()["source_revision"] == 1

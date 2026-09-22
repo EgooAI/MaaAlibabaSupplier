@@ -11,7 +11,7 @@ from backend.app.api.main import create_app
 from backend.tests.auth_client import authenticate
 from backend.app.api.routers import settings as settings_router
 from backend.app.shared.backend import im_db_middleware as mw_mod
-from backend.app.shared.backend.im_layout import looks_like_data_dir
+from backend.app.shared.backend.im_layout import encrypted_db_path, looks_like_data_dir
 from backend.app.shared.backend.account_context import get_account_context
 from backend.app.shared.crm import account_keys
 from backend.app.shared.utils import app_config
@@ -121,6 +121,21 @@ class DataDirSettingsTestCase(unittest.TestCase):
         mw._data_dir = layout
         rows = mw.scan_ali_ids()
         self.assertEqual([row["ali_id"] for row in rows], ["10002", "10001"])
+
+    def test_instance_profile_merges_into_account_and_wins_as_source(self) -> None:
+        layout = _make_layout(Path(self.temp_dir.name))
+        canonical = layout / "IMServiceDir" / "MessageSDK" / "10001@icbu" / "database" / "im.sqlite"
+        os.utime(canonical, (1_000_000, 1_000_000))
+        instance = layout / "IMServiceDir" / "MessageSDK" / "10001@icbu_1" / "database" / "im.sqlite"
+        instance.parent.mkdir(parents=True)
+        instance.write_bytes(b"\x00" * 96)
+        os.utime(instance, (2_000_000, 2_000_000))
+        mw = self._fresh_middleware()
+        mw._data_dir = layout
+        rows = mw.scan_ali_ids()
+        self.assertEqual([row["ali_id"] for row in rows], ["10001"])
+        self.assertEqual(rows[0]["db_size"], 96)
+        self.assertEqual(encrypted_db_path(layout, "10001"), instance)
 
 
 class AccountKeyTestCase(unittest.TestCase):

@@ -52,7 +52,7 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.engine import URL
 from sqlmodel import Session
 
-from backend.app.shared.crm.identities import self_sender_id, session_key_prefix
+from backend.app.shared.crm.identities import sender_matches, session_key_prefix
 from backend.app.shared.crm.paths import default_crm_database_path
 from backend.app.shared.crm.sdk import Message, SessionMeta
 from backend.app.shared.crm.sync_store import canonical_source_dir, sync_state
@@ -201,9 +201,9 @@ def write_inbox(
             contact = contacts[sid][len(prefix):]
             sender = record.get("sender_id")
             direction = "unknown"
-            if sender == self_sender_id(seller):
+            if sender_matches(sender, seller):
                 direction = "outbound"
-            elif contact and sender == self_sender_id(contact):
+            elif sender_matches(sender, contact):
                 direction = "inbound"
             current = existing.get(mid)
             first_seen_at = current["first_seen_at"] if current is not None else now

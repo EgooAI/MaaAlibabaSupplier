@@ -19,8 +19,8 @@ from backend.app.shared.utils import app_config
 KEY = bytes(range(16))
 
 
-def encrypted_db(root, ali_id="10001", key=KEY):
-    path = root / "IMServiceDir" / "MessageSDK" / f"{ali_id}@icbu" / "database" / "im.sqlite"
+def encrypted_db(root, ali_id="10001", key=KEY, profile=None):
+    path = root / "IMServiceDir" / "MessageSDK" / (profile or f"{ali_id}@icbu") / "database" / "im.sqlite"
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     try:

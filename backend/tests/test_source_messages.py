@@ -76,6 +76,30 @@ def test_target_only_independent_readonly_transaction(source, mw, monkeypatch):
     assert not mw._reader_pins
 
 
+def test_instance_profile_cids_are_visible_to_the_reader(mw, submissions):
+    path = mw._data_dir / "IMServiceDir/MessageSDK/10001@icbu_1/database/im.sqlite"
+    path.parent.mkdir(parents=True)
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute(
+            "CREATE TABLE msg_table (mid TEXT, sender_id TEXT, cid TEXT, created_at REAL, "
+            "user_content_type INTEGER, content_label TEXT, extension TEXT)"
+        )
+        conn.executemany("INSERT INTO msg_table VALUES (?, ?, ?, ?, ?, ?, ?)", [
+            ("one", "10001@icbu_1", "10001@icbu_1-20002", 1700000000, 0, "hello", "{}"),
+            ("two", "20002@icbu", "20002-10001@icbu_1", 1700000001, 0, "reply", "{}"),
+        ])
+        conn.commit()
+    path.write_bytes(AES.new(KEY, AES.MODE_ECB).encrypt(path.read_bytes()))
+    save_key("10001", KEY, "manual")
+    assert mw.retry_connection() is not None
+    submissions[0][3].set_result(dict(revision=1, applied_source_revision=mw._source_revision,
+                                     last_success=1.0, inserted=0, updated=0, unchanged=0))
+    mw._coordinator.tick()
+    snapshot = module.read_source_messages(get_account_context(), "20002")
+    assert snapshot["valid"] and snapshot["reason"] == "fresh"
+    assert {message["id"] for message in snapshot["messages"]} == {"msg_table:one", "msg_table:two"}
+
+
 def test_fresh_empty_is_distinct_from_unreadable(source, mw, monkeypatch):
     context = get_account_context()
     empty = module.read_source_messages(context, "99999")

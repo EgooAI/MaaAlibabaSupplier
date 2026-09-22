@@ -16,7 +16,7 @@ from sqlmodel import Session, select
 from backend.app.shared.crm.identities import (
     PLATFORM_PID,
     message_external_id,
-    self_sender_id,
+    sender_matches,
     session_key,
     session_key_prefix,
 )
@@ -519,7 +519,7 @@ def _is_empty(value: Any) -> bool:
 def _message_from_self(row: MessageRow, self_info: SelfInfo | None) -> bool:
     if self_info is None or not self_info.ali_id:
         return False
-    return row.sender_id == self_sender_id(self_info.ali_id)
+    return sender_matches(row.sender_id, self_info.ali_id)
 
 
 def _message_content(row: MessageRow) -> dict[str, Any]:

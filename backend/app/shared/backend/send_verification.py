@@ -23,7 +23,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 
-from backend.app.shared.crm.identities import self_sender_id
+from backend.app.shared.crm.identities import canonical_ali_id, sender_matches
 
 
 def _timestamp(value: object) -> bool:
@@ -46,20 +46,29 @@ def _baseline(record: dict) -> dict | None:
     return baseline
 
 
+def _cid_key(cid: str) -> str:
+    """Canonical ``a-b`` conversation key, ignoring instance profile suffixes."""
+    main = cid.split("#", 1)[0]
+    return "-".join(canonical_ali_id(part) for part in main.split("-"))
+
+
 def _candidates(record: dict, baseline: dict, messages: list[dict]) -> list[dict]:
     old_ids = set(baseline["ids"])
     seller, contact = record.get("seller"), record.get("contact_ali_id")
-    cids = (f"{seller}-{contact}", f"{contact}-{seller}")
+    cids = {
+        f"{canonical_ali_id(seller)}-{canonical_ali_id(contact)}",
+        f"{canonical_ali_id(contact)}-{canonical_ali_id(seller)}",
+    }
     sent_at = baseline.get("sent_at", record.get("created_at"))
     return [message for message in messages if (
         isinstance(message, dict) and isinstance(message.get("id"), str) and message["id"]
         and message["id"] not in old_ids
-        and message.get("sender_id") == self_sender_id(seller)
+        and sender_matches(message.get("sender_id"), seller)
         and type(message.get("type")) is int and message["type"] == 0
         and message.get("text") == record.get("content")
         and message.get("is_system") is False and message.get("is_auto_reply") is False
         and message.get("extension_valid") is True
-        and isinstance(message.get("cid"), str) and message["cid"].split("#", 1)[0] in cids
+        and isinstance(message.get("cid"), str) and _cid_key(message["cid"]) in cids
         and _timestamp(message.get("created_at"))
         and baseline["checked_at"] - 5 <= message["created_at"] <= sent_at + 120
     )]

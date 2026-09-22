@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from backend.app.shared.crm.identities import canonical_ali_id
 from backend.app.shared.crm.views import coerce_epoch
 
 
@@ -94,12 +95,14 @@ def _contact_ali_id_from_cid(cid: str, self_ali_id: str) -> str:
     parts = main.split("-")
     if len(parts) != 2:
         return ""
-    first, second = parts
-    if not self_ali_id:
+    self_key = canonical_ali_id(self_ali_id)
+    if not self_key:
         return ""
-    if first == self_ali_id:
+    first, second = parts
+    first_key, second_key = canonical_ali_id(first), canonical_ali_id(second)
+    if first_key == self_key and second_key != self_key:
         return second
-    return first if second == self_ali_id else ""
+    return first if second_key == self_key and first_key != self_key else ""
 
 
 def build_conversations(conn: sqlite3.Connection, self_ali_id: str) -> list[ContactConv]:

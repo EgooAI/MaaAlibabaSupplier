@@ -386,6 +386,25 @@ def test_repeats_edits_deletions_preserve_sequence_first_seen_and_read(inbox, mo
     assert only(store, scope)[1]["unread_count"] == 0
 
 
+def test_instance_profile_sender_counts_as_seller_and_contact(inbox):
+    store, scope, apply, _ = inbox
+    buyer = MessageRow(
+        table_name="msg_table", cid="buyer-seller@icbu_1", mid="1",
+        sender_id="buyer@icbu", created_at=T, user_content_type=0,
+        content_label="question", content=b"question",
+    )
+    seller = MessageRow(
+        table_name="msg_table", cid="seller@icbu_1-buyer", mid="2",
+        sender_id="seller@icbu_1", created_at=T + 5, user_content_type=0,
+        content_label="reply", content=b"reply",
+    )
+    apply(conv(buyer))
+    apply(conv(buyer, seller))
+    _, state = only(store, scope, now=T + 100)
+    assert state["reply_state"] == "waiting_customer"
+    assert state["unread_count"] == 0
+
+
 def test_snapshot_epoch_rejects_return_to_same_account_and_unsigned_epoch_changes(inbox):
     store, scope, apply, _ = inbox
     apply()

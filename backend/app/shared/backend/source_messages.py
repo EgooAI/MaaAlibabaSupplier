@@ -72,7 +72,18 @@ def read_source_messages(context: AccountContext, contact_ali_id: str) -> dict:
                 return result
             # Record the start of the observation, not the end of a slow scan.
             result["checked_at"] = time.time()
-            cids = (f"{context.self_ali_id}-{contact_ali_id}", f"{contact_ali_id}-{context.self_ali_id}")
+            # Instance profile directories may also be the client's sender id;
+            # accept both the selected account id and the resolved profile name.
+            profile_self = Path(pinned["origin"]["source_path"]).parent.parent.name
+            self_ids = {context.self_ali_id}
+            if profile_self:
+                self_ids.add(profile_self)
+            cids = sorted({
+                f"{self_id}-{contact_ali_id}" for self_id in self_ids
+            } | {
+                f"{contact_ali_id}-{self_id}" for self_id in self_ids
+            })
+            placeholders = ",".join("?" for _ in cids)
             messages = []
             with closing(open_readonly(pinned["path"])) as conn:
                 conn.execute("BEGIN")
@@ -81,8 +92,9 @@ def read_source_messages(context: AccountContext, contact_ali_id: str) -> dict:
                     # substr is literal (unlike LIKE's %/_), and includes # suffixes.
                     rows = conn.execute(
                         f"SELECT mid, sender_id, cid, created_at, user_content_type, content_label, extension "
-                        f"FROM {quoted} WHERE cid IN (?, ?) "
-                        "OR substr(cid, 1, instr(cid, '#') - 1) IN (?, ?)", (*cids, *cids),
+                        f"FROM {quoted} WHERE cid IN ({placeholders}) "
+                        f"OR substr(cid, 1, instr(cid, '#') - 1) IN ({placeholders})",
+                        (*cids, *cids),
                     )
                     for row in rows:
                         system, auto, valid = _extension_flags(row["extension"])
