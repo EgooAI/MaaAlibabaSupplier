@@ -14,6 +14,9 @@ import pytest
 def _set_test_paths(patch, root):
     from backend.app.shared.utils import settings
 
+    # CI temp directories may arrive in 8.3 short form;
+    # keep the sandbox and cwd canonical so app paths never mix spellings.
+    root = root.resolve()
     backend_root = root / "backend"
     backend_root.mkdir()
     patch.setattr(settings, "REPO_ROOT", root)

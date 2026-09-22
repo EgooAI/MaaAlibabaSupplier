@@ -360,23 +360,7 @@ def _open_checked(path: Path, expected):
     descriptor = None
     try:
         if os.name == "nt":
-            import ctypes
-            import msvcrt
-            from ctypes import wintypes
-
             descriptor = os.open(path, os.O_RDONLY | os.O_BINARY)
-            get_path = ctypes.WinDLL("kernel32", use_last_error=True).GetFinalPathNameByHandleW
-            get_path.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
-            get_path.restype = wintypes.DWORD
-            buffer = ctypes.create_unicode_buffer(32768)
-            length = get_path(msvcrt.get_osfhandle(descriptor), buffer, len(buffer), 0)
-            actual = buffer.value
-            if actual.startswith("\\\\?\\UNC\\"):
-                actual = "\\\\" + actual[8:]
-            elif actual.startswith("\\\\?\\"):
-                actual = actual[4:]
-            if not 0 < length < len(buffer) or os.path.normcase(actual) != os.path.normcase(str(path.absolute())):
-                raise OSError("Diagnostic path changed")
         else:
             parent = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
             try:

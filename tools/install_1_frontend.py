@@ -21,6 +21,7 @@ import _common as common
 
 PNPM_CJS = Path("node_modules") / "pnpm" / "bin" / "pnpm.cjs"
 NPM_CLI = Path("node_modules") / "npm" / "bin" / "npm-cli.js"
+PNPM_STORE = common.PORTABLE_DIR / "pnpm-store"
 NODE_RELEASE_DIR = f"latest-v{common.NODE_MAJOR}.x"
 NODE_DIST_BASE = "https://nodejs.org/dist"
 
@@ -95,7 +96,7 @@ def main() -> int:
         node, pnpm_cjs = prepare_portable()
         pnpm_cmd = [node, pnpm_cjs]
 
-    install_cmd = pnpm_cmd + ["install"]
+    install_cmd = pnpm_cmd + ["install", "--store-dir", str(PNPM_STORE)]
     if not args.no_frozen:
         install_cmd.append("--frozen-lockfile")
     common.run(install_cmd, cwd=common.FRONTEND_DIR)

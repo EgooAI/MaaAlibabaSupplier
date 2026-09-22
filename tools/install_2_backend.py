@@ -56,7 +56,7 @@ def prepare_portable() -> Path:
     if not python_exe.exists():
         common.fail(f"Python runtime not found after install: {python_exe}")
     # python-build-standalone distributions bundle pip.
-    common.run([str(python_exe), "-m", "pip", "install", "--upgrade", "--no-cache-dir", "pip"])
+    common.run([str(python_exe), "-m", "pip", "install", "--upgrade", "pip"])
     return python_exe
 
 
@@ -79,7 +79,7 @@ def main() -> int:
     packages = ["-r", str(REQUIREMENTS)]
     if args.dev:
         packages.append("pytest")
-    common.run([str(python_exe), "-m", "pip", "install", "--upgrade", "--no-cache-dir", *packages])
+    common.run([str(python_exe), "-m", "pip", "install", "--upgrade", *packages])
 
     resolved = python_exe.resolve()
     outputs = {}
