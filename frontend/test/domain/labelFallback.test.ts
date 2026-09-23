@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getCardStatusLabel, getCardTypeLabel } from "@/domain/cards/cardModel";
+import { getCardStatusLabel } from "@/domain/cards/cardModel";
 import { stageLabel, statusLabel } from "@/domain/chat/chatModel";
 import { formatDateTime, formatMonthDay } from "@/domain/time";
 
@@ -7,7 +7,6 @@ describe("label fallbacks do not crash on unknown backend values", () => {
   it("returns raw status when unknown", () => {
     expect(statusLabel("some-new-status")).toBe("some-new-status");
     expect(stageLabel("some-new-stage")).toBe("some-new-stage");
-    expect(getCardTypeLabel("some-new-type")).toBe("some-new-type");
     expect(getCardStatusLabel("some-new-status")).toBe("some-new-status");
   });
 });

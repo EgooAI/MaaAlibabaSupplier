@@ -55,4 +55,5 @@ export interface BusinessCard {
   coverTone: string;
   details: Array<{ label: string; value: string }>;
   recommendedScenario?: string;
+  link?: { label: string; href: string };
 }

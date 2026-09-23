@@ -1,5 +1,4 @@
-import { Card, Descriptions, Space, Tag, Typography } from "antd";
-import { getCardTypeLabel } from "@/domain/cards/cardModel";
+import { Button, Card, Descriptions, Space, Tag, Typography } from "antd";
 import { StatusTag } from "@/components/StatusTag";
 import type { BusinessCard } from "@/types/cards";
 
@@ -15,16 +14,26 @@ export function BusinessCardView({ card, compact = false, onClick }: { card: Bus
     >
       <div className="mb-4 h-2 rounded-full" style={{ background: card.coverTone ?? "#e6f4ff" }} />
       <Space orientation="vertical" size={compact ? 6 : 10} className="w-full">
-        <Space wrap>
-          <Tag color="blue">{getCardTypeLabel(card.type)}</Tag>
-          {card.status ? <StatusTag status={card.status} /> : null}
-        </Space>
+        {card.status ? <StatusTag status={card.status} /> : null}
         <Typography.Title level={compact ? 5 : 4} className="!mb-0">
           {card.title || "未命名卡片"}
         </Typography.Title>
         <Typography.Paragraph ellipsis={compact ? { rows: 2 } : false} className="!mb-0">
           {card.summary || "暂无摘要"}
         </Typography.Paragraph>
+        {card.link ? (
+          <Button
+            type="link"
+            size="small"
+            className="!px-0"
+            href={card.link.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {card.link.label}
+          </Button>
+        ) : null}
         <Space wrap>
           {tags.map((tag) => (
             <Tag key={tag}>{tag}</Tag>

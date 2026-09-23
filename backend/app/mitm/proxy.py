@@ -20,13 +20,11 @@ from urllib.parse import parse_qs, urlparse
 from backend.app.shared.mitm.parsers import (
     parse_contact_extinfo_get,
     parse_fetch_card,
-    parse_generic_card,
     parse_get_user_info_by_params,
     parse_im_id_get,
-    parse_inquiry_card,
     parse_query_customer_info,
 )
-from backend.app.shared.mitm.pool import UserInfo, get_generic_card_pool, get_product_card_pool, get_user_info_pool
+from backend.app.shared.mitm.pool import UserInfo, get_product_card_pool, get_user_info_pool
 from backend.app.shared.crm import sync_self_info, sync_user_info
 from backend.app.shared.utils.app_config import get_configured_self_ali_id
 from backend.app.shared.utils.log_context import log_event
@@ -106,19 +104,18 @@ class ReusableThreadingHTTPServer(ThreadingHTTPServer):
 
 
 class TrafficRouter:
-    # One structured event per matched request; the event name identifies the
-    # API surface and `count` carries how many items were parsed from it.
+    # One structured event per matched request that stored items; the fetchcard
+    # route records its own event, including empty or unparsable bodies.
     _EVENTS = {
         "queryCustomerInfo": "mitm.query_customer_info",
         "getuserinfobyparams": "mitm.user_info_batch",
         "icbu.im.id.get": "mitm.user_info_id",
         "contact.extinfo.get": "mitm.contact_extinfo",
-        "fetchcard": "mitm.fetch_card",
     }
 
     def __init__(self, url_filters: list[str] | None = None) -> None:
         self.url_filters = url_filters or []
-        self._routes: list[tuple[str, Callable[[_TrafficEvent], int]]] = [
+        self._routes: list[tuple[str, Callable[[_TrafficEvent], int | None]]] = [
             ("queryCustomerInfo", self._handle_query_customer_info),
             ("getuserinfobyparams", self._handle_get_user_info_by_params),
             ("icbu.im.id.get", self._handle_im_id_get),
@@ -138,14 +135,16 @@ class TrafficRouter:
             return
         keyword, handler = route
 
+        if keyword == "fetchcard":
+            handler(event)
+            return
         if not event.response_body:
             return
-
         count = handler(event)
         if count:
             log_event(self._EVENTS[keyword], count=count)
 
-    def _match_route(self, event: _TrafficEvent) -> tuple[str, Callable[[_TrafficEvent], int]] | None:
+    def _match_route(self, event: _TrafficEvent) -> tuple[str, Callable[[_TrafficEvent], int | None]] | None:
         for keyword, handler in self._routes:
             if keyword in event.route_target:
                 return keyword, handler
@@ -200,24 +199,11 @@ class TrafficRouter:
         return len(accounts)
 
     @staticmethod
-    def _handle_fetch_card(event: _TrafficEvent) -> int:
-        card = parse_fetch_card(event.response_body)
-        if card:
+    def _handle_fetch_card(event: _TrafficEvent) -> None:
+        card = parse_fetch_card(event.response_body) if event.response_body else None
+        if card is not None:
             get_product_card_pool().put(card)
-            return 1
-
-        # Inquiry cards have no reader in the product; keep them out of the
-        # generic pool so they are not rendered as unrelated cards.
-        inquiry = parse_inquiry_card(event.response_body)
-        if inquiry:
-            return len(inquiry.products)
-
-        # Other non-product cards: store as generic
-        generic = parse_generic_card(event.response_body, source_url=event.url)
-        pool = get_generic_card_pool()
-        for gc in generic:
-            pool.put(gc)
-        return len(generic)
+        log_event("mitm.fetch_card", body_bytes=len(event.response_body), count=1 if card else 0)
 
 
 class TrafficHandler(BaseHTTPRequestHandler):

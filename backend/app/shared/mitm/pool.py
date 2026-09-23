@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 import threading
 from pathlib import Path
@@ -126,39 +125,6 @@ class ProductCard(BaseModel):
     product_id: str = ""
     product_url: str = ""
     expired: bool = False
-
-
-class GenericCard(BaseModel):
-    """Non-product card captured from fetchcard (RFQ, order, feedback, etc.)."""
-
-    card_type: int = 0
-    card_id: str = ""
-    source_url: str = ""
-    raw_json: str = ""
-
-
-class InquiryProduct(BaseModel):
-    """A single product referenced in an inquiry card."""
-
-    product_name: str = ""
-    product_id: str = ""
-    product_unit_price: str = ""
-    product_moq: str = ""
-    product_unit: str = ""
-    product_image: str = ""
-    discount_price: str = ""
-    product_url: str = ""
-
-
-class InquiryCard(BaseModel):
-    """Inquiry (询盘) card from chat."""
-
-    inquiry_id: str = ""
-    inquiry_content: str = ""
-    products: list[InquiryProduct] = Field(default_factory=list)
-    product_image: str = ""
-    is_seller: bool = False
-    attachment_count: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -421,33 +387,3 @@ class ProductCardPool(_DictPool[ProductCard]):
 
 def get_product_card_pool() -> ProductCardPool:
     return ProductCardPool()
-
-
-# ---------------------------------------------------------------------------
-# GenericCardPool
-# ---------------------------------------------------------------------------
-
-
-class GenericCardPool(_DictPool[GenericCard]):
-    _instance: GenericCardPool | None = None
-    _instance_lock = threading.Lock()
-
-    def __new__(cls) -> GenericCardPool:
-        with cls._instance_lock:
-            if cls._instance is None:
-                instance = super().__new__(cls)
-                instance._init_pool("generic_card", "key", GenericCard)
-                cls._instance = instance
-        return cls._instance
-
-    def _get_key(self, item: GenericCard) -> str:
-        return f"{item.card_type}:{item.card_id}"
-
-    def get(self, card_type: int, card_id: str) -> GenericCard | None:
-        key = f"{card_type}:{card_id}"
-        with self._lock:
-            return self._data.get(key)
-
-
-def get_generic_card_pool() -> GenericCardPool:
-    return GenericCardPool()

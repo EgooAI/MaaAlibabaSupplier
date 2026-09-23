@@ -38,6 +38,7 @@ from backend.app.shared.utils.logging import configure_logging
 from backend.app.shared.utils.process_logs import (
     attach_process_log, colorless_child_env, finish_process_log, report_startup_failure,
 )
+from backend.app.shared.backend.card_sweep_service import start_card_sweep_service, stop_card_sweep_service
 from backend.app.shared.backend.sync_coordinator import start_sync_service, stop_sync_service
 from backend.app.shared.backend.outbox_service import start_outbox_service, stop_outbox_service
 from backend.app.updater import register_update_runtime
@@ -184,11 +185,16 @@ def _main() -> None:
         )
         start_sync_service()
         start_outbox_service()
+        start_card_sweep_service()
         run_api()
     except MaaFWProcessError:
         logger.exception("Failed to start MaaFW")
         raise
     finally:
+        try:
+            stop_card_sweep_service()
+        except Exception:
+            logger.exception("Card sweep shutdown failed")
         try:
             stop_outbox_service()
         except Exception:

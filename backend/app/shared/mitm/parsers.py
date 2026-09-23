@@ -8,7 +8,7 @@ import re
 
 from loguru import logger
 
-from .pool import GenericCard, InquiryCard, InquiryProduct, ProductCard, SelfInfo, UserInfo
+from .pool import ProductCard, SelfInfo, UserInfo
 
 
 def _try_decode_base64(body: bytes) -> bytes:
@@ -198,6 +198,18 @@ def parse_im_id_get(body: bytes) -> list[UserInfo]:
 # ---------------------------------------------------------------------------
 
 
+def _unwrap_card_data(card_data: dict) -> dict:
+    if "productIdTitle" not in card_data and isinstance(card_data.get("data"), dict):
+        nested = card_data["data"]
+        if isinstance(nested, dict) and "productIdTitle" in nested:
+            return nested
+    return card_data
+
+
+def is_product_card(card_data: dict) -> bool:
+    return "productIdTitle" in _unwrap_card_data(card_data)
+
+
 def parse_fetch_card(body: bytes) -> ProductCard | None:
     data = _parse_json(body)
     if not data:
@@ -283,143 +295,3 @@ def parse_contact_extinfo_get(body: bytes) -> list[SelfInfo]:
         )
     return results
 
-
-# ---------------------------------------------------------------------------
-# Generic card parser (non-product cards from fetchcard)
-# ---------------------------------------------------------------------------
-
-_CARD_ID_KEYS = ("id", "ids", "encryFeedbackId", "orderId", "encryId", "quoteProductId", "quoId")
-INQUIRY_TAG = "询盘"
-
-
-def _unwrap_card_data(card_data: dict) -> dict:
-    if "productIdTitle" not in card_data and isinstance(card_data.get("data"), dict):
-        nested = card_data["data"]
-        if isinstance(nested, dict) and "productIdTitle" in nested:
-            return nested
-    return card_data
-
-
-def is_product_card(card_data: dict) -> bool:
-    return "productIdTitle" in _unwrap_card_data(card_data)
-
-
-def is_inquiry_card(item: dict) -> bool:
-    summary = item.get("summary") or {}
-    return summary.get("tag") == INQUIRY_TAG
-
-
-# ---------------------------------------------------------------------------
-# fetchcard — inquiry card parser  (询盘卡片)
-# ---------------------------------------------------------------------------
-
-
-def parse_inquiry_card(body: bytes) -> InquiryCard | None:
-    data = _parse_json(body)
-    if not data or not _is_success_ret(data):
-        return None
-
-    card_list = (data.get("data") or {}).get("fbCardList") or []
-    for item in card_list:
-        card_data = item.get("data") or {}
-        if not card_data:
-            continue
-
-        # Skip product cards
-        if is_product_card(card_data):
-            continue
-
-        # Inquiry cards have summary.tag == "询盘"
-        if not is_inquiry_card(item):
-            continue
-
-        inner = card_data.get("data") if isinstance(card_data.get("data"), dict) else card_data
-
-        inquiry_id = str(inner.get("inquiryID") or "")
-        if not inquiry_id:
-            continue
-
-        products: list[InquiryProduct] = []
-        for p in inner.get("products") or []:
-            if not isinstance(p, dict):
-                continue
-            detail_action = p.get("detailAction") or {}
-            action_params = detail_action.get("actionParams") or {}
-            products.append(InquiryProduct(
-                product_name=p.get("productName") or "",
-                product_id=str(p.get("productId") or ""),
-                product_unit_price=p.get("productUnitPrice") or "",
-                product_moq=str(p.get("productMOQ") or "").strip(),
-                product_unit=p.get("productUnit") or "",
-                product_image=p.get("productImage") or "",
-                discount_price=p.get("discountPrice") or "",
-                product_url=action_params.get("url") or "",
-            ))
-
-        return InquiryCard(
-            inquiry_id=inquiry_id,
-            inquiry_content=inner.get("inquiryContent") or inner.get("content") or "",
-            products=products,
-            product_image=inner.get("productImage") or "",
-            is_seller=bool(inner.get("isSeller")),
-            attachment_count=str(inner.get("attachmentCount") or "0"),
-        )
-
-    return None
-
-
-# ---------------------------------------------------------------------------
-# fetchcard — generic card parser (non-product, non-inquiry)
-# ---------------------------------------------------------------------------
-
-
-def _extract_card_id(params: dict) -> str:
-    """Extract the best available ID from card params."""
-    for key in _CARD_ID_KEYS:
-        val = params.get(key)
-        if val:
-            return str(val)
-    return ""
-
-
-def parse_generic_card(body: bytes, source_url: str = "") -> list[GenericCard]:
-    """Parse fetchcard response into GenericCard list (non-product cards only)."""
-    data = _parse_json(body)
-    if not data or not _is_success_ret(data):
-        return []
-
-    card_list = (data.get("data") or {}).get("fbCardList") or []
-    results: list[GenericCard] = []
-    for item in card_list:
-        card_data = item.get("data") or {}
-        if not card_data:
-            continue
-
-        # Skip product cards (handled by parse_fetch_card)
-        if is_product_card(card_data):
-            continue
-
-        # Skip inquiry cards (handled by parse_inquiry_card)
-        if is_inquiry_card(item):
-            continue
-
-        # Determine cardType
-        try:
-            card_type = int(card_data.get("cardType") or 0)
-        except (TypeError, ValueError):
-            card_type = 0
-        if not card_type:
-            continue
-
-        params = card_data.get("params") or {}
-        card_id = _extract_card_id(params) if isinstance(params, dict) else ""
-        if not card_id:
-            continue
-
-        results.append(GenericCard(
-            card_type=card_type,
-            card_id=card_id,
-            source_url=source_url,
-            raw_json=json.dumps(card_data, ensure_ascii=False),
-        ))
-    return results

@@ -11,32 +11,11 @@ import re
 import zipfile
 from datetime import datetime, timezone
 
-from backend.app.shared.chat_format import extract_card_ref
+from backend.app.shared.cards import TYPE_NAMES, card_reference, parse_card
 from backend.app.shared.crm.sync import CRMAdapter
 from backend.app.shared.crm.views import CrmConversation, CrmMessage, coerce_epoch
 
 _INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
-
-_CARD_TYPE_NAMES = {
-    1: "资质认证",
-    3: "产品卡片",
-    6: "询盘/反馈",
-    8: "未知",
-    9: "订单/交易",
-    12: "文件附件",
-    20: "未知",
-    23: "资质认证",
-    2000: "产品批量",
-    2008: "商品目录",
-    2028: "报价",
-    2086: "关注提醒",
-    2098: "报价提醒",
-    2106: "关注提醒",
-}
-
-
-def card_type_name(card_type: int) -> str:
-    return _CARD_TYPE_NAMES.get(card_type, f"类型{card_type}")
 
 
 def dialogue_count(conv: CrmConversation) -> int:
@@ -65,10 +44,12 @@ def message_text(message: CrmMessage) -> str:
     if message.user_content_type == 10010:
         if message.content_label:
             return message.content_label
-        card_type, card_id = extract_card_ref(message)
-        if card_type:
-            return f"[{card_type_name(card_type)}:{card_id}]"
-        return "[卡片]"
+        card = parse_card(message.content)
+        if card is None:
+            return "[卡片]"
+        name = TYPE_NAMES.get(card.card_type) or f"类型{card.card_type}"
+        reference = card_reference(card)
+        return f"[{name}:{reference}]" if reference else f"[{name}]"
     return message.content_label or ""
 
 

@@ -95,6 +95,22 @@ class ConversationAggregateTestCase(unittest.TestCase):
             [("buyer", "text"), ("seller", "text"), ("system", "system"), ("card", "card")],
         )
 
+    def test_aggregate_exposes_the_card_view(self) -> None:
+        from backend.app.api.routers.conversations import _build_aggregate
+
+        class _EmptyProductPool:
+            def find_by_product_id(self, product_id):
+                return None
+
+        with mock.patch("backend.app.shared.cards.get_product_card_pool", return_value=_EmptyProductPool()):
+            conv = conversations_for(self.adapter, SELF_ALI_ID)[0]
+            aggregate = _build_aggregate(self.adapter, SELF_ALI_ID, conv)
+        self.assertEqual([card["id"] for card in aggregate["business_cards"]], ["P123"])
+        self.assertEqual(aggregate["business_cards"][0]["title"], "产品卡片")
+        card_message = [m for m in aggregate["messages"] if m["role"] == "card"][0]
+        self.assertEqual(card_message["message"]["type"], "card")
+        self.assertEqual(card_message["message"]["content"], {"card_id": "P123", "label": "product card"})
+
     def test_sender_aids_and_external_mid(self) -> None:
         messages = self.adapter.messages.list_message()
         self.assertEqual(len(messages), 4)

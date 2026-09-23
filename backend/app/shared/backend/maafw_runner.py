@@ -299,13 +299,13 @@ def capture_client_frame() -> ClientFrame:
         return frame
 
 
-def goto_contact(login_id: str) -> tuple[bool, str]:
+def goto_contact(contact_ref: str) -> tuple[bool, str]:
     """Navigate to a contact's chat window via MaaFW ContactSearch pipeline."""
     override = {
         "ContactSearch_InputText": {
             "action": {
                 "param": {
-                    "input_text": login_id
+                    "input_text": contact_ref
                 }
             }
         }

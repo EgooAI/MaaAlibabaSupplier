@@ -25,10 +25,8 @@ from backend.app.shared.agent.suggestions import generate_reply_suggestions
 from backend.app.shared.agent.system_agents import CHAT_CUSTOMER_STAGE_AGENT_APID
 from backend.app.shared.backend.maafw_runner import goto_contact
 from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
-from backend.app.shared.chat_format import (
-    business_card_from_message,
-    conversation_transcript,
-)
+from backend.app.shared.cards import card_view
+from backend.app.shared.chat_format import conversation_transcript
 from backend.app.shared.crm.identities import PLATFORM_PID, message_external_id
 from backend.app.shared.crm.inbox_store import InboxStore
 from backend.app.shared.crm.inbox_queries import has_archive_messages, observe_inbox, public_state, query_inbox, scoped_message_ids
@@ -172,7 +170,7 @@ def _build_aggregate(adapter: CRMAdapter, self_ali_id: str, conv: CrmConversatio
     for message in conv.messages:
         role = resolve_role(message, resolver)
         content = message_display_text(message)
-        card = business_card_from_message(message)
+        card = card_view(message)
         if card is not None and card["id"] not in seen_cards:
             seen_cards.add(card["id"])
             cards.append(card)

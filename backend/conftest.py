@@ -70,6 +70,10 @@ def pytest_configure(config):
 
 
 def _cleanup_runtime():
+    sweep = sys.modules.get("backend.app.shared.backend.card_sweep_service")
+    if sweep is not None:
+        sweep.stop_card_sweep_service()
+
     outbox = sys.modules.get("backend.app.shared.backend.outbox_service")
     if outbox is not None:
         outbox.stop_outbox_service()
@@ -101,7 +105,7 @@ def _cleanup_runtime():
 
     pools = sys.modules.get("backend.app.shared.mitm.pool")
     if pools is not None:
-        for name in ("UserInfoPool", "ProductCardPool", "GenericCardPool"):
+        for name in ("UserInfoPool", "ProductCardPool"):
             cls = getattr(pools, name)
             if cls._instance is not None:
                 with cls._instance._lock:

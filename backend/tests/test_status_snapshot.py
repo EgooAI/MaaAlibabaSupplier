@@ -53,20 +53,25 @@ class StatusSnapshotTestCase(unittest.TestCase):
         self.assertIn("modules", body["data"])
 
     def test_observation_does_not_create_queue_or_claim_tcp_business_readiness(self) -> None:
-        from backend.app.shared.backend import sync_coordinator, outbox_service
+        from backend.app.shared.backend import card_sweep_service, sync_coordinator, outbox_service
 
         with mock.patch.dict(status_router.TaskQueue._instances, {}, clear=True), mock.patch.object(
             status_router, "get_task_queue", side_effect=AssertionError("must not create worker")
         ), mock.patch.object(status_mod, "_check_port", side_effect=lambda host, port: status_mod.NetworkStatus(True, host, port, 1, None)), mock.patch.object(
             sync_coordinator, "_service", None
         ), mock.patch.object(outbox_service, "_service", None), mock.patch.object(
+            card_sweep_service, "_service", None
+        ), mock.patch.object(
             status_router.IMDBMiddleware, "__new__", side_effect=AssertionError("must not initialize middleware")
         ):
             snapshot = self.client.get("/api/status").json()["data"]
             self.assertEqual(snapshot["tasks"], [])
             self.assertEqual(self.client.get("/api/status/tasks").json()["data"], [])
             self.assertEqual(status_router.TaskQueue._instances, {})
-            self.assertEqual(snapshot["workers"], {"im-source-check": None, "outbox-verifier": None})
+            self.assertEqual(
+                snapshot["workers"],
+                {"im-source-check": None, "outbox-verifier": None, "card-sweep": None},
+            )
             self.assertFalse(snapshot["queues"]["maafw"]["initialized"])
             self.assertFalse(snapshot["queues"]["translation"]["initialized"])
             self.assertEqual(snapshot["queues"]["maafw"]["pending"], 0)

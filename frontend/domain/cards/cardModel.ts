@@ -70,14 +70,6 @@ export function documentCardsToBusinessCards({
   ];
 }
 
-export function getCardTypeLabel(type: BusinessCard["type"] | (string & {})) {
-  return ({
-    product: "产品卡",
-    inquiry: "询盘卡",
-    generic: "通用卡",
-  } as Record<string, string>)[type] ?? String(type);
-}
-
 export function getCardStatusLabel(status: NonNullable<BusinessCard["status"]> | (string & {})) {
   return ({
     published: "已发布",

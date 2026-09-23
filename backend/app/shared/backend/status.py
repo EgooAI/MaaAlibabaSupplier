@@ -67,10 +67,15 @@ def check_data_dir_status() -> dict:
 
 
 def observe_workers() -> dict:
+    from backend.app.shared.backend.card_sweep_service import observe_card_sweep
     from backend.app.shared.backend.sync_coordinator import observe_sync_service
     from backend.app.shared.backend.outbox_service import observe_outbox_verifier
 
-    return {"im-source-check": observe_sync_service(), "outbox-verifier": observe_outbox_verifier()}
+    return {
+        "im-source-check": observe_sync_service(),
+        "outbox-verifier": observe_outbox_verifier(),
+        "card-sweep": observe_card_sweep(),
+    }
 
 
 def check_im_sync_status() -> dict:
