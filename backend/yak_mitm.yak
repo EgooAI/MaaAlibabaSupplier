@@ -30,6 +30,11 @@ PYTHON_RECEIVER = "http://" + RECEIVER_HOST + ":" + RECEIVER_PORT + "/internal/t
 // Known API keywords — capture body for these
 API_KEYWORDS = ["queryCustomerInfo", "getuserinfobyparams", "icbu.im.id.get", "contact.extinfo.get", "fetchcard"]
 
+// Liveness counters: the Python receiver only ever sees the keywords above, so
+// only this proxy can tell "no client traffic" from "traffic but no match".
+seenCount = 0
+matchedCount = 0
+
 postToPython = fn(payload) {
     rsp, err = http.Post(
         PYTHON_RECEIVER,
@@ -60,10 +65,12 @@ matchesApi = fn(rawUrl) {
 // from the MITM proxy's raw response bytes (already decompressed by the proxy).
 // This is non-consuming — rspRaw is a copy, not a stream read.
 handleHijackResponse = fn(isHttps, urlStr, reqRaw, rspRaw, forward, dropped) {
+    seenCount = seenCount + 1
     if !matchesApi(urlStr) {
         forward(rspRaw)
         return
     }
+    matchedCount = matchedCount + 1
 
     // Extract body from raw response bytes (minimum poc calls)
     respBody = ""
@@ -118,5 +125,6 @@ println("[*] 流量链路：APP -> " + YAK_MITM_HOST + ":" + string(MITM_PORT) +
 println("[*] 需要设置被劫持的 APP 的网络代理为 " + YAK_MITM_HOST + ":" + string(MITM_PORT))
 
 for {
-    sleep(3600)
+    sleep(300)
+    println("[*] Yak MITM tick seen=" + string(seenCount) + " matched=" + string(matchedCount))
 }

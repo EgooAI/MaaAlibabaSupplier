@@ -18,6 +18,7 @@ from backend.app.shared.crm.account_keys import get_key_source
 from backend.app.shared.backend.gui_session import get_client_status
 from backend.app.shared.backend import status as status_mod
 from backend.app.shared.backend.maafw_runner import run_node
+from backend.app.shared.mitm.pool import observe_pools
 from backend.app.task_queue import DEFAULT_QUEUE_NAME, TaskQueue, get_task_queue, observe_task_queues
 
 router = APIRouter(route_class=AccountRoute)
@@ -161,6 +162,7 @@ def _build_system_snapshot() -> dict:
         "lastDiagnostic": {**node, "currentContext": node_current} if node else None,
         "workers": workers,
         "queues": queues,
+        "pools": observe_pools(),
         "source": source,
         "modules": [
             {

@@ -200,6 +200,18 @@ def test_reparse_attribute_blocks_before_read(monkeypatch):
     assert set(unpack(diag.build_bundle())) == {"manifest.json", "runtime.json"}
 
 
+def test_export_keeps_audited_messages_and_parses_yak_traffic_tick():
+    audited = json.dumps({"schema": 1, "time": "2026-09-20T12:00:00", "level": "INFO",
+                          "event": "application.message", "message": "MITM receiver thread started",
+                          "context": {}})
+    assert json.loads(diag._metadata(audited, "application"))["message"] == "MITM receiver thread started"
+    stored = json.dumps({"schema": 1, "source": "yak", "event": "yak.traffic_tick",
+                         "context": {"seen": 3, "matched": 1}})
+    assert json.loads(diag._metadata(stored, "yak"))["context"] == {"seen": 3, "matched": 1}
+    tick = json.loads(diag._metadata("[*] Yak MITM tick seen=17 matched=0", "yak"))
+    assert tick == {"event": "yak.traffic_tick", "context": {"seen": 17, "matched": 0}}
+
+
 def test_unknown_bodies_oversized_lines_and_stack_locals_are_omitted():
     path = write(diag.resolve_backend_root() / "debug/debug/maa.log",
                  "private-unknown\n" + "x" * (diag.MAX_LINE_BYTES + 1) + "\n" + NATIVE

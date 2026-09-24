@@ -189,6 +189,35 @@ def test_startup_event_retains_caller_and_typed_process_fields(logs):
                                   "tcp_reachable": "PRIVATE", "error_category": "PRIVATE"}) == {}
 
 
+def test_card_sweep_and_mitm_fields_survive_the_export_allowlist():
+    fields = transport.safe_fields({
+        "sid": 12, "key_kind": "ali_id", "unresolved": 2, "resolved": 1, "navigated": True,
+        "body_bytes": 4096, "count": 1, "targets": 3, "visited": 3, "enriched": 1, "failed": 2,
+        "seen": 5, "matched": 2, "private": "PRIVATE",
+    })
+    assert fields == {"sid": 12, "key_kind": "ali_id", "unresolved": 2, "resolved": 1, "navigated": True,
+                      "body_bytes": 4096, "count": 1, "targets": 3, "visited": 3, "enriched": 1,
+                      "failed": 2, "seen": 5, "matched": 2}
+
+
+def test_audited_operation_messages_survive_export_and_free_form_does_not():
+    audited = json.dumps({"schema": 1, "time": "2026-09-20T12:00:00", "level": "INFO",
+                          "event": "application.message", "message": "SelfInfo parsed for selected account",
+                          "context": {}})
+    assert json.loads(transport.sanitize_diagnostic_record(audited))["message"] == "SelfInfo parsed for selected account"
+    free_form = json.dumps({"schema": 1, "time": "2026-09-20T12:00:00", "level": "INFO",
+                            "event": "application.message", "message": "buyer said PRIVATE",
+                            "context": {}})
+    assert "message" not in json.loads(transport.sanitize_diagnostic_record(free_form))
+
+
+def test_yak_traffic_tick_exports_only_bounded_counts():
+    record = json.loads(transport.sanitize_diagnostic_record(
+        "[*] Yak MITM tick seen=17 matched=3 PRIVATE trailing body", "yak"))
+    assert record == {"schema": 1, "source": "yak", "event": "yak.traffic_tick",
+                      "context": {"seen": 17, "matched": 3}}
+
+
 def test_file_rotation_and_retention_keep_a_bounded_number_of_parseable_files(monkeypatch, logs):
     _, _, directory = logs
     assert transport.LOG_MAX_BYTES == 10 * 1024 * 1024 and transport.LOG_ARCHIVES == 5

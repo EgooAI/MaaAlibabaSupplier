@@ -211,6 +211,10 @@ class _DictPool(Generic[M]):
             _clear_table(self._conn, self._table)
             self._data.clear()
 
+    def count(self) -> int:
+        with self._lock:
+            return len(self._data)
+
 
 # ---------------------------------------------------------------------------
 # UserInfoPool
@@ -322,6 +326,10 @@ class UserInfoPool:
         with self._lock:
             return dict(self._data)
 
+    def count(self) -> int:
+        with self._lock:
+            return len(self._data)
+
     def clear(self) -> None:
         with self._lock:
             _clear_table(self._conn, "user_info")
@@ -387,3 +395,13 @@ class ProductCardPool(_DictPool[ProductCard]):
 
 def get_product_card_pool() -> ProductCardPool:
     return ProductCardPool()
+
+
+def observe_pools() -> dict:
+    """Read-only counts for status; never initializes a pool or opens its database."""
+    counts = {}
+    if UserInfoPool._instance is not None:
+        counts["user_info"] = UserInfoPool._instance.count()
+    if ProductCardPool._instance is not None:
+        counts["product_cards"] = ProductCardPool._instance.count()
+    return counts

@@ -386,14 +386,17 @@ def _open_checked(path: Path, expected):
 
 def _metadata(line: str, kind: str) -> str | None:
     if kind == "application" or kind in ("native", "yak") and line.lstrip().startswith("{"):
-        from backend.app.shared.utils.logging import sanitize_diagnostic_record
+        from backend.app.shared.utils.logging import _RUNTIME_MESSAGES, sanitize_diagnostic_record
 
         safe = sanitize_diagnostic_record(line, source=kind)
         if safe is None:
             return None
         record = json.loads(safe)
-        # Free-form legacy prose cannot be made safe by credential regexes alone.
-        record.pop("message", None)
+        # Free-form legacy prose cannot be made safe by credential regexes alone;
+        # only the audited operation literals are reproducible.
+        message = record.get("message")
+        if not (isinstance(message, str) and message in _RUNTIME_MESSAGES):
+            record.pop("message", None)
         if kind in ("native", "yak"):
             original = json.loads(line)
             fields = original.get("context")
@@ -423,6 +426,9 @@ def _metadata(line: str, kind: str) -> str | None:
         if match := _YAK.match(line):
             record = {"time": match[2], "level": match[1].upper(), "event": "yak_record"}
             record["context"] = _native_context(line[match.end():])
+        elif tick := re.match(r"\[\*\] Yak MITM tick seen=(\d{1,12}) matched=(\d{1,12})(?:\s|$)", line):
+            record = {"event": "yak.traffic_tick",
+                      "context": {"seen": int(tick[1]), "matched": int(tick[2])}}
         else:
             for prefix, event in (("[!] Forwarding to Python failed (transport error)", "forward_transport_error"),
                                   ("[!] Forwarding to Python failed: HTTP ", "forward_http_error"),

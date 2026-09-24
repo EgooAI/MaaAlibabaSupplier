@@ -34,7 +34,7 @@ class StatusSnapshotTestCase(unittest.TestCase):
         body = self.client.get("/api/status").json()
         self.assertEqual(body["code"], 0)
         snapshot = body["data"]
-        for key in ("updatedAt", "modules", "tasks"):
+        for key in ("updatedAt", "modules", "tasks", "pools"):
             self.assertIn(key, snapshot)
         module_ids = [module["id"] for module in snapshot["modules"]]
         self.assertEqual(
@@ -51,6 +51,13 @@ class StatusSnapshotTestCase(unittest.TestCase):
         body = self.client.post("/api/status/refresh").json()
         self.assertEqual(body["code"], 0)
         self.assertIn("modules", body["data"])
+
+    def test_system_snapshot_reports_pool_counts(self) -> None:
+        from backend.app.shared.mitm.pool import ProductCard, get_product_card_pool
+
+        self.assertEqual(self.client.get("/api/status").json()["data"]["pools"], {})
+        get_product_card_pool().put(ProductCard(card_id="9", product_id="111"))
+        self.assertEqual(self.client.get("/api/status").json()["data"]["pools"], {"product_cards": 1})
 
     def test_observation_does_not_create_queue_or_claim_tcp_business_readiness(self) -> None:
         from backend.app.shared.backend import card_sweep_service, sync_coordinator, outbox_service
@@ -75,6 +82,7 @@ class StatusSnapshotTestCase(unittest.TestCase):
             self.assertFalse(snapshot["queues"]["maafw"]["initialized"])
             self.assertFalse(snapshot["queues"]["translation"]["initialized"])
             self.assertEqual(snapshot["queues"]["maafw"]["pending"], 0)
+            self.assertEqual(snapshot["pools"], {})
         for module in snapshot["modules"]:
             if module["id"] in ("health-proxy", "health-receiver"):
                 self.assertEqual(module["status"], "uncertain")

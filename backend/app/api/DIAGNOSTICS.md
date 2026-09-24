@@ -92,9 +92,13 @@ No getter that initializes, scans a tree,
 rotates logs, probes native state or waits for a service lock should be wired here.
 
 Application records pass through `sanitize_diagnostic_record`; free-form messages are
-then removed. Native/Yak parsers additionally retain numeric task/job/node/recognition/
+then removed, while audited operation literals from the runtime allowlist are kept so
+lifecycle facts such as "MITM receiver thread started" remain verifiable. Native/Yak
+parsers additionally retain numeric task/job/node/recognition/
 action/process/thread IDs, source basename, function and line, fixed error categories,
-and entry/node names from the application's known pipeline allowlist. Text parsing
+and entry/node names from the application's known pipeline allowlist. A Yak
+`[*] Yak MITM tick seen=<n> matched=<n>` heartbeat is exported as `yak.traffic_tick`
+with only the two bounded counts. Text parsing
 consumes only contiguous recognized leading metadata and stops before unknown bodies;
 it never searches OCR/text/payload bodies for apparent IDs. Structured native/Yak
 records are re-sanitized and typed correlation fields are validated independently.

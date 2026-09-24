@@ -45,6 +45,8 @@ _FIELDS = frozenset({
     "native_job_id", "native_runtime_id", "native_log_session_id", "sync_id", "source_revision", "revision",
     "inserted", "updated", "unchanged", "count", "duration_ms", "method", "route",
     "complete", "disconnected", "send_failed", "entry", "exception_type", "signal", "component",
+    "sid", "key_kind", "unresolved", "resolved", "navigated", "body_bytes",
+    "targets", "visited", "enriched", "failed", "seen", "matched",
 })
 _RUNTIME_MESSAGES = (
     "Queued task failed", "request failed", "translation query failed", "translation chunk failed",
@@ -322,6 +324,10 @@ def sanitize_diagnostic_record(line: str, source: str = "application") -> str | 
                 return json.dumps({"schema": 1, "source": source, "time": yak[2],
                                    "level": yak[1].upper(), "event": "yak.record"})
             if source == "yak":
+                if tick := re.match(r"\[\*\] Yak MITM tick seen=(\d{1,12}) matched=(\d{1,12})(?:\s|$)", line):
+                    return json.dumps({"schema": 1, "source": source, "event": "yak.traffic_tick",
+                                       "context": {"seen": int(tick[1]), "matched": int(tick[2])}},
+                                      ensure_ascii=True, separators=(",", ":"))
                 for prefix, event in (("[!] Forwarding to Python failed (transport error)", "yak.forward_failed"),
                                       ("[!] Forwarding to Python failed: HTTP ", "yak.http_failed"),
                                       ("[!] GetHTTPPacketBody failed:", "yak.parse_failed"),
@@ -346,7 +352,8 @@ def sanitize_diagnostic_record(line: str, source: str = "application") -> str | 
             result[name] = value
     message = data.get("message")
     if isinstance(message, str) and (message in {"completed", "started", "stopped"}
-                                     or message == result.get("event")):
+                                     or message == result.get("event")
+                                     or message in _RUNTIME_MESSAGES):
         result["message"] = message
     result.update(_safe_origin(data))
     result["context"] = safe_fields(data["context"]) if isinstance(data.get("context"), dict) else {}

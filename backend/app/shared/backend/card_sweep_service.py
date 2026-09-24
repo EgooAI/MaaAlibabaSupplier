@@ -112,7 +112,7 @@ class CardSweepService:
         self._backoff: dict[str, tuple[int, float]] = {}
         self._observation_lock = RLock()
         self._observation = {
-            "started_at": None, "heartbeat_at": None, "last_progress_at": None,
+            "started_at": None, "heartbeat_at": None, "last_progress_at": None, "last_sweep_at": None,
             "phase": "not_started", "phase_started_at": None,
             "completed_iterations": 0, "last_error": None,
             "targets": 0, "visited": 0, "enriched": 0, "failed": 0,
@@ -133,6 +133,7 @@ class CardSweepService:
             **state, "started": state["started_at"] is not None,
             "alive": self._thread is not None and self._thread.is_alive(),
             "stopping": self._stop.is_set(), "observed_at": now,
+            "backoff_contacts": len(self._backoff),
             "phase_age_s": max(0, now - state["phase_started_at"]) if state["phase_started_at"] is not None else None,
             "progress_unit": "sweep_iterations",
         }
@@ -182,11 +183,11 @@ class CardSweepService:
     def _sweep_once(self) -> None:
         context = get_account_context()
         if not context.self_ali_id or not context.data_dir:
-            self._observe("waiting", targets=0, visited=0, enriched=0, failed=0)
+            self._observe("waiting")
             return
         if outbox_busy(context):
             log_event("card.sweep_skipped", reason="outbox_busy")
-            self._observe("waiting", targets=0, visited=0, enriched=0, failed=0)
+            self._observe("waiting")
             return
         adapter = CRMAdapter()
         try:
@@ -197,7 +198,7 @@ class CardSweepService:
         now = self._clock()
         targets = [target for target in targets if self._eligible(target.contact_ali_id, now)][:SWEEP_MAX_TARGETS]
         if not targets:
-            self._observe("waiting", targets=0, visited=0, enriched=0, failed=0)
+            self._observe("waiting")
             return
         try:
             token = gui_session.capture_gui_session(context.epoch)
@@ -217,12 +218,15 @@ class CardSweepService:
             self._record(outcome)
             log_event(
                 "card.sweep_target", sid=outcome.target.sid, key_kind="ali_id",
+                navigated=outcome.navigated,
                 unresolved=len(outcome.target.product_ids), resolved=len(outcome.resolved),
             )
         enriched = sum(1 for outcome in outcomes if outcome.enriched)
         failed = sum(1 for outcome in outcomes if outcome.navigated and not outcome.enriched)
-        self._observe("waiting", last_progress_at=self._clock(), last_error=None,
-                      visited=len(outcomes), enriched=enriched, failed=failed)
+        self._observe("waiting", last_progress_at=self._clock(), last_sweep_at=self._clock(), last_error=None,
+                      targets=len(targets), visited=len(outcomes), enriched=enriched, failed=failed)
+        log_event("card.sweep_done", targets=len(targets), visited=len(outcomes),
+                  enriched=enriched, failed=failed)
 
     @staticmethod
     def _resolved(product_id: str) -> bool:

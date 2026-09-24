@@ -141,6 +141,19 @@ def test_sweep_once_skips_while_outbox_is_busy(monkeypatch):
     assert state["phase"] == "waiting" and state["targets"] == 0
 
 
+def test_empty_iterations_keep_the_last_sweep_results(monkeypatch):
+    service = CardSweepService(clock=lambda: 100.0)
+    service._observe("waiting", targets=3, visited=3, enriched=1, failed=2, last_sweep_at=99.0)
+    monkeypatch.setattr(service_module, "get_account_context", lambda: AccountContext("10001", "D:/data", "e"))
+    monkeypatch.setattr(service_module, "outbox_busy", lambda context: True)
+
+    service._sweep_once()
+
+    state = service.observation()
+    assert (state["targets"], state["visited"], state["enriched"], state["failed"]) == (3, 3, 1, 2)
+    assert state["last_sweep_at"] == 99.0 and state["backoff_contacts"] == 0
+
+
 def test_sweep_once_waits_when_the_client_is_not_connected(monkeypatch):
     service = CardSweepService()
     monkeypatch.setattr(service_module, "get_account_context", lambda: AccountContext("10001", "D:/data", "e"))
