@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import re
@@ -9,6 +10,7 @@ import stat
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, Iterator
 
@@ -217,7 +219,7 @@ class ProcessLogDrain:
 
                     safe = sanitize_diagnostic_record(line, source=self.source)
                     if safe is not None:
-                        writer.write(safe)
+                        writer.write(self._with_time(safe))
                     else:
                         self.dropped_records += 1
                 except Exception as exc:
@@ -233,6 +235,15 @@ class ProcessLogDrain:
                 self.error_type = type(exc).__name__
             finally:
                 self.finished.set()
+
+    @staticmethod
+    def _with_time(safe: str) -> str:
+        """Child tools print no timestamp; the drain is the only writer that knows one."""
+        record = json.loads(safe)
+        if isinstance(record, dict) and "time" not in record:
+            record["time"] = datetime.now().astimezone().isoformat(timespec="seconds")
+            return json.dumps(record, ensure_ascii=True, separators=(",", ":"))
+        return safe
 
     def join(self, timeout: float = 1.0) -> bool:
         self.thread.join(timeout)

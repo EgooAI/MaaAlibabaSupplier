@@ -4,6 +4,22 @@ from backend.app.mitm import proxy
 from backend.app.shared.mitm.pool import get_product_card_pool
 
 URL = "https://acs.m.alibaba.com/gw/mtop.alibaba.intl.mobile.interaction.fetchcard/1.1/"
+BATCH_URL = "https://acs.m.alibaba.com/gw/mtop.alibaba.intl.mobile.interaction.getuserinfobyparams/1.1/"
+
+
+def test_matched_route_logs_zero_count_and_body_size(monkeypatch):
+    events = []
+    monkeypatch.setattr(proxy, "log_event", lambda name, **fields: events.append((name, fields)))
+    router = proxy.TrafficRouter()
+    body = b'{"api":"mtop.alibaba.intl.mobile.interaction.getuserinfobyparams","ret":["FAIL_SYS_ILLEGAL_ACCESS::x"]}'
+
+    router.process({"url": BATCH_URL, "response_body": body})
+    router.process({"url": BATCH_URL, "response_body": b""})
+
+    assert events == [
+        ("mitm.user_info_batch", {"count": 0, "body_bytes": len(body)}),
+        ("mitm.user_info_batch", {"count": 0, "body_bytes": 0}),
+    ]
 
 
 def test_fetchcard_events_are_logged_even_without_a_parse(monkeypatch):

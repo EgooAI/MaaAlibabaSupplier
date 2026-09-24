@@ -183,6 +183,7 @@ class CardSweepService:
     def _sweep_once(self) -> None:
         context = get_account_context()
         if not context.self_ali_id or not context.data_dir:
+            log_event("card.sweep_skipped", reason="no_account")
             self._observe("waiting")
             return
         if outbox_busy(context):
@@ -192,17 +193,21 @@ class CardSweepService:
         adapter = CRMAdapter()
         try:
             self._observe("selecting")
-            targets = select_targets(adapter, context.self_ali_id, get_product_card_pool())
+            unresolved = select_targets(adapter, context.self_ali_id, get_product_card_pool())
         finally:
             adapter.engine.dispose()
         now = self._clock()
-        targets = [target for target in targets if self._eligible(target.contact_ali_id, now)][:SWEEP_MAX_TARGETS]
+        eligible = [target for target in unresolved if self._eligible(target.contact_ali_id, now)]
+        targets = eligible[:SWEEP_MAX_TARGETS]
+        log_event("card.sweep_selected", targets=len(unresolved),
+                  backoff=len(unresolved) - len(eligible), eligible=len(eligible))
         if not targets:
             self._observe("waiting")
             return
         try:
             token = gui_session.capture_gui_session(context.epoch)
         except AppError as exc:
+            log_event("card.sweep_skipped", reason="gui_unavailable")
             self._observe("waiting", last_error=str(exc), targets=len(targets), visited=0, enriched=0, failed=0)
             return
         self._observe("sweeping", last_error=None, targets=len(targets), visited=0, enriched=0, failed=0)

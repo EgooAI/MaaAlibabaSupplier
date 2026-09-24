@@ -409,8 +409,9 @@ class CRMAdapter:
             )
 
 
-def sync_user_info(info: UserInfo) -> Future:
-    return _submit_sync(_sync_user_info_now, info)
+def sync_user_infos(infos: list[UserInfo]) -> Future:
+    """Queue one transaction for a batch; a contact list must not commit per user."""
+    return _submit_sync(_sync_user_infos_now, list(infos))
 
 
 def sync_self_info(info: SelfInfo) -> Future:
@@ -467,10 +468,13 @@ def _log_sync_failure(future, duration_ms: float | None = None) -> None:
         log_event("crm.failed", exception_type=type(exc).__name__)
 
 
-def _sync_user_info_now(info: UserInfo) -> None:
+def _sync_user_infos_now(infos: list[UserInfo]) -> None:
     adapter = CRMAdapter()
-    adapter.ensure_platform()
-    adapter.upsert_user_info(info)
+    with Session(adapter.engine) as session:
+        session.execute(text("BEGIN IMMEDIATE"))
+        adapter.ensure_platform(session)
+        for info in infos:
+            adapter.upsert_user_info(info, session)
 
 
 def _sync_self_info_now(info: SelfInfo) -> None:

@@ -46,7 +46,7 @@ _FIELDS = frozenset({
     "inserted", "updated", "unchanged", "count", "duration_ms", "method", "route",
     "complete", "disconnected", "send_failed", "entry", "exception_type", "signal", "component",
     "sid", "key_kind", "unresolved", "resolved", "navigated", "body_bytes",
-    "targets", "visited", "enriched", "failed", "seen", "matched",
+    "targets", "visited", "enriched", "failed", "eligible", "backoff", "seen", "matched",
 })
 _RUNTIME_MESSAGES = (
     "Queued task failed", "request failed", "translation query failed", "translation chunk failed",
@@ -76,6 +76,7 @@ _RUNTIME_MESSAGES = (
     "MaaFW runner init failed", "MaaFW node execution failed", "MaaFW send wait failed",
     "Failed to start MaaFW", "Outbox shutdown failed",
     "GUI task queue shutdown failed", "IM sync shutdown failed", "MaaFW shutdown failed",
+    "Card sweep iteration failed", "Card sweep shutdown failed",
     "Yak MITM shutdown failed", "MITM receiver shutdown failed", "Task queue",
     "Authentication storage unavailable", "Unhandled authentication middleware error",
     "LLM runtime registration failed",

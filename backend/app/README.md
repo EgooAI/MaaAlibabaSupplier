@@ -129,7 +129,7 @@ UI/业务以 `app.shared.crm` 为稳定入口：
 
 普通日志不记录业务正文、凭据或异常局部变量，异常保留类型和堆栈位置。应用及受管子进程日志按大小和日期轮转，并限制归档数量、体积和期限。Maa 原生文本日志保留在本机专属会话目录，属于敏感诊断资料；只在没有未完成原生任务的操作边界轮转，执行中的原生日志无法承诺严格实时大小上限。确认截图和业务审计不属于日志清理范围。
 
-状态页区分 TCP 可达、源库成功观测、历史手工识别和后台线程进展。超过 30 秒没有成功观察源库时显示过期，保留存档及已提交版本；翻译、AI 和退出请求失联时不会据此宣布完成或自动重试。MITM 路由命中 fetchcard 即记录 `mitm.fetch_card`（含 `body_bytes` 与解析数量），解析失败也留痕，用于判断抓取链路是否存活。Yak 每 5 分钟上报 `yak.traffic_tick`（seen/matched）以区分「客户端流量未走代理」与「无命中关键词」；sweep 每轮记录 `card.sweep_target`（sid/导航结果/未解析与已解析数）与 `card.sweep_done`，状态快照保留上一轮计数并给出 `backoff_contacts`，`/api/status` 的 `pools` 只读暴露 `user_info`/`product_cards` 数量（未初始化时不建立池）。
+状态页区分 TCP 可达、源库成功观测、历史手工识别和后台线程进展。超过 30 秒没有成功观察源库时显示过期，保留存档及已提交版本；翻译、AI 和退出请求失联时不会据此宣布完成或自动重试。MITM 每条命中路由都记录 `count`（含 0）与 `body_bytes`，fetchcard 空响应/解析失败也留痕，用于判断抓取链路与导航触发的是哪个 API。Yak 每 5 分钟上报 `yak.traffic_tick`（seen/matched，由 Python 补时间戳）以区分「客户端流量未走代理」与「无命中关键词」；sweep 每轮记录 `card.sweep_selected`（targets/backoff/eligible）与逐目标 `card.sweep_target`（sid/导航结果/未解析与已解析数），有实际扫描时记录 `card.sweep_done`，状态快照保留上一轮计数并给出 `backoff_contacts`，`/api/status` 的 `pools` 只读暴露 `user_info`/`product_cards` 数量（未初始化时不建立池）。
 
 开发机可经 `GET /api/app/diagnostics/download` 使用现有 Bearer token 拉取近期诊断 ZIP。接口覆盖固定关键日志来源、构建信息和被动运行摘要，不绑定所选卖家、不触发 GUI 或同步；文件经过脱敏且有读取、输出和并发上限。`manifest.json` 说明缺失、截断和省略，`runtime.json` 提供 worker 及原生日志状态。使用 `tools/pull_diagnostics.py` 下载并验证完整 ZIP，详见 [诊断接口说明](api/DIAGNOSTICS.md)。
 

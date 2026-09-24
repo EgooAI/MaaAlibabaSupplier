@@ -193,11 +193,11 @@ def test_card_sweep_and_mitm_fields_survive_the_export_allowlist():
     fields = transport.safe_fields({
         "sid": 12, "key_kind": "ali_id", "unresolved": 2, "resolved": 1, "navigated": True,
         "body_bytes": 4096, "count": 1, "targets": 3, "visited": 3, "enriched": 1, "failed": 2,
-        "seen": 5, "matched": 2, "private": "PRIVATE",
+        "eligible": 13, "backoff": 2, "seen": 5, "matched": 2, "private": "PRIVATE",
     })
     assert fields == {"sid": 12, "key_kind": "ali_id", "unresolved": 2, "resolved": 1, "navigated": True,
                       "body_bytes": 4096, "count": 1, "targets": 3, "visited": 3, "enriched": 1,
-                      "failed": 2, "seen": 5, "matched": 2}
+                      "failed": 2, "eligible": 13, "backoff": 2, "seen": 5, "matched": 2}
 
 
 def test_audited_operation_messages_survive_export_and_free_form_does_not():
@@ -637,9 +637,9 @@ def test_failure_report_due_reports_first_changed_and_tenth_attempts():
 
 def test_application_log_call_sites_are_audited_against_the_allowlist():
     import ast
+    from pathlib import Path
 
     from backend.app.shared.utils.logging import _RUNTIME_MESSAGES
-    from backend.app.shared.utils.settings import resolve_repo_root
 
     def logger_base(node):
         while isinstance(node, (ast.Attribute, ast.Call)):
@@ -648,7 +648,10 @@ def test_application_log_call_sites_are_audited_against_the_allowlist():
 
     levels = {"info", "success", "warning", "error", "exception", "critical"}
     uncovered, dead = [], []
-    for path in sorted((resolve_repo_root() / "backend" / "app").rglob("*.py")):
+    # The real source tree, not resolve_repo_root(): the isolation fixture
+    # repoints that constant at an empty temp root and silently disables this audit.
+    source_root = Path(__file__).resolve().parents[1] / "app"
+    for path in sorted(source_root.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):

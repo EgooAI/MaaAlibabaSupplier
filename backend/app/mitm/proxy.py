@@ -25,7 +25,7 @@ from backend.app.shared.mitm.parsers import (
     parse_query_customer_info,
 )
 from backend.app.shared.mitm.pool import UserInfo, get_product_card_pool, get_user_info_pool
-from backend.app.shared.crm import sync_self_info, sync_user_info
+from backend.app.shared.crm import sync_self_info, sync_user_infos
 from backend.app.shared.utils.app_config import get_configured_self_ali_id
 from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.utils.logging import configure_logging
@@ -104,8 +104,8 @@ class ReusableThreadingHTTPServer(ThreadingHTTPServer):
 
 
 class TrafficRouter:
-    # One structured event per matched request that stored items; the fetchcard
-    # route records its own event, including empty or unparsable bodies.
+    # Every matched route records count and body size, including zero matches;
+    # fetchcard records its own event, even for an empty or unparsable body.
     _EVENTS = {
         "queryCustomerInfo": "mitm.query_customer_info",
         "getuserinfobyparams": "mitm.user_info_batch",
@@ -138,11 +138,8 @@ class TrafficRouter:
         if keyword == "fetchcard":
             handler(event)
             return
-        if not event.response_body:
-            return
-        count = handler(event)
-        if count:
-            log_event(self._EVENTS[keyword], count=count)
+        count = handler(event) if event.response_body else 0
+        log_event(self._EVENTS[keyword], count=count, body_bytes=len(event.response_body))
 
     def _match_route(self, event: _TrafficEvent) -> tuple[str, Callable[[_TrafficEvent], int | None]] | None:
         for keyword, handler in self._routes:
@@ -157,15 +154,17 @@ class TrafficRouter:
         if not info:
             return 0
         get_user_info_pool().put(info)
-        sync_user_info(info)
+        sync_user_infos([info])
         return 1
 
     @staticmethod
     def _put_users(users: list[UserInfo]) -> int:
+        if not users:
+            return 0
         pool = get_user_info_pool()
         for user in users:
             pool.put(user)
-            sync_user_info(user)
+        sync_user_infos(users)
         return len(users)
 
     def _handle_get_user_info_by_params(self, event: _TrafficEvent) -> int:
@@ -181,6 +180,7 @@ class TrafficRouter:
 
         selected_ali_id = get_configured_self_ali_id()
         user_pool = get_user_info_pool()
+        infos = []
         for account in accounts:
             user_info = UserInfo(
                 ali_id=account.ali_id,
@@ -192,10 +192,11 @@ class TrafficRouter:
                 company_name=account.company_name,
             )
             user_pool.put(user_info)
-            sync_user_info(user_info)
+            infos.append(user_info)
             if selected_ali_id and account.ali_id == selected_ali_id:
                 logger.info("SelfInfo parsed for selected account")
                 sync_self_info(account)
+        sync_user_infos(infos)
         return len(accounts)
 
     @staticmethod
