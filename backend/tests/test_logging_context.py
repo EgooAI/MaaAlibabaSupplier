@@ -193,11 +193,11 @@ def test_card_sweep_and_mitm_fields_survive_the_export_allowlist():
     fields = transport.safe_fields({
         "sid": 12, "key_kind": "ali_id", "unresolved": 2, "resolved": 1, "navigated": True,
         "body_bytes": 4096, "count": 1, "targets": 3, "visited": 3, "enriched": 1, "failed": 2,
-        "eligible": 13, "backoff": 2, "seen": 5, "matched": 2, "private": "PRIVATE",
+        "seen": 5, "matched": 2, "private": "PRIVATE",
     })
     assert fields == {"sid": 12, "key_kind": "ali_id", "unresolved": 2, "resolved": 1, "navigated": True,
                       "body_bytes": 4096, "count": 1, "targets": 3, "visited": 3, "enriched": 1,
-                      "failed": 2, "eligible": 13, "backoff": 2, "seen": 5, "matched": 2}
+                      "failed": 2, "seen": 5, "matched": 2}
 
 
 def test_audited_operation_messages_survive_export_and_free_form_does_not():

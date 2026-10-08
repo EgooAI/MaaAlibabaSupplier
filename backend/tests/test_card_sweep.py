@@ -1,4 +1,6 @@
 import json
+import time
+from threading import Event
 
 import pytest
 
@@ -6,9 +8,7 @@ from backend.app.api.envelope import AppError
 from backend.app.shared.backend import card_sweep_service as service_module
 from backend.app.shared.backend.account_context import AccountContext
 from backend.app.shared.backend.card_sweep_service import (
-    SWEEP_INTERVAL_S,
     CardSweepService,
-    SweepOutcome,
     SweepTarget,
     outbox_busy,
     run_targets,
@@ -113,20 +113,25 @@ def test_outbox_busy_reads_pending_scope():
     assert outbox_busy(context, store=_Store([{"id": "t1"}])) is True
 
 
-def test_failed_targets_back_off_before_retry():
-    now = [1000.0]
-    service = CardSweepService(clock=lambda: now[0])
-    target = SweepTarget(1, "20002", ("111",))
+def test_start_stays_idle_until_a_manual_trigger(monkeypatch):
+    service = CardSweepService()
+    calls = []
+    done = Event()
 
-    assert service._eligible("20002", now[0])
-    service._record(SweepOutcome(target, True, ()))
-    assert not service._eligible("20002", now[0] + SWEEP_INTERVAL_S - 1)
-    assert service._eligible("20002", now[0] + SWEEP_INTERVAL_S)
-    service._record(SweepOutcome(target, True, ()))
-    assert not service._eligible("20002", now[0] + 2 * SWEEP_INTERVAL_S - 1)
+    def fake_sweep() -> None:
+        calls.append(service._clock())
+        done.set()
 
-    service._record(SweepOutcome(target, True, ("111",)))
-    assert service._eligible("20002", now[0])
+    monkeypatch.setattr(service, "_sweep_once", fake_sweep)
+    service.start()
+    try:
+        assert not done.wait(0.2)
+        service.trigger()
+        assert done.wait(2.0)
+        time.sleep(0.1)
+        assert len(calls) == 1
+    finally:
+        service.stop()
 
 
 def test_sweep_once_skips_while_outbox_is_busy(monkeypatch):
@@ -138,7 +143,7 @@ def test_sweep_once_skips_while_outbox_is_busy(monkeypatch):
     service._sweep_once()
 
     state = service.observation()
-    assert state["phase"] == "waiting" and state["targets"] == 0
+    assert state["phase"] == "idle" and state["targets"] == 0
 
 
 def test_empty_iterations_keep_the_last_sweep_results(monkeypatch):
@@ -151,7 +156,7 @@ def test_empty_iterations_keep_the_last_sweep_results(monkeypatch):
 
     state = service.observation()
     assert (state["targets"], state["visited"], state["enriched"], state["failed"]) == (3, 3, 1, 2)
-    assert state["last_sweep_at"] == 99.0 and state["backoff_contacts"] == 0
+    assert state["last_sweep_at"] == 99.0
 
 
 def test_sweep_once_waits_when_the_client_is_not_connected(monkeypatch):

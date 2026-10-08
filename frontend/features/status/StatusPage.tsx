@@ -1,7 +1,7 @@
 "use client";
 
-import { ExperimentOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, Col, Empty, Row, Space, Typography } from "antd";
+import { ExperimentOutlined, InfoCircleOutlined } from "@ant-design/icons";
+import { Alert, Button, Card, Col, Empty, Row, Space, Tooltip, Typography } from "antd";
 import { AppTable } from "@/components/AppTable";
 import { EMPTY_TEXT } from "@/components/empty";
 import { StatusTag } from "@/components/StatusTag";
@@ -35,9 +35,9 @@ export function StatusPage() {
     <Space orientation="vertical" size="large" className="w-full">
       {failure}
       <ChatSyncCard observedSource={snapshot.source} />
-      {snapshot.workers ? <WorkerStatus workers={snapshot.workers} queues={snapshot.queues} /> : null}
+      {snapshot.workers ? <WorkerStatus workers={snapshot.workers} queues={snapshot.queues} pools={snapshot.pools} /> : null}
 
-      <Card title="模块状态" extra={<Typography.Text type="secondary">更新于 {snapshot.updatedAt}（观察完成后间隔 2 秒）</Typography.Text>} loading={loading}>
+      <Card title="模块状态" extra={<Tooltip title="页面每 2 秒自动刷新一次状态"><Typography.Text type="secondary" className="cursor-help">更新于 {snapshot.updatedAt}</Typography.Text></Tooltip>} loading={loading}>
         <Row gutter={[16, 16]}>
           {snapshot.modules.map((module) => <Col xs={24} md={8} key={module.id}><HealthModulePanel module={module} /></Col>)}
         </Row>
@@ -77,17 +77,14 @@ export function StatusPage() {
 }
 
 function HealthModulePanel({ module }: { module: HealthModule }) {
+  const details = `${module.observedAt != null ? `观察时间：${formatDateTime(module.observedAt)} · ` : ""}延迟：${module.latency === null ? "未知" : `${module.latency}ms`}`;
   return (
     <div className="h-full rounded-lg border border-slate-200 bg-white p-4">
       <div className="mb-2 flex items-center justify-between gap-3">
         <Typography.Text strong>{module.name}</Typography.Text>
-        <StatusTag status={module.status} />
+        <Tooltip title={details}><span className="cursor-help"><StatusTag status={module.status} /></span></Tooltip>
       </div>
-      <Space orientation="vertical" size={2}>
-        <Typography.Text>{module.description}</Typography.Text>
-        {module.observedAt != null ? <Typography.Text type="secondary">观察时间：{formatDateTime(module.observedAt)}</Typography.Text> : null}
-        <Typography.Text type="secondary">延迟：{module.latency === null ? "未知" : `${module.latency}ms`}</Typography.Text>
-      </Space>
+      <Typography.Text>{module.description}</Typography.Text>
     </div>
   );
 }
@@ -112,14 +109,13 @@ function ChatSyncCard({ observedSource }: { observedSource?: SourceSyncStatus | 
         {source ? (
           <>
             <Row gutter={[12, 12]}>
-              <Col xs={12} md={8}><SyncDetailTile label="最近检查" value={time(source.last_checked)} /></Col>
               <Col xs={12} md={8}><SyncDetailTile label="最近成功观察源库" value={time(source.last_observed_at)} /></Col>
-              <Col xs={12} md={8}><SyncDetailTile label="最近尝试" value={time(source.last_attempt)} /></Col>
-              <Col xs={12} md={8}><SyncDetailTile label="计划重试" value={source.retry_at == null ? "无" : time(source.retry_at)} /></Col>
-              <Col xs={12} md={8}><SyncDetailTile label="最近提交" value={`新增 ${source.counts.inserted} · 更新 ${source.counts.updated} · 未变 ${source.counts.unchanged}`} /></Col>
-              <Col xs={12} md={8}><SyncDetailTile label="同步版本" value={`已提交 ${source.revision} · 数据源 ${source.source_revision} · 已应用 ${source.applied_source_revision}`} /></Col>
-              <Col xs={12} md={8}><SyncDetailTile label="后台检查" value={`${source.auto_enabled ? "已启用" : "未启用"}${source.source_dirty ? " · 数据源有变化" : ""}${source.pending ? " · 等待同步" : ""}`} /></Col>
+              <Col xs={12} md={8}><SyncDetailTile label="最近一轮提交" value={`新增 ${source.counts.inserted} · 更新 ${source.counts.updated} · 未变 ${source.counts.unchanged}`} /></Col>
+              <Col xs={12} md={8}><SyncDetailTile label="后台同步" value={`${source.auto_enabled ? "已启用" : "未启用"}${source.source_dirty ? " · 数据源有变化" : ""}${source.pending ? " · 等待同步" : ""}`} /></Col>
             </Row>
+            <Tooltip title={<div className="whitespace-pre-line">{`最近检查：${time(source.last_checked)}\n最近尝试：${time(source.last_attempt)}\n计划重试：${source.retry_at == null ? "无" : time(source.retry_at)}\n同步版本：已提交 ${source.revision} · 数据源 ${source.source_revision} · 已应用 ${source.applied_source_revision}`}</div>}>
+              <Typography.Text type="secondary" className="cursor-help"><InfoCircleOutlined className="mr-1" />技术细节（最近检查 / 尝试 / 重试 / 版本）</Typography.Text>
+            </Tooltip>
             {source.last_error ? <Alert type="error" showIcon title={source.last_error} /> : null}
             {source.observation_stale ? <Alert type="warning" showIcon title={`尚无成功源库观察或已超过 ${source.observation_max_age_s} 秒。已有存档可能过期；这不表示同步任务已失败。`} /> : null}
           </>

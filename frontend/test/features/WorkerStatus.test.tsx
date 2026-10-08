@@ -8,9 +8,12 @@ import type { WorkerObservation } from "@/types/status";
 vi.mock("antd", () => ({
   Card: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   Space: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  Tag: ({ children }: { children: ReactNode }) => <span>{children}</span>,
+  Tooltip: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  Row: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  Col: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   Typography: {
     Text: ({ children }: { children: ReactNode }) => <span>{children}</span>,
-    Paragraph: ({ children }: { children: ReactNode }) => <p>{children}</p>,
   },
   Alert: ({ title }: { title: ReactNode }) => <div>{title}</div>,
 }));
@@ -27,16 +30,45 @@ it("distinguishes a live blocked worker, stopped worker and unstarted queue with
   };
   try {
     await act(async () => root.render(<WorkerStatus workers={{ "outbox-verifier": worker, "im-source-check": null }} queues={{ translation: { initialized: false, alive: false, pending: 0, current_started: null, current_age_s: null, last_completed: null, observed_at: 180 } }} />));
-    expect(container.textContent).toContain("发送结果核对服务：线程存活");
+    expect(container.textContent).toContain("发送结果核对服务");
+    expect(container.textContent).toContain("线程存活");
     expect(container.textContent).toContain("持续 60 秒");
     expect(container.textContent).toContain("已完成循环 2");
     expect(container.textContent).toContain("待核对数量：3");
     expect(container.textContent).toContain("卖家 seller-a");
-    expect(container.textContent).toContain("翻译任务队列：未启动");
+    expect(container.textContent).toContain("源库检查服务");
+    expect(container.textContent).toContain("尚无观察记录");
+    expect(container.textContent).toContain("翻译任务队列");
+    expect(container.textContent).toContain("未启动");
     expect(container.textContent).toContain("不代表源库新鲜、CRM 已提交或消息已送达");
     await act(async () => root.render(<WorkerStatus workers={{ "outbox-verifier": { ...worker, alive: false, phase: "stopped", last_error: "OSError" } }} />));
-    expect(container.textContent).toContain("发送结果核对服务：线程未存活");
+    expect(container.textContent).toContain("线程未存活");
     expect(container.textContent).toContain("上次循环异常：OSError");
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+it("shows sweep counters and the product pool instead of the pending count", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const sweep: WorkerObservation = {
+    started: true, alive: true, stopping: false, started_at: 100, heartbeat_at: 120,
+    last_progress_at: 110, observed_at: 180, phase: "waiting", phase_started_at: 120,
+    phase_age_s: 60, completed_iterations: 5, pending: null, context: null, last_error: null,
+    progress_unit: "sweep_iterations", last_sweep_at: 178, targets: 13, visited: 13,
+    enriched: 2, failed: 11,
+  };
+  try {
+    await act(async () => root.render(<WorkerStatus workers={{ "card-sweep": sweep }} pools={{ product_cards: 2 }} />));
+    expect(container.textContent).toContain("卡片清扫服务");
+    expect(container.textContent).toContain("目标会话");
+    expect(container.textContent).toContain("已富化");
+    expect(container.textContent).toContain("未富化");
+    expect(container.textContent).not.toContain("退避中");
+    expect(container.textContent).toContain("产品卡池");
+    expect(container.textContent).not.toContain("待核对数量");
   } finally {
     await act(async () => root.unmount());
   }

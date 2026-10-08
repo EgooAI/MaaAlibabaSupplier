@@ -54,7 +54,7 @@ APP -> 127.0.0.1:8084 Yak/Yakit MITM -> 127.0.0.1:8085 Python receiver -> parser
 
 `im_db_middleware.py`：密钥懒加载 + 带时效的解密缓存。可用条件：设置页已选身份、有对应 AES Key、解密成功。身份唯一来源为设置页手选（`app_config.json: self_ali_id`），MITM 只做联系人/profile 富化，不提供身份。同一账号的实例 profile 目录（`{ali_id}@icbu_{n}`）与规范目录视为同一身份，按最近写入解析活动源；旧 profile 冻结而新 profile 持续写入时不再误判为“新鲜”。
 
-卡片消息（`user_content_type = 10010`）由 `shared/cards.py` 统一解析：产品类（3/2000/2028/2098）优先用 `ProductCardPool` 富化，其余按类型映射字段展示，密文字段不进入 API。`shared/backend/card_sweep_service.py` 默认每小时、或经 `POST /api/cards/sweep` 手动触发，逐个导航未富化产品卡所在会话，促使客户端发出 fetchcard 请求；状态经 `/api/status` 的 `workers.card-sweep` 观察。
+卡片消息（`user_content_type = 10010`）由 `shared/cards.py` 统一解析：产品类（3/2000/2028/2098）优先用 `ProductCardPool` 富化，其余按类型映射字段展示，密文字段不进入 API。`shared/backend/card_sweep_service.py` 仅经 `POST /api/cards/sweep` 手动触发，逐个导航未富化产品卡所在会话，促使客户端发出 fetchcard 请求；状态经 `/api/status` 的 `workers.card-sweep` 观察。
 
 聊天页经 CRM 读会话/消息，不直连 IM middleware。启动时后台自动读取所选账号已保存的密钥，试解密当前源库头；通过后恢复同步，不依赖页面开启。验证状态不沿用历史标记，CRM 提交完成后才恢复同步就绪。首次接入、设置变更或密钥缺失/无效时，由设置页显式验证。可见聊天/批量页面每 10 秒只观察已提交版本；密钥失效后停止自动刷新，所选账号的存档仍可读并提示可能过期。
 
@@ -129,7 +129,7 @@ UI/业务以 `app.shared.crm` 为稳定入口：
 
 普通日志不记录业务正文、凭据或异常局部变量，异常保留类型和堆栈位置。应用及受管子进程日志按大小和日期轮转，并限制归档数量、体积和期限。Maa 原生文本日志保留在本机专属会话目录，属于敏感诊断资料；只在没有未完成原生任务的操作边界轮转，执行中的原生日志无法承诺严格实时大小上限。确认截图和业务审计不属于日志清理范围。
 
-状态页区分 TCP 可达、源库成功观测、历史手工识别和后台线程进展。超过 30 秒没有成功观察源库时显示过期，保留存档及已提交版本；翻译、AI 和退出请求失联时不会据此宣布完成或自动重试。MITM 每条命中路由都记录 `count`（含 0）与 `body_bytes`，fetchcard 空响应/解析失败也留痕，用于判断抓取链路与导航触发的是哪个 API。Yak 每 5 分钟上报 `yak.traffic_tick`（seen/matched，由 Python 补时间戳）以区分「客户端流量未走代理」与「无命中关键词」；sweep 每轮记录 `card.sweep_selected`（targets/backoff/eligible）与逐目标 `card.sweep_target`（sid/导航结果/未解析与已解析数），有实际扫描时记录 `card.sweep_done`，状态快照保留上一轮计数并给出 `backoff_contacts`，`/api/status` 的 `pools` 只读暴露 `user_info`/`product_cards` 数量（未初始化时不建立池）。
+状态页区分 TCP 可达、源库成功观测、历史手工识别和后台线程进展。超过 30 秒没有成功观察源库时显示过期，保留存档及已提交版本；翻译、AI 和退出请求失联时不会据此宣布完成或自动重试。MITM 每条命中路由都记录 `count`（含 0）与 `body_bytes`，fetchcard 空响应/解析失败也留痕，用于判断抓取链路与导航触发的是哪个 API。Yak 每 5 分钟上报 `yak.traffic_tick`（seen/matched，由 Python 补时间戳）以区分「客户端流量未走代理」与「无命中关键词」；sweep 每次手动运行记录 `card.sweep_selected`（targets）与逐目标 `card.sweep_target`（sid/导航结果/未解析与已解析数），有实际扫描时记录 `card.sweep_done`，状态快照保留上一轮计数，`/api/status` 的 `pools` 只读暴露 `user_info`/`product_cards` 数量（未初始化时不建立池）。
 
 开发机可经 `GET /api/app/diagnostics/download` 使用现有 Bearer token 拉取近期诊断 ZIP。接口覆盖固定关键日志来源、构建信息和被动运行摘要，不绑定所选卖家、不触发 GUI 或同步；文件经过脱敏且有读取、输出和并发上限。`manifest.json` 说明缺失、截断和省略，`runtime.json` 提供 worker 及原生日志状态。使用 `tools/pull_diagnostics.py` 下载并验证完整 ZIP，详见 [诊断接口说明](api/DIAGNOSTICS.md)。
 

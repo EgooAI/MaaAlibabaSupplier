@@ -92,6 +92,11 @@ export interface WorkerObservation {
   context?: { epoch: string; self_ali_id: string; data_dir: string } | null;
   last_error: string | null;
   progress_unit: string;
+  last_sweep_at?: number | null;
+  targets?: number;
+  visited?: number;
+  enriched?: number;
+  failed?: number;
 }
 
 export interface QueueObservation {
@@ -107,6 +112,7 @@ export interface QueueObservation {
 export interface SystemStatusSnapshot {
   queues?: Record<string, QueueObservation>;
   workers?: Record<string, WorkerObservation | null>;
+  pools?: Record<string, number>;
   source?: SourceSyncStatus | null;
   observedAt?: number;
   context?: { epoch: string; self_ali_id: string; data_dir: string };

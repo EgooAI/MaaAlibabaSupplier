@@ -2,8 +2,8 @@
 
 Product cards only show title, price and image when the passive ``fetchcard``
 capture has seen that product. The client issues those requests while a
-conversation is open, so unresolved product cards are re-visited through the
-existing contact-search pipeline on a fixed interval or on demand.
+conversation is open, so unresolved product cards can be re-visited through the
+existing contact-search pipeline on demand.
 """
 
 from __future__ import annotations
@@ -24,11 +24,8 @@ from backend.app.shared.crm.sync import CRMAdapter
 from backend.app.shared.mitm.pool import ProductCardPool, get_product_card_pool
 from backend.app.shared.utils.log_context import log_event
 
-SWEEP_INTERVAL_S = 3600.0
 SWEEP_DWELL_S = 5.0
 SWEEP_MAX_TARGETS = 20
-_BACKOFF_BASE_S = 3600.0
-_BACKOFF_MAX_S = 86400.0
 
 
 @dataclass(frozen=True)
@@ -102,14 +99,14 @@ def outbox_busy(context: AccountContext, *, store=None) -> bool:
 
 
 class CardSweepService:
-    def __init__(self, *, interval: float = SWEEP_INTERVAL_S, clock: Callable[[], float] = time.time) -> None:
-        self.interval = interval
+    """Runs only when explicitly triggered; there is no periodic sweep."""
+
+    def __init__(self, *, clock: Callable[[], float] = time.time) -> None:
         self._clock = clock
         self._stop = Event()
         self._wake = Event()
         self._lifecycle_lock = RLock()
         self._thread: Thread | None = None
-        self._backoff: dict[str, tuple[int, float]] = {}
         self._observation_lock = RLock()
         self._observation = {
             "started_at": None, "heartbeat_at": None, "last_progress_at": None, "last_sweep_at": None,
@@ -133,7 +130,6 @@ class CardSweepService:
             **state, "started": state["started_at"] is not None,
             "alive": self._thread is not None and self._thread.is_alive(),
             "stopping": self._stop.is_set(), "observed_at": now,
-            "backoff_contacts": len(self._backoff),
             "phase_age_s": max(0, now - state["phase_started_at"]) if state["phase_started_at"] is not None else None,
             "progress_unit": "sweep_iterations",
         }
@@ -143,12 +139,13 @@ class CardSweepService:
             if self._thread is not None and not self._stop.is_set():
                 return self
             self._stop.clear()
-            self._observe("starting", started_at=self._clock(), last_error=None)
+            self._observe("idle", started_at=self._clock(), last_error=None)
             self._thread = Thread(target=self._run, name="card-sweep", daemon=True)
             self._thread.start()
         return self
 
     def trigger(self) -> None:
+        """Queue one manual sweep on the idle service thread."""
         self._wake.set()
 
     def stop(self, timeout: float = 5.0) -> None:
@@ -166,7 +163,7 @@ class CardSweepService:
     def _run(self) -> None:
         try:
             while not self._stop.is_set():
-                self._wake.wait(self.interval)
+                self._wake.wait()
                 self._wake.clear()
                 if self._stop.is_set():
                     break
@@ -174,7 +171,7 @@ class CardSweepService:
                     self._sweep_once()
                 except Exception:
                     logger.exception("Card sweep iteration failed")
-                    self._observe("waiting", last_error="sweep_failed")
+                    self._observe("idle", last_error="sweep_failed")
                 with self._observation_lock:
                     self._observation["completed_iterations"] += 1
         finally:
@@ -184,11 +181,11 @@ class CardSweepService:
         context = get_account_context()
         if not context.self_ali_id or not context.data_dir:
             log_event("card.sweep_skipped", reason="no_account")
-            self._observe("waiting")
+            self._observe("idle")
             return
         if outbox_busy(context):
             log_event("card.sweep_skipped", reason="outbox_busy")
-            self._observe("waiting")
+            self._observe("idle")
             return
         adapter = CRMAdapter()
         try:
@@ -196,19 +193,16 @@ class CardSweepService:
             unresolved = select_targets(adapter, context.self_ali_id, get_product_card_pool())
         finally:
             adapter.engine.dispose()
-        now = self._clock()
-        eligible = [target for target in unresolved if self._eligible(target.contact_ali_id, now)]
-        targets = eligible[:SWEEP_MAX_TARGETS]
-        log_event("card.sweep_selected", targets=len(unresolved),
-                  backoff=len(unresolved) - len(eligible), eligible=len(eligible))
+        targets = unresolved[:SWEEP_MAX_TARGETS]
+        log_event("card.sweep_selected", targets=len(unresolved))
         if not targets:
-            self._observe("waiting")
+            self._observe("idle")
             return
         try:
             token = gui_session.capture_gui_session(context.epoch)
         except AppError as exc:
             log_event("card.sweep_skipped", reason="gui_unavailable")
-            self._observe("waiting", last_error=str(exc), targets=len(targets), visited=0, enriched=0, failed=0)
+            self._observe("idle", last_error=str(exc), targets=len(targets), visited=0, enriched=0, failed=0)
             return
         self._observe("sweeping", last_error=None, targets=len(targets), visited=0, enriched=0, failed=0)
 
@@ -220,7 +214,6 @@ class CardSweepService:
 
         outcomes = run_targets(targets, navigate=navigate, resolved=self._resolved, sleep=self._sleep)
         for outcome in outcomes:
-            self._record(outcome)
             log_event(
                 "card.sweep_target", sid=outcome.target.sid, key_kind="ali_id",
                 navigated=outcome.navigated,
@@ -228,7 +221,7 @@ class CardSweepService:
             )
         enriched = sum(1 for outcome in outcomes if outcome.enriched)
         failed = sum(1 for outcome in outcomes if outcome.navigated and not outcome.enriched)
-        self._observe("waiting", last_progress_at=self._clock(), last_sweep_at=self._clock(), last_error=None,
+        self._observe("idle", last_progress_at=self._clock(), last_sweep_at=self._clock(), last_error=None,
                       targets=len(targets), visited=len(outcomes), enriched=enriched, failed=failed)
         log_event("card.sweep_done", targets=len(targets), visited=len(outcomes),
                   enriched=enriched, failed=failed)
@@ -239,18 +232,6 @@ class CardSweepService:
 
     def _sleep(self, seconds: float) -> None:
         self._stop.wait(seconds)
-
-    def _eligible(self, contact_ali_id: str, now: float) -> bool:
-        return self._backoff.get(contact_ali_id, (0, 0.0))[1] <= now
-
-    def _record(self, outcome: SweepOutcome) -> None:
-        contact = outcome.target.contact_ali_id
-        if outcome.enriched:
-            self._backoff.pop(contact, None)
-            return
-        attempts = self._backoff.get(contact, (0, 0.0))[0] + 1
-        delay = min(_BACKOFF_BASE_S * (2 ** (attempts - 1)), _BACKOFF_MAX_S)
-        self._backoff[contact] = (attempts, self._clock() + delay)
 
 
 _service: CardSweepService | None = None
