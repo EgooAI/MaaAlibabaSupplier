@@ -1,6 +1,6 @@
 "use client";
 
-import { ExperimentOutlined, InfoCircleOutlined } from "@ant-design/icons";
+import { ExperimentOutlined, InfoCircleOutlined, ScanOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Col, Empty, Row, Space, Tooltip, Typography } from "antd";
 import { AppTable } from "@/components/AppTable";
 import { EMPTY_TEXT } from "@/components/empty";
@@ -17,7 +17,7 @@ import { WorkerStatus } from "./WorkerStatus";
 export function StatusPage() {
   const account = useAccount();
   const canDiagnose = !account.blocked && Boolean(account.snapshot?.client.connected);
-  const { snapshot, loading, lastFailure, creatingTask, testingNode, createTestTask, runNodeTest } = useStatusWorkbench();
+  const { snapshot, loading, lastFailure, creatingTask, testingNode, sweepingCards, createTestTask, runNodeTest, sweepCards } = useStatusWorkbench();
   const failure = lastFailure ? <Alert type="warning" showIcon title={`状态观察失败（${new Date(lastFailure.at).toLocaleTimeString()}）`} description={`${lastFailure.message}。${snapshot ? `当前显示上次成功快照（${snapshot.updatedAt}），可能已过期。` : "尚无可用快照。"}`} /> : null;
 
   if (!snapshot) {
@@ -50,8 +50,9 @@ export function StatusPage() {
           <Button type="primary" icon={<ExperimentOutlined />} loading={creatingTask} onClick={createTestTask}>创建测试任务</Button>
           <Button disabled={!canDiagnose} loading={testingNode === "ChatInput_GoToInput"} onClick={() => void runNodeTest("ChatInput_GoToInput")}>检查聊天输入框</Button>
           <Button disabled={!canDiagnose} loading={testingNode === "ContactSearch_GoToSearch"} onClick={() => void runNodeTest("ContactSearch_GoToSearch")}>检查联系人搜索框</Button>
+          <Button disabled={!canDiagnose} loading={sweepingCards} icon={<ScanOutlined />} onClick={() => void sweepCards()}>立即扫描</Button>
         </Space>
-        <Typography.Paragraph type="secondary" className="mt-3 mb-0">界面检查仅需接入客户端；会排队执行，仅识别控件，不点击或输入。选择卖家并接入客户端后可发送、填入测试和跳转联系人；发送与填入仍需查看截图并确认联系人与内容。</Typography.Paragraph>
+        <Typography.Paragraph type="secondary" className="mt-3 mb-0">界面检查仅需接入客户端；会排队执行，仅识别控件，不点击或输入。选择卖家并接入客户端后可发送、填入测试和跳转联系人；发送与填入仍需查看截图并确认联系人与内容。「立即扫描」导航未富化产品卡所在会话，促使客户端请求卡片详情；仅收到新卡片消息时客户端才会请求，历史卡片可能仍无法富化。</Typography.Paragraph>
       </Card>
 
       <Card title="任务队列">
@@ -114,7 +115,7 @@ function ChatSyncCard({ observedSource }: { observedSource?: SourceSyncStatus | 
               <Col xs={12} md={8}><SyncDetailTile label="后台同步" value={`${source.auto_enabled ? "已启用" : "未启用"}${source.source_dirty ? " · 数据源有变化" : ""}${source.pending ? " · 等待同步" : ""}`} /></Col>
             </Row>
             <Tooltip title={<div className="whitespace-pre-line">{`最近检查：${time(source.last_checked)}\n最近尝试：${time(source.last_attempt)}\n计划重试：${source.retry_at == null ? "无" : time(source.retry_at)}\n同步版本：已提交 ${source.revision} · 数据源 ${source.source_revision} · 已应用 ${source.applied_source_revision}`}</div>}>
-              <Typography.Text type="secondary" className="cursor-help"><InfoCircleOutlined className="mr-1" />技术细节（最近检查 / 尝试 / 重试 / 版本）</Typography.Text>
+              <InfoCircleOutlined tabIndex={0} aria-label="技术细节" className="cursor-help text-slate-400" />
             </Tooltip>
             {source.last_error ? <Alert type="error" showIcon title={source.last_error} /> : null}
             {source.observation_stale ? <Alert type="warning" showIcon title={`尚无成功源库观察或已超过 ${source.observation_max_age_s} 秒。已有存档可能过期；这不表示同步任务已失败。`} /> : null}

@@ -48,6 +48,7 @@ export interface OperationsBackend {
   checkMitmProxy(): Promise<NetworkStatus>;
   checkMitmReceiver(): Promise<NetworkStatus>;
   runNodeTest(entry?: NodeTestEntry): Promise<NodeTestSubmission>;
+  sweepCards(): Promise<void>;
   listTaskSnapshots(): Promise<TaskSnapshot[]>;
   getSystemStatus(): Promise<SystemStatusSnapshot>;
   createTestTask(input: CreateTestTaskInput): Promise<TaskItem>;

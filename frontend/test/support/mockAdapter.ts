@@ -306,6 +306,8 @@ export const mockBackend: OperationsBackend = {
     return delay(structuredClone({ success: null, message: task.message, task_snapshot: task }), 360);
   },
 
+  sweepCards: () => delay(undefined),
+
   getDataDirStatus: () => delay(structuredClone(dataDirStatusStore)),
 
   saveDataDirPath: async (path, epoch) => {

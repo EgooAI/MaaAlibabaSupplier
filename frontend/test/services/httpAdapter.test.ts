@@ -360,6 +360,17 @@ describe("http adapter contract", () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ entry: entry ?? "ChatInput_GoToInput" });
   });
 
+  it("triggers a manual card sweep under the captured account epoch", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: { accepted: true, state: {} } })));
+    globalThis.fetch = fetchMock;
+
+    await expect(httpBackend.sweepCards()).resolves.toBeUndefined();
+    const [path, init] = fetchMock.mock.calls[0];
+    expect(path).toBe("/api/cards/sweep");
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("X-Account-Epoch")).toBe("mock-1");
+  });
+
   it("accepts void responses without attempting to parse JSON", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response("", { status: 200 }))

@@ -35,7 +35,7 @@ it("distinguishes a live blocked worker, stopped worker and unstarted queue with
     expect(container.textContent).toContain("持续 60 秒");
     expect(container.textContent).toContain("已完成循环 2");
     expect(container.textContent).toContain("待核对数量：3");
-    expect(container.textContent).toContain("卖家 seller-a");
+    expect(container.textContent).not.toContain("卖家");
     expect(container.textContent).toContain("源库检查服务");
     expect(container.textContent).toContain("尚无观察记录");
     expect(container.textContent).toContain("翻译任务队列");

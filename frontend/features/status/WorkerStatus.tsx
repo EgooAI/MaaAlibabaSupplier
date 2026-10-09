@@ -75,7 +75,7 @@ function WorkerPanel({ id, worker, pools }: { id: string; worker: WorkerObservat
           {id === "card-sweep" ? <SweepMetrics worker={worker} pools={pools} /> : (
             <Tooltip title={`观察于 ${time(worker.pending_observed_at)}`}>
               <Typography.Text type="secondary" className="cursor-help">
-                {id === "im-source-check" ? "待提交同步目标" : "待核对数量"}：{worker.pending == null ? "未观察 / 不适用" : worker.pending}{worker.context ? ` · 卖家 ${worker.context.self_ali_id || "未选择"}` : ""}
+                {id === "im-source-check" ? "待提交同步目标" : "待核对数量"}：{worker.pending == null ? "未观察 / 不适用" : worker.pending}
               </Typography.Text>
             </Tooltip>
           )}

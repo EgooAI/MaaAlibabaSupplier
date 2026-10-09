@@ -124,7 +124,7 @@ function prepareAccountRequest(path: string, init?: RequestInit) {
     if (!new Headers(init?.headers).get("X-Account-Epoch")) throw new AccountChangedError();
     return { init };
   }
-  const scoped = path === "/api/settings/connection/retry" || /^\/api\/(inbox(?:\/|$)|outbox(?:\/|$)|conversations(?:\/|$)|messages(?:\/|$)|self-info(?:\/|$)|cache\/reset(?:\/|$)|status\/node-test(?:\/|$))/.test(path);
+  const scoped = path === "/api/settings/connection/retry" || /^\/api\/(inbox(?:\/|$)|outbox(?:\/|$)|conversations(?:\/|$)|messages(?:\/|$)|self-info(?:\/|$)|cache\/reset(?:\/|$)|status\/node-test(?:\/|$)|cards(?:\/|$))/.test(path);
   if (!scoped) return { init };
   const ticket = captureAccount();
   const { capabilities, client } = accountSession.get().snapshot!;
@@ -203,6 +203,7 @@ export const httpBackend: OperationsBackend = {
   checkMitmProxy: () => requestJson("/api/status/mitm-proxy"),
   checkMitmReceiver: () => requestJson("/api/status/mitm-receiver"),
   runNodeTest: (entry) => requestJson("/api/status/node-test", { method: "POST", body: JSON.stringify({ entry: entry ?? "ChatInput_GoToInput" }) }),
+  sweepCards: async () => { await requestJson("/api/cards/sweep", { method: "POST", body: JSON.stringify({}) }); },
   listTaskSnapshots: () => requestJson("/api/status/tasks"),
   getSystemStatus: () => requestJson("/api/status"),
   createTestTask: (input) => requestJson("/api/status/test-tasks", { method: "POST", body: JSON.stringify(input) }),

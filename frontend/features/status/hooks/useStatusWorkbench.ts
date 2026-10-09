@@ -15,6 +15,7 @@ export function useStatusWorkbench() {
   const [loading, setLoading] = useState(true);
   const [creatingTask, setCreatingTask] = useState(false);
   const [testingNode, setTestingNode] = useState<NodeTestEntry>();
+  const [sweepingCards, setSweepingCards] = useState(false);
   const [lastFailure, setLastFailure] = useState<{ at: number; message: string }>();
   const inFlight = useRef<Promise<boolean> | null>(null);
   const lifecycle = useRef(0);
@@ -93,5 +94,20 @@ export function useStatusWorkbench() {
     }
   }
 
-  return { snapshot, loading, lastFailure, creatingTask, testingNode, createTestTask, runNodeTest };
+  async function sweepCards() {
+    if (sweepingCards) return;
+    setSweepingCards(true);
+    try {
+      await backend.sweepCards();
+      const synced = await loadSnapshot();
+      if (synced) message.info("卡片扫描已触发，进度见「卡片清扫服务」（每 2 秒自动更新）。历史卡片可能无法富化。");
+      else message.warning("卡片扫描已触发，状态未同步");
+    } catch (error: unknown) {
+      message.error(operationErrorMessage(error, "卡片扫描触发失败"));
+    } finally {
+      setSweepingCards(false);
+    }
+  }
+
+  return { snapshot, loading, lastFailure, creatingTask, testingNode, sweepingCards, createTestTask, runNodeTest, sweepCards };
 }
