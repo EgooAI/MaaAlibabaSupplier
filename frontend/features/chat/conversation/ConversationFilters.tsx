@@ -6,28 +6,64 @@ import { Button, Checkbox, Input, Popover, Select, Space, Typography } from "ant
 import type { ConversationPage, ConversationQuery } from "@/types/inbox";
 import { replyStates } from "@/domain/chat/inboxModel";
 import { statusLabel } from "@/domain/chat/chatModel";
+import { LOST_REASON_OPTIONS, PORTRAIT_STAGE_OPTIONS, portraitTagOptions } from "@/domain/portrait/portraitModel";
+import type { BusinessTag } from "@/types/portrait";
 
-export function ConversationFilters({ query, onChange }: { query: ConversationQuery; onChange: (query: ConversationQuery) => void }) {
+export function ConversationFilters({ query, onChange, tagOptions = [] }: { query: ConversationQuery; onChange: (query: ConversationQuery) => void; tagOptions?: BusinessTag[] }) {
   const [draft, setDraft] = useState(query);
   const [applied, setApplied] = useState(query);
   const [open, setOpen] = useState(false);
-  const filterCount = [applied.country, applied.tag, applied.reply_state, applied.unread, applied.overdue, applied.search_scope && applied.search_scope !== "all"].filter(Boolean).length;
+  const filterCount = [
+    applied.country, applied.tag, applied.reply_state, applied.unread, applied.overdue,
+    applied.portrait_stage, applied.lost_reason, applied.business_tag?.length,
+    applied.search_scope && applied.search_scope !== "all",
+  ].filter(Boolean).length;
   function apply(next: ConversationQuery) {
     setDraft(next);
     setApplied(next);
     onChange(next);
     setOpen(false);
   }
-  const filters = <form onSubmit={(event) => { event.preventDefault(); apply(draft); }} className="flex w-[min(280px,calc(100vw-48px))] flex-col gap-3">
+  const filters = <form onSubmit={(event) => { event.preventDefault(); apply(draft); }} className="flex w-[min(300px,calc(100vw-48px))] flex-col gap-3">
     <Typography.Text type="secondary">搜索范围</Typography.Text>
     <Select aria-label="搜索范围" value={draft.search_scope ?? "all"} onChange={(search_scope) => setDraft({ ...draft, search_scope })} options={[
       { value: "all", label: "客户资料与消息" }, { value: "customer", label: "仅客户资料" }, { value: "messages", label: "仅消息正文" },
     ]} />
     <Space.Compact className="w-full">
       <Input aria-label="国家" value={draft.country ?? ""} onChange={(event) => setDraft({ ...draft, country: event.target.value || undefined })} placeholder="国家" allowClear />
-      <Input aria-label="客户资料标签" value={draft.tag ?? ""} onChange={(event) => setDraft({ ...draft, tag: event.target.value || undefined })} placeholder="客户资料标签" allowClear />
+      <Input aria-label="平台资料标签" value={draft.tag ?? ""} onChange={(event) => setDraft({ ...draft, tag: event.target.value || undefined })} placeholder="平台资料标签" allowClear />
     </Space.Compact>
     <Select aria-label="回复状态" allowClear placeholder="全部回复状态" value={draft.reply_state} onChange={(reply_state) => setDraft({ ...draft, reply_state })} options={replyStates.map((value) => ({ value, label: statusLabel(value) }))} />
+    <Space.Compact className="w-full">
+      <Select
+        aria-label="客户阶段"
+        allowClear
+        placeholder="全部客户阶段"
+        className="w-1/2"
+        value={draft.portrait_stage}
+        onChange={(portrait_stage) => setDraft({ ...draft, portrait_stage })}
+        options={PORTRAIT_STAGE_OPTIONS}
+      />
+      <Select
+        aria-label="失败原因"
+        allowClear
+        placeholder="全部失败原因"
+        className="w-1/2"
+        value={draft.lost_reason}
+        onChange={(lost_reason) => setDraft({ ...draft, lost_reason })}
+        options={LOST_REASON_OPTIONS}
+      />
+    </Space.Compact>
+    <Select
+      aria-label="业务标签"
+      mode="multiple"
+      allowClear
+      placeholder="全部业务标签（需全部命中）"
+      value={draft.business_tag ?? []}
+      onChange={(business_tag: string[]) => setDraft({ ...draft, business_tag: business_tag.length ? business_tag : undefined })}
+      options={portraitTagOptions(tagOptions)}
+      optionFilterProp="label"
+    />
     <Space wrap>
       <Checkbox checked={draft.unread === true} onChange={(event) => setDraft({ ...draft, unread: event.target.checked ? true : undefined })}>本工作台未读</Checkbox>
       <Checkbox checked={draft.overdue === true} onChange={(event) => setDraft({ ...draft, overdue: event.target.checked ? true : undefined })}>超时</Checkbox>

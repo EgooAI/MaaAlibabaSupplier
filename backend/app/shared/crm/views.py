@@ -47,6 +47,46 @@ class CrmConversationDigest:
 CARD_CONTENT_TYPE = 10010
 
 
+def _extra_of(account: Any) -> dict:
+    extra = account.extra if hasattr(account, "extra") else account.get("extra") if isinstance(account, dict) else None
+    return extra if isinstance(extra, dict) else {}
+
+
+def _cid_of(account: Any) -> int | None:
+    cid = account.cid if hasattr(account, "cid") else account.get("cid") if isinstance(account, dict) else None
+    return cid if isinstance(cid, int) and cid > 0 else None
+
+
+def is_self_account(account: Any) -> bool:
+    return _extra_of(account).get("is_self") is True
+
+
+def resolve_contact_cid(participants: list[int], accounts: dict[int, Any]) -> int | None:
+    """Resolve the single contact customer for a conversation.
+
+    Accounts may be SDK models or JSON dicts. A lone non-self participant wins
+    only when it is the positional contact of a two-party conversation; several
+    non-self participants win only when they share one ``cid``. Otherwise a
+    two-party conversation falls back to its second participant so synced rows
+    keep working when ``is_self`` is missing. Anything else is ambiguous and
+    returns ``None`` so callers can disable customer maintenance.
+    """
+    resolved = {aid: accounts[aid] for aid in participants if aid in accounts}
+    nonself = [account for account in resolved.values() if not is_self_account(account)]
+    if len(nonself) == 1:
+        if len(participants) != 2 or resolved.get(participants[1]) is nonself[0]:
+            return _cid_of(nonself[0])
+    elif len(nonself) > 1:
+        cids = {cid for cid in (_cid_of(account) for account in nonself) if cid is not None}
+        if len(cids) == 1:
+            return next(iter(cids))
+    if len(participants) == 2:
+        candidate = resolved.get(participants[1])
+        if candidate is not None and not is_self_account(candidate):
+            return _cid_of(candidate)
+    return None
+
+
 class CrmResolver:
     def __init__(self, self_ali_id: str = "") -> None:
         self._self_ali_id = self_ali_id
@@ -92,7 +132,9 @@ __all__ = [
     "coerce_epoch",
     "format_created_at",
     "is_card_message",
+    "is_self_account",
     "message_display_text",
     "normalize_message_type",
+    "resolve_contact_cid",
     "resolve_role",
 ]

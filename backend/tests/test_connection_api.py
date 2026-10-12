@@ -309,7 +309,10 @@ def test_revision_poll_100_calls_never_reads_source_or_submits_sync(client, revi
             for _ in range(100):
                 response = client.get("/api/conversations/revision")
                 assert response.status_code == 200, response.text
-                assert response.json()["data"] == {**source, "reason": "source_not_ready", "inbox_revision": 0, "next_due_at": None}
+                assert response.json()["data"] == {
+                    **source, "reason": "source_not_ready", "inbox_revision": 0, "next_due_at": None,
+                    "portrait_revision": 0, "tag_revision": 0,
+                }
             assert client.get("/api/settings/connection").json()["data"]["source"] == source
             forbidden.assert_not_called()
         assert len(submissions) == 1
@@ -325,8 +328,9 @@ def test_revision_poll_100_calls_never_reads_source_or_submits_sync(client, revi
     assert ready["applied_source_revision"] == ready["source_revision"] == source["source_revision"]
     assert ready["counts"] == {"inserted": 1, "updated": 0, "unchanged": 0}
     assert ready["last_success"] > 0
-    assert {key: value for key, value in ready.items() if key not in {"inbox_revision", "next_due_at"}} == client.get("/api/settings/connection").json()["data"]["source"]
+    assert {key: value for key, value in ready.items() if key not in {"inbox_revision", "next_due_at", "portrait_revision", "tag_revision"}} == client.get("/api/settings/connection").json()["data"]["source"]
     assert ready["inbox_revision"] == 1 and ready["next_due_at"] is None
+    assert ready["portrait_revision"] == 0 and ready["tag_revision"] == 0
     state = client.get("/api/sync-state").json()["data"]
     for key in ("revision", "source_revision", "applied_source_revision", "counts", "last_success", "last_checked", "last_attempt"):
         assert ready[key] == state[key]

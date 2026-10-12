@@ -13,11 +13,16 @@ import json
 import time
 from dataclasses import asdict
 
+from backend.app.shared.crm.customer_portrait_store import (
+    load_portrait_bundle,
+    load_portrait_revisions,
+    public_portrait_fields,
+)
 from backend.app.shared.crm.identities import session_key_prefix
 from backend.app.shared.crm.inbox_store import InboxStore
 from backend.app.shared.crm.sdk import Account, Customer
 from backend.app.shared.crm.sync_store import canonical_source_dir
-from backend.app.shared.crm.views import CrmConversationDigest, coerce_epoch
+from backend.app.shared.crm.views import CrmConversationDigest, coerce_epoch, resolve_contact_cid
 from backend.app.shared.mitm.pool import UserInfo
 
 
@@ -83,6 +88,8 @@ def query_inbox(store: InboxStore, seller: str, data_dir: str, build_view, filte
     with store._connection() as conn:
         metadata = store._metadata(conn, key)
         hash_row(metadata)
+        if filters.get("business_tag") is not None:
+            filters = {**filters, "business_tag": sorted(set(filters["business_tag"]))}
         hash_row(filters)
         metas = {row["sid"]: dict(row) for row in conn.execute(
             "SELECT sid, key, participants FROM session_meta WHERE substr(key, 1, :length)=:prefix "
@@ -161,11 +168,21 @@ def query_inbox(store: InboxStore, seller: str, data_dir: str, build_view, filte
                 except ValueError:
                     pass
         preloaded = {"accounts": accounts, "customers": customers, "users": users}
+        cid_by_sid = {
+            digest.sid: resolve_contact_cid(list(digest.participants), accounts) for digest in digests
+        }
+        portrait_cids = sorted({cid for cid in cid_by_sid.values() if cid is not None})
+        portraits = load_portrait_bundle(conn, key["seller"], key["data_dir"], portrait_cids)
+        portrait_revisions = load_portrait_revisions(conn, key["seller"], key["data_dir"])
+        hash_row(portrait_revisions)
         states = store._states(conn, key, latest, now)
+        required_tags = set(filters.get("business_tag") or [])
         selected, views = [], {}
         for digest in digests:
             state = states[digest.sid]
-            view = build_view(digest, preloaded)
+            cid = cid_by_sid.get(digest.sid)
+            portrait = portraits.get(cid) if cid is not None else None
+            view = build_view(digest, preloaded, public_portrait_fields(cid, portrait))
             views[digest.sid] = view
             hash_row([asdict(digest), view, state])
             q = filters.get("q", "").casefold()
@@ -187,6 +204,17 @@ def query_inbox(store: InboxStore, seller: str, data_dir: str, build_view, filte
                 continue
             if filters.get("overdue") is not None and state["is_overdue"] != filters["overdue"]:
                 continue
+            portrait_stage = portrait["stage"] if portrait else "unknown"
+            if filters.get("portrait_stage") is not None and portrait_stage != filters["portrait_stage"]:
+                continue
+            if required_tags:
+                owned = {tag["tag_id"] for tag in (portrait["tags"] if portrait else [])}
+                if not required_tags <= owned:
+                    continue
+            if filters.get("lost_reason") is not None:
+                reason = portrait["lost_reason"] if portrait else None
+                if reason != filters["lost_reason"]:
+                    continue
             selected.append(digest)
         selected_states = [states[d.sid] for d in selected]
         counts = {"total": len(selected), **{
@@ -198,5 +226,5 @@ def query_inbox(store: InboxStore, seller: str, data_dir: str, build_view, filte
             "digests": selected, "preloaded": preloaded, "views": views, "states": states,
             "total": len(selected), "counts": counts, "updated_at": now,
             "inbox_revision": metadata["inbox_revision"], "timeout_seconds": metadata["timeout_seconds"],
-            "pagination_revision": fingerprint.hexdigest(),
+            "pagination_revision": fingerprint.hexdigest(), **portrait_revisions,
         }

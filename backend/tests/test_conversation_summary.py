@@ -9,7 +9,9 @@ from backend.app.api.routers.conversations import (
     _build_aggregate,
     _build_summary,
     _minimal_customer_view,
+    _summary_customer_view,
 )
+from backend.app.shared.crm.customer_portrait_store import public_portrait_fields
 from backend.app.shared.backend.im_chat_db import ContactConv, MessageRow
 from backend.app.shared.crm.identities import self_sender_id
 from backend.app.shared.crm.sync import CRMAdapter
@@ -106,7 +108,8 @@ class ConversationSummaryTestCase(unittest.TestCase):
 
     def test_summary_matches_aggregate_contract(self) -> None:
         full = _build_aggregate(self.adapter, SELF_ALI_ID, self.conv)
-        summary = _build_summary(self.digest, self.preloaded)
+        fields = public_portrait_fields(full["customer_view"]["cid"], None)
+        summary = _build_summary(self.digest, self.preloaded, _summary_customer_view(self.digest, self.preloaded, fields))
         self.assertEqual(summary["customer_view"]["login_id"], "buyer")
         self.assertEqual(set(summary), set(full))
         for key in ("sid", "name", "participants", "latest", "unread_count",
@@ -120,7 +123,7 @@ class ConversationSummaryTestCase(unittest.TestCase):
         full = _build_aggregate(self.adapter, SELF_ALI_ID, self.conv)
         assert full["customer_view"] is not None
         self.assertEqual(set(_minimal_customer_view("ghost")), set(full["customer_view"]))
-        self.assertIsNone(_assemble_customer_view("ghost", [], [], None))
+        self.assertIsNone(_assemble_customer_view("ghost", [], [], None, public_portrait_fields(None, None)))
 
 
 if __name__ == "__main__":

@@ -19,6 +19,8 @@ export function useConversationSummaries(initialQuery: ConversationQuery = {}) {
   const [listVersion, setListVersion] = useState(0);
   const [detailVersion, setDetailVersion] = useState(0);
   const seenInbox = useRef<number | undefined>(undefined);
+  const seenPortrait = useRef<number | undefined>(undefined);
+  const seenTags = useRef<number | undefined>(undefined);
   const nextDue = useRef<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [polledRevision, setPolledRevision] = useState(0);
@@ -101,6 +103,14 @@ export function useConversationSummaries(initialQuery: ConversationQuery = {}) {
         setConversations(next.items);
         setPage(next);
         observeInbox(next.inbox_revision);
+        if (typeof next.portrait_revision === "number"
+          && (seenPortrait.current === undefined || next.portrait_revision > seenPortrait.current)) {
+          seenPortrait.current = next.portrait_revision;
+        }
+        if (typeof next.tag_revision === "number"
+          && (seenTags.current === undefined || next.tag_revision > seenTags.current)) {
+          seenTags.current = next.tag_revision;
+        }
         const due = next.items.flatMap((item) => item.dueAt !== null && !item.isOverdue ? [item.dueAt] : []);
         if (due.length) nextDue.current = Math.min(nextDue.current ?? Infinity, ...due);
         acknowledge(true);
@@ -135,8 +145,18 @@ export function useConversationSummaries(initialQuery: ConversationQuery = {}) {
         if (!cancelled && next.ready) {
           setPolledRevision(next.revision);
           const reading = Object.values(reads.current).some((read) => read.pending);
+          // Missing revision fields mean "no signal"; only a strictly newer
+          // observed revision triggers reads, so the first poll after load
+          // does not duplicate the list the initial read already produced.
+          const portraitChanged = typeof next.portrait_revision === "number"
+            && seenPortrait.current !== undefined && next.portrait_revision > seenPortrait.current;
+          const tagsChanged = typeof next.tag_revision === "number"
+            && seenTags.current !== undefined && next.tag_revision > seenTags.current;
+          if (typeof next.portrait_revision === "number") seenPortrait.current = next.portrait_revision;
+          if (typeof next.tag_revision === "number") seenTags.current = next.tag_revision;
+          if (portraitChanged || tagsChanged) setDetailVersion((value) => value + 1);
           // An empty overdue page cannot supply its own upcoming deadline.
-          if (observeInbox(next.inbox_revision, deadlineFiltered && !reading)) {
+          if (observeInbox(next.inbox_revision, deadlineFiltered && !reading) || portraitChanged || tagsChanged) {
             setListVersion((value) => value + 1);
           }
           if (next.inbox_revision === seenInbox.current) {

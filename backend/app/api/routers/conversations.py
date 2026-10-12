@@ -8,7 +8,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Query
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Literal
 from sqlmodel import Session, select
 
@@ -27,6 +27,12 @@ from backend.app.shared.backend.maafw_runner import goto_contact
 from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
 from backend.app.shared.cards import card_view
 from backend.app.shared.chat_format import conversation_transcript
+from backend.app.shared.crm.customer_portrait_store import (
+    LOST_REASONS,
+    PORTRAIT_STAGES,
+    CustomerPortraitStore,
+    public_portrait_fields,
+)
 from backend.app.shared.crm.identities import PLATFORM_PID, message_external_id
 from backend.app.shared.crm.inbox_store import InboxStore
 from backend.app.shared.crm.inbox_queries import has_archive_messages, observe_inbox, public_state, query_inbox, scoped_message_ids
@@ -37,8 +43,10 @@ from backend.app.shared.crm.views import (
     CrmConversationDigest,
     CrmResolver,
     format_created_at,
+    is_self_account,
     message_display_text,
     normalize_message_type,
+    resolve_contact_cid,
     resolve_role,
 )
 from backend.app.shared.export_zip import build_export_zip
@@ -59,6 +67,33 @@ class InboxFilters(BaseModel):
     reply_state: Literal["needs_reply", "waiting_customer", "history_pending", "none", "unknown"] | None = None
     unread: bool | None = None
     overdue: bool | None = None
+    portrait_stage: str | None = None
+    business_tag: list[str] | None = None
+    lost_reason: str | None = None
+
+    @field_validator("portrait_stage")
+    @classmethod
+    def _validate_portrait_stage(cls, value: str | None) -> str | None:
+        if value is not None and value not in PORTRAIT_STAGES:
+            raise ValueError("portrait_stage is invalid")
+        return value
+
+    @field_validator("lost_reason")
+    @classmethod
+    def _validate_lost_reason(cls, value: str | None) -> str | None:
+        if value is not None and value not in LOST_REASONS:
+            raise ValueError("lost_reason is invalid")
+        return value
+
+    @field_validator("business_tag")
+    @classmethod
+    def _validate_business_tags(cls, value: list[str] | None) -> list[str] | None:
+        if not value:
+            return value
+        tags = sorted({tag.strip() for tag in value})
+        if any(not tag or len(tag) > 64 for tag in tags):
+            raise ValueError("business_tag is invalid")
+        return tags
 
 
 class ReadConversationInput(BaseModel):
@@ -156,7 +191,7 @@ def _dump(model: Any) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _build_aggregate(adapter: CRMAdapter, self_ali_id: str, conv: CrmConversation) -> dict:
+def _build_aggregate(adapter: CRMAdapter, self_ali_id: str, conv: CrmConversation, data_dir: str | None = None) -> dict:
     resolver = CrmResolver(self_ali_id)
     participants = list(conv.participants or [])
     # Written by sync as [self_aid, contact_aid]; role itself is resolved
@@ -210,6 +245,11 @@ def _build_aggregate(adapter: CRMAdapter, self_ali_id: str, conv: CrmConversatio
 
     last = message_dtos[-1] if message_dtos else None
     dialogue_count = sum(1 for message in conv.messages if not message.is_system)
+    account_map = {account["aid"]: account for account in accounts if "aid" in account}
+    contact_cid = resolve_contact_cid(participants, account_map)
+    portrait = None
+    if contact_cid is not None and data_dir:
+        portrait = CustomerPortraitStore().portrait_records(self_ali_id, data_dir, [contact_cid]).get(contact_cid)
     return {
         "sid": conv.sid,
         "name": conv.key,
@@ -219,7 +259,10 @@ def _build_aggregate(adapter: CRMAdapter, self_ali_id: str, conv: CrmConversatio
         "customers": customers,
         "platforms": platforms,
         "account_mappings": mappings,
-        "customer_view": _build_customer_view(conv.contact_ali_id, accounts, customers, adapter.get_user_info(conv.contact_ali_id)),
+        "customer_view": _assemble_customer_view(
+            conv.contact_ali_id, accounts, customers, adapter.get_user_info(conv.contact_ali_id),
+            public_portrait_fields(contact_cid, portrait),
+        ),
         "latest": {
             "content": (last["message"]["content"] if isinstance(last["message"]["content"], str) else last["message"]["content"].get("label")) if last else None,
             "updated_at": last["created_at"] if last else None,
@@ -259,10 +302,11 @@ def _minimal_customer_view(contact_ali_id: str) -> dict:
         "email_validated": None,
         "behavior": [],
         "d90": {},
+        **public_portrait_fields(None, None),
     }
 
 
-def _summary_customer_view(digest: CrmConversationDigest, preloaded: dict) -> dict:
+def _summary_customer_view(digest: CrmConversationDigest, preloaded: dict, portrait_fields: dict) -> dict:
     participants = list(digest.participants or [])
     accounts_map = preloaded["accounts"]
     customers_map = preloaded["customers"]
@@ -273,15 +317,15 @@ def _summary_customer_view(digest: CrmConversationDigest, preloaded: dict) -> di
         if customer is not None:
             customers.append(_dump(customer))
     view = _assemble_customer_view(
-        digest.contact_ali_id, accounts, customers, preloaded["users"].get(digest.contact_ali_id)
+        digest.contact_ali_id, accounts, customers, preloaded["users"].get(digest.contact_ali_id),
+        portrait_fields,
     )
     return view if view is not None else _minimal_customer_view(digest.contact_ali_id)
 
 
-def _build_summary(digest: CrmConversationDigest, preloaded: dict, view: dict | None = None) -> dict:
+def _build_summary(digest: CrmConversationDigest, preloaded: dict, view: dict) -> dict:
     """Only assemble page DTOs; filtering uses the same customer view."""
     participants = list(digest.participants or [])
-    view = _summary_customer_view(digest, preloaded) if view is None else view
     if digest.latest_is_card:
         content = digest.latest_content_label or "[\u5361\u7247]"
     else:
@@ -306,14 +350,10 @@ def _build_summary(digest: CrmConversationDigest, preloaded: dict, view: dict | 
     }
 
 
-def _build_customer_view(contact_ali_id: str, accounts: list[dict], customers: list[dict], user: Any) -> dict | None:
-    return _assemble_customer_view(contact_ali_id, accounts, customers, user)
-
-
 def _assemble_customer_view(
-    contact_ali_id: str, accounts: list[dict], customers: list[dict], user: Any
+    contact_ali_id: str, accounts: list[dict], customers: list[dict], user: Any, portrait_fields: dict,
 ) -> dict | None:
-    account = next((a for a in accounts if not (a.get("extra") or {}).get("is_self")), None)
+    account = next((a for a in accounts if not is_self_account(a)), None)
     if account is None and accounts:
         account = accounts[0]
     customer = None
@@ -398,6 +438,7 @@ def _assemble_customer_view(
         "email_validated": email_validated,
         "behavior": [],
         "d90": d90,
+        **portrait_fields,
     }
 
 
@@ -451,7 +492,8 @@ def list_conversations(
         for digest in projection["digests"][offset:offset + limit]
     ]
     return ok({"items": items, "total": projection["total"], "offset": offset, "limit": limit,
-               "inbox_revision": projection["inbox_revision"], "pagination_revision": projection["pagination_revision"]})
+               "inbox_revision": projection["inbox_revision"], "pagination_revision": projection["pagination_revision"],
+               "portrait_revision": projection["portrait_revision"], "tag_revision": projection["tag_revision"]})
 
 
 @router.get("/api/inbox/overview")
@@ -489,6 +531,7 @@ def conversation_revision() -> dict:
     payload = {
         **{k: v for k, v in status.items() if k not in _INTERNAL_SOURCE_FIELDS},
         **observe_inbox(InboxStore(), context.self_ali_id, context.data_dir),
+        **CustomerPortraitStore().observe_revisions(context.self_ali_id, context.data_dir),
         "ready": bool(status["ready"] or archive),
         "stale": bool(status["stale"] or (archive and not status["ready"])),
         "error_code": status.get("error_code") or None,
@@ -519,7 +562,7 @@ def get_conversation(conversation_id: int) -> dict:
         raise AppError("会话不存在", status_code=404)
     try:
         state = store.states(self_ali_id, context.data_dir, [conversation_id])[conversation_id]
-        return ok({**_build_aggregate(adapter, self_ali_id, conv), **public_state(state),
+        return ok({**_build_aggregate(adapter, self_ali_id, conv, context.data_dir), **public_state(state),
                    "read_snapshot": snapshot})
     except AppError:
         raise

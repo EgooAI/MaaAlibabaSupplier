@@ -18,7 +18,7 @@ from backend.app.shared.backend.account_context import get_account_context
 from backend.app.shared.utils.settings import FRONTEND_DEV_ORIGINS, resolve_repo_root
 from backend.app.shared.utils.log_context import bind_log_context
 
-from backend.app.api.routers import agent, app as app_router, auth, cards, conversations, messages, outbox, self, settings, status
+from backend.app.api.routers import agent, app as app_router, auth, cards, conversations, messages, outbox, portraits, self, settings, status
 
 
 def create_app() -> FastAPI:
@@ -104,6 +104,7 @@ def create_app() -> FastAPI:
     app.include_router(self.router, tags=["self"])
     app.include_router(status.router, tags=["status"])
     app.include_router(conversations.router, tags=["conversations"])
+    app.include_router(portraits.router, tags=["portraits"])
     app.include_router(messages.router, tags=["messages"])
     app.include_router(outbox.router, tags=["outbox"])
     app.include_router(cards.router, tags=["cards"])

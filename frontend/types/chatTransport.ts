@@ -1,6 +1,7 @@
 import type { BusinessCard } from "@/types/cards";
 import type { CustomerStage } from "@/types/chatCanonical";
 import type { InboxStateDto } from "./inbox";
+import type { BusinessTag, LostReason, PortraitStage } from "./portrait";
 import type { ID } from "@/types/common";
 
 export type TransportMessageRole = "buyer" | "seller" | "system" | "card";
@@ -89,6 +90,14 @@ export interface CustomerViewDto {
   phone: string;
   stage: CustomerStage;
   tags: string[];
+  cid?: number | null;
+  business_stage?: PortraitStage;
+  business_tags?: BusinessTag[];
+  business_version?: number;
+  lost_reason?: LostReason | null;
+  lost_note?: string | null;
+  lost_at?: number | null;
+  portrait_editable?: boolean;
   quality_tag?: string | null;
   growth_level?: string | null;
   industries?: string[];

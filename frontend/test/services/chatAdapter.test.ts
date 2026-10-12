@@ -141,4 +141,33 @@ describe("chat adapter", () => {
     expect(detail.customer.name).toBe("未知客户");
   });
 
+  it("maps portrait fields and defaults them when the backend omits them", () => {
+    const mapped = adaptConversationSummary({
+      ...aggregate,
+      customer_view: {
+        ...aggregate.customer_view!,
+        cid: 301,
+        business_stage: "lost",
+        business_tags: [{ tag_id: "tag-1", name: "价格敏感", archived: false }],
+        business_version: 4,
+        lost_reason: "price",
+        lost_note: "预算不足",
+        lost_at: 1756720000,
+        portrait_editable: true,
+      },
+    }).customer;
+    expect(mapped).toMatchObject({
+      cid: 301,
+      businessStage: "lost",
+      businessTags: [{ tag_id: "tag-1", name: "价格敏感", archived: false }],
+      businessVersion: 4,
+      lostReason: "price",
+      lostNote: "预算不足",
+      lostAt: 1756720000,
+      portraitEditable: true,
+    });
+    const bare = adaptConversationSummary({ ...aggregate, customer_view: { ...aggregate.customer_view!, cid: undefined, business_stage: undefined, business_tags: undefined, business_version: undefined, portrait_editable: undefined } }).customer;
+    expect(bare).toMatchObject({ cid: null, businessStage: "unknown", businessTags: [], businessVersion: 0, portraitEditable: false, lostReason: null });
+  });
+
 });

@@ -20,6 +20,32 @@ import type { OperationsBackend } from "@/services/interfaces";
 import { connectionSnapshot } from "@/mock/connectionData";
 import { ApiError } from "@/services/httpAdapter";
 import type { InboxSettings } from "@/types/inbox";
+import type {
+  LostReason,
+  PortraitBatchResult,
+  PortraitBatchTargetResult,
+  PortraitChangesInput,
+  PortraitStage,
+  PortraitTag,
+} from "@/types/portrait";
+
+type MockPortrait = {
+  stage: PortraitStage;
+  lost_reason: LostReason | null;
+  lost_note: string | null;
+  lost_at: number | null;
+  version: number;
+  updated_at: number;
+  tags: Set<string>;
+};
+
+type MockPortraitOperation = {
+  request_id: string;
+  kind: string;
+  created_at: number;
+  changes: PortraitChangesInput;
+  targets: PortraitBatchTargetResult[];
+};
 
 const delay = <T,>(value: T, ms = 280) => new Promise<T>((resolve) => setTimeout(() => resolve(value), ms));
 
@@ -57,6 +83,44 @@ let connectionStore = structuredClone(connectionSnapshot);
 const outboxStore = new Map<string, { scope: string; task: OutboxTask }>();
 const outboxScope = () => JSON.stringify([connectionStore.account.data_dir, connectionStore.account.self_ali_id]);
 const inboxSettings = new Map<string, InboxSettings>();
+const portraitTags = new Map<string, PortraitTag>();
+const portraits = new Map<number, MockPortrait>();
+const portraitOperations: MockPortraitOperation[] = [];
+const portraitReceipts = new Map<string, { payload: string; result: PortraitBatchResult }>();
+let portraitRevision = 0;
+let tagRevision = 0;
+
+function portraitUsage(tagId: string) {
+  return [...portraits.values()].filter((record) => record.tags.has(tagId)).length;
+}
+
+function mockPortraitRecord(cid: number): MockPortrait {
+  return portraits.get(cid) ?? { stage: "unknown", lost_reason: null, lost_note: null, lost_at: null, version: 0, updated_at: 0, tags: new Set() };
+}
+
+function mockPortraitView(cid: number) {
+  const record = portraits.get(cid);
+  return {
+    business_stage: record?.stage ?? "unknown",
+    business_tags: record
+      ? [...record.tags].map((tagId) => ({
+          tag_id: tagId,
+          name: portraitTags.get(tagId)?.name ?? tagId,
+          archived: Boolean(portraitTags.get(tagId)?.archived),
+        }))
+      : [],
+    business_version: record?.version ?? 0,
+    lost_reason: record?.lost_reason ?? null,
+    lost_note: record?.lost_note ?? null,
+    lost_at: record?.lost_at ?? null,
+  };
+}
+
+function enrichConversation(item: ConversationAggregateDto): ConversationAggregateDto {
+  const view = item.customer_view;
+  if (!view?.cid) return item;
+  return { ...item, customer_view: { ...view, ...mockPortraitView(view.cid) } };
+}
 function mockInboxSettings() {
   let value = inboxSettings.get(outboxScope());
   if (!value) { value = { timeout_seconds: 86400, inbox_revision: 1 }; inboxSettings.set(outboxScope(), value); }
@@ -74,6 +138,12 @@ function changeMockAccount() {
   connectionStore.account.epoch = crypto.randomUUID();
   connectionStore.source = { ...connectionStore.source, epoch: connectionStore.account.epoch, self_ali_id: connectionStore.account.self_ali_id, phase: "idle", ready: false, key_validation: "unverified", auto_enabled: false, freshness: "stale", stale: true, syncing: false, pending: false, last_error: null, error_code: null, retry_at: null };
   connectionStore.capabilities = { read_chat: false, use_ai: false, operate_client: Boolean(connectionStore.account.self_ali_id && connectionStore.client.connected) };
+  portraitTags.clear();
+  portraits.clear();
+  portraitOperations.length = 0;
+  portraitReceipts.clear();
+  portraitRevision = 0;
+  tagRevision = 0;
 }
 
 function checkMockEpoch(epoch: string) {
@@ -125,6 +195,12 @@ export const mockBackend: OperationsBackend = {
     translationJobs.clear();
     outboxStore.clear();
     inboxSettings.clear();
+    portraitTags.clear();
+    portraits.clear();
+    portraitOperations.length = 0;
+    portraitReceipts.clear();
+    portraitRevision = 0;
+    tagRevision = 0;
     return delay(undefined);
   },
 
@@ -179,10 +255,10 @@ export const mockBackend: OperationsBackend = {
 
   listConversations: async (query = {}) => {
     const settings = mockInboxSettings();
-    const token = `mock-page-${settings.inbox_revision}`;
+    const token = `mock-page-${settings.inbox_revision}-p${portraitRevision}-t${tagRevision}`;
     if ((query.offset ?? 0) > 0 && query.pagination_revision !== token) throw new ApiError("分页已过期", "/api/conversations", { status: 409 });
     const q = query.q?.toLowerCase();
-    const items = conversationStore.filter((item) => {
+    const items = conversationStore.map(enrichConversation).filter((item) => {
       const customer = adaptConversationSummary(item).customer;
       const customerMatch = [customer.name, customer.company, customer.aliId, customer.loginId].some((text) => text?.toLowerCase().includes(q ?? ""));
       const messageMatch = item.messages.some((message) => JSON.stringify(message.message.content).toLowerCase().includes(q ?? ""));
@@ -190,11 +266,14 @@ export const mockBackend: OperationsBackend = {
         && (!query.country || customer.country === query.country) && (!query.tag || customer.tags.includes(query.tag))
         && (!query.reply_state || item.reply_state === query.reply_state)
         && (query.unread === undefined || (item.unread_count > 0) === query.unread)
-        && (query.overdue === undefined || item.is_overdue === query.overdue);
+        && (query.overdue === undefined || item.is_overdue === query.overdue)
+        && (!query.portrait_stage || customer.businessStage === query.portrait_stage)
+        && (!query.business_tag?.length || query.business_tag.every((tagId) => customer.businessTags.some((tag) => tag.tag_id === tagId)))
+        && (query.lost_reason === undefined || customer.lostReason === query.lost_reason);
     }).sort((a, b) => (b.latest.updated_at ?? "").localeCompare(a.latest.updated_at ?? "") || b.sid - a.sid);
     const offset = query.offset ?? 0;
     const limit = query.limit ?? 50;
-    return delay({ items: items.slice(offset, offset + limit).map(adaptConversationSummary), total: items.length, offset, limit, inbox_revision: settings.inbox_revision, pagination_revision: token });
+    return delay({ items: items.slice(offset, offset + limit).map(adaptConversationSummary), total: items.length, offset, limit, inbox_revision: settings.inbox_revision, pagination_revision: token, portrait_revision: portraitRevision, tag_revision: tagRevision });
   },
 
   getInboxSettings: () => delay({ ...mockInboxSettings() }),
@@ -224,7 +303,7 @@ export const mockBackend: OperationsBackend = {
     return delay({ state: { unread_count, reply_state, pending_since, due_at, is_overdue, history_pending, uncertain, read_seq: 1, snapshot_seq: 1 }, inbox_revision: ++mockInboxSettings().inbox_revision });
   },
 
-  getConversationRevision: () => delay({ ...structuredClone(connectionStore.source), ready: connectionStore.capabilities.read_chat, inbox_revision: mockInboxSettings().inbox_revision, next_due_at: null }),
+  getConversationRevision: () => delay({ ...structuredClone(connectionStore.source), ready: connectionStore.capabilities.read_chat, inbox_revision: mockInboxSettings().inbox_revision, portrait_revision: portraitRevision, tag_revision: tagRevision, next_due_at: null }),
 
   getConversation: async (id) => delay(buildConversationDetail(id)),
 
@@ -291,6 +370,157 @@ export const mockBackend: OperationsBackend = {
   gotoContact: async () => {
     requireMockClient();
     return delay({ status: "queued" });
+  },
+
+  listPortraitTags: () => delay({
+    tags: [...portraitTags.values()].map((tag) => ({ ...tag, usage_count: portraitUsage(tag.tag_id) })),
+  }),
+
+  createPortraitTag: async ({ name, description = "" }) => {
+    const label = name.normalize("NFKC").trim();
+    if (!label) throw new Error("标签名称不能为空");
+    const key = label.toLowerCase();
+    if ([...portraitTags.values()].some((tag) => tag.name.toLowerCase() === key)) throw new Error("同名标签已存在");
+    const now = Date.now() / 1000;
+    const tag: PortraitTag = {
+      tag_id: crypto.randomUUID(), name: label, description: description.trim(),
+      archived: false, version: 1, created_at: now, updated_at: now, usage_count: 0,
+    };
+    portraitTags.set(tag.tag_id, tag);
+    ++tagRevision;
+    return delay({ tag: { ...tag } });
+  },
+
+  updatePortraitTag: async (tagId, input) => {
+    const tag = portraitTags.get(tagId);
+    if (!tag) throw new Error("标签不存在");
+    let changed = false;
+    if (input.name !== undefined) {
+      const label = input.name.normalize("NFKC").trim();
+      if (!label) throw new Error("标签名称不能为空");
+      if (label.toLowerCase() !== tag.name.toLowerCase()
+        && [...portraitTags.values()].some((candidate) => candidate.tag_id !== tagId && candidate.name.toLowerCase() === label.toLowerCase())) {
+        throw new Error("同名标签已存在");
+      }
+      if (label !== tag.name) { tag.name = label; changed = true; }
+    }
+    if (input.description !== undefined) {
+      const description = input.description.trim();
+      if (description !== tag.description) { tag.description = description; changed = true; }
+    }
+    if (input.archived !== undefined && input.archived !== tag.archived) { tag.archived = input.archived; changed = true; }
+    if (changed) {
+      tag.version += 1;
+      tag.updated_at = Date.now() / 1000;
+      ++tagRevision;
+    }
+    return delay({ tag: { ...tag, usage_count: portraitUsage(tagId) } });
+  },
+
+  savePortraitBatch: async (input) => {
+    const conflict = () => new ApiError("画像目标已变化，请刷新后重试", "/api/portraits/batch", { status: 409 });
+    const payload = JSON.stringify({ targets: input.targets, changes: input.changes });
+    const receipt = portraitReceipts.get(input.request_id);
+    if (receipt) {
+      if (receipt.payload !== payload) {
+        throw new ApiError("请求标识已用于其他画像操作", "/api/portraits/batch", { status: 409 });
+      }
+      return delay(structuredClone(receipt.result));
+    }
+    const addIds = input.changes.add_tag_ids ?? [];
+    const removeIds = input.changes.remove_tag_ids ?? [];
+    if (addIds.some((tagId) => removeIds.includes(tagId))) {
+      throw new ApiError("同一标签不能同时增加和移除", "/api/portraits/batch", { status: 422 });
+    }
+    for (const tagId of [...addIds, ...removeIds]) {
+      const tag = portraitTags.get(tagId);
+      if (!tag) throw new Error("标签不存在");
+      if (addIds.includes(tagId) && tag.archived) throw new Error(`标签「${tag.name}」已停用，不能新增`);
+    }
+    const byCid = new Map<number, number[]>();
+    for (const target of input.targets) {
+      const conversation = conversationStore.find((item) => item.sid === target.sid);
+      const cid = conversation?.customer_view?.cid;
+      if (!cid || cid !== target.expected_cid) throw conflict();
+      if (mockPortraitRecord(cid).version !== target.expected_version) throw conflict();
+      byCid.set(cid, [...(byCid.get(cid) ?? []), target.sid]);
+    }
+    const lostRequested = input.changes.lost_reason !== undefined || input.changes.lost_note !== undefined;
+    if (lostRequested) {
+      for (const cid of byCid.keys()) {
+        const stage = input.changes.stage ?? mockPortraitRecord(cid).stage;
+        if (stage !== "lost") {
+          throw new ApiError("失败原因和备注仅在流失阶段维护", "/api/portraits/batch", { status: 422 });
+        }
+      }
+    }
+    const result: PortraitBatchResult = {
+      request_id: input.request_id, portrait_revision: portraitRevision, tag_revision: tagRevision,
+      changed: [], unchanged: [],
+    };
+    const now = Date.now() / 1000;
+    for (const [cid, sids] of byCid) {
+      const base = mockPortraitRecord(cid);
+      const record = { ...base, tags: new Set(base.tags) };
+      let changed = false;
+      const { changes } = input;
+      if (changes.stage !== undefined && record.stage !== changes.stage) { record.stage = changes.stage; changed = true; }
+      if (record.stage === "lost") {
+        if (changes.lost_reason !== undefined && record.lost_reason !== changes.lost_reason) { record.lost_reason = changes.lost_reason; changed = true; }
+        if (changes.lost_note !== undefined && record.lost_note !== changes.lost_note) { record.lost_note = changes.lost_note; changed = true; }
+        if (!record.lost_at) { record.lost_at = now; changed = true; }
+      } else if (record.lost_reason !== null || record.lost_note !== null || record.lost_at !== null) {
+        record.lost_reason = null; record.lost_note = null; record.lost_at = null; changed = true;
+      }
+      for (const tagId of changes.add_tag_ids ?? []) if (!record.tags.has(tagId)) { record.tags.add(tagId); changed = true; }
+      for (const tagId of changes.remove_tag_ids ?? []) if (record.tags.delete(tagId)) changed = true;
+      const entry = { cid, sids: [...sids].sort((a, b) => a - b), version: record.version + (changed ? 1 : 0) };
+      if (changed) { record.version += 1; record.updated_at = now; portraits.set(cid, record); result.changed.push(entry); }
+      else result.unchanged.push(entry);
+    }
+    if (result.changed.length) ++portraitRevision;
+    result.portrait_revision = portraitRevision;
+    result.tag_revision = tagRevision;
+    portraitOperations.unshift({
+      request_id: input.request_id, kind: "batch", created_at: now,
+      changes: input.changes, targets: [...result.changed, ...result.unchanged],
+    });
+    portraitReceipts.set(input.request_id, { payload, result: structuredClone(result) });
+    return delay(result);
+  },
+
+  exportPortraits: async ({ conversationIds }) => {
+    const rows = new Map<number, string[]>();
+    const missing: number[] = [];
+    for (const sid of conversationIds) {
+      const conversation = conversationStore.find((item) => item.sid === sid);
+      const cid = conversation?.customer_view?.cid;
+      if (!conversation || !cid) { missing.push(sid); continue; }
+      if (rows.has(cid)) continue;
+      const customer = adaptConversationSummary(conversation).customer;
+      const view = mockPortraitView(cid);
+      const updatedAt = portraits.get(cid)?.updated_at;
+      rows.set(cid, [
+        String(cid), customer.aliId ?? "", customer.name, customer.company, customer.country,
+        view.business_stage, view.business_tags.map((tag) => tag.name).join("; "),
+        view.lost_reason ?? "", view.lost_note ?? "", updatedAt ? new Date(updatedAt * 1000).toISOString() : "",
+      ]);
+    }
+    const header = "cid,ali_id,name,company,country,stage,business_tags,lost_reason,lost_note,updated_at";
+    const csvCell = (value: string) => {
+      const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+      return `"${guarded.replaceAll('"', '""')}"`;
+    };
+    const content = [header, ...[...rows.values()].map((row) => row.map(csvCell).join(","))].join("\r\n");
+    return delay({ filename: "customer-portraits-mock.csv", content: `\ufeff${content}\r\n`, exported: rows.size, missing });
+  },
+
+  listPortraitOperations: (cid, limit = 20) => {
+    const operations = portraitOperations
+      .map((entry) => ({ ...entry, targets: entry.targets.filter((target) => target.cid === cid) }))
+      .filter((entry) => entry.targets.length)
+      .slice(0, limit);
+    return delay({ operations: structuredClone(operations) });
   },
 
   checkUserStatus: () => delay(structuredClone(keyStatusStore)),
@@ -489,7 +719,7 @@ export const mockBackend: OperationsBackend = {
 function buildConversationDetail(id: string): ConversationDetail {
   const conversation = conversationStore.find((item) => conversationMatchesId(item, id));
   if (!conversation) throw new Error("会话不存在");
-  return adaptConversationDetail(conversation, { cards: businessCardStore });
+  return adaptConversationDetail(enrichConversation(conversation), { cards: businessCardStore });
 }
 
 function queueMockTask(description: string, target: string): TaskSnapshot {

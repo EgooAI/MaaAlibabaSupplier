@@ -37,6 +37,7 @@ from backend.app.shared.crm.sdk import (
 from backend.app.shared.crm.views import (
     CrmConversation,
     CrmMessage,
+    is_self_account,
     message_display_text,
 )
 from backend.app.shared.crm.sync_store import canonical_source_dir, upsert_messages, write_sync_state
@@ -54,6 +55,19 @@ MAPPING_LOGIN_ID = "login_id"
 MAPPING_ENCRYPT_ACCOUNT_ID = "encrypt_account_id"
 
 _SYNC_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="crm-sync")
+
+
+class IdentityConflictError(ValueError):
+    """Aliases resolve to different existing accounts.
+
+    The sync refuses to redirect mappings silently: a redirect can change which
+    customer a session or portrait belongs to. Callers either keep the
+    conversation's previously committed contact or reject the snapshot.
+    """
+
+    def __init__(self, message: str, aliases: list[tuple[str, str]] | None = None) -> None:
+        super().__init__(message)
+        self.aliases = aliases or []
 
 
 class CRMAdapter:
@@ -127,21 +141,37 @@ class CRMAdapter:
             # Explicit BEGIN also makes SQLite DDL transactional and serializes revisions.
             session.execute(text("BEGIN IMMEDIATE"))
             self.ensure_platform(session)
-            self_aid = self.upsert_self_info(self_info, session)
+            try:
+                self_aid = self.upsert_self_info(self_info, session)
+            except IdentityConflictError as error:
+                logger.warning("CRM seller identity conflict; keeping the account marked is_self aliases={}", error.aliases)
+                self_aid = self._resolve_conflicted_self(self_info, session)
+            if self_aid is None:
+                raise ValueError("IM sync could not resolve seller identity")
             messages = []
             for conv in conversations:
                 contact_info = user_pool.get(conv.contact_ali_id)
-                contact_aid = self.upsert_user_info(contact_info, session) if contact_info else self._upsert_account(
-                    ali_id=conv.contact_ali_id,
-                    login_id="",
-                    encrypt_account_id="",
-                    display_name=conv.contact_ali_id,
-                    avatar="",
-                    is_self=False,
-                    extra={"ali_id": conv.contact_ali_id},
-                    session=session,
-                )
-                if self_aid is None or contact_aid is None:
+                contact_aid = None
+                try:
+                    contact_aid = self.upsert_user_info(contact_info, session) if contact_info else self._upsert_account(
+                        ali_id=conv.contact_ali_id,
+                        login_id="",
+                        encrypt_account_id="",
+                        display_name=conv.contact_ali_id,
+                        avatar="",
+                        is_self=False,
+                        extra={"ali_id": conv.contact_ali_id},
+                        session=session,
+                    )
+                except IdentityConflictError as error:
+                    logger.warning(
+                        "CRM identity conflict for contact {}; keeping the committed contact aliases={}",
+                        conv.contact_ali_id,
+                        error.aliases,
+                    )
+                if contact_aid is None:
+                    contact_aid = self._resolve_conflicted_contact(self_info.ali_id, conv.contact_ali_id, session)
+                if contact_aid is None:
                     raise ValueError("IM sync could not resolve account identity")
                 session_meta = self._upsert_session(
                     self_info.ali_id, conv.contact_ali_id, [self_aid, contact_aid], session,
@@ -172,16 +202,24 @@ class CRMAdapter:
         if not identity_key:
             return None
 
+        hits = self._mapping_hits(
+            ali_id=ali_id, login_id=login_id, encrypt_account_id=encrypt_account_id, session=session,
+        )
+        aids = {aid for _, _, aid in hits}
+        if len(aids) > 1:
+            raise IdentityConflictError(
+                "conflicting identity aliases resolve to different accounts",
+                aliases=[(mapping_type, key) for mapping_type, key, _ in hits],
+            )
         account = None
-        for mapping_type, key in (
-            (MAPPING_ALI_ID, ali_id),
-            (MAPPING_LOGIN_ID, login_id),
-            (MAPPING_ENCRYPT_ACCOUNT_ID, encrypt_account_id),
-        ):
-            if key:
-                account = self._account_by_mapping(mapping_type, key, session)
-                if account is not None:
-                    break
+        if aids:
+            aid = next(iter(aids))
+            account = session.get(Account, aid) if session is not None else self.accounts.get_account(aid)
+            if account is None:
+                raise IdentityConflictError(
+                    "identity aliases point at a missing account",
+                    aliases=[(mapping_type, key) for mapping_type, key, _ in hits],
+                )
         customer = self._build_customer_payload(
             account=account,
             display_name=display_name,
@@ -296,6 +334,75 @@ class CRMAdapter:
             type=_message_type(row),
             created_at=datetime.fromtimestamp(epoch) if epoch is not None else None,
         )
+
+    def _mapping_hits(
+        self, *, ali_id: str, login_id: str, encrypt_account_id: str, session: Session | None,
+    ) -> list[tuple[str, str, int]]:
+        """All mapping rows for the supplied aliases, without choosing a winner."""
+        hits: list[tuple[str, str, int]] = []
+        for mapping_type, key in (
+            (MAPPING_ALI_ID, ali_id),
+            (MAPPING_LOGIN_ID, login_id),
+            (MAPPING_ENCRYPT_ACCOUNT_ID, encrypt_account_id),
+        ):
+            if not key:
+                continue
+            with nullcontext(session) if session is not None else Session(self.engine) as work:
+                rows = work.exec(select(AccountMapping).where(
+                    AccountMapping.type == mapping_type, AccountMapping.key == key,
+                )).all()
+            hits.extend((mapping_type, key, row.aid) for row in rows)
+        return hits
+
+    def _resolve_conflicted_contact(self, self_ali_id: str, contact_ali_id: str, session: Session) -> int | None:
+        """Keep a definite chat target when profile aliases conflict.
+
+        The previously committed session contact wins; the exact ``ali_id``
+        mapping is used only when there is no committed contact. A disagreement
+        between the two returns ``None`` so the caller rejects the snapshot
+        instead of moving the session to another customer.
+        """
+        exact = session.exec(select(AccountMapping).where(
+            AccountMapping.type == MAPPING_ALI_ID, AccountMapping.key == contact_ali_id,
+        )).all()
+        exact_aids = {row.aid for row in exact}
+        existing = self._session_by_key(session_key(self_ali_id, contact_ali_id), session)
+        prior_aid = None
+        if existing is not None:
+            participants = existing.participants or []
+            if isinstance(participants, str):
+                participants = json.loads(participants)
+            if len(participants) >= 2:
+                candidate = session.get(Account, participants[1])
+                if candidate is not None and candidate.pid == PLATFORM_PID and not is_self_account(candidate):
+                    prior_aid = candidate.aid
+        if prior_aid is not None:
+            if len(exact_aids) == 1 and next(iter(exact_aids)) != prior_aid:
+                return None
+            return prior_aid
+        if len(exact_aids) == 1:
+            aid = next(iter(exact_aids))
+            return aid if session.get(Account, aid) is not None else None
+        return None
+
+    def _resolve_conflicted_self(self, self_info: SelfInfo, session: Session) -> int | None:
+        """Recover the seller account when self aliases disagree.
+
+        The account explicitly marked ``is_self`` wins; with zero or multiple
+        candidates the caller must fail the sync instead of guessing.
+        """
+        hits = self._mapping_hits(
+            ali_id=self_info.ali_id,
+            login_id=self_info.login_id,
+            encrypt_account_id=self_info.encrypt_account_id,
+            session=session,
+        )
+        marked = []
+        for aid in {aid for _, _, aid in hits}:
+            account = session.get(Account, aid)
+            if account is not None and is_self_account(account):
+                marked.append(aid)
+        return marked[0] if len(marked) == 1 else None
 
     def _account_by_mapping(self, mapping_type: str, key: str, session: Session | None = None) -> Any | None:
         with nullcontext(session) if session is not None else Session(self.engine) as session:
@@ -474,7 +581,17 @@ def _sync_user_infos_now(infos: list[UserInfo]) -> None:
         session.execute(text("BEGIN IMMEDIATE"))
         adapter.ensure_platform(session)
         for info in infos:
-            adapter.upsert_user_info(info, session)
+            try:
+                adapter.upsert_user_info(info, session)
+            except IdentityConflictError as error:
+                # Profile enrichment is best effort: skip the disputed item and
+                # keep the committed identity instead of redirecting aliases.
+                logger.warning(
+                    "CRM profile enrichment skipped: identity conflict for ali_id={} aliases={}",
+                    info.ali_id,
+                    error.aliases,
+                )
+        session.commit()
 
 
 def _sync_self_info_now(info: SelfInfo) -> None:

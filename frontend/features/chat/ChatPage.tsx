@@ -68,7 +68,7 @@ function ChatWorkspace() {
       loading={workbench.loading}
       extra={<Tooltip title="管理会话"><Button type="text" size="small" aria-label="管理会话" icon={<SettingOutlined />} onClick={() => router.push("/batch")} /></Tooltip>}
     >
-      <ConversationFilters key={params} query={inboxQueryFromUrl(new URLSearchParams(params))} onChange={workbench.changeQuery} />
+      <ConversationFilters key={params} query={inboxQueryFromUrl(new URLSearchParams(params))} onChange={workbench.changeQuery} tagOptions={workbench.portraitTags} />
       <div className="app-scroll min-h-0 flex-1 overflow-y-auto">
         <ConversationList
           conversations={workbench.conversations}
@@ -190,7 +190,15 @@ function ChatWorkspace() {
 
       <AssistantSuggestionModal open={workbench.suggestionOpen} suggestions={workbench.suggestions} error={workbench.suggestionError} onClose={() => workbench.setSuggestionOpen(false)} onInsert={workbench.insertSuggestion} />
       <ChatAnalysisModal open={workbench.analysisOpen} analysis={active?.analysis} focus={analysisFocus} loading={workbench.analysisLoading} error={workbench.analysisError} onClose={() => workbench.setAnalysisOpen(false)} />
-      <CustomerInfo conversation={active} open={customerInfoOpen} onClose={() => setCustomerInfoOpen(false)} onGotoContact={() => void workbench.gotoContact()} />
+      <CustomerInfo
+        conversation={active}
+        open={customerInfoOpen}
+        onClose={() => setCustomerInfoOpen(false)}
+        onGotoContact={() => void workbench.gotoContact()}
+        onSaved={() => { void workbench.refreshActiveDetail(); void workbench.reload(); }}
+        portraitTags={workbench.portraitTags}
+        onTagCreated={workbench.addPortraitTag}
+      />
       <CardDetailDrawer card={workbench.activeCard} open={Boolean(workbench.activeCard)} onClose={() => workbench.setActiveCardId(undefined)} />
     </>
   );

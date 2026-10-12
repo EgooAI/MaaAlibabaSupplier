@@ -1,8 +1,9 @@
 # Stage 4 Inbox API
 
 All responses retain the existing `{code, msg, data}` envelope. Account
-responses carry `X-Account-Epoch`. POST/PUT require the current epoch header;
-missing/stale epochs return 409. Inbox writes do not require GUI confirmation.
+responses carry `X-Account-Epoch`. Writes (POST/PUT/PATCH/DELETE) require the
+current epoch header; missing/stale epochs return 409, while reads tolerate a
+missing header. Inbox writes do not require GUI confirmation.
 
 ## List and Overview
 
@@ -15,6 +16,8 @@ missing/stale epochs return 409. Inbox writes do not require GUI confirmation.
   offset: number,
   limit: number,
   inbox_revision: number,
+  portrait_revision: number,
+  tag_revision: number,
   pagination_revision: string
 }
 ```
@@ -26,13 +29,19 @@ Supported query parameters:
 | q | Literal search, max 200 characters, default empty |
 | search_scope | `all` (default), `customer`, `messages` |
 | country | Exact resolved country, Unicode casefold comparison |
-| tag | Exact quality/growth tag, case sensitive |
+| tag | Exact platform quality/growth tag, case sensitive |
 | reply_state | `needs_reply`, `waiting_customer`, `history_pending`, `none`, `unknown` |
 | unread | Optional boolean, matches conversations with unread_count > 0 |
 | overdue | Optional boolean |
+| portrait_stage | Business stage: `unknown`, `new_inquiry`, `following_up`, `negotiating`, `won`, `dormant`, `lost` |
+| business_tag | Repeatable business tag id; all supplied tags must match |
+| lost_reason | `unreachable`, `price`, `product_mismatch`, `delivery`, `competitor`, `unclear` |
 | offset | Integer >= 0, default 0 |
 | limit | Integer 1..100, default 50 |
 | pagination_revision | Required when offset > 0 |
+
+Business portrait filters and fields are documented in [PORTRAITS.md](PORTRAITS.md).
+Platform tags (`tag`) and business tags (`business_tag`) are independent sources.
 
 Missing or changed pagination_revision on a later page returns 409: discard
 loaded pages and request offset=0. Reuse the same filters with the token.
@@ -124,12 +133,15 @@ PUT with `{timeout_seconds}` returns the same shape. The value must be an intege
 PUT returns 409 immediately when the account is busy.
 
 GET `/api/conversations/revision` retains existing fields and adds
-`inbox_revision: number` and `next_due_at: number | null` (earliest future pending
-deadline in Unix seconds). This endpoint is observation only: it does not create
-tables, initialize a baseline, migrate SDK data, read/decrypt the IM source or
-schedule sync. Polling revision is not a snapshot shared with later requests.
-Reload list/overview when a known deadline crosses, or periodically (for example
-once a minute); inbox_revision alone cannot signal a time threshold crossing.
+`inbox_revision: number`, `portrait_revision: number`, `tag_revision: number` and
+`next_due_at: number | null` (earliest future pending deadline in Unix seconds).
+`portrait_revision` tracks committed customer portrait edits in the current
+workspace; `tag_revision` tracks shared tag definition changes. This endpoint is
+observation only: it does not create tables, initialize a baseline, migrate SDK
+data, read/decrypt the IM source or schedule sync. Polling revision is not a
+snapshot shared with later requests. Reload list/overview when a known deadline
+crosses or any observed revision increases, or periodically (for example once a
+minute); inbox_revision alone cannot signal a time threshold crossing.
 
 The first list/detail/overview/settings access may initialize an existing selected
 archive once through InboxStore.initialize. This adds application-owned inbox
@@ -141,8 +153,9 @@ successful source sync establishes history with zero unread.
 
 ## Integration Boundary
 
-The new shared/crm/inbox_queries.py confines read-transaction access to
-InboxStore._connection/_metadata/_states. No InboxStore, SDK, sync.py or
-sync_store.py changes are required by this API implementation. A future public
-read-session exposure can replace these private calls without changing HTTP
-contracts. Stage 3 send/outbox/confirmation endpoints are unchanged.
+The new shared/crm/inbox_queries.py reads inbox scope inside its own SQLite
+read transactions (and customer_portrait_store.py does the same for portrait
+projections); no InboxStore, SDK, sync.py or sync_store.py public API change is
+required. A future public read-session exposure can replace these private calls
+without changing HTTP contracts. Stage 3 send/outbox/confirmation endpoints are
+unchanged.

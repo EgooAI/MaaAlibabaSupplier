@@ -2,6 +2,7 @@ import type { AgentConsoleState, AgentTestInput, AgentTestResult, AgentTestSessi
 import type { AssistantSuggestion, ConversationAnalysis, ConversationDetail } from "@/types/chatCanonical";
 import type { ConversationPage, ConversationQuery, InboxOverview, InboxSettings, ReadReceipt } from "@/types/inbox";
 import type { ExportConversationsInput, ExportConversationsResult, OutboxTask, RequestTranslationsInput, RequestTranslationsResult, TranslationQueryInput, TranslationQueryResult, TranslationJobSnapshot, SendMessageInput, SendMessageResult, ConversationRevision } from "@/types/chatOperations";
+import type { PortraitBatchInput, PortraitBatchResult, PortraitExportInput, PortraitExportResult, PortraitOperationEntry, PortraitTag } from "@/types/portrait";
 import type { SelfInfo } from "@/types/home";
 import type { AccountEpoch, ConnectionSnapshot } from "@/types/connection";
 import type { UpdateState } from "@/types/update";
@@ -43,6 +44,13 @@ export interface OperationsBackend {
   getOutboxScreenshot(id: string, screenshotId: string, version: number): Promise<Blob>;
   exportConversations(input: ExportConversationsInput): Promise<ExportConversationsResult>;
   gotoContact(conversationId: string, loginId: string): Promise<{ status: string }>;
+
+  listPortraitTags(): Promise<{ tags: PortraitTag[] }>;
+  createPortraitTag(input: { name: string; description?: string }): Promise<{ tag: PortraitTag }>;
+  updatePortraitTag(tagId: string, input: { name?: string; description?: string; archived?: boolean }): Promise<{ tag: PortraitTag }>;
+  savePortraitBatch(input: PortraitBatchInput): Promise<PortraitBatchResult>;
+  exportPortraits(input: PortraitExportInput): Promise<PortraitExportResult>;
+  listPortraitOperations(cid: number): Promise<{ operations: PortraitOperationEntry[] }>;
 
   checkUserStatus(): Promise<KeyStatus>;
   checkMitmProxy(): Promise<NetworkStatus>;

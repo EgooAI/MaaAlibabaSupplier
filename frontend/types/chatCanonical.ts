@@ -1,6 +1,7 @@
 import type { BusinessCard } from "@/types/cards";
 import type { ID } from "@/types/common";
 import type { ReplyState } from "./inbox";
+import type { BusinessTag, LostReason, PortraitStage } from "./portrait";
 
 export type CustomerStage = "unknown" | "new" | "interested" | "negotiating" | "risk" | "done";
 export type MessageRole = "unknown" | "buyer" | "seller" | "system" | "card";
@@ -32,6 +33,16 @@ export interface CustomerProfile {
   phone: string;
   stage: CustomerStage;
   tags: string[];
+  // Portrait fields resolved by chatAdapter; older backends without portrait
+  // support yield cid null, unknown stage, version 0 and portraitEditable false.
+  cid: number | null;
+  businessStage: PortraitStage;
+  businessTags: BusinessTag[];
+  businessVersion: number;
+  lostReason: LostReason | null;
+  lostNote: string | null;
+  lostAt: number | null;
+  portraitEditable: boolean;
   qualityTag?: string;
   growthLevel?: string;
   industries?: string[];

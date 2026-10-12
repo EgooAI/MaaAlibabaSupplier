@@ -1,9 +1,10 @@
 "use client";
 
-import { Avatar, Button, Checkbox, Empty, Radio, Space, Typography } from "antd";
+import { Avatar, Button, Checkbox, Empty, Radio, Space, Tag, Typography } from "antd";
 import { useMemo } from "react";
 import { avatarColorOf, avatarInitialOf } from "@/domain/chat/avatarModel";
 import { conversationTimeLabel, dialogueCountOf, groupConversations } from "@/domain/chat/chatModel";
+import { portraitStageColor, portraitStageLabel } from "@/domain/portrait/portraitModel";
 import { InboxBadges } from "./InboxBadges";
 import { EMPTY_TEXT } from "@/components/empty";
 import type { ConversationGroupMode } from "@/domain/chat/chatModel";
@@ -90,6 +91,14 @@ export function ConversationList({
                       {item.latestMessage ? <div className="mt-1 truncate text-xs text-slate-500">{item.latestMessage}</div> : null}
                       <div className="mt-1.5 flex flex-wrap items-center gap-1">
                         <InboxBadges conversation={item} compact={!selectable} />
+                        {item.customer.businessStage !== "unknown" ? (
+                          <Tag color={portraitStageColor(item.customer.businessStage)} className="!m-0 !text-[11px]">
+                            {portraitStageLabel(item.customer.businessStage)}
+                          </Tag>
+                        ) : null}
+                        {item.customer.businessTags.slice(0, 2).map((tag) => (
+                          <Tag key={tag.tag_id} className="!m-0 !text-[11px]">{tag.name}</Tag>
+                        ))}
                         {item.customer.country ? <span className="text-[11px] text-slate-400">{item.customer.country}</span> : null}
                       </div>
                     </div>

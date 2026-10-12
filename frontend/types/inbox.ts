@@ -1,4 +1,5 @@
 import type { Conversation } from "./chatCanonical";
+import type { LostReason, PortraitStage } from "./portrait";
 
 export type ReplyState = "needs_reply" | "waiting_customer" | "history_pending" | "none" | "unknown";
 
@@ -20,6 +21,9 @@ export interface ConversationQuery {
   reply_state?: ReplyState;
   unread?: boolean;
   overdue?: boolean;
+  portrait_stage?: PortraitStage;
+  business_tag?: string[];
+  lost_reason?: LostReason;
   offset?: number;
   limit?: number;
   pagination_revision?: string;
@@ -32,6 +36,8 @@ export interface ConversationPage<T = Conversation> {
   limit: number;
   inbox_revision: number;
   pagination_revision: string;
+  portrait_revision?: number;
+  tag_revision?: number;
 }
 
 export interface ReadReceipt {

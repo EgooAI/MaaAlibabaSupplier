@@ -98,7 +98,8 @@ APP -> 127.0.0.1:8084 Yak/Yakit MITM -> 127.0.0.1:8085 Python receiver -> parser
 - 回复超时默认 24 小时，可按卖家和目录设置为 1 到 168 小时。到期状态按当前时间计算，无新消息时也会更新。`inbox_revision` 通知阅读、台账和配置变化，另提供 `next_due_at` 供页面刷新。
 - `inbox_queries.py` 在一个 SQLite 读事务中按当前目录台账筛选消息、资料和回复状态，支持历史正文/客户搜索、国家、已有资料标签、未读和待回复筛选。分页按最新时间与 SID 稳定排序，数据或到期状态变化后旧分页版本失效，前端回到第一页。
 - 列表、详情、AI 上下文与导出共用当前目录的消息成员范围；首页按会话而非消息计数。SDK 仍只保存每个消息 ID 的当前正文，不具备同 ID 跨目录正文版本的完整来源历史。
-- 首页面向已接入账号展示收件箱统计，未接入时保留引导。自定义客户标签、可维护成交阶段和今日跟进仍属于后续 P1，不以固定值冒充实现。接口详见 `api/INBOX.md`。
+- 首页面向已接入账号展示收件箱统计，未接入时保留引导。
+- 客户经营画像（可维护阶段、业务标签、失败信息）使用应用扩展表按工作区隔离，支持筛选、批量维护、变更记录与 CSV 导出，见 `api/PORTRAITS.md`；AI 建议、自动重算和动态人群仍属后续迭代。
 
 ### CRM 读取边界
 
@@ -114,7 +115,7 @@ UI/业务以 `app.shared.crm` 为稳定入口：
 - 业务上 `Customer` : `Account` 为 1:1（SDK 允许多 Account，本业务不拆）；`Customer` 是实体，`Account` 是其聊天账号；原始数据多在 Account 侧采集再归并到 Customer。
 - 唯一平台：`Platform.pid = alibaba_icbu`。
 - CRM SQLite 与 MITM/`pools.db` 分离；不要在应用侧再持久化 `user_info` / 进程内翻译缓存——资料进 `Account.extra`，译文进 SDK `Translate`。
-- `AccountMapping` 使用 `ali_id` / `login_id` / `encrypt_account_id` 解析到同一 Account；先匹配再新建，后出现的 `ali_id` 应合并而非重复建号。同一 key 指向不同 aid 时，重定向到先匹配的 aid 并记录 redirect 日志。
+- `AccountMapping` 使用 `ali_id` / `login_id` / `encrypt_account_id` 解析到同一 Account；先匹配再新建。请求内的别名命中不同 aid 时按身份冲突处理：不再静默重定向；资料富化跳过该条目，聊天同步沿用已提交的会话联系人，或在归属无法确定时拒绝该次源快照。
 - 卖家自身也要有 Customer/Account/Mapping，`Account.extra.is_self = true`。
 - 消息统一 upsert 到 SDK `Message`；`external_mid = alibaba_icbu:{self_ali_id}:{table_name}:{mid}`，跨卖家、跨表隔离；`content` 保留足够原始字段。
 - `CRMAdapter` 首次访问旧库时由 `migrations.py` 自动迁移消息标识。在数据库同目录的 `backups/` 保存完整 SQLite 备份后，事务内更新标识、引用链和迁移标记。身份归属不明确、备份失败或引用损坏会回滚并阻止继续导入；不会猜测归属或删除消息。迁移无法恢复此前已被覆盖的历史内容。

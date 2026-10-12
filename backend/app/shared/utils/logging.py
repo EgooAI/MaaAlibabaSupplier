@@ -57,6 +57,8 @@ _RUNTIME_MESSAGES = (
     "Outbox verifier has not stopped", "Outbox GUI attempt still running after shutdown timeout",
     "IM sync service tick failed", "IM source refresh failed", "IM database source snapshot refreshed",
     "CRM sync state restore failed", "CRM mapping redirect", "Failed to sync data into CRM SDK",
+    "CRM seller identity conflict", "CRM identity conflict for contact",
+    "CRM profile enrichment skipped: identity conflict",
     "Failed to load SelfInfo from CRM SDK", "Ignoring corrupt app config", "Failed to write app config",
     "Stored account key is corrupt, ignoring", "Encrypted DB not found", "DB decryption failed",
     "Rebuilt IM cache validation failed; discarded", "IM source copy failed; retaining previous cache",

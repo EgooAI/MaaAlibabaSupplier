@@ -4,6 +4,7 @@ import { Card, Space, Spin } from "antd";
 import { Suspense, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { inboxQueryFromUrl } from "@/domain/chat/inboxModel";
+import { portraitStageLabel } from "@/domain/portrait/portraitModel";
 import { ConversationFilters, ConversationPaging } from "./conversation/ConversationFilters";
 import { BatchManagement } from "./batch/BatchManagement";
 import { ConversationList } from "./conversation/ConversationList";
@@ -28,6 +29,7 @@ function BatchWorkspace() {
     previousParams.current = params;
     changeQuery(inboxQueryFromUrl(new URLSearchParams(params)));
   }, [params, changeQuery]);
+  const tagName = (tagId: string) => workbench.portraitTags.find((tag) => tag.tag_id === tagId)?.name ?? tagId;
 
   return (
     <Space orientation="vertical" size="large" className="w-full">
@@ -35,14 +37,22 @@ function BatchWorkspace() {
       <SyncStatus refreshError={workbench.refreshError} refreshPending={workbench.refreshPending} />
       <BatchManagement
         selectedCount={workbench.selectedCount}
+        selectedCustomerCount={workbench.selectedCustomerCount}
         exporting={workbench.exporting}
+        exportingPortraits={workbench.exportingPortraits}
+        portraitBusy={workbench.portraitBusy}
+        portraitTags={workbench.portraitTags}
         onSelectAll={workbench.selectAll}
         onInvert={workbench.invertSelection}
         onClear={workbench.clearSelection}
         onExport={workbench.exportSelected}
+        onExportPortraits={() => void workbench.exportPortraits()}
+        onSetStage={(stage) => workbench.applyPortraitChanges({ stage }, `阶段设为「${portraitStageLabel(stage)}」`)}
+        onAddTag={(tagId) => workbench.applyPortraitChanges({ add_tag_ids: [tagId] }, `增加标签「${tagName(tagId)}」`)}
+        onRemoveTag={(tagId) => workbench.applyPortraitChanges({ remove_tag_ids: [tagId] }, `移除标签「${tagName(tagId)}」`)}
       />
       <Card title="选择会话" loading={workbench.loading}>
-        <ConversationFilters key={params} query={inboxQueryFromUrl(new URLSearchParams(params))} onChange={workbench.changeQuery} />
+        <ConversationFilters key={params} query={inboxQueryFromUrl(new URLSearchParams(params))} onChange={workbench.changeQuery} tagOptions={workbench.portraitTags} />
         <ConversationPaging page={workbench.page} pending={workbench.pagePending} onChange={workbench.changePage} />
         <ConversationList
           conversations={workbench.conversations}

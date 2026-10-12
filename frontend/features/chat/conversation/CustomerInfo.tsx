@@ -1,19 +1,42 @@
 "use client";
 
 import { Button, Card, Descriptions, Drawer, Space, Tag } from "antd";
-import { stageLabel } from "@/domain/chat/chatModel";
 import type { ConversationDetail } from "@/types/chatCanonical";
+import type { PortraitTag } from "@/types/portrait";
 import { useAccount } from "@/features/account/AccountProvider";
+import { PortraitEditor } from "./PortraitEditor";
 
-export function CustomerInfo({ conversation, open, onClose, onGotoContact }: { conversation?: ConversationDetail; open: boolean; onClose: () => void; onGotoContact?: () => void }) {
+export function CustomerInfo({ conversation, open, onClose, onGotoContact, onSaved, portraitTags, onTagCreated }: {
+  conversation?: ConversationDetail;
+  open: boolean;
+  onClose: () => void;
+  onGotoContact?: () => void;
+  onSaved?: () => void;
+  portraitTags: PortraitTag[];
+  onTagCreated?: (tag: PortraitTag) => void;
+}) {
   return (
     <Drawer title="客户详情" size={520} open={open} onClose={onClose} destroyOnHidden>
-      {conversation ? <CustomerInfoContent conversation={conversation} onGotoContact={onGotoContact} /> : null}
+      {conversation ? (
+        <CustomerInfoContent
+          conversation={conversation}
+          onGotoContact={onGotoContact}
+          onSaved={onSaved}
+          portraitTags={portraitTags}
+          onTagCreated={onTagCreated}
+        />
+      ) : null}
     </Drawer>
   );
 }
 
-function CustomerInfoContent({ conversation, onGotoContact }: { conversation: ConversationDetail; onGotoContact?: () => void }) {
+function CustomerInfoContent({ conversation, onGotoContact, onSaved, portraitTags, onTagCreated }: {
+  conversation: ConversationDetail;
+  onGotoContact?: () => void;
+  onSaved?: () => void;
+  portraitTags: PortraitTag[];
+  onTagCreated?: (tag: PortraitTag) => void;
+}) {
   const { snapshot, blocked } = useAccount();
   const { customer } = conversation;
   const value = (text: string | number | undefined) => (text === undefined || text === null || String(text).trim() === "" ? "—" : String(text));
@@ -21,6 +44,7 @@ function CustomerInfoContent({ conversation, onGotoContact }: { conversation: Co
 
   return (
     <Space orientation="vertical" className="w-full" size="middle">
+      <PortraitEditor conversation={conversation} tags={portraitTags} onTagCreated={onTagCreated} onSaved={onSaved} />
       <Card title="身份" extra={onGotoContact ? <Button size="small" disabled={blocked || !snapshot?.capabilities.operate_client} onClick={onGotoContact}>跳转到该联系人</Button> : null}>
         <Descriptions size="small" column={1} items={[
           { key: "ali", label: "Ali ID", children: value(customer.aliId) },
@@ -38,10 +62,10 @@ function CustomerInfoContent({ conversation, onGotoContact }: { conversation: Co
           { key: "email", label: "邮箱", children: value(customer.email) },
           { key: "mobile", label: "手机", children: value(customer.mobile) },
           { key: "phone", label: "电话", children: value(customer.phone) },
-          { key: "stage", label: "阶段", children: stageLabel(customer.stage) },
           { key: "availability", label: "在线时间", children: value(customer.availability) },
         ]} />
         <div className="mt-3">
+          <div className="mb-1 text-xs text-slate-500">平台资料标签</div>
           {customer.tags.map((tag) => <Tag key={tag} color="blue">{tag}</Tag>)}
         </div>
       </Card>

@@ -3,6 +3,12 @@ import { adaptConversationDetail, adaptConversationSummary } from "@/services/ch
 import type { ConversationAggregateDto } from "@/types/chatTransport";
 import type { ConversationRevision, TranslationJobSnapshot } from "@/types/chatOperations";
 import type { ConversationPage } from "@/types/inbox";
+import type {
+  PortraitBatchResult,
+  PortraitExportResult,
+  PortraitOperationEntry,
+  PortraitTag,
+} from "@/types/portrait";
 import type { ApiResponse } from "@/types/common";
 import type { OperationsBackend } from "./interfaces";
 import { accountSession, AccountChangedError, captureAccount } from "./accountSession";
@@ -124,7 +130,7 @@ function prepareAccountRequest(path: string, init?: RequestInit) {
     if (!new Headers(init?.headers).get("X-Account-Epoch")) throw new AccountChangedError();
     return { init };
   }
-  const scoped = path === "/api/settings/connection/retry" || /^\/api\/(inbox(?:\/|$)|outbox(?:\/|$)|conversations(?:\/|$)|messages(?:\/|$)|self-info(?:\/|$)|cache\/reset(?:\/|$)|status\/node-test(?:\/|$)|cards(?:\/|$))/.test(path);
+  const scoped = path === "/api/settings/connection/retry" || /^\/api\/(inbox(?:\/|$)|outbox(?:\/|$)|conversations(?:\/|$)|portraits(?:\/|$)|messages(?:\/|$)|self-info(?:\/|$)|cache\/reset(?:\/|$)|status\/node-test(?:\/|$)|cards(?:\/|$))/.test(path);
   if (!scoped) return { init };
   const ticket = captureAccount();
   const { capabilities, client } = accountSession.get().snapshot!;
@@ -167,7 +173,9 @@ export const httpBackend: OperationsBackend = {
   listConversations: async (query = {}) => {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) {
-      if (value !== undefined) params.set(key, String(value));
+      if (value === undefined || value === null) continue;
+      if (Array.isArray(value)) value.forEach((item) => params.append(key, String(item)));
+      else params.set(key, String(value));
     }
     const page = await requestJson<ConversationPage<ConversationAggregateDto>>(`/api/conversations?${params}`, { cache: "no-store" });
     return { ...page, items: page.items.map(adaptConversationSummary) };
@@ -198,6 +206,13 @@ export const httpBackend: OperationsBackend = {
   },
   exportConversations: (input) => requestJson("/api/conversations/export", { method: "POST", body: JSON.stringify(input) }),
   gotoContact: (conversationId, loginId) => requestJson(`/api/conversations/${encodeURIComponent(conversationId)}/goto-contact`, { method: "POST", body: JSON.stringify({ login_id: loginId }) }),
+
+  listPortraitTags: () => requestJson<{ tags: PortraitTag[] }>("/api/portraits/tags", { cache: "no-store" }),
+  createPortraitTag: (input) => requestJson<{ tag: PortraitTag }>("/api/portraits/tags", { method: "POST", body: JSON.stringify(input) }),
+  updatePortraitTag: (tagId, input) => requestJson<{ tag: PortraitTag }>(`/api/portraits/tags/${encodeURIComponent(tagId)}`, { method: "PATCH", body: JSON.stringify(input) }),
+  savePortraitBatch: (input) => requestJson<PortraitBatchResult>("/api/portraits/batch", { method: "POST", body: JSON.stringify(input) }),
+  exportPortraits: (input) => requestJson<PortraitExportResult>("/api/portraits/export", { method: "POST", body: JSON.stringify(input) }),
+  listPortraitOperations: (cid) => requestJson<{ operations: PortraitOperationEntry[] }>(`/api/portraits/operations?cid=${encodeURIComponent(String(cid))}`, { cache: "no-store" }),
 
   checkUserStatus: () => requestJson("/api/status/user"),
   checkMitmProxy: () => requestJson("/api/status/mitm-proxy"),
