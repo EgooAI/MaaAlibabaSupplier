@@ -1,4 +1,4 @@
-import type { BusinessTag, LostReason, PortraitStage } from "@/types/portrait";
+import type { BusinessTag, LostReason, PortraitOperationEntry, PortraitStage } from "@/types/portrait";
 
 const stageLabels: Record<PortraitStage, string> = {
   unknown: "未设置",
@@ -56,4 +56,19 @@ export function portraitTagOptions(tags: BusinessTag[]) {
 export function portraitRequestId() {
   const random = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   return random.slice(0, 64);
+}
+
+/** 将一次画像操作记录格式化为“阶段→…；加标签：…”形式的摘要。 */
+export function operationSummary(entry: PortraitOperationEntry, tagOptions: { value: string; label: string }[]) {
+  const names = new Map(tagOptions.map((option) => [option.value, option.label]));
+  const parts: string[] = [];
+  if (entry.changes.stage) parts.push(`阶段→${portraitStageLabel(entry.changes.stage)}`);
+  if (entry.changes.lost_reason) parts.push(`原因→${lostReasonLabel(entry.changes.lost_reason)}`);
+  if (entry.changes.add_tag_ids?.length) {
+    parts.push(`加标签：${entry.changes.add_tag_ids.map((tagId) => names.get(tagId) ?? tagId).join("、")}`);
+  }
+  if (entry.changes.remove_tag_ids?.length) {
+    parts.push(`移除标签：${entry.changes.remove_tag_ids.map((tagId) => names.get(tagId) ?? tagId).join("、")}`);
+  }
+  return parts.join("；") || "画像变更";
 }

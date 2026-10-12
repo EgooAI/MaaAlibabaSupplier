@@ -6,9 +6,8 @@ import { AccountChangedError, useAccountBackend } from "@/features/account/Accou
 import {
   LOST_REASON_OPTIONS,
   PORTRAIT_STAGE_OPTIONS,
-  lostReasonLabel,
+  operationSummary,
   portraitRequestId,
-  portraitStageLabel,
   portraitTagLabel,
 } from "@/domain/portrait/portraitModel";
 import { formatDateTime } from "@/domain/time";
@@ -232,18 +231,4 @@ export function PortraitEditor({ conversation, tags, onTagCreated, onSaved }: {
       </Space>
     </Card>
   );
-}
-
-function operationSummary(entry: PortraitOperationEntry, tagOptions: { value: string; label: string }[]) {
-  const names = new Map(tagOptions.map((option) => [option.value, option.label]));
-  const parts: string[] = [];
-  if (entry.changes.stage) parts.push(`阶段→${portraitStageLabel(entry.changes.stage)}`);
-  if (entry.changes.lost_reason) parts.push(`原因→${lostReasonLabel(entry.changes.lost_reason)}`);
-  if (entry.changes.add_tag_ids?.length) {
-    parts.push(`加标签：${entry.changes.add_tag_ids.map((tagId) => names.get(tagId) ?? tagId).join("、")}`);
-  }
-  if (entry.changes.remove_tag_ids?.length) {
-    parts.push(`移除标签：${entry.changes.remove_tag_ids.map((tagId) => names.get(tagId) ?? tagId).join("、")}`);
-  }
-  return parts.join("；") || "画像变更";
 }

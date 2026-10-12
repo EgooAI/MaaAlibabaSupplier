@@ -1,13 +1,15 @@
 "use client";
 
 import { Card, Space, Spin } from "antd";
-import { Suspense, useEffect, useRef } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { inboxQueryFromUrl } from "@/domain/chat/inboxModel";
+import { groupCustomers } from "@/domain/portrait/customerGroups";
 import { portraitStageLabel } from "@/domain/portrait/portraitModel";
 import { ConversationFilters, ConversationPaging } from "./conversation/ConversationFilters";
 import { BatchManagement } from "./batch/BatchManagement";
-import { ConversationList } from "./conversation/ConversationList";
+import { BatchCustomerDrawer } from "./batch/BatchCustomerDrawer";
+import { BatchCustomerGrid } from "./batch/BatchCustomerGrid";
 import { useBatchManagement } from "./hooks/useBatchManagement";
 import { useAccount } from "@/features/account/AccountProvider";
 import { DataDirBanner } from "@/features/settings/DataDirBanner";
@@ -30,6 +32,11 @@ function BatchWorkspace() {
     changeQuery(inboxQueryFromUrl(new URLSearchParams(params)));
   }, [params, changeQuery]);
   const tagName = (tagId: string) => workbench.portraitTags.find((tag) => tag.tag_id === tagId)?.name ?? tagId;
+  const [drawerKey, setDrawerKey] = useState<string | null>(null);
+  const drawerGroup = useMemo(
+    () => (drawerKey ? groupCustomers(workbench.conversations).find((group) => group.key === drawerKey) ?? null : null),
+    [drawerKey, workbench.conversations],
+  );
 
   return (
     <Space orientation="vertical" size="large" className="w-full">
@@ -51,19 +58,19 @@ function BatchWorkspace() {
         onAddTag={(tagId) => workbench.applyPortraitChanges({ add_tag_ids: [tagId] }, `增加标签「${tagName(tagId)}」`)}
         onRemoveTag={(tagId) => workbench.applyPortraitChanges({ remove_tag_ids: [tagId] }, `移除标签「${tagName(tagId)}」`)}
       />
-      <Card title="选择会话" loading={workbench.loading}>
+      <Card title="选择会话">
         <ConversationFilters key={params} query={inboxQueryFromUrl(new URLSearchParams(params))} onChange={workbench.changeQuery} tagOptions={workbench.portraitTags} />
         <ConversationPaging page={workbench.page} pending={workbench.pagePending} onChange={workbench.changePage} />
-        <ConversationList
+        <BatchCustomerGrid
           conversations={workbench.conversations}
           selectedIds={workbench.selectedIds}
-          groupMode={workbench.groupMode}
-          onGroupModeChange={workbench.setGroupMode}
-          onToggleSelected={workbench.toggleSelected}
-          onSelectGroup={workbench.setGroupSelected}
-          selectable
+          loading={workbench.loading}
+          onToggleSessions={workbench.setGroupSelected}
+          onToggleAll={(selected) => (selected ? workbench.selectAll() : workbench.clearSelection())}
+          onOpenCustomer={setDrawerKey}
         />
       </Card>
+      <BatchCustomerDrawer group={drawerGroup} open={Boolean(drawerGroup)} onClose={() => setDrawerKey(null)} portraitTags={workbench.portraitTags} />
     </Space>
   );
 }

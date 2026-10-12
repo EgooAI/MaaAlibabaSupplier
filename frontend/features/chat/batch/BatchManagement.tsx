@@ -35,7 +35,7 @@ export function BatchManagement({
       title={
         <div className="flex items-center gap-2">
           <Typography.Text strong>批量管理</Typography.Text>
-          <Tag color={selectedCount ? "blue" : "default"}>{selectedCount} 个已选</Tag>
+          <Tag color={selectedCount ? "blue" : "default"}>{selectedCount} 个会话</Tag>
           {selectedCount ? <Tag color={selectedCustomerCount ? "geekblue" : "default"}>涉及 {selectedCustomerCount} 位客户</Tag> : null}
         </div>
       }
