@@ -267,7 +267,9 @@ export const mockBackend: OperationsBackend = {
         && (!query.reply_state || item.reply_state === query.reply_state)
         && (query.unread === undefined || (item.unread_count > 0) === query.unread)
         && (query.overdue === undefined || item.is_overdue === query.overdue)
-        && (!query.portrait_stage || customer.businessStage === query.portrait_stage)
+        && (!query.portrait_stage?.length || query.portrait_stage.includes(customer.businessStage))
+        && (query.portrait_completeness === undefined || query.portrait_completeness === "all"
+          || (query.portrait_completeness === "maintained") === (customer.cid !== null && customer.businessVersion > 0))
         && (!query.business_tag?.length || query.business_tag.every((tagId) => customer.businessTags.some((tag) => tag.tag_id === tagId)))
         && (query.lost_reason === undefined || customer.lostReason === query.lost_reason);
     }).sort((a, b) => (b.latest.updated_at ?? "").localeCompare(a.latest.updated_at ?? "") || b.sid - a.sid);

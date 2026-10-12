@@ -67,16 +67,20 @@ class InboxFilters(BaseModel):
     reply_state: Literal["needs_reply", "waiting_customer", "history_pending", "none", "unknown"] | None = None
     unread: bool | None = None
     overdue: bool | None = None
-    portrait_stage: str | None = None
+    portrait_stage: list[str] | None = None
+    portrait_completeness: Literal["all", "maintained", "unmaintained"] = "all"
     business_tag: list[str] | None = None
     lost_reason: str | None = None
 
     @field_validator("portrait_stage")
     @classmethod
-    def _validate_portrait_stage(cls, value: str | None) -> str | None:
-        if value is not None and value not in PORTRAIT_STAGES:
+    def _validate_portrait_stage(cls, value: list[str] | None) -> list[str] | None:
+        if not value:
+            return value
+        stages = sorted(set(value))
+        if any(stage not in PORTRAIT_STAGES for stage in stages):
             raise ValueError("portrait_stage is invalid")
-        return value
+        return stages
 
     @field_validator("lost_reason")
     @classmethod

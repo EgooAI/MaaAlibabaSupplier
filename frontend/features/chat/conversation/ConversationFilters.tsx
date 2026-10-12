@@ -2,12 +2,12 @@
 
 import { useState } from "react";
 import { FilterOutlined } from "@ant-design/icons";
-import { Button, Checkbox, Input, Popover, Select, Space, Typography } from "antd";
+import { Button, Checkbox, Input, Popover, Segmented, Select, Space, Typography } from "antd";
 import type { ConversationPage, ConversationQuery } from "@/types/inbox";
 import { replyStates } from "@/domain/chat/inboxModel";
 import { statusLabel } from "@/domain/chat/chatModel";
 import { LOST_REASON_OPTIONS, PORTRAIT_STAGE_OPTIONS, portraitTagOptions } from "@/domain/portrait/portraitModel";
-import type { BusinessTag } from "@/types/portrait";
+import type { BusinessTag, PortraitStage } from "@/types/portrait";
 
 export function ConversationFilters({ query, onChange, tagOptions = [] }: { query: ConversationQuery; onChange: (query: ConversationQuery) => void; tagOptions?: BusinessTag[] }) {
   const [draft, setDraft] = useState(query);
@@ -15,7 +15,8 @@ export function ConversationFilters({ query, onChange, tagOptions = [] }: { quer
   const [open, setOpen] = useState(false);
   const filterCount = [
     applied.country, applied.tag, applied.reply_state, applied.unread, applied.overdue,
-    applied.portrait_stage, applied.lost_reason, applied.business_tag?.length,
+    applied.portrait_stage?.length, applied.lost_reason, applied.business_tag?.length,
+    applied.portrait_completeness && applied.portrait_completeness !== "all",
     applied.search_scope && applied.search_scope !== "all",
   ].filter(Boolean).length;
   function apply(next: ConversationQuery) {
@@ -37,12 +38,14 @@ export function ConversationFilters({ query, onChange, tagOptions = [] }: { quer
     <Space.Compact className="w-full">
       <Select
         aria-label="客户阶段"
+        mode="multiple"
         allowClear
-        placeholder="全部客户阶段"
+        placeholder="全部客户阶段（可多选）"
         className="w-1/2"
-        value={draft.portrait_stage}
-        onChange={(portrait_stage) => setDraft({ ...draft, portrait_stage })}
+        value={draft.portrait_stage ?? []}
+        onChange={(stages: PortraitStage[]) => setDraft({ ...draft, portrait_stage: stages.length ? stages : undefined })}
         options={PORTRAIT_STAGE_OPTIONS}
+        optionFilterProp="label"
       />
       <Select
         aria-label="失败原因"
@@ -63,6 +66,13 @@ export function ConversationFilters({ query, onChange, tagOptions = [] }: { quer
       onChange={(business_tag: string[]) => setDraft({ ...draft, business_tag: business_tag.length ? business_tag : undefined })}
       options={portraitTagOptions(tagOptions)}
       optionFilterProp="label"
+    />
+    <Segmented
+      aria-label="画像完整度"
+      block
+      value={draft.portrait_completeness ?? "all"}
+      onChange={(value) => setDraft({ ...draft, portrait_completeness: value === "all" ? undefined : (value as "maintained" | "unmaintained") })}
+      options={[{ value: "all", label: "全部" }, { value: "maintained", label: "已维护" }, { value: "unmaintained", label: "未维护" }]}
     />
     <Space wrap>
       <Checkbox checked={draft.unread === true} onChange={(event) => setDraft({ ...draft, unread: event.target.checked ? true : undefined })}>本工作台未读</Checkbox>

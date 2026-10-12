@@ -30,6 +30,7 @@ vi.mock("antd", () => {
     Popover: ({ open, onOpenChange, content, children }: { open: boolean; onOpenChange: (open: boolean) => void; content: ReactNode; children: ReactNode }) => <><div onClick={() => onOpenChange(!open)}>{children}</div>{open ? content : null}</>,
     Checkbox: ({ children, onChange, ...props }: InputHTMLAttributes<HTMLInputElement>) => <label><input type="checkbox" {...props} onChange={onChange} />{children}</label>,
     Select: ({ value, onChange, options, "aria-label": label }: { value?: string; onChange: (value: string) => void; options: { value: string; label: string }[]; "aria-label": string }) => <select aria-label={label} value={value ?? ""} onChange={(event) => onChange(event.target.value)}><option value="" />{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>,
+    Segmented: ({ value, onChange, options }: { value?: string; onChange: (value: string) => void; options: { value: string; label: string }[] }) => <select aria-label="画像完整度" value={value ?? ""} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>,
     Typography: { Text: Group, Title: Group },
     Card: ({ title, children }: { title?: string; children: ReactNode }) => <section>{title}{children}</section>,
     Statistic: ({ title, value }: { title: string; value: ReactNode }) => <p>{title}: <output>{value}</output></p>,

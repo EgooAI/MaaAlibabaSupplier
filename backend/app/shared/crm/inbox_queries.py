@@ -90,6 +90,8 @@ def query_inbox(store: InboxStore, seller: str, data_dir: str, build_view, filte
         hash_row(metadata)
         if filters.get("business_tag") is not None:
             filters = {**filters, "business_tag": sorted(set(filters["business_tag"]))}
+        if filters.get("portrait_stage") is not None:
+            filters = {**filters, "portrait_stage": sorted(set(filters["portrait_stage"]))}
         hash_row(filters)
         metas = {row["sid"]: dict(row) for row in conn.execute(
             "SELECT sid, key, participants FROM session_meta WHERE substr(key, 1, :length)=:prefix "
@@ -177,6 +179,8 @@ def query_inbox(store: InboxStore, seller: str, data_dir: str, build_view, filte
         hash_row(portrait_revisions)
         states = store._states(conn, key, latest, now)
         required_tags = set(filters.get("business_tag") or [])
+        portrait_stages = set(filters.get("portrait_stage") or [])
+        completeness = filters.get("portrait_completeness", "all")
         selected, views = [], {}
         for digest in digests:
             state = states[digest.sid]
@@ -205,8 +209,12 @@ def query_inbox(store: InboxStore, seller: str, data_dir: str, build_view, filte
             if filters.get("overdue") is not None and state["is_overdue"] != filters["overdue"]:
                 continue
             portrait_stage = portrait["stage"] if portrait else "unknown"
-            if filters.get("portrait_stage") is not None and portrait_stage != filters["portrait_stage"]:
+            if portrait_stages and portrait_stage not in portrait_stages:
                 continue
+            if completeness != "all":
+                maintained = cid is not None and bool(portrait and portrait["version"] > 0)
+                if maintained != (completeness == "maintained"):
+                    continue
             if required_tags:
                 owned = {tag["tag_id"] for tag in (portrait["tags"] if portrait else [])}
                 if not required_tags <= owned:

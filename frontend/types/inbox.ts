@@ -21,7 +21,8 @@ export interface ConversationQuery {
   reply_state?: ReplyState;
   unread?: boolean;
   overdue?: boolean;
-  portrait_stage?: PortraitStage;
+  portrait_stage?: PortraitStage[];
+  portrait_completeness?: "all" | "maintained" | "unmaintained";
   business_tag?: string[];
   lost_reason?: LostReason;
   offset?: number;

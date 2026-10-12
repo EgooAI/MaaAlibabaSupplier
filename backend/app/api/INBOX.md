@@ -33,7 +33,8 @@ Supported query parameters:
 | reply_state | `needs_reply`, `waiting_customer`, `history_pending`, `none`, `unknown` |
 | unread | Optional boolean, matches conversations with unread_count > 0 |
 | overdue | Optional boolean |
-| portrait_stage | Business stage: `unknown`, `new_inquiry`, `following_up`, `negotiating`, `won`, `dormant`, `lost` |
+| portrait_stage | Repeatable business stage; matches any supplied stage (OR). Values: `unknown`, `new_inquiry`, `following_up`, `negotiating`, `won`, `dormant`, `lost` |
+| portrait_completeness | `all` (default), `maintained` (cid resolved and business_version > 0), `unmaintained` (never maintained or cid unresolved) |
 | business_tag | Repeatable business tag id; all supplied tags must match |
 | lost_reason | `unreachable`, `price`, `product_mismatch`, `delivery`, `competitor`, `unclear` |
 | offset | Integer >= 0, default 0 |

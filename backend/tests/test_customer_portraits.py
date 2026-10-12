@@ -107,6 +107,40 @@ def test_portrait_stage_tags_filters_and_platform_tag_separation(client, archive
     assert detail["customer_view"]["business_tags"][0]["name"] == "高潜"
 
 
+def test_portrait_stage_or_and_completeness_filters(client, archive):
+    adapter, apply = archive
+    apply(("buyer", [row(1)]))
+    apply(("other", [row(2, "other")]))
+    apply(("third", [row(3, "third")]))
+    first = listing_item(client, q="buyer")
+    batch(client, first["sid"], first["customer_view"]["cid"], 0, {"stage": "won"}, request_id="or-won")
+    second = listing_item(client, q="other")
+    batch(client, second["sid"], second["customer_view"]["cid"], 0, {"stage": "following_up"}, request_id="or-follow")
+    third = listing_item(client, q="third")
+    assert third["customer_view"]["business_version"] == 0
+    # Repeatable stage filter matches any supplied stage (OR).
+    assert data(client, portrait_stage=["won", "following_up"])["total"] == 2
+    assert data(client, portrait_stage="won")["total"] == 1
+    assert data(client, portrait_stage=["dormant", "lost"])["total"] == 0
+    assert client.get("/api/conversations", params={"portrait_stage": ["won", "bogus"]}).status_code == 422
+    # Completeness splits maintained portraits from never-maintained and cid-less sessions.
+    maintained = data(client, portrait_completeness="maintained")
+    assert maintained["total"] == 2 and all(item["customer_view"]["business_version"] > 0 for item in maintained["items"])
+    unmaintained = data(client, portrait_completeness="unmaintained")
+    assert [item["sid"] for item in unmaintained["items"]] == [third["sid"]]
+    with closing(sqlite3.connect(InboxStore().database_path)) as conn:
+        conn.execute("UPDATE session_meta SET participants=? WHERE sid=?", (json.dumps([]), third["sid"]))
+        conn.commit()
+    unmaintained = data(client, portrait_completeness="unmaintained")
+    assert unmaintained["total"] == 1 and unmaintained["items"][0]["customer_view"]["cid"] is None
+    assert data(client, portrait_completeness="maintained")["total"] == 2
+    # The pagination fingerprint is filter-sensitive and order-insensitive.
+    token = data(client, portrait_stage=["won", "following_up"], limit=1)["pagination_revision"]
+    assert data(client, portrait_stage=["following_up", "won"], limit=1)["pagination_revision"] == token
+    assert data(client, portrait_stage="won", limit=1)["pagination_revision"] != token
+    assert data(client, portrait_completeness="maintained", limit=1)["pagination_revision"] != token
+
+
 def test_portrait_batch_conflicts_idempotency_and_scope(client, archive):
     _, apply = archive
     apply(("buyer", [row(1)]))

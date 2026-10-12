@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { httpBackend } from "@/services/httpAdapter";
 import type { ConversationAggregateDto } from "@/types/chatTransport";
+import type { ConversationQuery } from "@/types/inbox";
 import { accountSession } from "@/services/accountSession";
 import { connectionSnapshot } from "@/mock/connectionData";
 import { authenticatedSession } from "@/test/support/authFixture";
@@ -124,11 +125,14 @@ describe("http adapter contract", () => {
     const data = { items: [aggregate], total: 123, offset: 50, limit: 50, inbox_revision: 7, pagination_revision: "opaque-next" };
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data })));
     globalThis.fetch = fetchMock;
-    const query = { q: "客户%_ &?", search_scope: "messages" as const, country: "ES", tag: "A&B", unread: false, overdue: true, offset: 50, limit: 50, pagination_revision: "opaque/+=" };
+    const query: ConversationQuery = { q: "客户%_ &?", search_scope: "messages", country: "ES", tag: "A&B", unread: false, overdue: true, portrait_stage: ["won", "lost"], portrait_completeness: "maintained", offset: 50, limit: 50, pagination_revision: "opaque/+=" };
     const result = await httpBackend.listConversations(query);
     const [path, init] = fetchMock.mock.calls[0];
     const params = new URL(path, "http://localhost").searchParams;
-    for (const [key, value] of Object.entries(query)) expect(params.get(key)).toBe(String(value));
+    for (const [key, value] of Object.entries(query)) {
+      if (Array.isArray(value)) expect(params.getAll(key)).toEqual(value.map(String));
+      else expect(params.get(key)).toBe(String(value));
+    }
     expect(new Headers(init.headers).get("X-Account-Epoch")).toBe("mock-1");
     expect(result).toMatchObject({ total: 123, offset: 50, pagination_revision: "opaque-next", items: [{ id: "42", replyState: "waiting_customer" }] });
   });
