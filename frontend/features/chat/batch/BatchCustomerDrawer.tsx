@@ -58,7 +58,7 @@ function CustomerDetail({ group, operations, portraitTags }: {
     return (
       <div className="flex flex-col gap-4">
         <Typography.Text type="secondary">
-          cid 缺失：无法维护画像，聊天与导出不受影响。
+          无法关联平台客户，画像不可维护；聊天与导出不受影响。
         </Typography.Text>
         <Section title={`包含会话（${group.sessionIds.length}）`}>
           <SessionRows conversations={group.conversations} />
@@ -86,7 +86,7 @@ function CustomerDetail({ group, operations, portraitTags }: {
         ]} />
       </Section>
 
-      <Section title="平台资料（只读）">
+      <Section title="平台资料">
         <div className="flex flex-wrap items-center gap-1">
           {customer.tags.length ? customer.tags.map((tag) => <Tag key={tag} className="!m-0 !text-[11px]">{tag}</Tag>) : <Typography.Text type="secondary" className="!text-xs">无</Typography.Text>}
         </div>
@@ -112,7 +112,7 @@ function CustomerDetail({ group, operations, portraitTags }: {
             key: "version", label: "版本/更新",
             children: customer.businessVersion
               ? `v${customer.businessVersion}${customer.lostAt ? ` · ${formatDateTime(customer.lostAt)}` : ""}`
-              : "从未维护",
+              : "未维护",
           },
         ]} />
       </Section>

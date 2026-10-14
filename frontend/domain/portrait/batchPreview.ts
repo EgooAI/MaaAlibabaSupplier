@@ -4,6 +4,9 @@ import type { Conversation } from "@/types/chatCanonical";
 
 export type BatchPanelAction = "stage" | "add-tag" | "remove-tag";
 
+/** 配置面板当前视图：三个画像动作 + 两个导出预览（导出同样先预览后确认）。 */
+export type BatchPanelView = BatchPanelAction | "export-portrait" | "export-chat";
+
 export type PortraitPreviewStatus = "change" | "unchanged" | "unavailable";
 
 export interface PortraitPreviewRow {
@@ -35,7 +38,7 @@ export function previewPortraitChanges(changes: PortraitChangesInput, targets: C
   return targets.map((conversation) => {
     const customer = conversation.customer;
     if (customer.cid === null) {
-      return { conversation, status: "unavailable" as const, note: "cid 缺失，跳过画像", lines: [] };
+      return { conversation, status: "unavailable" as const, note: "无法关联平台客户，跳过画像", lines: [] };
     }
     const held = new Set(customer.businessTags.map((tag) => tag.tag_id));
     const add = addIds.filter((id) => !held.has(id));

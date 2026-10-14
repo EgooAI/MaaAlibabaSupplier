@@ -37,19 +37,31 @@ function BatchWorkspace() {
     () => (drawerKey ? groupCustomers(workbench.conversations).find((group) => group.key === drawerKey) ?? null : null),
     [drawerKey, workbench.conversations],
   );
+  const panel = workbench.panel;
   const panelTargets = useMemo(
-    () => (workbench.portraitPanel ? workbench.conversations.filter((conversation) => workbench.portraitPanel!.sessionIds.includes(conversation.id)) : []),
-    [workbench.portraitPanel, workbench.conversations],
+    () => (panel ? workbench.conversations.filter((conversation) => panel.sessionIds.includes(conversation.id)) : []),
+    [panel, workbench.conversations],
   );
+  const panelRef = useRef<HTMLDivElement>(null);
+  const panelWasOpen = useRef(false);
+  // 面板堆叠到网格下方（< xl）时滚动到面板，避免行内入口打开后“看不到反应”。
+  useEffect(() => {
+    const open = Boolean(panel);
+    const wasOpen = panelWasOpen.current;
+    panelWasOpen.current = open;
+    if (!open || wasOpen) return;
+    if (window.matchMedia("(min-width: 1280px)").matches) return;
+    panelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [panel]);
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       if (drawerKey) setDrawerKey(null);
-      else if (workbench.portraitPanel) workbench.closePortraitPanel();
+      else if (panel) workbench.closePanel();
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [drawerKey, workbench]);
+  }, [drawerKey, panel, workbench]);
 
   return (
     <Space orientation="vertical" size="large" className="w-full">
@@ -58,16 +70,9 @@ function BatchWorkspace() {
       <BatchManagement
         selectedCount={workbench.selectedCount}
         selectedCustomerCount={workbench.selectedCustomerCount}
-        exporting={workbench.exporting}
-        exportingPortraits={workbench.exportingPortraits}
-        portraitBusy={workbench.portraitBusy}
-        activeAction={workbench.portraitPanel?.action ?? null}
         onSelectAll={workbench.selectAll}
         onInvert={workbench.invertSelection}
         onClear={workbench.clearSelection}
-        onExport={workbench.exportSelected}
-        onExportPortraits={() => void workbench.exportPortraits()}
-        onOpenPanel={(action) => workbench.openPortraitPanel(action)}
       />
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
         <Card title="选择会话" className="min-w-0 flex-1">
@@ -80,21 +85,24 @@ function BatchWorkspace() {
             onToggleSessions={workbench.setGroupSelected}
             onToggleAll={(selected) => (selected ? workbench.selectAll() : workbench.clearSelection())}
             onOpenCustomer={setDrawerKey}
-            onOpenStage={(sessionIds) => workbench.openPortraitPanel("stage", sessionIds)}
-            onOpenAddTag={(sessionIds) => workbench.openPortraitPanel("add-tag", sessionIds)}
+            onOpenStage={(sessionIds) => workbench.openPanel("stage", sessionIds)}
+            onOpenAddTag={(sessionIds) => workbench.openPanel("add-tag", sessionIds)}
           />
         </Card>
-        {workbench.portraitPanel ? (
-          <div className="xl:sticky xl:top-4 xl:w-[380px] xl:shrink-0">
+        {panel ? (
+          <div ref={panelRef} className="xl:sticky xl:top-4 xl:w-[380px] xl:shrink-0">
             <BatchActionPanel
-              key={`${workbench.portraitPanel.action}:${workbench.portraitPanel.sessionIds.join(",")}`}
-              action={workbench.portraitPanel.action}
+              key={panel.sessionIds.join(",")}
+              action={panel.action}
               targets={panelTargets}
               portraitTags={workbench.portraitTags}
               busy={workbench.portraitBusy}
+              exporting={workbench.exporting}
+              exportingPortraits={workbench.exportingPortraits}
               onActionChange={workbench.changePanelAction}
-              onClose={workbench.closePortraitPanel}
+              onClose={workbench.closePanel}
               onApply={(changes, description) => void workbench.applyPortraitChanges(changes, description)}
+              onExport={(kind) => void (kind === "portrait" ? workbench.exportPortraits() : workbench.exportSelected()).then(() => workbench.closePanel())}
             />
           </div>
         ) : null}
@@ -104,14 +112,12 @@ function BatchWorkspace() {
         selectedCount={workbench.selectedCount}
         selectedCustomerCount={workbench.selectedCustomerCount}
         busy={workbench.portraitBusy}
-        exporting={workbench.exporting}
-        exportingPortraits={workbench.exportingPortraits}
-        onOpenPanel={(action) => workbench.openPortraitPanel(action)}
-        onExportPortraits={() => void workbench.exportPortraits()}
-        onExport={workbench.exportSelected}
+        activeAction={panel?.action ?? null}
+        shifted={Boolean(panel)}
+        onOpenPanel={workbench.openPanel}
         onClear={workbench.clearSelection}
       />
-      {workbench.selectedCount ? <div className="h-12" aria-hidden /> : null}
+      {workbench.selectedCount ? <div className="h-16" aria-hidden /> : null}
     </Space>
   );
 }

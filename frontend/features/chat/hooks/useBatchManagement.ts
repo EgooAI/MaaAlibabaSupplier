@@ -4,7 +4,7 @@ import { App } from "antd";
 import { useMemo, useState } from "react";
 import { AccountChangedError, useAccountBackend } from "@/features/account/AccountProvider";
 import type { ConversationGroupMode } from "@/domain/chat/chatModel";
-import type { BatchPanelAction } from "@/domain/portrait/batchPreview";
+import type { BatchPanelAction, BatchPanelView } from "@/domain/portrait/batchPreview";
 import { portraitRequestId } from "@/domain/portrait/portraitModel";
 import type { Conversation } from "@/types/chatCanonical";
 import type { PortraitChangesInput, PortraitTargetInput } from "@/types/portrait";
@@ -18,12 +18,12 @@ export function useBatchManagement(initialQuery: ConversationQuery = {}) {
   const summaries = useConversationSummaries(initialQuery);
   const { conversations, loading, refreshError, refreshPending, selectionVersion, pagePending } = summaries;
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [portraitPanel, setPortraitPanel] = useState<{ action: BatchPanelAction; sessionIds: string[] } | null>(null);
+  const [panel, setPanel] = useState<{ action: BatchPanelView; sessionIds: string[] } | null>(null);
   const [selectedVersion, setSelectedVersion] = useState(selectionVersion);
   if (selectedVersion !== selectionVersion) {
     setSelectedVersion(selectionVersion);
     setSelectedIds([]);
-    setPortraitPanel(null);
+    setPanel(null);
   }
   const [groupMode, setGroupMode] = useState<ConversationGroupMode>("time");
   const [exporting, setExporting] = useState(false);
@@ -64,32 +64,33 @@ export function useBatchManagement(initialQuery: ConversationQuery = {}) {
     });
   }
 
-  function openPortraitPanel(action: BatchPanelAction, sessionIds?: string[]) {
+  function openPanel(action: BatchPanelView, sessionIds?: string[]) {
     const ids = sessionIds ?? visibleSelectedIds;
     if (!ids.length) {
       message.warning("请先选择要操作的会话");
       return;
     }
-    setPortraitPanel({ action, sessionIds: ids });
+    setPanel({ action, sessionIds: ids });
   }
 
   function changePanelAction(action: BatchPanelAction) {
-    setPortraitPanel((current) => (current ? { ...current, action } : current));
+    setPanel((current) => (current ? { ...current, action } : current));
   }
 
-  function closePortraitPanel() {
-    setPortraitPanel(null);
+  function closePanel() {
+    setPanel(null);
   }
 
   async function exportSelected() {
     if (exporting) return;
-    if (!visibleSelectedIds.length) {
+    const ids = panelSessionIds();
+    if (!ids.length) {
       message.warning("请先选择要导出的会话");
       return;
     }
     setExporting(true);
     try {
-      const result = await backend.exportConversations({ conversationIds: visibleSelectedIds });
+      const result = await backend.exportConversations({ conversationIds: ids });
       const archiveName = result.archive_name;
       const isZip = Boolean(archiveName);
       const blob = isZip
@@ -104,10 +105,18 @@ export function useBatchManagement(initialQuery: ConversationQuery = {}) {
     }
   }
 
+  /** 面板打开时以面板自身的目标为准（行内入口可能不带选择），否则回退当前选择。 */
+  function panelSessionIds() {
+    const source = panel?.sessionIds ?? visibleSelectedIds;
+    return source.filter((id) => availableIds.has(id));
+  }
+
   function portraitTargets() {
+    const wanted = new Set(panelSessionIds());
     const targets: PortraitTargetInput[] = [];
     let skipped = 0;
-    for (const conversation of selectedConversations) {
+    for (const conversation of conversations) {
+      if (!wanted.has(conversation.id)) continue;
       const cid = conversation.customer.cid;
       if (!cid) {
         skipped += 1;
@@ -149,7 +158,7 @@ export function useBatchManagement(initialQuery: ConversationQuery = {}) {
     } finally {
       setPortraitBusy(false);
       // 提交后（无论成败）目标版本可能已过期，关闭面板并重读列表。
-      setPortraitPanel(null);
+      setPanel(null);
       if (!accountChanged) summaries.changeQuery(summaries.query);
     }
   }
@@ -196,10 +205,10 @@ export function useBatchManagement(initialQuery: ConversationQuery = {}) {
     selectAll,
     invertSelection,
     clearSelection: () => setSelectedIds([]),
-    portraitPanel,
-    openPortraitPanel,
+    panel,
+    openPanel,
     changePanelAction,
-    closePortraitPanel,
+    closePanel,
     exportSelected,
     applyPortraitChanges,
     exportPortraits,

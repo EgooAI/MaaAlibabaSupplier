@@ -108,12 +108,12 @@ describe("portrait batch workflow", () => {
     await act(async () => batch.toggleSelected("43"));
     expect(batch.selectedCount).toBe(2);
     expect(batch.selectedCustomerCount).toBe(1);
-    await act(async () => batch.openPortraitPanel("stage"));
-    expect(batch.portraitPanel).toEqual({ action: "stage", sessionIds: ["42", "43"] });
+    await act(async () => batch.openPanel("stage"));
+    expect(batch.panel).toEqual({ action: "stage", sessionIds: ["42", "43"] });
     const calls = mocks.backend.listConversations.mock.calls.length;
     await act(async () => batch.applyPortraitChanges({ stage: "won" }, "阶段设为「已成交」"));
     expect(mocks.backend.savePortraitBatch).toHaveBeenCalledTimes(1);
-    expect(batch.portraitPanel).toBeNull();
+    expect(batch.panel).toBeNull();
     const payload = mocks.backend.savePortraitBatch.mock.calls[0][0];
     expect(payload.changes).toEqual({ stage: "won" });
     expect(payload.targets).toEqual([
@@ -133,18 +133,18 @@ describe("portrait batch workflow", () => {
   it("opens the portrait panel for the current selection or a single customer row", async () => {
     mocks.backend.listConversations.mockResolvedValue(page([portraitDetail("42", 1001, 3), portraitDetail("43", 1001, 3)]));
     await mount();
-    await act(async () => batch.openPortraitPanel("stage"));
-    expect(batch.portraitPanel).toBeNull();
+    await act(async () => batch.openPanel("stage"));
+    expect(batch.panel).toBeNull();
     expect(mocks.message.warning).toHaveBeenCalled();
     await act(async () => batch.toggleSelected("42"));
-    await act(async () => batch.openPortraitPanel("stage"));
-    expect(batch.portraitPanel).toEqual({ action: "stage", sessionIds: ["42"] });
-    await act(async () => batch.openPortraitPanel("add-tag", ["42", "43"]));
-    expect(batch.portraitPanel).toEqual({ action: "add-tag", sessionIds: ["42", "43"] });
+    await act(async () => batch.openPanel("stage"));
+    expect(batch.panel).toEqual({ action: "stage", sessionIds: ["42"] });
+    await act(async () => batch.openPanel("add-tag", ["42", "43"]));
+    expect(batch.panel).toEqual({ action: "add-tag", sessionIds: ["42", "43"] });
     await act(async () => batch.changePanelAction("remove-tag"));
-    expect(batch.portraitPanel).toEqual({ action: "remove-tag", sessionIds: ["42", "43"] });
-    await act(async () => batch.closePortraitPanel());
-    expect(batch.portraitPanel).toBeNull();
+    expect(batch.panel).toEqual({ action: "remove-tag", sessionIds: ["42", "43"] });
+    await act(async () => batch.closePanel());
+    expect(batch.panel).toBeNull();
   });
 
   it("skips sessions without a resolved customer instead of sending guessed targets", async () => {
@@ -181,5 +181,23 @@ describe("portrait batch workflow", () => {
     await act(async () => batch.exportPortraits());
     expect(mocks.backend.exportPortraits).toHaveBeenCalledExactlyOnceWith({ conversationIds: [42] });
     expect(mocks.message.success).toHaveBeenCalled();
+  });
+
+  it("applies and exports the panel's own sessions when opened from a single customer row", async () => {
+    mocks.backend.listConversations.mockResolvedValue(page([portraitDetail("42", 1001, 3), portraitDetail("43", 1002, 0)]));
+    mocks.backend.savePortraitBatch.mockResolvedValue({
+      request_id: "req", portrait_revision: 1, tag_revision: 0,
+      changed: [{ cid: 1001, sids: [42], version: 4 }], unchanged: [],
+    });
+    mocks.backend.exportPortraits.mockResolvedValue({ filename: "customer-portraits.csv", content: "\ufeffcid\n", exported: 1, missing: [] });
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    await mount();
+    await act(async () => batch.openPanel("stage", ["42"]));
+    await act(async () => batch.applyPortraitChanges({ stage: "won" }, "阶段设为「已成交」"));
+    expect(mocks.backend.savePortraitBatch.mock.calls[0][0].targets).toEqual([{ sid: 42, expected_cid: 1001, expected_version: 3 }]);
+    await act(async () => batch.openPanel("export-portrait", ["42"]));
+    await act(async () => batch.exportPortraits());
+    expect(mocks.backend.exportPortraits).toHaveBeenCalledExactlyOnceWith({ conversationIds: [42] });
   });
 });

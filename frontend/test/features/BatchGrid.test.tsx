@@ -113,7 +113,7 @@ describe("batch customer grid", () => {
     expect(rows[1].textContent).toContain("未维护");
     expect(rows[2].textContent).toContain("未识别客户");
     expect(rows[2].textContent).toContain("不可维护");
-    expect(rows[2].textContent).toContain("cid 缺失");
+    expect(rows[2].textContent).toContain("无法关联平台客户");
   });
 
   it("toggles whole customers, header select-all and expands session sub-rows", async () => {
@@ -185,7 +185,7 @@ describe("batch customer drawer", () => {
     const group = groupCustomers([fixture[3]])[0];
     await act(async () => root.render(<BatchCustomerDrawer group={group} open onClose={vi.fn()} portraitTags={portraitTags} />));
     await act(async () => {});
-    expect(document.body.textContent).toContain("cid 缺失");
+    expect(document.body.textContent).toContain("无法关联平台客户");
     expect(mocks.backend.listPortraitOperations).not.toHaveBeenCalled();
   });
 });
@@ -195,22 +195,24 @@ describe("batch floating bar", () => {
     const onOpenPanel = vi.fn();
     const onClear = vi.fn();
     await act(async () => root.render(
-      <BatchFloatingBar selectedCount={3} selectedCustomerCount={2} busy={false} exporting={false} exportingPortraits={false} onOpenPanel={onOpenPanel} onExportPortraits={vi.fn()} onExport={vi.fn()} onClear={onClear} />,
+      <BatchFloatingBar selectedCount={3} selectedCustomerCount={2} busy={false} onOpenPanel={onOpenPanel} onClear={onClear} />,
     ));
     expect(container.textContent).toContain("已选 3 个会话 · 2 位客户");
     await act(async () => [...container.querySelectorAll("button")].find((node) => node.textContent === "设置阶段")!.click());
-    expect(onOpenPanel).toHaveBeenCalledExactlyOnceWith("stage");
-    await act(async () => [...container.querySelectorAll("button")].find((node) => node.textContent === "清除")!.click());
+    expect(onOpenPanel).toHaveBeenCalledWith("stage");
+    await act(async () => [...container.querySelectorAll("button")].find((node) => node.textContent === "导出客户资料")!.click());
+    expect(onOpenPanel).toHaveBeenCalledWith("export-portrait");
+    await act(async () => [...container.querySelectorAll("button")].find((node) => node.textContent === "清空")!.click());
     expect(onClear).toHaveBeenCalled();
   });
 
-  it("hides without a selection and disables portrait actions while busy", async () => {
+  it("hides without a selection and disables actions while busy", async () => {
     await act(async () => root.render(
-      <BatchFloatingBar selectedCount={0} selectedCustomerCount={0} busy={false} exporting={false} exportingPortraits={false} onOpenPanel={vi.fn()} onExportPortraits={vi.fn()} onExport={vi.fn()} onClear={vi.fn()} />,
+      <BatchFloatingBar selectedCount={0} selectedCustomerCount={0} busy={false} onOpenPanel={vi.fn()} onClear={vi.fn()} />,
     ));
     expect(container.querySelector("button")).toBeNull();
     await act(async () => root.render(
-      <BatchFloatingBar selectedCount={1} selectedCustomerCount={1} busy exporting={false} exportingPortraits={false} onOpenPanel={vi.fn()} onExportPortraits={vi.fn()} onExport={vi.fn()} onClear={vi.fn()} />,
+      <BatchFloatingBar selectedCount={1} selectedCustomerCount={1} busy onOpenPanel={vi.fn()} onClear={vi.fn()} />,
     ));
     const stage = [...container.querySelectorAll("button")].find((node) => node.textContent === "设置阶段") as HTMLButtonElement;
     expect(stage.disabled).toBe(true);

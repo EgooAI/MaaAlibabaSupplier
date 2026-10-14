@@ -73,7 +73,7 @@ describe("batch action panel", () => {
     const onApply = vi.fn();
     const targets = [conversation("42", 1001, { stage: "following_up" }), conversation("43", 1001), conversation("45", null)];
     await act(async () => root.render(
-      <BatchActionPanel action="stage" targets={targets} portraitTags={portraitTags} busy={false} onActionChange={vi.fn()} onClose={vi.fn()} onApply={onApply} />,
+      <BatchActionPanel action="stage" targets={targets} portraitTags={portraitTags} busy={false} exporting={false} exportingPortraits={false} onExport={vi.fn()} onActionChange={vi.fn()} onClose={vi.fn()} onApply={onApply} />,
     ));
     const apply = findButton("应用到");
     expect(apply.disabled).toBe(true);
@@ -91,7 +91,7 @@ describe("batch action panel", () => {
     const onApply = vi.fn();
     const targets = [conversation("42", 1001, { stage: "lost", tags: [{ tag_id: "t1", name: "长期合作", archived: false }] })];
     await act(async () => root.render(
-      <BatchActionPanel action="stage" targets={targets} portraitTags={portraitTags} busy={false} onActionChange={vi.fn()} onClose={vi.fn()} onApply={onApply} />,
+      <BatchActionPanel action="stage" targets={targets} portraitTags={portraitTags} busy={false} exporting={false} exportingPortraits={false} onExport={vi.fn()} onActionChange={vi.fn()} onClose={vi.fn()} onApply={onApply} />,
     ));
     await act(async () => findButton("流失/失败").click());
     expect(container.textContent).toContain("标记流失需选择失败原因");
@@ -105,7 +105,7 @@ describe("batch action panel", () => {
   it("applies tag additions with archived options disabled", async () => {
     const onApply = vi.fn();
     await act(async () => root.render(
-      <BatchActionPanel action="add-tag" targets={[conversation("42", 1001)]} portraitTags={portraitTags} busy={false} onActionChange={vi.fn()} onClose={vi.fn()} onApply={onApply} />,
+      <BatchActionPanel action="add-tag" targets={[conversation("42", 1001)]} portraitTags={portraitTags} busy={false} exporting={false} exportingPortraits={false} onExport={vi.fn()} onActionChange={vi.fn()} onClose={vi.fn()} onApply={onApply} />,
     ));
     const boxes = [...container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
     expect(boxes[1].disabled).toBe(true);
@@ -121,7 +121,7 @@ describe("batch action panel", () => {
     const onActionChange = vi.fn();
     const targets = [conversation("42", 1001, { tags: [{ tag_id: "t1", name: "长期合作", archived: false }] }), conversation("43", 1001, { tags: [{ tag_id: "t1", name: "长期合作", archived: false }] })];
     await act(async () => root.render(
-      <BatchActionPanel action="remove-tag" targets={targets} portraitTags={portraitTags} busy={false} onActionChange={onActionChange} onClose={vi.fn()} onApply={onApply} />,
+      <BatchActionPanel action="remove-tag" targets={targets} portraitTags={portraitTags} busy={false} exporting={false} exportingPortraits={false} onExport={vi.fn()} onActionChange={onActionChange} onClose={vi.fn()} onApply={onApply} />,
     ));
     expect(container.textContent).toContain("2 位客户持有");
     await act(async () => container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
@@ -132,5 +132,48 @@ describe("batch action panel", () => {
     expect(addTab.length).toBe(3);
     await act(async () => addTab[1].click());
     expect(onActionChange).toHaveBeenCalledExactlyOnceWith("add-tag");
+  });
+
+  it("previews export scope and exports only after confirmation", async () => {
+    const onExport = vi.fn();
+    const targets = [conversation("42", 1001), conversation("43", 1001), conversation("45", null)];
+    await act(async () => root.render(
+      <BatchActionPanel action="export-portrait" targets={targets} portraitTags={portraitTags} busy={false} exporting={false} exportingPortraits={false} onExport={onExport} onActionChange={vi.fn()} onClose={vi.fn()} onApply={vi.fn()} />,
+    ));
+    expect(container.querySelector(".ant-segmented")).toBeNull();
+    expect(container.textContent).toContain("将导出 1 位客户资料");
+    expect(container.textContent).toContain("1 个会话无法关联平台客户，不会导出");
+    expect(onExport).not.toHaveBeenCalled();
+    await act(async () => findButton("导出 1 位客户资料").click());
+    expect(onExport).toHaveBeenCalledExactlyOnceWith("portrait");
+  });
+
+  it("previews the chat export range", async () => {
+    const onExport = vi.fn();
+    await act(async () => root.render(
+      <BatchActionPanel action="export-chat" targets={[conversation("42", 1001), conversation("45", null)]} portraitTags={portraitTags} busy={false} exporting={false} exportingPortraits={false} onExport={onExport} onActionChange={vi.fn()} onClose={vi.fn()} onApply={vi.fn()} />,
+    ));
+    expect(container.textContent).toContain("将导出 2 个会话的聊天记录");
+    await act(async () => findButton("导出 2 个会话聊天记录").click());
+    expect(onExport).toHaveBeenCalledExactlyOnceWith("chat");
+  });
+
+  it("keeps each action's configuration while switching between them", async () => {
+    const onApply = vi.fn();
+    const props = {
+      targets: [conversation("42", 1001, { stage: "following_up", tags: [{ tag_id: "t1", name: "长期合作", archived: false }] })],
+      portraitTags, busy: false, exporting: false, exportingPortraits: false, onActionChange: vi.fn(), onClose: vi.fn(), onApply, onExport: vi.fn(),
+    };
+    await act(async () => root.render(<BatchActionPanel action="stage" {...props} />));
+    await act(async () => findButton("报价/洽谈").click());
+    await act(async () => root.render(<BatchActionPanel action="add-tag" {...props} />));
+    const addBoxes = [...container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+    await act(async () => addBoxes[0].click());
+    expect(addBoxes[0].checked).toBe(true);
+    await act(async () => root.render(<BatchActionPanel action="remove-tag" {...props} />));
+    expect([...container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')][0].checked).toBe(false);
+    await act(async () => root.render(<BatchActionPanel action="stage" {...props} />));
+    await act(async () => findButton("应用到").click());
+    expect(onApply).toHaveBeenCalledExactlyOnceWith({ stage: "negotiating" }, "阶段设为「报价/洽谈」");
   });
 });

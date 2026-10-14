@@ -71,7 +71,7 @@ describe("previewPortraitChanges", () => {
     expect(previewPortraitChanges({ add_tag_ids: ["t1"] }, [held])[0]).toMatchObject({ status: "unchanged", note: "已持有所选标签" });
     expect(previewPortraitChanges({ remove_tag_ids: ["t2"] }, [held], [tag("t2", "大单")])[0]).toMatchObject({ status: "unchanged", note: "未持有所选标签" });
     expect(previewPortraitChanges({ remove_tag_ids: ["t1"] }, [held])[0]).toMatchObject({ status: "change", lines: ["－长期合作"] });
-    expect(previewPortraitChanges({ add_tag_ids: ["t1"] }, [conversation("45", null)])[0]).toMatchObject({ status: "unavailable", note: "cid 缺失，跳过画像" });
+    expect(previewPortraitChanges({ add_tag_ids: ["t1"] }, [conversation("45", null)])[0]).toMatchObject({ status: "unavailable", note: "无法关联平台客户，跳过画像" });
   });
 });
 

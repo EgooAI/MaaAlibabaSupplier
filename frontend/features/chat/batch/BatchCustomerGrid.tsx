@@ -210,7 +210,7 @@ export function BatchCustomerGrid({ conversations, selectedIds, loading = false,
 function CustomerCell({ group }: { group: CustomerGroup }) {
   const customer = group.representative.customer;
   const unresolved = group.cid === null;
-  const sub = unresolved ? `${group.sessionIds.length} 个会话 · cid 缺失` : [customer.aliId, customer.company].filter(Boolean).join(" · ");
+  const sub = unresolved ? "无法关联平台客户" : [customer.aliId, customer.company].filter(Boolean).join(" · ");
   return (
     <div className="flex min-w-0 items-center gap-2">
       <Avatar size={28} className="shrink-0" style={{ backgroundColor: unresolved ? "#cbd5e1" : avatarColorOf(customer.id) }}>
