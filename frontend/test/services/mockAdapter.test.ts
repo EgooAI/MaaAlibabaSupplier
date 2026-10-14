@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { SYSTEM_AGENT_APIDS, agentPresetToDbPreset } from "@/domain/agent/agentModel";
 import { mockBackend } from "@/test/support/mockAdapter";
 import { accountSession, scopeBackend } from "@/services/accountSession";
+import type { PortraitBatchInput } from "@/types/portrait";
 
 beforeEach(async () => {
   await mockBackend.resetCache();
@@ -103,5 +104,37 @@ describe("mock adapter", () => {
     await mockBackend.saveAgentPreset(agentPresetToDbPreset({ ...preset, enabled: false }));
 
     await expect(mockBackend.requestTranslations({ texts: ["hello"] })).rejects.toThrow("系统 Agent 不存在或未启用");
+  });
+});
+
+describe("mock portrait batches and filters", () => {
+  it("filters by repeatable stage and portrait completeness", async () => {
+    const batch = await mockBackend.savePortraitBatch({
+      request_id: "filters-1",
+      targets: [{ sid: 42, expected_cid: 1001, expected_version: 0 }],
+      changes: { stage: "won" },
+    });
+    expect(batch.changed).toEqual([{ cid: 1001, sids: [42], version: 1 }]);
+    const maintained = await mockBackend.listConversations({ portrait_completeness: "maintained" });
+    expect(maintained.items.map((item) => item.id)).toEqual(["42"]);
+    expect(maintained.items[0].customer.businessVersion).toBe(1);
+    const unmaintained = await mockBackend.listConversations({ portrait_completeness: "unmaintained" });
+    expect(unmaintained.items.map((item) => item.id).sort()).toEqual(["43", "44"]);
+    expect((await mockBackend.listConversations({ portrait_stage: ["won", "following_up"] })).items.map((item) => item.id)).toEqual(["42"]);
+    expect((await mockBackend.listConversations({ portrait_stage: ["following_up"] })).total).toBe(0);
+  });
+
+  it("applies portrait batches idempotently and rejects stale versions", async () => {
+    const input: PortraitBatchInput = { request_id: "batch-1", targets: [{ sid: 42, expected_cid: 1001, expected_version: 0 }], changes: { stage: "won" } };
+    const first = await mockBackend.savePortraitBatch(input);
+    expect(first.changed[0]).toMatchObject({ cid: 1001, version: 1 });
+    const operations = await mockBackend.listPortraitOperations(1001);
+    expect(await mockBackend.savePortraitBatch(input)).toEqual(first);
+    expect((await mockBackend.listPortraitOperations(1001)).operations).toHaveLength(operations.operations.length);
+    await expect(mockBackend.savePortraitBatch({ ...input, changes: { stage: "lost", lost_reason: "price" } })).rejects.toMatchObject({ status: 409 });
+    await expect(mockBackend.savePortraitBatch({ ...input, request_id: "batch-2" })).rejects.toMatchObject({ status: 409 });
+    const unchanged = await mockBackend.savePortraitBatch({ request_id: "batch-3", targets: [{ sid: 42, expected_cid: 1001, expected_version: 1 }], changes: { stage: "won" } });
+    expect(unchanged.changed).toEqual([]);
+    expect(unchanged.unchanged).toEqual([{ cid: 1001, sids: [42], version: 1 }]);
   });
 });

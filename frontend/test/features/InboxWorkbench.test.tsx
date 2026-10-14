@@ -67,15 +67,20 @@ function Batch() {
   useEffect(() => { batch = current; }, [current]);
   return <output>{current.selectedIds.join(",")}</output>;
 }
-function Workspace({ isBatch = false }: { isBatch?: boolean }) {
+function DeepLinkChat() {
+  const current = useChatWorkbench({}, "99");
+  useEffect(() => { chat = current; }, [current]);
+  return <output>{current.activeConversation?.id ?? ""}</output>;
+}
+function Workspace({ isBatch = false, deepLink = false }: { isBatch?: boolean; deepLink?: boolean }) {
   const current = useAccount();
   useEffect(() => { account = current; }, [current]);
   if ((current.blocked && !current.suspended) || !current.snapshot?.capabilities.read_chat) return null;
-  const Component = isBatch ? Batch : Chat;
+  const Component = isBatch ? Batch : deepLink ? DeepLinkChat : Chat;
   return <Component key={`${current.snapshot.account.epoch}:${current.generation}`} />;
 }
-async function mount(isBatch = false) {
-  await act(async () => root.render(<AccountProvider><Workspace isBatch={isBatch} /></AccountProvider>));
+async function mount(isBatch = false, deepLink = false) {
+  await act(async () => root.render(<AccountProvider><Workspace isBatch={isBatch} deepLink={deepLink} /></AccountProvider>));
 }
 
 beforeEach(async () => {
@@ -194,6 +199,15 @@ describe("inbox workspace", () => {
     expect(mocks.backend.markConversationRead).not.toHaveBeenCalled();
     await act(async () => batch.changeQuery({ unread: true }));
     expect(batch.selectedIds).toEqual([]);
+  });
+
+  it("opens a deep-linked conversation without falling back to the first session", async () => {
+    mocks.backend.getConversation.mockResolvedValue(detail("99"));
+    await mount(false, true);
+    const requested = mocks.backend.getConversation.mock.calls.map(([id]) => id);
+    expect(requested).toContain("99");
+    expect(requested).not.toContain("42");
+    expect(container.textContent).toContain("99");
   });
 
   it("refreshes list and detail on inbox revision changes even at the same message revision", async () => {

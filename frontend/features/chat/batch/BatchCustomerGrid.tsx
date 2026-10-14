@@ -179,6 +179,7 @@ export function BatchCustomerGrid({ conversations, selectedIds, loading = false,
       columns={columns}
       pagination={false}
       scroll={{ x: 1420 }}
+      locale={{ emptyText: "没有符合条件的客户" }}
       rowSelection={rowSelection}
       expandable={{
         expandedRowKeys: expandedKeys,

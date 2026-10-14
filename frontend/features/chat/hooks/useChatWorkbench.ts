@@ -19,7 +19,7 @@ type AnalysisState = {
   error?: string;
 };
 
-export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
+export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialConversationId?: string) {
   const { message } = App.useApp();
   const backend = useAccountBackend();
   const { snapshot, refreshReads } = useAccount();
@@ -123,11 +123,20 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}) {
     }
   }, [account, absorbTranslations, backend, commitConversation, message, warnStorage, beginRead, resetTranslation]);
 
+  // 深链（/chat?conversation=…）优先于“自动选中第一个会话”。
+  const deepLinkRef = useRef<string | null>(null);
   useEffect(() => {
+    if (!initialConversationId || deepLinkRef.current === initialConversationId) return;
+    deepLinkRef.current = initialConversationId;
+    void selectConversation(initialConversationId);
+  }, [initialConversationId, selectConversation]);
+
+  useEffect(() => {
+    if (initialConversationId) return;
     if (!activeConversationId && conversations[0]) {
       queueMicrotask(() => selectConversation(conversations[0].id));
     }
-  }, [activeConversationId, conversations, selectConversation]);
+  }, [activeConversationId, conversations, selectConversation, initialConversationId]);
 
   // Keep the current detail visible while reading a committed version or retrying.
   const refreshActiveDetail = useCallback(async () => {

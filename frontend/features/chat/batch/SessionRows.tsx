@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { conversationTimeLabel } from "@/domain/chat/chatModel";
 import { InboxBadges } from "../conversation/InboxBadges";
 import type { Conversation } from "@/types/chatCanonical";
@@ -14,6 +15,13 @@ export function SessionRows({ conversations }: { conversations: Conversation[] }
           <InboxBadges conversation={conversation} />
           <span className="shrink-0 text-slate-400">{conversationTimeLabel(conversation.updatedAt)}</span>
           <span className="min-w-0 flex-1 truncate text-slate-500" title={conversation.latestMessage}>{conversation.latestMessage || "—"}</span>
+          <Link
+            className="shrink-0 text-blue-500 hover:underline"
+            href={`/chat?conversation=${conversation.id}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            去聊天 ↗
+          </Link>
         </div>
       ))}
     </div>

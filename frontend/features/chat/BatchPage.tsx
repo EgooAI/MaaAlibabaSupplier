@@ -7,6 +7,7 @@ import { inboxQueryFromUrl } from "@/domain/chat/inboxModel";
 import { groupCustomers } from "@/domain/portrait/customerGroups";
 import { ConversationFilters, ConversationPaging } from "./conversation/ConversationFilters";
 import { BatchActionPanel } from "./batch/BatchActionPanel";
+import { BatchFloatingBar } from "./batch/BatchFloatingBar";
 import { BatchManagement } from "./batch/BatchManagement";
 import { BatchCustomerDrawer } from "./batch/BatchCustomerDrawer";
 import { BatchCustomerGrid } from "./batch/BatchCustomerGrid";
@@ -40,6 +41,15 @@ function BatchWorkspace() {
     () => (workbench.portraitPanel ? workbench.conversations.filter((conversation) => workbench.portraitPanel!.sessionIds.includes(conversation.id)) : []),
     [workbench.portraitPanel, workbench.conversations],
   );
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      if (drawerKey) setDrawerKey(null);
+      else if (workbench.portraitPanel) workbench.closePortraitPanel();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [drawerKey, workbench]);
 
   return (
     <Space orientation="vertical" size="large" className="w-full">
@@ -51,6 +61,7 @@ function BatchWorkspace() {
         exporting={workbench.exporting}
         exportingPortraits={workbench.exportingPortraits}
         portraitBusy={workbench.portraitBusy}
+        activeAction={workbench.portraitPanel?.action ?? null}
         onSelectAll={workbench.selectAll}
         onInvert={workbench.invertSelection}
         onClear={workbench.clearSelection}
@@ -89,6 +100,18 @@ function BatchWorkspace() {
         ) : null}
       </div>
       <BatchCustomerDrawer group={drawerGroup} open={Boolean(drawerGroup)} onClose={() => setDrawerKey(null)} portraitTags={workbench.portraitTags} />
+      <BatchFloatingBar
+        selectedCount={workbench.selectedCount}
+        selectedCustomerCount={workbench.selectedCustomerCount}
+        busy={workbench.portraitBusy}
+        exporting={workbench.exporting}
+        exportingPortraits={workbench.exportingPortraits}
+        onOpenPanel={(action) => workbench.openPortraitPanel(action)}
+        onExportPortraits={() => void workbench.exportPortraits()}
+        onExport={workbench.exportSelected}
+        onClear={workbench.clearSelection}
+      />
+      {workbench.selectedCount ? <div className="h-12" aria-hidden /> : null}
     </Space>
   );
 }

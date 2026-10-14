@@ -37,7 +37,7 @@ function ChatWorkspace() {
   const router = useRouter();
   const { isMobile, mobileView, setMobileView } = useSplitSessionMobile();
   const params = useSearchParams().toString();
-  const workbench = useChatWorkbench(inboxQueryFromUrl(new URLSearchParams(params)));
+  const workbench = useChatWorkbench(inboxQueryFromUrl(new URLSearchParams(params)), new URLSearchParams(params).get("conversation") ?? undefined);
   const canUseAi = !blocked && Boolean(snapshot?.capabilities.use_ai);
   const { changeQuery } = workbench;
   const previousParams = useRef(params);
