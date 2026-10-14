@@ -5,8 +5,8 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { inboxQueryFromUrl } from "@/domain/chat/inboxModel";
 import { groupCustomers } from "@/domain/portrait/customerGroups";
-import { portraitStageLabel } from "@/domain/portrait/portraitModel";
 import { ConversationFilters, ConversationPaging } from "./conversation/ConversationFilters";
+import { BatchActionPanel } from "./batch/BatchActionPanel";
 import { BatchManagement } from "./batch/BatchManagement";
 import { BatchCustomerDrawer } from "./batch/BatchCustomerDrawer";
 import { BatchCustomerGrid } from "./batch/BatchCustomerGrid";
@@ -31,11 +31,14 @@ function BatchWorkspace() {
     previousParams.current = params;
     changeQuery(inboxQueryFromUrl(new URLSearchParams(params)));
   }, [params, changeQuery]);
-  const tagName = (tagId: string) => workbench.portraitTags.find((tag) => tag.tag_id === tagId)?.name ?? tagId;
   const [drawerKey, setDrawerKey] = useState<string | null>(null);
   const drawerGroup = useMemo(
     () => (drawerKey ? groupCustomers(workbench.conversations).find((group) => group.key === drawerKey) ?? null : null),
     [drawerKey, workbench.conversations],
+  );
+  const panelTargets = useMemo(
+    () => (workbench.portraitPanel ? workbench.conversations.filter((conversation) => workbench.portraitPanel!.sessionIds.includes(conversation.id)) : []),
+    [workbench.portraitPanel, workbench.conversations],
   );
 
   return (
@@ -48,28 +51,43 @@ function BatchWorkspace() {
         exporting={workbench.exporting}
         exportingPortraits={workbench.exportingPortraits}
         portraitBusy={workbench.portraitBusy}
-        portraitTags={workbench.portraitTags}
         onSelectAll={workbench.selectAll}
         onInvert={workbench.invertSelection}
         onClear={workbench.clearSelection}
         onExport={workbench.exportSelected}
         onExportPortraits={() => void workbench.exportPortraits()}
-        onSetStage={(stage) => workbench.applyPortraitChanges({ stage }, `阶段设为「${portraitStageLabel(stage)}」`)}
-        onAddTag={(tagId) => workbench.applyPortraitChanges({ add_tag_ids: [tagId] }, `增加标签「${tagName(tagId)}」`)}
-        onRemoveTag={(tagId) => workbench.applyPortraitChanges({ remove_tag_ids: [tagId] }, `移除标签「${tagName(tagId)}」`)}
+        onOpenPanel={(action) => workbench.openPortraitPanel(action)}
       />
-      <Card title="选择会话">
-        <ConversationFilters key={params} query={inboxQueryFromUrl(new URLSearchParams(params))} onChange={workbench.changeQuery} tagOptions={workbench.portraitTags} />
-        <ConversationPaging page={workbench.page} pending={workbench.pagePending} onChange={workbench.changePage} />
-        <BatchCustomerGrid
-          conversations={workbench.conversations}
-          selectedIds={workbench.selectedIds}
-          loading={workbench.loading}
-          onToggleSessions={workbench.setGroupSelected}
-          onToggleAll={(selected) => (selected ? workbench.selectAll() : workbench.clearSelection())}
-          onOpenCustomer={setDrawerKey}
-        />
-      </Card>
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
+        <Card title="选择会话" className="min-w-0 flex-1">
+          <ConversationFilters key={params} query={inboxQueryFromUrl(new URLSearchParams(params))} onChange={workbench.changeQuery} tagOptions={workbench.portraitTags} />
+          <ConversationPaging page={workbench.page} pending={workbench.pagePending} onChange={workbench.changePage} />
+          <BatchCustomerGrid
+            conversations={workbench.conversations}
+            selectedIds={workbench.selectedIds}
+            loading={workbench.loading}
+            onToggleSessions={workbench.setGroupSelected}
+            onToggleAll={(selected) => (selected ? workbench.selectAll() : workbench.clearSelection())}
+            onOpenCustomer={setDrawerKey}
+            onOpenStage={(sessionIds) => workbench.openPortraitPanel("stage", sessionIds)}
+            onOpenAddTag={(sessionIds) => workbench.openPortraitPanel("add-tag", sessionIds)}
+          />
+        </Card>
+        {workbench.portraitPanel ? (
+          <div className="xl:sticky xl:top-4 xl:w-[380px] xl:shrink-0">
+            <BatchActionPanel
+              key={`${workbench.portraitPanel.action}:${workbench.portraitPanel.sessionIds.join(",")}`}
+              action={workbench.portraitPanel.action}
+              targets={panelTargets}
+              portraitTags={workbench.portraitTags}
+              busy={workbench.portraitBusy}
+              onActionChange={workbench.changePanelAction}
+              onClose={workbench.closePortraitPanel}
+              onApply={(changes, description) => void workbench.applyPortraitChanges(changes, description)}
+            />
+          </div>
+        ) : null}
+      </div>
       <BatchCustomerDrawer group={drawerGroup} open={Boolean(drawerGroup)} onClose={() => setDrawerKey(null)} portraitTags={workbench.portraitTags} />
     </Space>
   );

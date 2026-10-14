@@ -4,6 +4,7 @@ import { App } from "antd";
 import { useMemo, useState } from "react";
 import { AccountChangedError, useAccountBackend } from "@/features/account/AccountProvider";
 import type { ConversationGroupMode } from "@/domain/chat/chatModel";
+import type { BatchPanelAction } from "@/domain/portrait/batchPreview";
 import { portraitRequestId } from "@/domain/portrait/portraitModel";
 import type { Conversation } from "@/types/chatCanonical";
 import type { PortraitChangesInput, PortraitTargetInput } from "@/types/portrait";
@@ -12,15 +13,17 @@ import { usePortraitTags } from "./usePortraitTags";
 import type { ConversationQuery } from "@/types/inbox";
 
 export function useBatchManagement(initialQuery: ConversationQuery = {}) {
-  const { message, modal } = App.useApp();
+  const { message } = App.useApp();
   const backend = useAccountBackend();
   const summaries = useConversationSummaries(initialQuery);
   const { conversations, loading, refreshError, refreshPending, selectionVersion, pagePending } = summaries;
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [portraitPanel, setPortraitPanel] = useState<{ action: BatchPanelAction; sessionIds: string[] } | null>(null);
   const [selectedVersion, setSelectedVersion] = useState(selectionVersion);
   if (selectedVersion !== selectionVersion) {
     setSelectedVersion(selectionVersion);
     setSelectedIds([]);
+    setPortraitPanel(null);
   }
   const [groupMode, setGroupMode] = useState<ConversationGroupMode>("time");
   const [exporting, setExporting] = useState(false);
@@ -59,6 +62,23 @@ export function useBatchManagement(initialQuery: ConversationQuery = {}) {
       }
       return conversations.map((conversation) => conversation.id).filter((id) => next.has(id));
     });
+  }
+
+  function openPortraitPanel(action: BatchPanelAction, sessionIds?: string[]) {
+    const ids = sessionIds ?? visibleSelectedIds;
+    if (!ids.length) {
+      message.warning("请先选择要操作的会话");
+      return;
+    }
+    setPortraitPanel({ action, sessionIds: ids });
+  }
+
+  function changePanelAction(action: BatchPanelAction) {
+    setPortraitPanel((current) => (current ? { ...current, action } : current));
+  }
+
+  function closePortraitPanel() {
+    setPortraitPanel(null);
   }
 
   async function exportSelected() {
@@ -102,40 +122,36 @@ export function useBatchManagement(initialQuery: ConversationQuery = {}) {
     return { targets, skipped };
   }
 
-  function applyPortraitChanges(changes: PortraitChangesInput, description: string) {
+  async function applyPortraitChanges(changes: PortraitChangesInput, description: string) {
     if (portraitBusy) return;
     const { targets, skipped } = portraitTargets();
     if (!targets.length) {
       message.warning("所选会话缺少可维护的客户身份，无法修改画像");
       return;
     }
-    const customerCount = new Set(targets.map((target) => target.expected_cid)).size;
-    modal.confirm({
-      title: "确认批量修改客户画像",
-      content: `将修改 ${targets.length} 个会话，涉及 ${customerCount} 位客户：${description}。修改不可整体撤回，但会记录变更并可通过再次修改纠正。${skipped ? ` 另有 ${skipped} 个会话因身份无法确定不会被修改。` : ""}`,
-      okText: "确认修改",
-      cancelText: "取消",
-      onOk: async () => {
-        setPortraitBusy(true);
-        let accountChanged = false;
-        try {
-          const result = await backend.savePortraitBatch({ request_id: portraitRequestId(), targets, changes });
-          const changed = result.changed.length;
-          const unchanged = result.unchanged.length;
-          message.success(`画像已保存：${changed} 位客户已更新${unchanged ? `，${unchanged} 位无需修改` : ""}`);
-        } catch (error) {
-          if (error instanceof AccountChangedError) {
-            accountChanged = true;
-          } else {
-            message.error(error instanceof Error ? error.message : "画像修改失败");
-          }
-        } finally {
-          setPortraitBusy(false);
-          // Success and failures both leave displayed versions potentially stale.
-          if (!accountChanged) summaries.changeQuery(summaries.query);
-        }
-      },
-    });
+    if (targets.length > 50) {
+      message.warning("单批最多 50 个会话，请减少选择后重试");
+      return;
+    }
+    setPortraitBusy(true);
+    let accountChanged = false;
+    try {
+      const result = await backend.savePortraitBatch({ request_id: portraitRequestId(), targets, changes });
+      const changed = result.changed.length;
+      const unchanged = result.unchanged.length;
+      message.success(`画像已保存：${description}；${changed} 位客户已更新${unchanged ? `，${unchanged} 位无需修改` : ""}${skipped ? `；${skipped} 个会话因身份无法确定被跳过` : ""}`);
+    } catch (error) {
+      if (error instanceof AccountChangedError) {
+        accountChanged = true;
+      } else {
+        message.error(error instanceof Error ? error.message : "画像修改失败");
+      }
+    } finally {
+      setPortraitBusy(false);
+      // 提交后（无论成败）目标版本可能已过期，关闭面板并重读列表。
+      setPortraitPanel(null);
+      if (!accountChanged) summaries.changeQuery(summaries.query);
+    }
   }
 
   async function exportPortraits() {
@@ -143,6 +159,10 @@ export function useBatchManagement(initialQuery: ConversationQuery = {}) {
     const { targets, skipped } = portraitTargets();
     if (!targets.length) {
       message.warning("所选会话缺少可维护的客户身份，无法导出客户资料");
+      return;
+    }
+    if (targets.length > 100) {
+      message.warning("单次最多导出 100 个会话，请减少选择后重试");
       return;
     }
     setExportingPortraits(true);
@@ -176,6 +196,10 @@ export function useBatchManagement(initialQuery: ConversationQuery = {}) {
     selectAll,
     invertSelection,
     clearSelection: () => setSelectedIds([]),
+    portraitPanel,
+    openPortraitPanel,
+    changePanelAction,
+    closePortraitPanel,
     exportSelected,
     applyPortraitChanges,
     exportPortraits,

@@ -14,7 +14,6 @@ import { authenticatedSession } from "@/test/support/authFixture";
 
 const mocks = vi.hoisted(() => ({
   message: { error: vi.fn(), warning: vi.fn(), success: vi.fn(), info: vi.fn() },
-  confirm: vi.fn(),
   backend: {
     getConnection: vi.fn(),
     getConversationRevision: vi.fn(),
@@ -28,10 +27,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/services/client", () => ({ backend: mocks.backend }));
 vi.mock("antd", () => ({
   App: {
-    useApp: () => ({
-      message: mocks.message,
-      modal: { confirm: (config: { onOk?: () => unknown }) => mocks.confirm(config) },
-    }),
+    useApp: () => ({ message: mocks.message }),
   },
 }));
 
@@ -89,7 +85,6 @@ beforeEach(async () => {
   mocks.backend.getConnection.mockResolvedValue(structuredClone(connectionSnapshot));
   mocks.backend.getConversationRevision.mockResolvedValue(revision);
   mocks.backend.listPortraitTags.mockResolvedValue({ tags: [] });
-  mocks.confirm.mockImplementation((config: { onOk?: () => unknown }) => { void config.onOk?.(); });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -113,10 +108,12 @@ describe("portrait batch workflow", () => {
     await act(async () => batch.toggleSelected("43"));
     expect(batch.selectedCount).toBe(2);
     expect(batch.selectedCustomerCount).toBe(1);
+    await act(async () => batch.openPortraitPanel("stage"));
+    expect(batch.portraitPanel).toEqual({ action: "stage", sessionIds: ["42", "43"] });
     const calls = mocks.backend.listConversations.mock.calls.length;
     await act(async () => batch.applyPortraitChanges({ stage: "won" }, "阶段设为「已成交」"));
-    expect(mocks.confirm).toHaveBeenCalledTimes(1);
     expect(mocks.backend.savePortraitBatch).toHaveBeenCalledTimes(1);
+    expect(batch.portraitPanel).toBeNull();
     const payload = mocks.backend.savePortraitBatch.mock.calls[0][0];
     expect(payload.changes).toEqual({ stage: "won" });
     expect(payload.targets).toEqual([
@@ -131,6 +128,23 @@ describe("portrait batch workflow", () => {
     await act(async () => batch.selectAll());
     await act(async () => batch.applyPortraitChanges({ stage: "negotiating" }, "阶段设为「报价/洽谈」"));
     expect(mocks.backend.savePortraitBatch.mock.calls[1][0].request_id).not.toBe(payload.request_id);
+  });
+
+  it("opens the portrait panel for the current selection or a single customer row", async () => {
+    mocks.backend.listConversations.mockResolvedValue(page([portraitDetail("42", 1001, 3), portraitDetail("43", 1001, 3)]));
+    await mount();
+    await act(async () => batch.openPortraitPanel("stage"));
+    expect(batch.portraitPanel).toBeNull();
+    expect(mocks.message.warning).toHaveBeenCalled();
+    await act(async () => batch.toggleSelected("42"));
+    await act(async () => batch.openPortraitPanel("stage"));
+    expect(batch.portraitPanel).toEqual({ action: "stage", sessionIds: ["42"] });
+    await act(async () => batch.openPortraitPanel("add-tag", ["42", "43"]));
+    expect(batch.portraitPanel).toEqual({ action: "add-tag", sessionIds: ["42", "43"] });
+    await act(async () => batch.changePanelAction("remove-tag"));
+    expect(batch.portraitPanel).toEqual({ action: "remove-tag", sessionIds: ["42", "43"] });
+    await act(async () => batch.closePortraitPanel());
+    expect(batch.portraitPanel).toBeNull();
   });
 
   it("skips sessions without a resolved customer instead of sending guessed targets", async () => {

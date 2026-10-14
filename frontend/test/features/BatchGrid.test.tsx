@@ -136,14 +136,23 @@ describe("batch customer grid", () => {
 
   it("opens the customer drawer from a row or the history button, but not from controls", async () => {
     const onOpenCustomer = vi.fn();
+    const onOpenStage = vi.fn();
+    const onOpenAddTag = vi.fn();
     await act(async () => root.render(
-      <BatchCustomerGrid conversations={fixture} selectedIds={[]} onToggleSessions={vi.fn()} onToggleAll={vi.fn()} onOpenCustomer={onOpenCustomer} />,
+      <BatchCustomerGrid conversations={fixture} selectedIds={[]} onToggleSessions={vi.fn()} onToggleAll={vi.fn()} onOpenCustomer={onOpenCustomer} onOpenStage={onOpenStage} onOpenAddTag={onOpenAddTag} />,
     ));
     const row = container.querySelector<HTMLTableRowElement>('tr[data-row-key="c:1001"]')!;
     await act(async () => row.querySelector<HTMLInputElement>('input[aria-label="选择 Ahmed"]')!.click());
     expect(onOpenCustomer).not.toHaveBeenCalled();
     await act(async () => row.querySelector<HTMLButtonElement>('button[aria-label="查看操作历史"]')!.click());
     expect(onOpenCustomer).toHaveBeenCalledExactlyOnceWith("c:1001");
+    await act(async () => row.querySelector<HTMLButtonElement>('button[aria-label="添加标签"]')!.click());
+    expect(onOpenAddTag).toHaveBeenCalledExactlyOnceWith(["42", "43"]);
+    expect(onOpenCustomer).toHaveBeenCalledTimes(1);
+    const stageTag = [...row.querySelectorAll<HTMLElement>(".ant-tag")].find((node) => node.textContent === "报价/洽谈")!;
+    await act(async () => stageTag.click());
+    expect(onOpenStage).toHaveBeenCalledExactlyOnceWith(["42", "43"]);
+    expect(onOpenCustomer).toHaveBeenCalledTimes(1);
     await act(async () => [...row.querySelectorAll("span")].find((node) => node.textContent === "Ahmed")!.click());
     expect(onOpenCustomer).toHaveBeenCalledTimes(2);
     expect(onOpenCustomer).toHaveBeenLastCalledWith("c:1001");

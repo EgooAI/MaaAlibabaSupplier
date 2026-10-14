@@ -1,9 +1,8 @@
 "use client";
 
-import { CheckOutlined, ClearOutlined, DownOutlined, ExportOutlined, MessageOutlined, SwapOutlined } from "@ant-design/icons";
-import { Button, Card, Dropdown, Space, Tag, Typography } from "antd";
-import { PORTRAIT_STAGE_OPTIONS, portraitTagLabel } from "@/domain/portrait/portraitModel";
-import type { PortraitStage, PortraitTag } from "@/types/portrait";
+import { CheckOutlined, ClearOutlined, ExportOutlined, MessageOutlined, SwapOutlined } from "@ant-design/icons";
+import { Button, Card, Space, Tag, Typography } from "antd";
+import type { BatchPanelAction } from "@/domain/portrait/batchPreview";
 
 type BatchManagementProps = {
   selectedCount: number;
@@ -11,23 +10,19 @@ type BatchManagementProps = {
   exporting: boolean;
   exportingPortraits: boolean;
   portraitBusy: boolean;
-  portraitTags: PortraitTag[];
   onSelectAll: () => void;
   onInvert: () => void;
   onClear: () => void;
   onExport: () => void;
   onExportPortraits: () => void;
-  onSetStage: (stage: PortraitStage) => void;
-  onAddTag: (tagId: string) => void;
-  onRemoveTag: (tagId: string) => void;
+  onOpenPanel: (action: BatchPanelAction) => void;
 };
 
 export function BatchManagement({
-  selectedCount, selectedCustomerCount, exporting, exportingPortraits, portraitBusy, portraitTags,
-  onSelectAll, onInvert, onClear, onExport, onExportPortraits, onSetStage, onAddTag, onRemoveTag,
+  selectedCount, selectedCustomerCount, exporting, exportingPortraits, portraitBusy,
+  onSelectAll, onInvert, onClear, onExport, onExportPortraits, onOpenPanel,
 }: BatchManagementProps) {
   const busy = portraitBusy || !selectedCount;
-  const addableTags = portraitTags.filter((tag) => !tag.archived);
   return (
     <Card
       size="small"
@@ -51,30 +46,9 @@ export function BatchManagement({
           <Button size="small" icon={<CheckOutlined />} onClick={onSelectAll}>全选当前页</Button>
           <Button size="small" icon={<SwapOutlined />} onClick={onInvert}>反选</Button>
           <Button size="small" icon={<ClearOutlined />} onClick={onClear}>清空</Button>
-          <Dropdown
-            disabled={busy}
-            menu={{
-              items: PORTRAIT_STAGE_OPTIONS.map((option) => ({ key: option.value, label: option.label })),
-              onClick: ({ key }) => onSetStage(key as PortraitStage),
-            }}
-          >
-            <Button size="small" loading={portraitBusy}>设置阶段 <DownOutlined /></Button>
-          </Dropdown>
-          <Dropdown
-            disabled={busy || !addableTags.length}
-            menu={{ items: addableTags.map((tag) => ({ key: tag.tag_id, label: tag.name })), onClick: ({ key }) => onAddTag(key) }}
-          >
-            <Button size="small" loading={portraitBusy}>增加标签 <DownOutlined /></Button>
-          </Dropdown>
-          <Dropdown
-            disabled={busy || !portraitTags.length}
-            menu={{
-              items: portraitTags.map((tag) => ({ key: tag.tag_id, label: portraitTagLabel(tag) })),
-              onClick: ({ key }) => onRemoveTag(key),
-            }}
-          >
-            <Button size="small" loading={portraitBusy}>移除标签 <DownOutlined /></Button>
-          </Dropdown>
+          <Button size="small" disabled={busy} loading={portraitBusy} onClick={() => onOpenPanel("stage")}>设置阶段</Button>
+          <Button size="small" disabled={busy} loading={portraitBusy} onClick={() => onOpenPanel("add-tag")}>增加标签</Button>
+          <Button size="small" disabled={busy} loading={portraitBusy} onClick={() => onOpenPanel("remove-tag")}>移除标签</Button>
           <Button size="small" icon={<ExportOutlined />} loading={exportingPortraits} disabled={exportingPortraits || !selectedCount} onClick={onExportPortraits}>导出客户资料</Button>
           <Button size="small" icon={<ExportOutlined />} loading={exporting} disabled={exporting || !selectedCount} onClick={onExport}>导出当前页所选聊天</Button>
           <Button size="small" icon={<MessageOutlined />} disabled>群发</Button>

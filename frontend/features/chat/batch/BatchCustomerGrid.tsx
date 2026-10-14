@@ -22,9 +22,11 @@ type BatchCustomerGridProps = {
   onToggleSessions: (sessionIds: string[], selected: boolean) => void;
   onToggleAll: (selected: boolean) => void;
   onOpenCustomer: (key: string) => void;
+  onOpenStage?: (sessionIds: string[]) => void;
+  onOpenAddTag?: (sessionIds: string[]) => void;
 };
 
-export function BatchCustomerGrid({ conversations, selectedIds, loading = false, onToggleSessions, onToggleAll, onOpenCustomer }: BatchCustomerGridProps) {
+export function BatchCustomerGrid({ conversations, selectedIds, loading = false, onToggleSessions, onToggleAll, onOpenCustomer, onOpenStage, onOpenAddTag }: BatchCustomerGridProps) {
   const groups = useMemo(() => groupCustomers(conversations), [conversations]);
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const [expandedKeys, setExpandedKeys] = useState<readonly Key[]>([]);
@@ -76,7 +78,15 @@ export function BatchCustomerGrid({ conversations, selectedIds, loading = false,
       key: "stage",
       width: 116,
       render: (_, group) => (group.cid === null ? <Muted /> : (
-        <Tag color={portraitStageColor(group.representative.customer.businessStage)} className="!m-0 !text-[11px]">
+        <Tag
+          color={portraitStageColor(group.representative.customer.businessStage)}
+          className="!m-0 !cursor-pointer !text-[11px]"
+          title="设置阶段"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenStage?.(group.sessionIds);
+          }}
+        >
           {portraitStageLabel(group.representative.customer.businessStage)}
         </Tag>
       )),
@@ -85,7 +95,7 @@ export function BatchCustomerGrid({ conversations, selectedIds, loading = false,
       title: "业务标签",
       key: "tags",
       width: 200,
-      render: (_, group) => <TagsCell group={group} />,
+      render: (_, group) => <TagsCell group={group} onOpenAddTag={onOpenAddTag} />,
     },
     {
       title: "流失信息",
@@ -216,10 +226,9 @@ function CustomerCell({ group }: { group: CustomerGroup }) {
   );
 }
 
-function TagsCell({ group }: { group: CustomerGroup }) {
+function TagsCell({ group, onOpenAddTag }: { group: CustomerGroup; onOpenAddTag?: (sessionIds: string[]) => void }) {
   if (group.cid === null) return <Muted />;
   const tags = group.representative.customer.businessTags;
-  if (!tags.length) return <Muted />;
   const shown = tags.slice(0, 3);
   return (
     <div className="flex flex-wrap items-center gap-1">
@@ -227,6 +236,18 @@ function TagsCell({ group }: { group: CustomerGroup }) {
         <Tag key={tag.tag_id} className="!m-0 !text-[11px]">{portraitTagLabel(tag)}</Tag>
       ))}
       {tags.length > shown.length ? <span className="text-[11px] text-slate-400">+{tags.length - shown.length}</span> : null}
+      <button
+        type="button"
+        aria-label="添加标签"
+        title="添加标签"
+        className="rounded border border-dashed border-slate-300 px-1 text-[11px] leading-[18px] text-slate-400 hover:border-blue-400 hover:text-blue-500"
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenAddTag?.(group.sessionIds);
+        }}
+      >
+        ＋
+      </button>
     </div>
   );
 }
