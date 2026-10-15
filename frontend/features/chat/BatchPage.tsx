@@ -2,9 +2,10 @@
 
 import { Card, Space, Spin } from "antd";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import { inboxQueryFromUrl } from "@/domain/chat/inboxModel";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { inboxQueryFromUrl, inboxQueryToUrl } from "@/domain/chat/inboxModel";
 import { groupCustomers } from "@/domain/portrait/customerGroups";
+import type { ConversationQuery } from "@/types/inbox";
 import { ConversationFilters, ConversationPaging } from "./conversation/ConversationFilters";
 import { BatchActionPanel } from "./batch/BatchActionPanel";
 import { BatchFloatingBar } from "./batch/BatchFloatingBar";
@@ -24,8 +25,14 @@ export function BatchPage() {
 
 function BatchWorkspace() {
   const params = useSearchParams().toString();
+  const router = useRouter();
+  const pathname = usePathname();
   const workbench = useBatchManagement(inboxQueryFromUrl(new URLSearchParams(params)));
   const { changeQuery } = workbench;
+  // 已应用筛选写回 URL（未应用即为空查询），刷新与直达链接保留筛选。
+  const writeQueryToUrl = (query: ConversationQuery) => {
+    void router.replace(inboxQueryToUrl(query, null, pathname), { scroll: false });
+  };
   const previousParams = useRef(params);
   useEffect(() => {
     if (previousParams.current === params) return;
@@ -76,7 +83,7 @@ function BatchWorkspace() {
       />
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
         <Card title="选择会话" className="min-w-0 flex-1">
-          <ConversationFilters key={params} query={inboxQueryFromUrl(new URLSearchParams(params))} onChange={workbench.changeQuery} tagOptions={workbench.portraitTags} />
+          <ConversationFilters key={params} query={inboxQueryFromUrl(new URLSearchParams(params))} onChange={workbench.changeQuery} tagOptions={workbench.portraitTags} onApplied={writeQueryToUrl} />
           <ConversationPaging page={workbench.page} pending={workbench.pagePending} onChange={workbench.changePage} />
           <BatchCustomerGrid
             conversations={workbench.conversations}
@@ -107,7 +114,7 @@ function BatchWorkspace() {
           </div>
         ) : null}
       </div>
-      <BatchCustomerDrawer group={drawerGroup} open={Boolean(drawerGroup)} onClose={() => setDrawerKey(null)} portraitTags={workbench.portraitTags} />
+      <BatchCustomerDrawer group={drawerGroup} open={Boolean(drawerGroup)} onClose={() => setDrawerKey(null)} portraitTags={workbench.portraitTags} onPortraitTagsChanged={() => void workbench.reloadPortraitTags()} />
       <BatchFloatingBar
         selectedCount={workbench.selectedCount}
         selectedCustomerCount={workbench.selectedCustomerCount}

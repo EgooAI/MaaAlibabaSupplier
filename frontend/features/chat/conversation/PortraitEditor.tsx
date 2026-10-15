@@ -12,6 +12,7 @@ import {
 } from "@/domain/portrait/portraitModel";
 import { formatDateTime } from "@/domain/time";
 import { ApiError } from "@/services/httpAdapter";
+import { TagManagerModal } from "@/features/chat/portrait/TagManagerModal";
 import type { ConversationDetail } from "@/types/chatCanonical";
 import type {
   LostReason,
@@ -21,11 +22,12 @@ import type {
   PortraitTag,
 } from "@/types/portrait";
 
-export function PortraitEditor({ conversation, tags, onTagCreated, onSaved }: {
+export function PortraitEditor({ conversation, tags, onTagCreated, onSaved, onTagsChanged }: {
   conversation: ConversationDetail;
   tags: PortraitTag[];
   onTagCreated?: (tag: PortraitTag) => void;
   onSaved?: () => void;
+  onTagsChanged?: () => void;
 }) {
   const { message } = App.useApp();
   const backend = useAccountBackend();
@@ -39,6 +41,7 @@ export function PortraitEditor({ conversation, tags, onTagCreated, onSaved }: {
   const [newTagName, setNewTagName] = useState("");
   const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
   const [operations, setOperations] = useState<PortraitOperationEntry[]>([]);
   // Reset drafts when the displayed portrait version changes (render-time
   // adjustment instead of an effect; see "adjusting state when props change").
@@ -191,7 +194,10 @@ export function PortraitEditor({ conversation, tags, onTagCreated, onSaved }: {
           />
         ) : null}
         <div>
-          <Typography.Text type="secondary">业务标签</Typography.Text>
+          <div className="flex items-center justify-between">
+            <Typography.Text type="secondary">业务标签</Typography.Text>
+            <Button size="small" type="text" onClick={() => setManageOpen(true)}>管理标签</Button>
+          </div>
           <Select
             aria-label="业务标签"
             mode="multiple"
@@ -203,6 +209,12 @@ export function PortraitEditor({ conversation, tags, onTagCreated, onSaved }: {
             optionFilterProp="label"
           />
         </div>
+        <TagManagerModal
+          open={manageOpen}
+          onClose={() => setManageOpen(false)}
+          tags={tags}
+          onChanged={onTagsChanged}
+        />
         <Space.Compact className="w-full">
           <Input
             aria-label="新标签名称"

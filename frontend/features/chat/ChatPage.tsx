@@ -3,8 +3,8 @@
 import { ArrowDownOutlined, ArrowLeftOutlined, CheckOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { Alert, Button, Card, Empty, Popover, Spin, Tooltip } from "antd";
-import { useRouter, useSearchParams } from "next/navigation";
-import { inboxQueryFromUrl } from "@/domain/chat/inboxModel";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { inboxQueryFromUrl, inboxQueryToUrl } from "@/domain/chat/inboxModel";
 import { statusLabel } from "@/domain/chat/chatModel";
 import { ConversationFilters, ConversationPaging } from "./conversation/ConversationFilters";
 import { InboxBadges } from "./conversation/InboxBadges";
@@ -23,6 +23,7 @@ import { ChatAnalysisModal } from "./modals/ChatAnalysisModal";
 import { OutboxWorkspace } from "./outbox/OutboxWorkspace";
 import { useAccount } from "@/features/account/AccountProvider";
 import { SyncStatus } from "@/features/account/SyncStatus";
+import type { ConversationQuery } from "@/types/inbox";
 
 type AnalysisFocus = "intent" | "stage";
 
@@ -37,9 +38,14 @@ function ChatWorkspace() {
   const router = useRouter();
   const { isMobile, mobileView, setMobileView } = useSplitSessionMobile();
   const params = useSearchParams().toString();
+  const pathname = usePathname();
   const workbench = useChatWorkbench(inboxQueryFromUrl(new URLSearchParams(params)), new URLSearchParams(params).get("conversation") ?? undefined);
   const canUseAi = !blocked && Boolean(snapshot?.capabilities.use_ai);
   const { changeQuery } = workbench;
+  // 已应用筛选写回 URL（不含分页令牌），会话深链保持不变；刷新后不丢失筛选。
+  const writeQueryToUrl = (query: ConversationQuery) => {
+    router.replace(inboxQueryToUrl(query, new URLSearchParams(params).get("conversation"), pathname), { scroll: false });
+  };
   const previousParams = useRef(params);
   useEffect(() => {
     if (previousParams.current === params) return;
@@ -66,9 +72,25 @@ function ChatWorkspace() {
     <SessionListPanel
       title="会话列表"
       loading={workbench.loading}
-      extra={<Tooltip title="管理会话"><Button type="text" size="small" aria-label="管理会话" icon={<SettingOutlined />} onClick={() => router.push("/batch")} /></Tooltip>}
+      extra={
+        <Tooltip title="管理会话">
+          <Button
+            type="text"
+            size="small"
+            aria-label="管理会话"
+            icon={<SettingOutlined />}
+            onClick={() => {
+              // 跳转携带当前筛选（会话深链不属于批量页）。
+              const search = new URLSearchParams(params);
+              search.delete("conversation");
+              const queries = search.toString();
+              router.push(queries ? `/batch?${queries}` : "/batch");
+            }}
+          />
+        </Tooltip>
+      }
     >
-      <ConversationFilters key={params} query={inboxQueryFromUrl(new URLSearchParams(params))} onChange={workbench.changeQuery} tagOptions={workbench.portraitTags} />
+      <ConversationFilters key={params} query={inboxQueryFromUrl(new URLSearchParams(params))} onChange={workbench.changeQuery} tagOptions={workbench.portraitTags} onApplied={writeQueryToUrl} />
       <div className="app-scroll min-h-0 flex-1 overflow-y-auto">
         <ConversationList
           conversations={workbench.conversations}
@@ -198,6 +220,7 @@ function ChatWorkspace() {
         onSaved={() => { void workbench.refreshActiveDetail(); void workbench.reload(); }}
         portraitTags={workbench.portraitTags}
         onTagCreated={workbench.addPortraitTag}
+        onPortraitTagsChanged={() => void workbench.reloadPortraitTags()}
       />
       <CardDetailDrawer card={workbench.activeCard} open={Boolean(workbench.activeCard)} onClose={() => workbench.setActiveCardId(undefined)} />
     </>

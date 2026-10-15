@@ -195,7 +195,7 @@ describe("inbox workspace", () => {
     vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test");
     vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
     await act(async () => batch.exportSelected());
-    expect(mocks.backend.exportConversations).toHaveBeenCalledExactlyOnceWith({ conversationIds: ["70"] });
+    expect(mocks.backend.exportConversations).toHaveBeenCalledExactlyOnceWith({ conversationIds: [70] });
     expect(mocks.backend.markConversationRead).not.toHaveBeenCalled();
     await act(async () => batch.changeQuery({ unread: true }));
     expect(batch.selectedIds).toEqual([]);

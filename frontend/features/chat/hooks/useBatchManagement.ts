@@ -29,7 +29,7 @@ export function useBatchManagement(initialQuery: ConversationQuery = {}) {
   const [exporting, setExporting] = useState(false);
   const [exportingPortraits, setExportingPortraits] = useState(false);
   const [portraitBusy, setPortraitBusy] = useState(false);
-  const { tags: portraitTags } = usePortraitTags();
+  const { tags: portraitTags, reload: reloadPortraitTags } = usePortraitTags(summaries.observedTagRevision);
   const availableIds = useMemo(() => new Set(conversations.map((conversation) => conversation.id)), [conversations]);
   const visibleSelectedIds = useMemo(() => pagePending ? [] : selectedIds.filter((id) => availableIds.has(id)), [availableIds, selectedIds, pagePending]);
   const selectedConversations = useMemo(
@@ -90,13 +90,20 @@ export function useBatchManagement(initialQuery: ConversationQuery = {}) {
     }
     setExporting(true);
     try {
-      const result = await backend.exportConversations({ conversationIds: ids });
+      // Conversation ids are numeric session ids displayed as strings; the API
+      // takes integers and reports anything skipped server-side via `missing`.
+      const parsed = ids.map((id) => Number(id));
+      const valid = parsed.filter((sid) => Number.isInteger(sid) && sid >= 1);
+      const localSkipped = parsed.length - valid.length;
+      const result = await backend.exportConversations({ conversationIds: valid });
       const archiveName = result.archive_name;
       const isZip = Boolean(archiveName);
       const blob = isZip
         ? new Blob([Uint8Array.from(atob(result.content), (char) => char.charCodeAt(0))], { type: "application/zip" })
         : new Blob([result.content], { type: "text/plain;charset=utf-8" });
       downloadBlob(blob, archiveName ?? "conversation-export.txt");
+      const missing = (result.missing?.length ?? 0) + localSkipped;
+      if (missing) message.warning(`有 ${missing} 个所选会话未导出（不可见或无法定位）`);
       message.success(isZip ? "已导出 ZIP 文件" : "已导出 TXT 文件");
     } catch (error: unknown) {
       if (!(error instanceof AccountChangedError)) message.error(error instanceof Error ? error.message : "会话导出失败");
@@ -179,7 +186,7 @@ export function useBatchManagement(initialQuery: ConversationQuery = {}) {
       const result = await backend.exportPortraits({ conversationIds: targets.map((target) => target.sid) });
       downloadBlob(new Blob([result.content], { type: "text/csv;charset=utf-8" }), result.filename);
       const missing = result.missing.length + skipped;
-      message.success(`已导出 ${result.exported} 位客户资料${missing ? `；${missing} 个会话因身份无法确定未导出` : ""}`);
+      message.success(`已导出 ${result.exported} 位客户资料${missing ? `；${missing} 个会话未导出（不可见或身份无法确定）` : ""}`);
     } catch (error: unknown) {
       if (!(error instanceof AccountChangedError)) message.error(error instanceof Error ? error.message : "客户资料导出失败");
     } finally {
@@ -198,6 +205,7 @@ export function useBatchManagement(initialQuery: ConversationQuery = {}) {
     exportingPortraits,
     portraitBusy,
     portraitTags,
+    reloadPortraitTags,
     groupMode,
     setGroupMode,
     toggleSelected,

@@ -6,7 +6,7 @@ import type { PortraitTag } from "@/types/portrait";
 import { useAccount } from "@/features/account/AccountProvider";
 import { PortraitEditor } from "./PortraitEditor";
 
-export function CustomerInfo({ conversation, open, onClose, onGotoContact, onSaved, portraitTags, onTagCreated }: {
+export function CustomerInfo({ conversation, open, onClose, onGotoContact, onSaved, portraitTags, onTagCreated, onPortraitTagsChanged }: {
   conversation?: ConversationDetail;
   open: boolean;
   onClose: () => void;
@@ -14,6 +14,7 @@ export function CustomerInfo({ conversation, open, onClose, onGotoContact, onSav
   onSaved?: () => void;
   portraitTags: PortraitTag[];
   onTagCreated?: (tag: PortraitTag) => void;
+  onPortraitTagsChanged?: () => void;
 }) {
   return (
     <Drawer title="客户详情" size={520} open={open} onClose={onClose} destroyOnHidden>
@@ -24,18 +25,20 @@ export function CustomerInfo({ conversation, open, onClose, onGotoContact, onSav
           onSaved={onSaved}
           portraitTags={portraitTags}
           onTagCreated={onTagCreated}
+          onPortraitTagsChanged={onPortraitTagsChanged}
         />
       ) : null}
     </Drawer>
   );
 }
 
-function CustomerInfoContent({ conversation, onGotoContact, onSaved, portraitTags, onTagCreated }: {
+function CustomerInfoContent({ conversation, onGotoContact, onSaved, portraitTags, onTagCreated, onPortraitTagsChanged }: {
   conversation: ConversationDetail;
   onGotoContact?: () => void;
   onSaved?: () => void;
   portraitTags: PortraitTag[];
   onTagCreated?: (tag: PortraitTag) => void;
+  onPortraitTagsChanged?: () => void;
 }) {
   const { snapshot, blocked } = useAccount();
   const { customer } = conversation;
@@ -44,7 +47,13 @@ function CustomerInfoContent({ conversation, onGotoContact, onSaved, portraitTag
 
   return (
     <Space orientation="vertical" className="w-full" size="middle">
-      <PortraitEditor conversation={conversation} tags={portraitTags} onTagCreated={onTagCreated} onSaved={onSaved} />
+      <PortraitEditor
+        conversation={conversation}
+        tags={portraitTags}
+        onTagCreated={onTagCreated}
+        onSaved={onSaved}
+        onTagsChanged={onPortraitTagsChanged}
+      />
       <Card title="身份" extra={onGotoContact ? <Button size="small" disabled={blocked || !snapshot?.capabilities.operate_client} onClick={onGotoContact}>跳转到该联系人</Button> : null}>
         <Descriptions size="small" column={1} items={[
           { key: "ali", label: "Ali ID", children: value(customer.aliId) },

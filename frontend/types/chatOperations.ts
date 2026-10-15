@@ -60,12 +60,13 @@ export interface SendMessageResult {
 }
 
 export interface ExportConversationsInput {
-  conversationIds: string[];
+  conversationIds: number[];
 }
 export interface ExportConversationsResult {
   archive_name: string | null;
   content: string;
-  missing?: string[];
+  /** 后端可见会话中未成功导出的 SID（不可见、身份未解析等）；与 total 相加才是所选集合。 */
+  missing?: number[];
 }
 
 export interface ConversationRevision extends SourceSyncStatus {

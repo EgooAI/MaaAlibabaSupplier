@@ -1,27 +1,33 @@
 "use client";
 
-import { Descriptions, Tag, Typography } from "antd";
+import { Button, Descriptions, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { BaseDrawer } from "@/components/BaseDrawer";
 import { useAccountBackend } from "@/features/account/AccountProvider";
+import { TagManagerModal } from "@/features/chat/portrait/TagManagerModal";
 import { customerLabelOf, type CustomerGroup } from "@/domain/portrait/customerGroups";
 import { lostReasonLabel, operationSummary, portraitStageColor, portraitStageLabel, portraitTagLabel, portraitTagOptions } from "@/domain/portrait/portraitModel";
 import { formatDateTime } from "@/domain/time";
 import { SessionRows } from "./SessionRows";
 import type { PortraitOperationEntry, PortraitTag } from "@/types/portrait";
 
-/** 批量页只读客户详情：资料 + 画像 + 本页会话 + 操作历史（维护入口在 Phase 3 的配置面板）。 */
-export function BatchCustomerDrawer({ group, open, onClose, portraitTags }: {
+/** 批量页只读客户详情：资料 + 画像 + 本页会话 + 操作历史（维护入口在配置面板）。
+ *
+ * 抽屉额外提供共享业务标签的管理入口；更新成功回调让页面重读标签目录。
+ */
+export function BatchCustomerDrawer({ group, open, onClose, portraitTags, onPortraitTagsChanged }: {
   group: CustomerGroup | null;
   open: boolean;
   onClose: () => void;
   portraitTags: PortraitTag[];
+  onPortraitTagsChanged?: () => void;
 }) {
   const backend = useAccountBackend();
   const cid = group?.cid ?? null;
   const version = group?.representative.customer.businessVersion ?? 0;
   const [history, setHistory] = useState<{ cid: number; operations: PortraitOperationEntry[] } | null>(null);
+  const [manageOpen, setManageOpen] = useState(false);
 
   useEffect(() => {
     if (!open || !cid) return;
@@ -43,15 +49,21 @@ export function BatchCustomerDrawer({ group, open, onClose, portraitTags }: {
 
   return (
     <BaseDrawer title="客户详情" open={open && Boolean(group)} onClose={onClose}>
-      {group ? <CustomerDetail group={group} operations={operations} portraitTags={portraitTags} /> : null}
+      {group ? (
+        <>
+          <CustomerDetail group={group} operations={operations} portraitTags={portraitTags} onManageTags={() => setManageOpen(true)} />
+          <TagManagerModal open={manageOpen} onClose={() => setManageOpen(false)} tags={portraitTags} onChanged={onPortraitTagsChanged} />
+        </>
+      ) : null}
     </BaseDrawer>
   );
 }
 
-function CustomerDetail({ group, operations, portraitTags }: {
+function CustomerDetail({ group, operations, portraitTags, onManageTags }: {
   group: CustomerGroup;
   operations: PortraitOperationEntry[];
   portraitTags: PortraitTag[];
+  onManageTags: () => void;
 }) {
   const customer = group.representative.customer;
   if (group.cid === null) {
@@ -94,7 +106,12 @@ function CustomerDetail({ group, operations, portraitTags }: {
       </Section>
 
       <Section title="客户群像">
-        <Descriptions size="small" column={1} items={[
+        <div className="flex items-center justify-between">
+          <Descriptions
+            size="small"
+            column={1}
+            className="flex-1"
+            items={[
           { key: "stage", label: "业务阶段", children: <Tag color={portraitStageColor(customer.businessStage)} className="!m-0">{portraitStageLabel(customer.businessStage)}</Tag> },
           {
             key: "tags", label: "业务标签",
@@ -115,6 +132,8 @@ function CustomerDetail({ group, operations, portraitTags }: {
               : "未维护",
           },
         ]} />
+          <Button size="small" type="text" className="self-start" onClick={onManageTags}>管理标签</Button>
+        </div>
       </Section>
 
       <Section title={`包含会话（${group.sessionIds.length}）`}>

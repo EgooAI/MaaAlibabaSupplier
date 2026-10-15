@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAccountBackend } from "@/features/account/AccountProvider";
 import type { PortraitTag } from "@/types/portrait";
 
-export function usePortraitTags() {
+export function usePortraitTags(tagRevision?: number) {
   const backend = useAccountBackend();
   const [tags, setTags] = useState<PortraitTag[]>([]);
+  const loadedRevision = useRef<number | undefined>(undefined);
   const load = useCallback(async () => {
     try {
       const result = await backend.listPortraitTags();
@@ -23,5 +24,13 @@ export function usePortraitTags() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
+  useEffect(() => {
+    // 标签定义由 CRM 库内各工作区共享：提高共享版本说明其他工作区改动了标签目录。
+    // 首个观测值只作为基线；之后严格递增才重读。
+    if (typeof tagRevision !== "number") return;
+    const previous = loadedRevision.current;
+    loadedRevision.current = tagRevision;
+    if (previous !== undefined && tagRevision > previous) void load();
+  }, [load, tagRevision]);
   return { tags, reload: load, add };
 }

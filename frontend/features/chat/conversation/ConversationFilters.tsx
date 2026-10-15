@@ -9,7 +9,7 @@ import { statusLabel } from "@/domain/chat/chatModel";
 import { LOST_REASON_OPTIONS, PORTRAIT_STAGE_OPTIONS, portraitTagOptions } from "@/domain/portrait/portraitModel";
 import type { BusinessTag, PortraitStage } from "@/types/portrait";
 
-export function ConversationFilters({ query, onChange, tagOptions = [] }: { query: ConversationQuery; onChange: (query: ConversationQuery) => void; tagOptions?: BusinessTag[] }) {
+export function ConversationFilters({ query, onChange, tagOptions = [], onApplied }: { query: ConversationQuery; onChange: (query: ConversationQuery) => void; tagOptions?: BusinessTag[]; onApplied?: (query: ConversationQuery) => void }) {
   const [draft, setDraft] = useState(query);
   const [applied, setApplied] = useState(query);
   const [open, setOpen] = useState(false);
@@ -23,6 +23,7 @@ export function ConversationFilters({ query, onChange, tagOptions = [] }: { quer
     setDraft(next);
     setApplied(next);
     onChange(next);
+    onApplied?.(next);
     setOpen(false);
   }
   const filters = <form onSubmit={(event) => { event.preventDefault(); apply(draft); }} className="flex w-[min(300px,calc(100vw-48px))] flex-col gap-3">

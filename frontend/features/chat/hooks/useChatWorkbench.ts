@@ -31,7 +31,7 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
     message.warning("草稿暂存于当前标签页内存，切换账号后仍保留，存储恢复后会补存；关闭或刷新浏览器前请妥善保留内容");
   }, [message]);
   const summaries = useConversationSummaries(initialQuery);
-  const portraitTags = usePortraitTags();
+  const { tags: portraitTags, reload: reloadPortraitTags, add: addPortraitTag } = usePortraitTags(summaries.observedTagRevision);
   const { conversations, detailRevision, beginRead } = summaries;
   const [markingRead, setMarkingRead] = useState(false);
   const readBusy = useRef(false);
@@ -280,8 +280,9 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
     reconcileTranslations: translation.reconcileTranslations,
     gotoContact,
     refreshActiveDetail,
-    portraitTags: portraitTags.tags,
-    addPortraitTag: portraitTags.add,
+    portraitTags,
+    addPortraitTag,
+    reloadPortraitTags,
     suggestions,
     suggestionOpen,
     suggestionError,

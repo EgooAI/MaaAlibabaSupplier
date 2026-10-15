@@ -21,6 +21,7 @@ export function useConversationSummaries(initialQuery: ConversationQuery = {}) {
   const seenInbox = useRef<number | undefined>(undefined);
   const seenPortrait = useRef<number | undefined>(undefined);
   const seenTags = useRef<number | undefined>(undefined);
+  const [observedTagRevision, setObservedTagRevision] = useState(0);
   const nextDue = useRef<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [polledRevision, setPolledRevision] = useState(0);
@@ -37,6 +38,13 @@ export function useConversationSummaries(initialQuery: ConversationQuery = {}) {
   const listRevision = `${sharedRevision}:${listVersion}`;
   const detailRevision = `${sharedRevision}:${detailVersion}`;
   const deadlineFiltered = query.overdue !== undefined;
+  const absorbTagRevision = useCallback((value: number | undefined) => {
+    if (typeof value !== "number") return;
+    if (seenTags.current === undefined || value > seenTags.current) {
+      seenTags.current = value;
+      setObservedTagRevision(value);
+    }
+  }, []);
   const observeInbox = useCallback((inboxRevision: number, refreshDeadlineFilter = false) => {
     const changed = seenInbox.current === undefined || inboxRevision > seenInbox.current;
     const crossedDue = nextDue.current !== null && nextDue.current <= Date.now() / 1000;
@@ -107,10 +115,7 @@ export function useConversationSummaries(initialQuery: ConversationQuery = {}) {
           && (seenPortrait.current === undefined || next.portrait_revision > seenPortrait.current)) {
           seenPortrait.current = next.portrait_revision;
         }
-        if (typeof next.tag_revision === "number"
-          && (seenTags.current === undefined || next.tag_revision > seenTags.current)) {
-          seenTags.current = next.tag_revision;
-        }
+        absorbTagRevision(next.tag_revision);
         const due = next.items.flatMap((item) => item.dueAt !== null && !item.isOverdue ? [item.dueAt] : []);
         if (due.length) nextDue.current = Math.min(nextDue.current ?? Infinity, ...due);
         acknowledge(true);
@@ -125,7 +130,7 @@ export function useConversationSummaries(initialQuery: ConversationQuery = {}) {
     } finally {
       if (request === listRequest.current) { setLoading(false); setPagePending(false); }
     }
-  }, [backend, beginRead, query, changeQuery, observeInbox]);
+  }, [backend, beginRead, query, changeQuery, observeInbox, absorbTagRevision]);
 
   useEffect(() => () => { ++listRequest.current; reads.current = {}; }, []);
 
@@ -152,8 +157,8 @@ export function useConversationSummaries(initialQuery: ConversationQuery = {}) {
             && seenPortrait.current !== undefined && next.portrait_revision > seenPortrait.current;
           const tagsChanged = typeof next.tag_revision === "number"
             && seenTags.current !== undefined && next.tag_revision > seenTags.current;
+          absorbTagRevision(next.tag_revision);
           if (typeof next.portrait_revision === "number") seenPortrait.current = next.portrait_revision;
-          if (typeof next.tag_revision === "number") seenTags.current = next.tag_revision;
           if (portraitChanged || tagsChanged) setDetailVersion((value) => value + 1);
           // An empty overdue page cannot supply its own upcoming deadline.
           if (observeInbox(next.inbox_revision, deadlineFiltered && !reading) || portraitChanged || tagsChanged) {
@@ -182,12 +187,12 @@ export function useConversationSummaries(initialQuery: ConversationQuery = {}) {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [backend, blocked, snapshot?.account.self_ali_id, markReloadNeeded, deadlineFiltered, observeInbox]);
+  }, [backend, blocked, snapshot?.account.self_ali_id, markReloadNeeded, deadlineFiltered, observeInbox, absorbTagRevision]);
 
   useEffect(() => {
     // Commits, explicit refreshes and recovery each trigger data reads.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void reload();
   }, [reload, listRevision]);
-  return { conversations, loading, reload, detailRevision, refreshError, refreshPending, beginRead, query, changeQuery, page, pagePending, changePage, selectionVersion };
+  return { conversations, loading, reload, detailRevision, refreshError, refreshPending, beginRead, query, changeQuery, page, pagePending, changePage, selectionVersion, observedTagRevision };
 }

@@ -116,11 +116,11 @@ describe("mock portrait batches and filters", () => {
     });
     expect(batch.changed).toEqual([{ cid: 1001, sids: [42], version: 1 }]);
     const maintained = await mockBackend.listConversations({ portrait_completeness: "maintained" });
-    expect(maintained.items.map((item) => item.id)).toEqual(["42"]);
+    expect(maintained.items.map((item) => item.id)).toEqual(["42", "45"]);
     expect(maintained.items[0].customer.businessVersion).toBe(1);
     const unmaintained = await mockBackend.listConversations({ portrait_completeness: "unmaintained" });
     expect(unmaintained.items.map((item) => item.id).sort()).toEqual(["43", "44"]);
-    expect((await mockBackend.listConversations({ portrait_stage: ["won", "following_up"] })).items.map((item) => item.id)).toEqual(["42"]);
+    expect((await mockBackend.listConversations({ portrait_stage: ["won", "following_up"] })).items.map((item) => item.id)).toEqual(["42", "45"]);
     expect((await mockBackend.listConversations({ portrait_stage: ["following_up"] })).total).toBe(0);
   });
 
@@ -136,5 +136,25 @@ describe("mock portrait batches and filters", () => {
     const unchanged = await mockBackend.savePortraitBatch({ request_id: "batch-3", targets: [{ sid: 42, expected_cid: 1001, expected_version: 1 }], changes: { stage: "won" } });
     expect(unchanged.changed).toEqual([]);
     expect(unchanged.unchanged).toEqual([{ cid: 1001, sids: [42], version: 1 }]);
+  });
+
+  it("deduplicates one customer edit across its sessions and reports chat export misses", async () => {
+    // Both Luma sessions belong to customer 1001: one edit, one changed entry.
+    const result = await mockBackend.savePortraitBatch({
+      request_id: "dedup-1",
+      targets: [
+        { sid: 42, expected_cid: 1001, expected_version: 0 },
+        { sid: 45, expected_cid: 1001, expected_version: 0 },
+      ],
+      changes: { stage: "following_up" },
+    });
+    expect(result.changed).toEqual([{ cid: 1001, sids: [42, 45], version: 1 }]);
+    expect(result.portrait_revision).toBeGreaterThan(0);
+    const exported = await mockBackend.exportPortraits({ conversationIds: [42, 45] });
+    expect(exported.exported).toBe(1);
+    expect(exported.missing).toEqual([]);
+    const chatExport = await mockBackend.exportConversations({ conversationIds: [42, 999] });
+    expect(chatExport.missing).toContain(999);
+    expect(chatExport.archive_name).toBeNull();
   });
 });

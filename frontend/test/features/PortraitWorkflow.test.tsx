@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
     listPortraitTags: vi.fn(),
     savePortraitBatch: vi.fn(),
     exportPortraits: vi.fn(),
+    exportConversations: vi.fn(),
   },
 }));
 vi.mock("@/services/client", () => ({ backend: mocks.backend }));
@@ -199,5 +200,18 @@ describe("portrait batch workflow", () => {
     await act(async () => batch.openPanel("export-portrait", ["42"]));
     await act(async () => batch.exportPortraits());
     expect(mocks.backend.exportPortraits).toHaveBeenCalledExactlyOnceWith({ conversationIds: [42] });
+  });
+
+  it("warns when the chat archive leaves selected sessions unexported", async () => {
+    mocks.backend.listConversations.mockResolvedValue(page([portraitDetail("42", 1001)]));
+    mocks.backend.exportConversations.mockResolvedValue({ archive_name: null, content: "txt", missing: [43] });
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    await mount();
+    await act(async () => batch.toggleSelected("42"));
+    await act(async () => batch.exportSelected());
+    expect(mocks.backend.exportConversations).toHaveBeenCalledWith({ conversationIds: [42] });
+    expect(mocks.message.warning).toHaveBeenCalledWith("有 1 个所选会话未导出（不可见或无法定位）");
+    expect(mocks.message.success).toHaveBeenCalledWith("已导出 TXT 文件");
   });
 });

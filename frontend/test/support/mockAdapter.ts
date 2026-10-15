@@ -365,8 +365,15 @@ export const mockBackend: OperationsBackend = {
   getOutboxScreenshot: async () => { throw new Error("Mock 不提供真实客户端截图"); },
 
   exportConversations: async ({ conversationIds }) => {
-    const selected = conversationIds.map((id) => buildConversationDetail(id));
-    return delay(buildConversationExport(selected));
+    const selected = [];
+    const missing: number[] = [];
+    for (const id of conversationIds) {
+      const conversation = conversationStore.find((item) => conversationMatchesId(item, String(id)));
+      if (!conversation) { missing.push(Number(id)); continue; }
+      selected.push(buildConversationDetail(String(id)));
+    }
+    const result = buildConversationExport(selected);
+    return delay({ ...result, missing });
   },
 
   gotoContact: async () => {
@@ -379,10 +386,14 @@ export const mockBackend: OperationsBackend = {
   }),
 
   createPortraitTag: async ({ name, description = "" }) => {
+    const invalid = () => new ApiError("标签名称必须是文本", "/api/portraits/tags", { status: 422 });
+    if (typeof name !== "string" || !name.trim()) throw invalid();
     const label = name.normalize("NFKC").trim();
-    if (!label) throw new Error("标签名称不能为空");
+    if (!label) throw invalid();
     const key = label.toLowerCase();
-    if ([...portraitTags.values()].some((tag) => tag.name.toLowerCase() === key)) throw new Error("同名标签已存在");
+    if ([...portraitTags.values()].some((tag) => tag.name.toLowerCase() === key)) {
+      throw new ApiError("同名标签已存在", "/api/portraits/tags", { status: 409 });
+    }
     const now = Date.now() / 1000;
     const tag: PortraitTag = {
       tag_id: crypto.randomUUID(), name: label, description: description.trim(),
@@ -395,18 +406,23 @@ export const mockBackend: OperationsBackend = {
 
   updatePortraitTag: async (tagId, input) => {
     const tag = portraitTags.get(tagId);
-    if (!tag) throw new Error("标签不存在");
+    if (!tag) throw new ApiError("标签不存在", "/api/portraits/tags/{tag_id}", { status: 404 });
     let changed = false;
     if (input.name !== undefined) {
+      if (typeof input.name !== "string" || !input.name.trim()) {
+        throw new ApiError("标签名称不能为空", "/api/portraits/tags/{tag_id}", { status: 422 });
+      }
       const label = input.name.normalize("NFKC").trim();
-      if (!label) throw new Error("标签名称不能为空");
       if (label.toLowerCase() !== tag.name.toLowerCase()
         && [...portraitTags.values()].some((candidate) => candidate.tag_id !== tagId && candidate.name.toLowerCase() === label.toLowerCase())) {
-        throw new Error("同名标签已存在");
+        throw new ApiError("同名标签已存在", "/api/portraits/tags/{tag_id}", { status: 409 });
       }
       if (label !== tag.name) { tag.name = label; changed = true; }
     }
     if (input.description !== undefined) {
+      if (typeof input.description !== "string") {
+        throw new ApiError("标签说明必须是文本", "/api/portraits/tags/{tag_id}", { status: 422 });
+      }
       const description = input.description.trim();
       if (description !== tag.description) { tag.description = description; changed = true; }
     }
@@ -436,8 +452,10 @@ export const mockBackend: OperationsBackend = {
     }
     for (const tagId of [...addIds, ...removeIds]) {
       const tag = portraitTags.get(tagId);
-      if (!tag) throw new Error("标签不存在");
-      if (addIds.includes(tagId) && tag.archived) throw new Error(`标签「${tag.name}」已停用，不能新增`);
+      if (!tag) throw new ApiError("新增标签不存在，请刷新后重试", "/api/portraits/batch", { status: 422 });
+      if (addIds.includes(tagId) && tag.archived) {
+        throw new ApiError(`标签「${tag.name}」已停用，不能新增`, "/api/portraits/batch", { status: 422 });
+      }
     }
     const byCid = new Map<number, number[]>();
     for (const target of input.targets) {

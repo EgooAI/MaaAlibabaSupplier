@@ -14,10 +14,10 @@ const platforms: Platform[] = [
 ];
 
 const accounts: Account[] = [
-  { aid: 101, cid: 1001, pid: "alibaba", account: "buyer-ali-001", nickname: "Sofia Martinez", avatar: null, sids: [42], extra: { email: "sofia@luma.example", phone: "+34 600 123 456" } },
+  { aid: 101, cid: 1001, pid: "alibaba", account: "buyer-ali-001", nickname: "Sofia Martinez", avatar: null, sids: [42, 45], extra: { email: "sofia@luma.example", phone: "+34 600 123 456" } },
   { aid: 102, cid: 1002, pid: "alibaba", account: "buyer-ali-002", nickname: "Ahmed Khan", avatar: null, sids: [43], extra: { email: "ahmed@gfresh.example", phone: "+971 55 000 1188" } },
   { aid: 103, cid: 1003, pid: "alibaba", account: "buyer-ali-003", nickname: "Maya Brown", avatar: null, sids: [44], extra: { email: "maya@northharbor.example", phone: "+1 604 000 9281" } },
-  { aid: 9001, cid: 9001, pid: "alibaba", account: mockSelfInfo.ali_id, nickname: "Demo Seller", avatar: mockSelfInfo.avatar_url, sids: [42, 43, 44], extra: null },
+  { aid: 9001, cid: 9001, pid: "alibaba", account: mockSelfInfo.ali_id, nickname: "Demo Seller", avatar: mockSelfInfo.avatar_url, sids: [42, 43, 44, 45], extra: null },
 ];
 
 const accountMappings: AccountMapping[] = [
@@ -157,6 +157,38 @@ export const conversationAggregates: ConversationAggregateDto[] = [
     messages: [
       { message: { external_mid: "msg-007", sid: 44, sender: 103, read: false, content: "Can you send the latest catalog and sample terms?", type: "text" }, created_at: "2026-09-06 22:00", role: "buyer" },
       { message: { external_mid: "msg-008", sid: 44, sender: 9001, read: true, content: { card_id: "card-generic-001", label: "系统推荐卡片" }, type: "card" }, created_at: "2026-09-06 22:11", role: "card" },
+    ],
+  },
+  {
+    sid: 45,
+    name: "Luma Retail Group",
+    participants: [101, 9001],
+    ...aggregateEntities(101),
+    customer_view: {
+      id: "1001",
+      ali_id: "buyer-ali-001",
+      name: "Sofia Martinez",
+      company: "Luma Retail Group",
+      country: "Spain",
+      email: "sofia@luma.example",
+      phone: "+34 600 123 456",
+      stage: "interested",
+      tags: ["高质量买家", "新能源", "户外照明"],
+      cid: 1001,
+      business_stage: "unknown",
+      business_tags: [],
+      business_version: 0,
+      portrait_editable: true,
+      availability: "当前可联系",
+      behavior: ["商品浏览 12 次", "有效询盘 4 条", "活跃 28 天", "近期已联系"],
+    },
+    latest: { updated_at: "2026-09-05 17:02", content: "上一轮询价后客户表示预算需要内部确认。" },
+    unread_count: 0,
+    reply_state: "waiting_customer", pending_since: null, due_at: null, is_overdue: false, history_pending: false, uncertain: false,
+    read_snapshot: "mock-snapshot-45",
+    messages: [
+      { message: { external_mid: "msg-101", sid: 45, sender: 101, read: true, content: "Budget approved: 300 units. Please confirm the price for that volume.", type: "text" }, created_at: "2026-09-05 16:40", role: "buyer" },
+      { message: { external_mid: "msg-102", sid: 45, sender: 9001, read: true, content: "确认了 300 台的阶梯价，等最终确认后安排排产。", type: "text" }, created_at: "2026-09-05 17:02", role: "seller" },
     ],
   },
 ];
