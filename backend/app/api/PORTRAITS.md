@@ -141,8 +141,11 @@ from client drafts; cells are guarded against spreadsheet formula prefixes.
 ## Operations and Revisions
 
 `GET /api/portraits/operations` returns append-only records (newest first) with
-the request id, kind, creation time, the submitted changes and the affected
-`{cid, sids, version}` targets. There is no bulk rollback; corrections are new
+the request id, kind, creation time, the submitted changes, the affected
+`{cid, sids, version}` targets and a `before` snapshot: every committed
+target's prior `stage`, failure info and tags at write time; never-maintained
+customers appear as their defaults. Rows written before the snapshot column
+existed read `before: null`. There is no bulk rollback; corrections are new
 operations, which keeps the full change history.
 
 `GET /api/conversations/revision` exposes `portrait_revision` (workspace

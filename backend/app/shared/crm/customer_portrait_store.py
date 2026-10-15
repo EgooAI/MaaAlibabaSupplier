@@ -346,6 +346,11 @@ class CustomerPortraitStore:
     def _ensure_schema(self, conn) -> None:
         for statement in _SCHEMA_STATEMENTS:
             conn.execute(statement)
+        # Databases initialized before the audit snapshot get the column here;
+        # the additive migration must stay inside the caller's write transaction.
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(app_portrait_operation)")}
+        if "before" not in columns:
+            conn.execute("ALTER TABLE app_portrait_operation ADD COLUMN before TEXT")
         conn.execute("INSERT OR IGNORE INTO app_portrait_tag_meta (id, revision) VALUES (1, 0)")
 
     def _require_writable(self) -> None:
@@ -415,9 +420,12 @@ class CustomerPortraitStore:
                 ]
                 if cid is not None and not targets:
                     continue
+                # Legacy rows predating the audit snapshot carry no column and read as null.
+                raw_before = row["before"] if "before" in row.keys() else None
                 entries.append({
                     "request_id": row["request_id"], "kind": row["kind"], "created_at": row["created_at"],
                     "changes": payload.get("changes") or {}, "targets": targets,
+                    "before": json.loads(raw_before) if raw_before else None,
                 })
                 if len(entries) >= limit:
                     break
@@ -510,6 +518,18 @@ class CustomerPortraitStore:
             if conflicts:
                 raise PortraitConflict("画像目标已变化，请刷新后重试", items=conflicts)
 
+            # Audit snapshot of every committed target's state before this batch,
+            # read from the same in-transaction bundle; never-maintained records
+            # appear as their defaults so "before" always shows where it started.
+            before = {}
+            for cid in sorted(sids_by_cid):
+                record = current.get(cid) or default_portrait_record()
+                before[str(cid)] = {
+                    "stage": record["stage"], "lost_reason": record["lost_reason"],
+                    "lost_note": record["lost_note"], "lost_at": record["lost_at"],
+                    "tags": [{"tag_id": tag["tag_id"], "name": tag["name"]} for tag in record["tags"]],
+                }
+
             changed: list[dict] = []
             unchanged: list[dict] = []
             for cid in sorted(sids_by_cid):
@@ -581,10 +601,11 @@ class CustomerPortraitStore:
             }
             conn.execute(
                 "INSERT INTO app_portrait_operation "
-                "(request_id, seller, data_dir, kind, payload, results, created_at) "
-                "VALUES (:request_id, :seller, :data_dir, 'batch', :payload, :results, :created_at)",
+                "(request_id, seller, data_dir, kind, payload, results, before, created_at) "
+                "VALUES (:request_id, :seller, :data_dir, 'batch', :payload, :results, :before, :created_at)",
                 {"request_id": request_id, **key, "payload": payload,
-                 "results": json.dumps(results, ensure_ascii=False), "created_at": now},
+                 "results": json.dumps(results, ensure_ascii=False),
+                 "before": json.dumps(before, ensure_ascii=False), "created_at": now},
             )
             return results
 
@@ -704,6 +725,7 @@ _SCHEMA_STATEMENTS = (
         kind TEXT NOT NULL,
         payload TEXT NOT NULL,
         results TEXT NOT NULL,
+        before TEXT,
         created_at REAL NOT NULL
     )
     """,

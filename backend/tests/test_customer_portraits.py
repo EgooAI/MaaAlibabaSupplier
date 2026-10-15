@@ -398,3 +398,87 @@ def test_portrait_pagination_token_invalidates_after_edit(client, archive):
         "limit": 1, "offset": 1, "pagination_revision": token,
     }).status_code == 409
     assert data(client, portrait_stage="won", limit=1)["pagination_revision"] != token
+
+
+def test_operation_records_before_snapshot_and_legacy_rows(client, archive):
+    _, apply = archive
+    apply(("buyer", [row(1)]))
+    item = listing_item(client)
+    sid, cid = item["sid"], item["customer_view"]["cid"]
+    tag = create_tag(client, "老客户")
+    batch(client, sid, cid, 0, {"stage": "won", "add_tag_ids": [tag["tag_id"]]}, request_id="op-1")
+    first = next(
+        entry for entry in data(client, "/api/portraits/operations", cid=cid)["operations"]
+        if entry["request_id"] == "op-1"
+    )
+    line = first["before"][str(cid)]
+    assert (line["stage"], line["lost_reason"], line["lost_note"], line["lost_at"], line["tags"]) == (
+        "unknown", None, None, None, [],
+    )
+    batch(client, sid, cid, 1, {"stage": "lost", "lost_reason": "price"}, request_id="op-2")
+    second = next(
+        entry for entry in data(client, "/api/portraits/operations", cid=cid)["operations"]
+        if entry["request_id"] == "op-2"
+    )
+    assert second["before"][str(cid)] == {
+        "stage": "won", "lost_reason": None, "lost_note": None, "lost_at": None,
+        "tags": [{"tag_id": tag["tag_id"], "name": "老客户"}],
+    }
+    # A rejected stale batch commits nothing: no new operation and unchanged records.
+    operations_before = data(client, "/api/portraits/operations")["operations"]
+    batch(client, sid, cid, 0, {"stage": "won"}, request_id="op-stale", expect=409)
+    assert data(client, "/api/portraits/operations")["operations"] == operations_before
+    # Rows predating the audit column read as null instead of failing the read.
+    with closing(sqlite3.connect(InboxStore().database_path)) as conn:
+        conn.execute("ALTER TABLE app_portrait_operation DROP COLUMN before")
+        conn.commit()
+    entries = data(client, "/api/portraits/operations")["operations"]
+    assert len(entries) == 2 and all(entry["before"] is None for entry in entries)
+    # The next write migrates the schema additively and keeps auditing.
+    batch(client, sid, cid, 2, {"stage": "won"}, request_id="op-3")
+    third = data(client, "/api/portraits/operations")["operations"][0]
+    assert third["request_id"] == "op-3" and third["before"][str(cid)]["stage"] == "lost"
+
+
+def test_multi_exact_alias_keeps_committed_contact_and_portrait_owner(client, archive):
+    adapter, apply = archive
+    apply(("buyer", [row(1)]))
+    buyer_account = adapter._account_by_mapping("ali_id", "buyer")
+    second = adapter.upsert_user_info(UserInfo(login_id="buyer-login"))
+    assert second is not None and second != buyer_account.aid
+    with Session(adapter.engine) as session:
+        session.add(AccountMapping(aid=second, type="ali_id", key="buyer"))
+        session.commit()
+    # Two exact ali_id rows resolve to different accounts: enriching must fail closed.
+    with pytest.raises(sync.IdentityConflictError):
+        adapter.upsert_user_info(UserInfo(ali_id="buyer", first_name="Try"))
+    with closing(sqlite3.connect(InboxStore().database_path)) as conn:
+        account_count_before = conn.execute("SELECT COUNT(*) FROM account").fetchone()[0]
+    # Chat keeps the committed contact instead of guessing among the two owners.
+    with Session(adapter.engine) as session:
+        assert adapter._resolve_conflicted_contact("seller-a", "buyer", session) == buyer_account.aid
+    apply(("buyer", [row(2, at=T + 1)]))
+    with closing(sqlite3.connect(InboxStore().database_path)) as conn:
+        participants_row = conn.execute(
+            "SELECT participants FROM session_meta WHERE key='alibaba_icbu:seller-a:buyer'",
+        ).fetchone()
+        exact_aids = sorted(aid for (aid,) in conn.execute(
+            "SELECT aid FROM accountmapping WHERE type='ali_id' AND key='buyer'",
+        ))
+        login_aids = [aid for (aid,) in conn.execute(
+            "SELECT aid FROM accountmapping WHERE type='login_id' AND key='buyer-login'",
+        )]
+        accounts, second_cid = conn.execute(
+            "SELECT (SELECT COUNT(*) FROM account), (SELECT cid FROM account WHERE aid=?)", (second,),
+        ).fetchone()
+    participants = json.loads(participants_row[0])
+    assert participants[-1] == buyer_account.aid and len(participants) == 2
+    # Neither alias moved, and no third account was fabricated to dodge the conflict.
+    assert exact_aids == sorted([buyer_account.aid, second])
+    assert login_aids == [second] and accounts == account_count_before
+    # The resolved portrait owner is still the committed contact's customer.
+    item = listing_item(client)
+    resolved_cid = item["customer_view"]["cid"]
+    assert resolved_cid and resolved_cid != second_cid
+    batch(client, item["sid"], second_cid, 0, {"stage": "won"}, request_id="wrong-owner", expect=409)
+    batch(client, item["sid"], resolved_cid, 0, {"stage": "won"}, request_id="right-owner")
