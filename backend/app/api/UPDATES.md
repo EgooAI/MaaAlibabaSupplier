@@ -50,6 +50,14 @@ The runtime locates `pwsh` first, then `powershell`, then the standard Windows
 PowerShell executable under `%SystemRoot%`. The selected runtime must be outside
 the application installation. The helper supports PowerShell 7 and Windows
 PowerShell 5.1 and does not depend on the bundled Python being replaced.
+Availability is re-resolved for every installation attempt. A runtime that
+vanished since startup (a Windows Store package auto update can replace the
+resolved app-execution alias) fails only that attempt with a fixed error; the
+next attempt re-resolves the runtime or falls back to Windows PowerShell 5.1
+without a backend restart. Startup still validates the runtime once, so an
+unavailable shell keeps updates disabled with a stated reason. On unattended
+servers, prefer the MSI PowerShell distribution so the resolved executable
+cannot be replaced silently.
 
 Before launching application children, the main process creates and joins a
 Windows Job Object. Its MaaFW, agent, Yak, and later descendants inherit
@@ -160,7 +168,6 @@ Staging and results live outside the installation:
 ```text
 %LOCALAPPDATA%/MaaAlibabaSupplierUpdater/<installation-path-hash>/
     last-result.json
-    <download-stage>/artifact.zip
     <download-stage>/<installer>.exe
     <download-stage>/installer.log
     <broker-stage>/update-helper.ps1
@@ -168,8 +175,13 @@ Staging and results live outside the installation:
 ```
 
 The backend exposes the last terminal result when it next runs; an interrupted
-`installing` record is ignored rather than shown as active. Downloads and logs are
-retained for diagnosis; this version does not automatically purge staging data.
+`installing` record is ignored rather than shown as active. Staging is bounded:
+each download prunes uuid stage directories beyond the four most recent, and an
+attempt whose helper could not be started deletes its own stage directory.
+Failures after the helper started keep their stage for local inspection, and
+later downloads absorb them into the same window. `last-result.json` and its
+pending `.tmp` are never pruned, so one locked destination file can leave the
+terminal result stale without affecting installation.
 
 Inno Setup performs an in-place upgrade. It preserves an existing `.env` and
 excludes runtime data, debug files, and MaaFW config/data directories from the

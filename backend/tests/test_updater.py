@@ -2,9 +2,11 @@ import asyncio
 import hashlib
 import io
 import json
+import os
 import stat
 import threading
 import urllib.error
+import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
@@ -195,7 +197,7 @@ def test_verified_download_uses_github_identity_and_filename_version(manager, mo
     assert expected == build(version="v9.8.7", sha=run()["head_sha"], run_id=run()["id"],
                              run_number=run()["run_number"], run_attempt=run()["run_attempt"],
                              installer_sha256=hashlib.sha256(installer.read_bytes()).hexdigest())
-    assert {path.name for path in installer.parent.iterdir()} == {"artifact.zip", installer.name}
+    assert {path.name for path in installer.parent.iterdir()} == {installer.name}
     manager.runtime.start.assert_not_called()
     assert not manager.handoff.is_set()
 
@@ -568,6 +570,81 @@ def test_staging_cannot_be_inside_install(manager, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(manager.install / "local"))
     with pytest.raises(updates.UpdateError):
         updates.staging_base(manager.install)
+
+
+def make_stages(base: Path, count: int, populate=None) -> list[Path]:
+    """Create uuid-named stage directories pinned to ascending old timestamps."""
+    stages = [base / uuid.uuid4().hex for _ in range(count)]
+    for index, stage in enumerate(stages):
+        stage.mkdir()
+        if populate is not None:
+            populate(stage)
+        stamp = 1_700_000_000 + index
+        os.utime(stage, (stamp, stamp))
+    return stages
+
+
+def test_stage_pruning_keeps_recent_and_never_base_files(tmp_path):
+    base = tmp_path / "staging"
+    base.mkdir()
+    stages = make_stages(base, 6)
+    (base / "last-result.json").write_text("{}", encoding="utf-8")
+    (base / "last-result.json.tmp").write_text("{}", encoding="utf-8")
+    (base / "not-uuid").mkdir()
+
+    removed = updates.prune_stage_directories(base, keep=4)
+
+    assert removed == 2
+    kept = {stages[-4].name, stages[-3].name, stages[-2].name, stages[-1].name}
+    live = {entry.name for entry in base.iterdir()}
+    assert live == kept | {"last-result.json", "last-result.json.tmp", "not-uuid"}
+
+
+def test_prune_continues_when_a_directory_is_locked(monkeypatch, tmp_path):
+    base = tmp_path / "staging"
+    base.mkdir()
+    stages = make_stages(base, 5, lambda stage: (stage / "installer.log").write_text("x", encoding="utf-8"))
+    locked = stages[0]
+    real = updates.shutil.rmtree
+
+    def rmtree(path, *args, **kwargs):
+        if Path(path) == locked:
+            raise OSError("sharing violation")
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(updates.shutil, "rmtree", rmtree)
+    removed = updates.prune_stage_directories(base, keep=2)
+    assert removed == 2
+    assert locked.is_dir() and (locked / "installer.log").is_file()
+    assert {entry.name for entry in base.iterdir()} == {locked.name, stages[3].name, stages[4].name}
+
+
+def test_prune_ignores_a_missing_base(tmp_path):
+    assert updates.prune_stage_directories(tmp_path / "absent") == 0
+
+
+def test_download_prunes_old_stages_around_the_new_one(manager, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    base = updates.staging_base(manager.install)
+    base.mkdir(parents=True)
+    stages = make_stages(base, 6)
+    source = archive(tmp_path)
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    github = remote(monkeypatch, artifacts=[artifact(digest="sha256:" + digest)])
+
+    def download(path, target, progress):
+        data = source.read_bytes()
+        target.write_bytes(data)
+        progress(len(data), len(data))
+        return digest
+
+    github.download.side_effect = download
+    manager._check()
+    manager.download(manager.state["candidate"]["id"])
+    wait_operation(manager)
+    assert manager.snapshot()["phase"] == "ready"
+    stage_names = {entry.name for entry in base.iterdir() if updates._STAGE_NAME.fullmatch(entry.name)}
+    assert stage_names == {stage.name for stage in stages[3:]} | {manager.prepared[0].parent.name}
 
 
 def test_local_packaging_null_identity_is_supported_metadata():

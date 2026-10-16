@@ -20,7 +20,8 @@ import sys
 import time
 import uuid
 
-from backend.app.updater import BUILD_KEYS, UpdateError, atomic_json, read_json
+from backend.app.updater import (BUILD_KEYS, UpdateError, atomic_json, read_json, resolve_powershell,
+                                 terminal_result)
 
 JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x00000800
 JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
@@ -60,10 +61,9 @@ class _ExtendedLimitInformation(ctypes.Structure):
 
 
 class WindowsUpdateRuntime:
-    def __init__(self, install: Path, base: Path, powershell: str) -> None:
+    def __init__(self, install: Path, base: Path) -> None:
         self.install = install
         self.base = base
-        self.powershell = powershell
         self.stage: Path | None = None
         self.process: subprocess.Popen | None = None
         self.nonce: str | None = None
@@ -105,40 +105,45 @@ class WindowsUpdateRuntime:
 
         A previous attempt's exited process is not reused. Nothing is armed
         until the application writes the commit file after its response.
+        The PowerShell runtime is resolved again for every attempt: a shell
+        that vanished since registration (for example a Store package auto
+        update replacing the resolved app-execution alias) fails only this
+        attempt, and the next attempt re-resolves it or falls back.
         """
         if self.process is not None and self.process.poll() is None:
             raise UpdateError("An updater helper is already running.")
         self.reset()
-        stage = self.base / uuid.uuid4().hex
-        stage.mkdir(parents=True, exist_ok=False)
-        shutil.copyfile(Path(__file__).with_name("update-helper.ps1"), stage / "update-helper.ps1")
+        powershell = resolve_powershell(self.install)
         created, exited, cpu_kernel, cpu_user = (wintypes.FILETIME() for _ in range(4))
         if not self._kernel.GetProcessTimes(self._kernel.GetCurrentProcess(), ctypes.byref(created),
                                             ctypes.byref(exited), ctypes.byref(cpu_kernel), ctypes.byref(cpu_user)):
             raise UpdateError("Cannot identify the application process.")
-        atomic_json(stage / "bootstrap.json", {
-            "job": self.job_name, "root_pid": os.getpid(),
-            "root_created": str((created.dwHighDateTime << 32) | created.dwLowDateTime),
-            "root_path": str(Path(sys.executable).resolve()), "install": str(self.install),
-            "result": str(self.base / "last-result.json"),
-        })
-        nonce = uuid.uuid4().hex
-        atomic_json(stage / "request.json", {
-            "nonce": nonce, "installer": str(installer),
-            "installer_sha256": prepared["installer_sha256"],
-            "expected": {key: prepared[key] for key in BUILD_KEYS},
-        })
-        env = os.environ.copy()
-        # Preserve MAA_* launch configuration for the restarted backend. Discard
-        # unrelated GitHub credentials and the previous internal MITM token.
-        for key in tuple(env):
-            if key in {"MAA_MITM_INTERNAL_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"}:
-                env.pop(key)
+        stage = self.base / uuid.uuid4().hex
         try:
+            stage.mkdir(parents=True, exist_ok=False)
+            shutil.copyfile(Path(__file__).with_name("update-helper.ps1"), stage / "update-helper.ps1")
+            atomic_json(stage / "bootstrap.json", {
+                "job": self.job_name, "root_pid": os.getpid(),
+                "root_created": str((created.dwHighDateTime << 32) | created.dwLowDateTime),
+                "root_path": str(Path(sys.executable).resolve()), "install": str(self.install),
+                "result": str(self.base / "last-result.json"),
+            })
+            nonce = uuid.uuid4().hex
+            atomic_json(stage / "request.json", {
+                "nonce": nonce, "installer": str(installer),
+                "installer_sha256": prepared["installer_sha256"],
+                "expected": {key: prepared[key] for key in BUILD_KEYS},
+            })
+            env = os.environ.copy()
+            # Preserve MAA_* launch configuration for the restarted backend. Discard
+            # unrelated GitHub credentials and the previous internal MITM token.
+            for key in tuple(env):
+                if key in {"MAA_MITM_INTERNAL_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"}:
+                    env.pop(key)
             # Keep PowerShell's own error text locally; diagnostics never exports it.
             with (stage / "helper.log").open("ab") as helper_log:
                 process = subprocess.Popen(
-                    [self.powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                    [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
                      "-File", str(stage / "update-helper.ps1"), "-Stage", str(stage)],
                     cwd=str(stage), env=env, stdin=subprocess.DEVNULL,
                     stdout=helper_log, stderr=subprocess.STDOUT, close_fds=True,
@@ -146,14 +151,20 @@ class WindowsUpdateRuntime:
                     | subprocess.CREATE_NEW_PROCESS_GROUP,
                 )
         except OSError:
+            # The helper never started, so the stage holds no diagnostics.
+            shutil.rmtree(stage, ignore_errors=True)
             raise UpdateError("The updater helper could not be started.") from None
         self.stage, self.process, self.nonce = stage, process, nonce
         try:
             self._await_accept()
         except BaseException:
-            if process.poll() is None:
-                process.kill()
-            self.stage, self.process, self.nonce = None, None, None
+            try:
+                if process.poll() is None:
+                    process.kill()
+            finally:
+                # The helper did start: its stage stays for local inspection and
+                # the download-side prune window absorbs it.
+                self.stage, self.process, self.nonce = None, None, None
             raise
 
     def _await_accept(self) -> None:
@@ -196,11 +207,6 @@ class WindowsUpdateRuntime:
     def result(self) -> dict | None:
         """Only terminal results. An interrupted attempt is ignored by the app."""
         try:
-            result = read_json(self.base / "last-result.json")
-            if (result.get("status") in {"installed", "error", "reboot_required"}
-                    and isinstance(result.get("message"), str)
-                    and (result.get("version") is None or isinstance(result.get("version"), str))):
-                return {key: result.get(key) for key in ("status", "message", "version")}
+            return terminal_result(read_json(self.base / "last-result.json"))
         except (OSError, ValueError, UpdateError):
-            pass
-        return None
+            return None

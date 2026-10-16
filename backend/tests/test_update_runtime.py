@@ -23,6 +23,7 @@ def native(monkeypatch):
     process = Mock(pid=999, poll=Mock(return_value=None))
     spawn = Mock(return_value=process)
     monkeypatch.setattr(runtime.subprocess, "Popen", spawn)
+    monkeypatch.setattr(runtime, "resolve_powershell", Mock(return_value="external-pwsh.exe"))
     return kernel, spawn
 
 
@@ -42,9 +43,19 @@ def accepting(spawn):
     spawn.side_effect = popen
 
 
+def rejecting(spawn):
+    def popen(command, **kwargs):
+        stage = Path(kwargs["cwd"])
+        request = json.loads((stage / "request.json").read_text(encoding="utf-8"))
+        updater.atomic_json(stage / "accepted.json", {"nonce": request["nonce"], "status": "error"})
+        return Mock(pid=999, poll=Mock(return_value=None))
+
+    spawn.side_effect = popen
+
+
 def test_startup_builds_breakaway_containment_before_children(native, tmp_path):
     kernel, spawn = native
-    owner = runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external", "external-pwsh.exe")
+    owner = runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external")
     spawn.assert_not_called()
     assert owner.stage is None and owner.process is None and owner.nonce is None
     kernel.CreateJobObjectW.assert_called_once()
@@ -60,7 +71,7 @@ def test_containment_failures_close_job_without_children(native, tmp_path):
     kernel, spawn = native
     kernel.SetInformationJobObject.return_value = False
     with pytest.raises(updater.UpdateError):
-        runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external", "pwsh")
+        runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external")
     kernel.CloseHandle.assert_called_once_with(100)
     kernel.AssignProcessToJobObject.assert_not_called()
     spawn.assert_not_called()
@@ -70,7 +81,7 @@ def test_join_failure_closes_job_without_children(native, tmp_path):
     kernel, spawn = native
     kernel.AssignProcessToJobObject.return_value = False
     with pytest.raises(updater.UpdateError):
-        runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external", "pwsh")
+        runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external")
     kernel.CloseHandle.assert_called_once_with(100)
     spawn.assert_not_called()
 
@@ -78,13 +89,16 @@ def test_join_failure_closes_job_without_children(native, tmp_path):
 def test_start_spawns_single_use_breakaway_broker(native, monkeypatch, tmp_path):
     kernel, spawn = native
     accepting(spawn)
+    resolver = Mock(return_value="external-pwsh.exe")
+    monkeypatch.setattr(runtime, "resolve_powershell", resolver)
     monkeypatch.setenv("MAA_MITM_INTERNAL_TOKEN", "old-private-token")
     monkeypatch.setenv("MAA_AUTH_SECRET_SHA256", "test-digest")
-    owner = runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external", "external-pwsh.exe")
+    owner = runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external")
     installer = tmp_path / "installer.exe"
     owner.start(installer, prepared())
     command = spawn.call_args.args[0]
     assert command[0] == "external-pwsh.exe" and "-File" in command
+    resolver.assert_called_once_with(tmp_path / "install")
     assert str(owner.stage / "update-helper.ps1") in command
     assert owner.stage.is_relative_to(tmp_path / "external")
     assert spawn.call_args.kwargs["creationflags"] == runtime.CREATE_BREAKAWAY_FROM_JOB | 0x08000200
@@ -104,7 +118,7 @@ def test_start_spawns_single_use_breakaway_broker(native, monkeypatch, tmp_path)
 def test_each_attempt_starts_a_fresh_broker(native, tmp_path):
     kernel, spawn = native
     accepting(spawn)
-    owner = runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external", "pwsh")
+    owner = runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external")
     owner.start(tmp_path / "installer.exe", prepared())
     first = owner.stage
     owner.process.poll.return_value = 1
@@ -112,17 +126,65 @@ def test_each_attempt_starts_a_fresh_broker(native, tmp_path):
     assert owner.stage != first and owner.stage.is_dir()
 
 
+def test_each_attempt_re_resolves_the_shell_before_spawning(native, monkeypatch, tmp_path):
+    kernel, spawn = native
+    accepting(spawn)
+    owner = runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external")
+    resolutions = ["fresh-1.exe", "fresh-2.exe"]
+    received = []
+    monkeypatch.setattr(runtime, "resolve_powershell",
+                        lambda install: (received.append(install), resolutions.pop(0))[1])
+    owner.start(tmp_path / "installer.exe", prepared())
+    assert spawn.call_args.args[0][0] == "fresh-1.exe"
+    owner.process.poll.return_value = 1
+    owner.start(tmp_path / "installer.exe", prepared())
+    assert spawn.call_args.args[0][0] == "fresh-2.exe"
+    assert received == [tmp_path / "install", tmp_path / "install"]
+
+
+def test_start_fails_closed_without_usable_shell(native, monkeypatch, tmp_path):
+    kernel, spawn = native
+
+    def missing(install):
+        raise updater.UpdateError("An external PowerShell runtime is required.")
+
+    monkeypatch.setattr(runtime, "resolve_powershell", missing)
+    owner = runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external")
+    with pytest.raises(updater.UpdateError, match="runtime is required"):
+        owner.start(tmp_path / "installer.exe", prepared())
+    spawn.assert_not_called()
+    assert owner.stage is None and owner.process is None and owner.nonce is None
+    base = tmp_path / "external"
+    assert not base.exists() or not any(base.iterdir())
+
+
+def test_failed_attempt_cleanup_on_each_failure_kind(native, monkeypatch, tmp_path):
+    kernel, spawn = native
+    monkeypatch.setenv("MAA_AUTH_SECRET_SHA256", "test-digest")
+    owner = runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external")
+    base = tmp_path / "external"
+
+    spawn.side_effect = OSError("spawn was blocked")
+    with pytest.raises(updater.UpdateError, match="could not be started"):
+        owner.start(tmp_path / "installer.exe", prepared())
+    # The helper never started, so its stage holds no diagnostics at all.
+    assert owner.stage is None and not any(base.iterdir())
+
+    rejecting(spawn)
+    with pytest.raises(updater.UpdateError, match="rejected"):
+        owner.start(tmp_path / "installer.exe", prepared())
+    # The helper did start but rejected: the stage stays for local inspection.
+    assert owner.stage is None and owner.nonce is None
+    stages = [entry for entry in base.iterdir() if entry.is_dir()]
+    assert len(stages) == 1 and (stages[0] / "helper.log").is_file()
+    assert updater.read_json(stages[0] / "accepted.json")["status"] == "error"
+
+
 def test_exited_or_rejecting_broker_never_becomes_ready(native, tmp_path):
     kernel, spawn = native
-    owner = runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external", "pwsh")
+    owner = runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external")
 
-    def reject(command, **kwargs):
-        stage = Path(kwargs["cwd"])
-        request = json.loads((stage / "request.json").read_text(encoding="utf-8"))
-        updater.atomic_json(stage / "accepted.json", {"nonce": request["nonce"], "status": "error"})
-        return Mock(pid=999, poll=Mock(return_value=None))
-
-    spawn.side_effect = reject
+    rejecting(spawn)
     with pytest.raises(updater.UpdateError, match="rejected"):
         owner.start(tmp_path / "installer.exe", prepared())
     assert owner.process is None and owner.stage is None and owner.nonce is None
@@ -136,7 +198,7 @@ def test_exited_or_rejecting_broker_never_becomes_ready(native, tmp_path):
 
 def test_accept_wait_is_bounded(native, monkeypatch, tmp_path):
     kernel, spawn = native
-    owner = runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external", "pwsh")
+    owner = runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external")
     clock = [0.0]
     monkeypatch.setattr(runtime.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(runtime.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
@@ -148,7 +210,7 @@ def test_accept_wait_is_bounded(native, monkeypatch, tmp_path):
 def test_arm_cancel_and_failure_detection(native, tmp_path):
     kernel, spawn = native
     accepting(spawn)
-    owner = runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external", "pwsh")
+    owner = runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external")
     owner.start(tmp_path / "installer.exe", prepared())
     owner.arm()
     assert updater.read_json(owner.stage / "go.json")["nonce"] == owner.nonce

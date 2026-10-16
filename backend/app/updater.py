@@ -52,6 +52,18 @@ def atomic_json(path: Path, value: dict) -> None:
     os.replace(temporary, path)
 
 
+_TERMINAL_RESULTS = {"installed", "error", "reboot_required"}
+
+
+def terminal_result(result: dict) -> dict | None:
+    """Project one helper-written result file; None unless terminal and well-formed."""
+    if (result.get("status") in _TERMINAL_RESULTS
+            and isinstance(result.get("message"), str)
+            and (result.get("version") is None or isinstance(result["version"], str))):
+        return {key: result.get(key) for key in ("status", "message", "version")}
+    return None
+
+
 def valid_build(value: dict) -> bool:
     return (
         all(key in value for key in BUILD_KEYS)
@@ -88,6 +100,43 @@ def staging_base(install: Path) -> Path:
     if base.is_relative_to(install.resolve()):
         raise UpdateError("Updater staging must be outside the installation.")
     return base
+
+
+_STAGE_NAME = re.compile(r"[0-9a-f]{32}")
+_STAGE_KEEP = 4
+
+
+def prune_stage_directories(base: Path, keep: int = _STAGE_KEEP) -> int:
+    """Delete the oldest uuid stage directories beyond a bounded recent window.
+
+    Returns how many directories were removed. Locked entries, junctions,
+    symlinks and anything disappearing mid-scan are skipped, never fatal:
+    pruning is staging maintenance, not update logic.
+    """
+    candidates = []
+    try:
+        for entry in base.iterdir():
+            try:
+                if (not _STAGE_NAME.fullmatch(entry.name) or not entry.is_dir()
+                        or entry.is_symlink() or entry.is_junction()):
+                    continue
+                candidates.append((entry.stat().st_mtime, entry.name, entry))
+            except OSError:
+                continue
+    except OSError:
+        return 0
+    # (mtime, name, path) — the name tie-break keeps the removal set stable.
+    candidates.sort()
+    removed = 0
+    for _, _, entry in candidates[:max(0, len(candidates) - keep)]:
+        try:
+            shutil.rmtree(entry)
+            removed += 1
+        except OSError:
+            continue
+    if removed:
+        log_event("update.prune", status="purged", removed=removed)
+    return removed
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -236,10 +285,9 @@ class Updater:
                       "error": None, "last_result": None}
         try:
             result = read_json(staging_base(self.install) / "last-result.json")
-            if (result.get("status") in {"installed", "error", "reboot_required"}
-                    and all(isinstance(result.get(key), str) for key in ("status", "message"))
-                    and (result.get("version") is None or isinstance(result["version"], str))):
-                self.state["last_result"] = {key: result.get(key) for key in ("status", "message", "version")}
+            terminal = terminal_result(result)
+            if terminal is not None:
+                self.state["last_result"] = terminal
             elif result.get("status") == "installing":
                 # The previous process did not finish its handoff; expose that in
                 # logs without presenting it as an active installation.
@@ -259,7 +307,8 @@ class Updater:
                 raise UpdateError("Invalid updater source configuration.")
             from backend.app.update_runtime import WindowsUpdateRuntime
 
-            self.runtime = WindowsUpdateRuntime(self.install, staging_base(self.install), resolve_powershell(self.install))
+            resolve_powershell(self.install)  # fail fast at startup; attempts re-resolve it
+            self.runtime = WindowsUpdateRuntime(self.install, staging_base(self.install))
             self.state.update(supported=True, reason=None)
         except Exception:
             self.state["reason"] = "The independent updater helper or Windows process containment is unavailable."
@@ -401,8 +450,13 @@ class Updater:
 
     def _download(self) -> None:
         selected = self.selected.copy()
-        stage = staging_base(self.install) / uuid.uuid4().hex
+        base = staging_base(self.install)
+        stage = base / uuid.uuid4().hex
         stage.mkdir(parents=True, exist_ok=False)
+        # The new stage is inside the window; pruning here keeps the bounded
+        # staging safe against an armed handoff because _admit blocks further
+        # attempts until it clears.
+        prune_stage_directories(base)
         archive = stage / "artifact.zip.part"
 
         def progress(size, total):
@@ -414,6 +468,9 @@ class Updater:
         verified = stage / "artifact.zip"
         os.replace(archive, verified)
         installer, prepared = unpack_verified(verified, stage, selected)
+        # The verified archive has no consumer after extraction; keep the
+        # bounded window to installers and logs.
+        verified.unlink(missing_ok=True)
         with self.lock:
             self.prepared = (installer, prepared)
             self.state["candidate"]["version"] = prepared["version"]
