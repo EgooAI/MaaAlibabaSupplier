@@ -179,9 +179,11 @@ The backend exposes the last terminal result when it next runs; an interrupted
 each download prunes uuid stage directories beyond the four most recent, and an
 attempt whose helper could not be started deletes its own stage directory.
 Failures after the helper started keep their stage for local inspection, and
-later downloads absorb them into the same window. `last-result.json` and its
-pending `.tmp` are never pruned, so one locked destination file can leave the
-terminal result stale without affecting installation.
+later downloads absorb them into the same window. The helper publishes results
+by replace, then delete+move with short backoff, so a transiently held or
+read-only destination file cannot swallow the terminal record silently. When
+the published result still predates the running build, the backend records it
+as stale. `last-result.json` and its pending `.tmp` are never pruned.
 
 Inno Setup performs an in-place upgrade. It preserves an existing `.env` and
 excludes runtime data, debug files, and MaaFW config/data directories from the

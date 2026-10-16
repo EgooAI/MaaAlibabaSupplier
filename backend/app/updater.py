@@ -288,6 +288,12 @@ class Updater:
             terminal = terminal_result(result)
             if terminal is not None:
                 self.state["last_result"] = terminal
+                if terminal["version"] and self.build.get("version") \
+                        and terminal["version"] != self.build["version"]:
+                    # A published result older than the running build means the
+                    # helper's own terminal write was lost; the installation
+                    # itself is unaffected.
+                    log_event("update.result", status="stale", version=terminal["version"])
             elif result.get("status") == "installing":
                 # The previous process did not finish its handoff; expose that in
                 # logs without presenting it as an active installation.
@@ -323,6 +329,9 @@ class Updater:
                 if result is not None and result != self.state["last_result"]:
                     self.state["last_result"] = result
                     log_event("update.result", status=result["status"], version=result.get("version"))
+                    if result["status"] == "installed" and result.get("version") \
+                            and self.build.get("version") and result["version"] != self.build["version"]:
+                        log_event("update.result", status="stale", version=result["version"])
             return copy.deepcopy(self.state)
 
     def _cancel_install_locked(self, message: str, reason: str) -> None:

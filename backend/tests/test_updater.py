@@ -481,6 +481,32 @@ def test_snapshot_emits_result_event_only_when_the_terminal_result_changes(manag
     assert events == [("update.result", {"status": "installed", "version": "v1.2.3"})]
 
 
+def test_snapshot_reports_the_stale_result_of_an_older_version(manager, monkeypatch):
+    events = []
+    monkeypatch.setattr(updates, "log_event", lambda event, **fields: events.append((event, fields)))
+    manager.runtime.result.return_value = {"status": "installed", "message": "ok", "version": "v0.9.0"}
+    manager.snapshot()
+    assert events == [("update.result", {"status": "installed", "version": "v0.9.0"}),
+                      ("update.result", {"status": "stale", "version": "v0.9.0"})]
+
+
+def test_a_result_older_than_the_running_build_is_reported_as_stale_at_startup(manager, monkeypatch):
+    events = []
+    monkeypatch.setattr(updates, "log_event", lambda event, **fields: events.append((event, fields)))
+    path = updates.staging_base(manager.install)
+    path.mkdir(parents=True)
+    updates.atomic_json(path / "last-result.json",
+                        {"status": "installed", "message": "ok", "version": "v0.9.0"})
+    updates.Updater(manager.install)
+    assert ("update.result", {"status": "stale", "version": "v0.9.0"}) in events
+
+    events.clear()
+    updates.atomic_json(path / "last-result.json",
+                        {"status": "installed", "message": "ok", "version": "v1.2.3"})
+    updates.Updater(manager.install)
+    assert all(event != "update.result" for event, _ in events)
+
+
 def test_update_lifecycle_events_cover_check_download_and_handoff(manager, monkeypatch, tmp_path):
     events = []
     monkeypatch.setattr(updates, "log_event", lambda event, **fields: events.append((event, fields)))

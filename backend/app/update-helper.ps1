@@ -53,8 +53,18 @@ function Write-Json([string]$Path, $Value) {
     $bytes = [Text.Encoding]::UTF8.GetBytes(($Value | ConvertTo-Json -Depth 8 -Compress))
     $stream = [IO.File]::Open($temporary, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
     try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
-    if ([IO.File]::Exists($Path)) { [IO.File]::Replace($temporary, $Path, $null) }
-    else { [IO.File]::Move($temporary, $Path) }
+    # A held or read-only destination (scanner, backup, viewer) must never stop
+    # the installation: publish by replace, then by delete+move, with short
+    # backoff; the last resort leaves the .tmp for a later publication pass.
+    for ($attempt = 0; $attempt -lt 4; $attempt++) {
+        if ([IO.File]::Exists($Path)) {
+            try { [IO.File]::Replace($temporary, $Path, $null); return } catch { }
+            try { [IO.File]::SetAttributes($Path, [IO.FileAttributes]::Normal) } catch { }
+            try { [IO.File]::Delete($Path) } catch { }
+        }
+        try { [IO.File]::Move($temporary, $Path); return } catch { }
+        Start-Sleep -Milliseconds 200
+    }
 }
 function Matches-Nonce([string]$Name, [string]$Nonce) {
     $path = Join-Path $Stage $Name
