@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { agentPresetToConfig, agentPresetToDbPreset, canRegenerateAgentTestReply, canUndoAgentTestTurn, createRegularAgentPreset, dbPresetToAgentPreset, displayAgentTools, documentToLlmLevelConfig, filterAgentTestSessionsByCategory, isValidToolRoundLimit, llmLevelToDocumentConfig, nextAgentTestSessionId, normalizeAgentEditValues, normalizeAgentLevel, normalizeAgentTools, removeLatestAgentTestTurn, replaceLatestAgentTestReply } from "@/domain/agent/agentModel";
-import type { AgentConfig, AgentPreset, AgentTestSession, DocumentLlmConfig } from "@/types/agent";
+import { agentPresetToConfig, agentPresetToDbPreset, canRegenerateAgentTestReply, canUndoAgentTestTurn, createRegularAgentPreset, dbPresetToAgentPreset, displayAgentTools, documentToLlmLevelConfig, filterAgentTestSessionsByCategory, isSystemAgentModified, isValidToolRoundLimit, llmLevelToDocumentConfig, nextAgentTestSessionId, normalizeAgentEditValues, normalizeAgentLevel, normalizeAgentTools, removeLatestAgentTestTurn, replaceLatestAgentTestReply } from "@/domain/agent/agentModel";
+import type { AgentConfig, AgentPreset, AgentTestSession, DocumentLlmConfig, SystemAgentDefinition } from "@/types/agent";
 
 const agents: AgentConfig[] = [
   { id: "regular-1", name: "普通 Agent 1", category: "regular", enabled: true, capabilities: [], description: "", updatedAt: "" },
@@ -120,5 +120,34 @@ describe("agent model", () => {
     expect(llmLevelToDocumentConfig(level)).toMatchObject({ level: 2, max_tool_rounds: null });
     expect(isValidToolRoundLimit(0)).toBe(false);
     expect(isValidToolRoundLimit(null)).toBe(true);
+  });
+
+  it("detects modified system agents against their built-in default", () => {
+    const definition: SystemAgentDefinition = {
+      display_name: "翻译",
+      apid: "agent-system-1",
+      description: "d",
+      prompt: "默认提示词",
+      intelevel: 0,
+      tools: [],
+    };
+    const base: AgentConfig = {
+      id: "agent-system-1", name: "翻译", category: "system", enabled: true,
+      capabilities: [], description: "d", updatedAt: "", prompt: "默认提示词", level: 0, apid: "agent-system-1",
+    };
+    expect(isSystemAgentModified(base, definition)).toBe(false);
+    expect(isSystemAgentModified({ ...base, prompt: "改过的提示词" }, definition)).toBe(true);
+    expect(isSystemAgentModified({ ...base, level: 2 }, definition)).toBe(true);
+    expect(isSystemAgentModified(base, undefined)).toBe(false);
+  });
+
+  it("carries the revision note into the database DTO", () => {
+    const preset: AgentPreset = {
+      id: "agent-domain-2", name: "报价 Agent", description: "", prompt: "报价",
+      level: 0, tools: [], category: "regular", enabled: true, updated_at: "2026-09-10",
+    };
+    const dto = agentPresetToDbPreset(preset, { revisionNote: "载入历史版本 2026-09-10" });
+    expect(dto.revision_note).toBe("载入历史版本 2026-09-10");
+    expect(agentPresetToDbPreset(preset).revision_note).toBeUndefined();
   });
 });

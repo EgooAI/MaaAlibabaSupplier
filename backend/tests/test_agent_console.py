@@ -86,6 +86,71 @@ class AgentConsoleTestCase(unittest.TestCase):
         guard = self.client.delete(f"/api/agent/presets/{TRANSLATION_APID}").json()
         self.assertEqual(guard["data"], False)
 
+    def test_preset_enabled_roundtrip_and_system_lock(self) -> None:
+        created = self.client.post("/api/agent/presets", json={
+            "apid": "", "name": "N", "description": "D", "prompt": "P",
+            "intelevel": 0, "tools": [], "enabled": False,
+        }).json()["data"]
+        apid = created["apid"]
+        self.assertFalse(created["enabled"])
+
+        console = self.client.get("/api/agent/console").json()["data"]
+        listed = next(agent for agent in console["agents"] if agent["id"] == apid)
+        self.assertFalse(listed["enabled"])
+
+        toggled = self.client.post("/api/agent/presets", json={
+            "apid": apid, "name": "N", "description": "D", "prompt": "P",
+            "intelevel": 0, "tools": [], "enabled": True,
+        }).json()["data"]
+        self.assertTrue(toggled["enabled"])
+        console = self.client.get("/api/agent/console").json()["data"]
+        listed = next(agent for agent in console["agents"] if agent["id"] == apid)
+        self.assertTrue(listed["enabled"])
+
+        locked = self.client.post("/api/agent/presets", json={
+            "apid": TRANSLATION_APID, "name": "翻译", "description": "D", "prompt": "P",
+            "intelevel": 0, "tools": [], "enabled": False,
+        }).json()["data"]
+        self.assertTrue(locked["enabled"])
+
+    def test_preset_revisions_record_apply_and_dedupe(self) -> None:
+        def save(prompt: str, **extra: object) -> dict:
+            return self.client.post("/api/agent/presets", json={
+                "apid": apid, "name": "N", "description": "D", "prompt": prompt,
+                "intelevel": 0, "tools": [], "enabled": True, **extra,
+            }).json()["data"]
+
+        def revisions() -> list[dict]:
+            body = self.client.get(f"/api/agent/presets/{apid}/revisions").json()
+            self.assertEqual(body["code"], 0)
+            return body["data"]
+
+        apid = self.client.post("/api/agent/presets", json={
+            "apid": "", "name": "N", "description": "D", "prompt": "P1",
+            "intelevel": 0, "tools": [], "enabled": True,
+        }).json()["data"]["apid"]
+        self.assertEqual([item["prompt"] for item in revisions()], ["P1"])
+        saved = save("P1")
+        self.assertEqual(len(revisions()), 1)
+        self.assertEqual(saved["updated_at"], revisions()[0]["created_at"])
+
+        saved = save("P2", revision_source="manual", revision_note="按需改写")
+        self.assertEqual([item["prompt"] for item in revisions()], ["P2", "P1"])
+        head = revisions()[0]
+        self.assertEqual(head["source"], "manual")
+        self.assertEqual(head["note"], "按需改写")
+        self.assertEqual(saved["updated_at"], head["created_at"])
+
+        unknown_source = save("P3", revision_source="totally-made-up")
+        self.assertEqual(unknown_source["updated_at"] != "", True)
+        self.assertEqual(revisions()[0]["source"], "manual")
+
+        invalid_limit = self.client.get(f"/api/agent/presets/{apid}/revisions?limit=0").json()
+        self.assertEqual(invalid_limit["code"], 1)
+        missing = self.client.get("/api/agent/presets/agent-nope/revisions").json()
+        self.assertEqual(missing["code"], 0)
+        self.assertEqual(missing["data"], [])
+
     def test_restore_system_preset(self) -> None:
         body = self.client.post(f"/api/agent/system/{TRANSLATION_APID}/restore").json()
         self.assertEqual(body["code"], 0)
@@ -103,6 +168,55 @@ class AgentConsoleTestCase(unittest.TestCase):
         no_content = self.client.post(
             "/api/agent/test", json={"agentId": "agent-test-x"}).json()
         self.assertEqual(no_content["code"], 1)
+
+    def test_draft_test_run_snapshots_unsaved_prompt(self) -> None:
+        AgentPresetManager().upsert_agent_preset(AgentPreset(
+            apid="agent-draft", name="草稿测试", description="D",
+            prompt="已保存提示词", llm_level=0, tools=[]))
+        overrides: list[str] = []
+
+        def fake_runner(_apid: str, _user_input: str, *, preset_override: object = None) -> str:
+            overrides.append(preset_override.prompt if preset_override is not None else "(saved)")
+            return "回复"
+
+        with mock.patch(
+            "backend.app.api.routers.agent.run_chat_tool_agent", side_effect=fake_runner,
+        ):
+            created = self.client.post("/api/agent/test", json={
+                "agentId": "agent-draft", "content": "你好",
+                "draft": {"prompt": "草稿提示词", "level": 0, "tools": []},
+            }).json()["data"]
+            self.assertTrue(created["session"]["draft"])
+            session_id = created["session"]["id"]
+            continued = self.client.post("/api/agent/test", json={
+                "agentId": "agent-draft", "content": "继续", "sessionId": session_id,
+                "draft": {"prompt": "另一个草稿", "level": 0, "tools": []},
+            }).json()["data"]
+
+        self.assertTrue(continued["session"]["draft"])
+        self.assertEqual(overrides, ["草稿提示词", "草稿提示词"])
+
+    def test_disabled_regular_agent_cannot_run(self) -> None:
+        AgentPresetManager().upsert_agent_preset(AgentPreset(
+            apid="agent-off", name="Off", description="D", prompt="P", llm_level=0, tools=[], enabled=False))
+        body = self.client.post("/api/agent/test", json={
+            "agentId": "agent-off", "content": "hi",
+            "draft": {"prompt": "draw", "level": 0, "tools": []},
+        }).json()
+        self.assertEqual(body["code"], 1)
+
+    def test_saved_preset_run_has_no_draft_snapshot(self) -> None:
+        AgentPresetManager().upsert_agent_preset(AgentPreset(
+            apid="agent-saved", name="S", description="D", prompt="P", llm_level=0, tools=[]))
+        with mock.patch(
+            "backend.app.api.routers.agent.run_chat_tool_agent", return_value="回复",
+        ) as runner:
+            created = self.client.post("/api/agent/test", json={
+                "agentId": "agent-saved", "content": "你好",
+                "draft": {"prompt": "P", "level": 0, "tools": []},
+            }).json()["data"]
+        self.assertFalse(created["session"]["draft"])
+        self.assertIsNone(runner.call_args.kwargs["preset_override"])
 
     def test_history_undo_branch_delete(self) -> None:
         raw_id = _seed_session()

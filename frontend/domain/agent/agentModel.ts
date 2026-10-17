@@ -1,4 +1,4 @@
-import type { AgentConfig, AgentEditValues, AgentPreset, AgentTestMessage, AgentTestSession, DbAgentPreset, DocumentLlmConfig, LlmLevelConfig } from "@/types/agent";
+import type { AgentConfig, AgentEditValues, AgentPreset, AgentSaveOptions, AgentTestMessage, AgentTestSession, DbAgentPreset, DocumentLlmConfig, LlmLevelConfig, SystemAgentDefinition } from "@/types/agent";
 import { formatMonthDay } from "@/domain/time";
 
 export type AgentTestTurn = {
@@ -106,7 +106,7 @@ export function displayAgentTools(tools: string[] = []) {
   return normalizeAgentTools(tools).map(agentToolToDisplayLabel);
 }
 
-export function agentPresetToDbPreset(preset: AgentPreset): DbAgentPreset {
+export function agentPresetToDbPreset(preset: AgentPreset, revision?: AgentSaveOptions): DbAgentPreset {
   return {
     apid: preset.id,
     name: preset.name,
@@ -117,7 +117,15 @@ export function agentPresetToDbPreset(preset: AgentPreset): DbAgentPreset {
     enabled: preset.enabled,
     updated_at: preset.updated_at,
     category: preset.category,
+    revision_note: revision?.revisionNote,
   };
+}
+
+export function isSystemAgentModified(agent: AgentConfig, definition: SystemAgentDefinition | undefined) {
+  if (!definition) return false;
+  return (agent.prompt ?? "") !== definition.prompt
+    || (agent.level ?? 0) !== definition.intelevel
+    || JSON.stringify(normalizeAgentTools(agent.capabilities)) !== JSON.stringify(normalizeAgentTools(definition.tools));
 }
 
 export function dbPresetToAgentPreset(input: DbAgentPreset, current?: AgentPreset, updatedAt = input.updated_at): AgentPreset {

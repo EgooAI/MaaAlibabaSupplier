@@ -7,8 +7,8 @@ import { buildConversationExport } from "@/domain/chat/chatModel";
 import { nowText } from "@/domain/time";
 import { adaptConversationDetail, adaptConversationSummary } from "@/services/chatAdapter";
 import { buildSystemStatusSnapshot, taskSnapshotToTaskItem } from "@/domain/status/statusModel";
-import { SYSTEM_AGENT_APIDS, agentPresetToConfig, agentPresetToDbPreset, canRunAgentExecution, dbPresetToAgentPreset, documentToLlmLevelConfig, getLatestAgentTestTurn, removeLatestAgentTestTurn, replaceLatestAgentTestReply, upsertLlmLevel } from "@/domain/agent/agentModel";
-import type { AgentConsoleState, AgentPreset, AgentTestSession, DbAgentPreset } from "@/types/agent";
+import { SYSTEM_AGENT_APIDS, agentPresetToConfig, agentPresetToDbPreset, canRunAgentExecution, dbPresetToAgentPreset, documentToLlmLevelConfig, getLatestAgentTestTurn, normalizeAgentTools, removeLatestAgentTestTurn, replaceLatestAgentTestReply, upsertLlmLevel } from "@/domain/agent/agentModel";
+import type { AgentConsoleState, AgentPreset, AgentPresetRevision, AgentTestSession, DbAgentPreset } from "@/types/agent";
 import type { BusinessCard } from "@/types/cards";
 import type { ConversationDetail } from "@/types/chatCanonical";
 import type { ConversationAggregateDto } from "@/types/chatTransport";
@@ -76,6 +76,8 @@ let dataDirStatusStore: DataDirStatus = structuredClone(initialState.dataDirStat
 let taskSnapshotStore: TaskSnapshot[] = structuredClone(initialState.taskSnapshots);
 let consoleStore: AgentConsoleState = structuredClone(initialState.console);
 let agentPresetStore: AgentPreset[] = structuredClone(initialState.agentPresets);
+let revisionStore: AgentPresetRevision[] = [];
+let revisionSeq = 0;
 const translationStore = new Map<string, string>();
 const translationJobs = new Map<string, TranslationJobSnapshot>();
 const TRANSLATION_JOB_DELAY_MS = 400;
@@ -189,6 +191,8 @@ export const mockBackend: OperationsBackend = {
     dataDirStatusStore = structuredClone(initialState.dataDirStatus);
     taskSnapshotStore = structuredClone(initialState.taskSnapshots);
     agentPresetStore = structuredClone(initialState.agentPresets);
+    revisionStore = [];
+    revisionSeq = 0;
     consoleStore = structuredClone(initialState.console);
     statusStore = buildStatusSnapshot();
     translationStore.clear();
@@ -633,6 +637,7 @@ export const mockBackend: OperationsBackend = {
     const normalized = dbPresetToAgentPreset(input, current, input.updated_at);
     agentPresetStore = current ? agentPresetStore.map((preset) => (preset.id === input.apid ? normalized : preset)) : [normalized, ...agentPresetStore];
     syncConsoleAgents();
+    recordMockRevision(normalized, input.revision_source, input.revision_note);
     return delay(agentPresetToDbPreset(normalized));
   },
 
@@ -640,6 +645,7 @@ export const mockBackend: OperationsBackend = {
     const target = agentPresetStore.find((preset) => preset.id === id);
     if (!target || target.category === "system") return delay(false);
     agentPresetStore = agentPresetStore.filter((preset) => preset.id !== id);
+    revisionStore = revisionStore.filter((revision) => revision.apid !== id);
     consoleStore = { ...consoleStore, history: consoleStore.history.filter((session) => session.agentId !== id) };
     syncConsoleAgents();
     return delay(true);
@@ -650,12 +656,17 @@ export const mockBackend: OperationsBackend = {
     if (!source) throw new Error("系统 Agent 默认配置不存在");
     agentPresetStore = agentPresetStore.map((preset) => preset.id === apid ? structuredClone(source) : preset);
     syncConsoleAgents();
+    recordMockRevision(source, "restore_default");
     return delay(agentPresetToDbPreset(source));
   },
 
   listSystemAgentDefinitions: () => delay(structuredClone(systemAgents)),
 
-  runAgentTest: async ({ agentId, content, sessionId }) => {
+  listAgentPresetRevisions: (apid, limit) => delay(
+    structuredClone(revisionStore.filter((revision) => revision.apid === apid).slice(0, limit ?? 50)),
+  ),
+
+  runAgentTest: async ({ agentId, content, sessionId, draft }) => {
     const agent = consoleStore.agents.find((item) => item.id === agentId);
     if (!canRunAgentExecution(agent)) throw new Error("Agent 不存在或未启用");
     const now = nowText();
@@ -675,10 +686,16 @@ export const mockBackend: OperationsBackend = {
       return delay({ session, reply }, 520);
     }
 
+    const draftRun = Boolean(draft) && !(
+      draft!.prompt === (agent.prompt ?? "")
+      && draft!.level === (agent.level ?? 0)
+      && JSON.stringify(normalizeAgentTools(draft!.tools)) === JSON.stringify(normalizeAgentTools(agent.capabilities))
+    );
     const session: AgentTestSession = {
       id: `session-${crypto.randomUUID()}`,
       title: `${agent.name} 测试`,
       agentId,
+      draft: draftRun,
       createdAt: now,
       messages: content?.trim() ? [
         { id: `user-${crypto.randomUUID()}`, role: "user", content: content.trim(), createdAt: now },
@@ -794,6 +811,31 @@ function syncConsoleAgents() {
     agents: agentPresetStore.map(agentPresetToConfig),
     agentPresets: agentPresetStore,
   };
+}
+
+function recordMockRevision(preset: AgentPreset, source?: string, note?: string) {
+  const head = revisionStore.find((revision) => revision.apid === preset.id);
+  const tools = normalizeAgentTools(preset.tools);
+  if (head
+    && head.name === preset.name
+    && head.description === preset.description
+    && head.prompt === preset.prompt
+    && head.intelevel === preset.level
+    && JSON.stringify(head.tools) === JSON.stringify(tools)) {
+    return;
+  }
+  revisionStore = [{
+    id: ++revisionSeq,
+    apid: String(preset.id),
+    name: preset.name,
+    description: preset.description,
+    prompt: preset.prompt,
+    intelevel: preset.level,
+    tools,
+    source: source ?? "manual",
+    note: note ?? "",
+    created_at: nowText(),
+  }, ...revisionStore].slice(0, 200);
 }
 
 function mockTranslate(text: string, force = false): string | null {

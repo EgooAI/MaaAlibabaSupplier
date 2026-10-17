@@ -32,6 +32,8 @@ LLMApiConfig = models.LLMApiConfig
 LLMApiConfigManager = core.LLMApiConfigManager
 Message = models.Message
 MessageManager = core.MessageManager
+Meta = models.Meta
+MetaManager = core.MetaManager
 ChatHistory = models.ChatHistory
 ChatHistoryManager = core.ChatHistoryManager
 Platform = models.Platform
@@ -42,6 +44,8 @@ Translate = models.Translate
 TranslateManager = core.TranslateManager
 AgentPreset = models.AgentPreset
 AgentPresetManager = core.AgentPresetManager
+AgentPresetRevision = models.AgentPresetRevision
+AgentPresetRevisionManager = core.AgentPresetRevisionManager
 
 __all__ = [
     "Account",
@@ -50,6 +54,8 @@ __all__ = [
     "AccountMappingManager",
     "AgentPreset",
     "AgentPresetManager",
+    "AgentPresetRevision",
+    "AgentPresetRevisionManager",
     "ChatHistory",
     "ChatHistoryManager",
     "Customer",
@@ -58,6 +64,8 @@ __all__ = [
     "LLMApiConfigManager",
     "Message",
     "MessageManager",
+    "Meta",
+    "MetaManager",
     "Platform",
     "PlatformManager",
     "SessionMeta",

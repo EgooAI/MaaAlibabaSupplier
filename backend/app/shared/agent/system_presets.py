@@ -1,12 +1,26 @@
 """System agent preset data and startup seeding.
 
-系统 Agent 预设属于主仓库业务层：数据预制在本模块中，每次启动调用
-:func:`ensure_system_agents_seeded` 覆盖写入 CRM SDK 数据库。SDK 仅提供
-通用的 AgentPreset 存储与解析能力，不承载任何业务数据。
+系统 Agent 预设属于主仓库业务层：数据预制在本模块中，启动时调用
+:func:`ensure_system_agents_seeded` 写入 CRM SDK 数据库。SDK 仅提供通用的
+AgentPreset 存储与解析能力，不承载任何业务数据。
+
+种子策略（不覆盖用户编辑，同时保留默认升级通道）：
+
+- 记录缺失：写入内置默认并记录默认指纹；
+- 记录内容仍等于上一次内置默认（指纹匹配）：视为未修改，更新为最新默认；
+- 其余情况视为用户已修改：启动保持不动，只有显式「恢复默认」才重置。
+
+指纹记录在 SDK ``meta`` 表的 ``system_agent_seed:<apid>`` 键中，属于宿主业务
+状态，不污染 AgentPreset 本身。
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+from collections.abc import Mapping
+
+from backend.app.shared.agent.preset_history import record_preset_revision
 from backend.app.shared.agent.inputs import TRANSLATION_PROTOCOL_RULES
 from backend.app.shared.agent.system_agents import (
     CHAT_CUSTOMER_INTENT_AGENT_APID,
@@ -15,7 +29,10 @@ from backend.app.shared.agent.system_agents import (
     CHAT_TRANSLATION_AGENT_APID,
     SYSTEM_AGENT_DEFINITIONS,
 )
-from backend.app.shared.crm.sdk import AgentPreset, AgentPresetManager
+from backend.app.shared.crm.sdk import AgentPreset, AgentPresetManager, Meta, MetaManager
+from backend.app.shared.utils.log_context import log_event
+
+SEED_META_PREFIX = "system_agent_seed"
 
 _SYSTEM_AGENT_PROMPTS: dict[str, str] = {
     CHAT_TRANSLATION_AGENT_APID: (
@@ -93,15 +110,123 @@ def system_agent_presets() -> list[dict[str, object]]:
     return presets
 
 
-def ensure_system_agents_seeded() -> None:
-    """Upsert all system agent presets, overwriting any drifted records.
+def seed_meta_key(apid: str) -> str:
+    return f"{SEED_META_PREFIX}:{apid}"
 
-    每次启动调用，幂等覆盖：预设数据始终与程序内置版本保持一致。
-    Failures propagate and abort startup; a successful no-op is not logged.
+
+def preset_seed_fingerprint(payload: Mapping[str, object]) -> str:
+    """Fingerprint the fields a seed may overwrite.
+
+    Password-independent content hash: a stored fingerprint marks which preset
+    state was last written by a built-in seed.
+    """
+    canonical = json.dumps(
+        {
+            "name": str(payload.get("name") or ""),
+            "description": str(payload.get("description") or ""),
+            "prompt": str(payload.get("prompt") or ""),
+            "llm_level": int(payload.get("llm_level") or 0),
+            "tools": list(payload.get("tools") or []),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def preset_fingerprint_of(preset: AgentPreset) -> str:
+    return preset_seed_fingerprint(
+        {
+            "name": preset.name,
+            "description": preset.description,
+            "prompt": preset.prompt,
+            "llm_level": preset.llm_level,
+            "tools": list(preset.tools or []),
+        }
+    )
+
+
+def find_system_agent_default(apid: str) -> dict[str, object] | None:
+    return next(
+        (payload for payload in system_agent_presets() if payload.get("apid") == apid),
+        None,
+    )
+
+
+def apply_system_agent_default(apid: str, *, source: str = "restore_default") -> AgentPreset | None:
+    """Write one built-in default and refresh its seed fingerprint."""
+    payload = find_system_agent_default(apid)
+    if payload is None:
+        return None
+    return _write_default(payload, AgentPresetManager(), MetaManager(), source=source)
+
+
+def ensure_system_agents_seeded() -> None:
+    """Seed system agent presets without overwriting user edits.
+
+    幂等：只有记录缺失、记录仍是上一次内置默认（指纹匹配）时才写入；
+    用户改过的记录保持不动。Failures propagate and abort startup.
     """
     manager = AgentPresetManager()
+    meta = MetaManager()
+    written = 0
     for payload in system_agent_presets():
-        manager.upsert_agent_preset(AgentPreset(**payload))
+        apid = str(payload["apid"])
+        default_fingerprint = preset_seed_fingerprint(payload)
+        current = manager.get_agent_preset(apid)
+        if current is None:
+            _write_default(payload, manager, meta, source="seed")
+            written += 1
+            continue
+        recorded = meta.get_meta(seed_meta_key(apid))
+        recorded_value = recorded.value if recorded else ""
+        row_fingerprint = preset_fingerprint_of(current)
+        if row_fingerprint == default_fingerprint:
+            # Pristine row (legacy upgrade or already current): only refresh fingerprint.
+            if recorded_value != default_fingerprint:
+                meta.upsert_meta(Meta(key=seed_meta_key(apid), value=default_fingerprint))
+            continue
+        if recorded_value and recorded_value == row_fingerprint:
+            # Untouched older built-in default: deliver the updated default.
+            _write_default(payload, manager, meta, source="seed")
+            written += 1
+    if written:
+        log_event("config.seeded", count=written, entry="system_agent")
 
 
-__all__ = ["ensure_system_agents_seeded", "system_agent_presets"]
+def _write_default(
+    payload: Mapping[str, object],
+    manager: AgentPresetManager,
+    meta: MetaManager,
+    *,
+    source: str,
+) -> AgentPreset:
+    preset = AgentPreset(
+        apid=str(payload["apid"]),
+        name=str(payload["name"]),
+        description=str(payload["description"]),
+        prompt=str(payload["prompt"]),
+        llm_level=int(payload["llm_level"]),
+        tools=list(payload["tools"] or []),
+        enabled=True,
+    )
+    manager.upsert_agent_preset(preset)
+    meta.upsert_meta(Meta(
+        key=seed_meta_key(preset.apid),
+        value=preset_seed_fingerprint(payload),
+    ))
+    record_preset_revision(preset, source=source)
+    return preset
+
+
+__all__ = [
+    "SEED_META_PREFIX",
+    "apply_system_agent_default",
+    "ensure_system_agents_seeded",
+    "find_system_agent_default",
+    "preset_fingerprint_of",
+    "preset_seed_fingerprint",
+    "seed_meta_key",
+    "system_agent_presets",
+]

@@ -10,18 +10,31 @@ from pydantic import AliasChoices
 
 from backend.app.api.envelope import AppError, api_error, ok
 from backend.app.shared.agent.chat_history_content import (
+    ChatHistoryDraft,
     build_history_content,
     history_messages,
     load_history_content,
 )
 from backend.app.shared.agent.inputs import build_chat_dialog_input
+from backend.app.shared.agent.preset_history import (
+    MAX_REVISIONS_PER_PRESET,
+    latest_revision,
+    list_preset_revisions as load_preset_revisions,
+    normalize_revision_source,
+    record_preset_revision,
+)
 from backend.app.shared.agent.runner import run_chat_tool_agent
 from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.agent.system_agents import SYSTEM_AGENT_APIDS, SYSTEM_AGENT_DEFINITIONS
-from backend.app.shared.agent.system_presets import system_agent_presets
+from backend.app.shared.agent.system_presets import (
+    apply_system_agent_default,
+    find_system_agent_default,
+    system_agent_presets,
+)
 from backend.app.shared.crm.sdk import (
     AgentPreset,
     AgentPresetManager,
+    AgentPresetRevision,
     ChatHistory,
     ChatHistoryManager,
     LLMApiConfig,
@@ -52,12 +65,21 @@ class PresetInput(BaseModel):
     enabled: bool = True
     updated_at: str = ""
     category: str | None = None
+    revision_source: str = "manual"
+    revision_note: str = ""
+
+
+class DraftPresetInput(BaseModel):
+    prompt: str = ""
+    level: int = 0
+    tools: list[str] = []
 
 
 class AgentTestInput(BaseModel):
     agentId: str = ""
     content: str = ""
     sessionId: str | None = None
+    draft: DraftPresetInput | None = None
 
 
 def _refresh_llm_runtime() -> None:
@@ -72,7 +94,7 @@ def _refresh_llm_runtime() -> None:
         logger.exception("LLM runtime registration failed")
 
 
-def _db_preset_to_dict(preset: AgentPreset, *, enabled: bool = True, updated_at: str = "") -> dict:
+def _db_preset_to_dict(preset: AgentPreset, *, updated_at: str = "") -> dict:
     category = "system" if preset.apid in SYSTEM_AGENT_APIDS else "regular"
     return {
         "apid": preset.apid,
@@ -81,10 +103,30 @@ def _db_preset_to_dict(preset: AgentPreset, *, enabled: bool = True, updated_at:
         "prompt": preset.prompt,
         "intelevel": preset.llm_level,
         "tools": list(preset.tools or []),
-        "enabled": enabled,
+        "enabled": preset.enabled,
         "updated_at": updated_at,
         "category": category,
     }
+
+
+def _revision_to_dict(revision: AgentPresetRevision) -> dict:
+    return {
+        "id": revision.id,
+        "apid": revision.apid,
+        "name": revision.name,
+        "description": revision.description,
+        "prompt": revision.prompt,
+        "intelevel": revision.llm_level,
+        "tools": list(revision.tools or []),
+        "source": revision.source,
+        "note": revision.note,
+        "created_at": format_created_at(revision.created_time) or "",
+    }
+
+
+def _updated_at_text(apid: str) -> str:
+    revision = latest_revision(apid)
+    return format_created_at(revision.created_time) if revision is not None else ""
 
 
 def _session_to_dict(hist: ChatHistory) -> dict | None:
@@ -105,6 +147,7 @@ def _session_to_dict(hist: ChatHistory) -> dict | None:
         "id": str(hist.id),
         "title": hist.name,
         "agentId": content.apid,
+        "draft": content.draft is not None,
         "createdAt": created,
         "messages": messages,
     }
@@ -123,14 +166,57 @@ def _load_session(manager: ChatHistoryManager, session_id: str) -> ChatHistory:
     return hist
 
 
+def _draft_override(preset: AgentPreset, draft: ChatHistoryDraft) -> AgentPreset:
+    """Build the unsaved draft preset used to run one draft test session."""
+    return AgentPreset(
+        apid=preset.apid,
+        name=preset.name,
+        description=preset.description,
+        prompt=draft.prompt,
+        llm_level=draft.llm_level,
+        tools=list(draft.tools),
+        enabled=True,
+    )
+
+
+def _draft_matches_preset(draft: ChatHistoryDraft, preset: AgentPreset) -> bool:
+    return (
+        draft.prompt == preset.prompt
+        and draft.llm_level == preset.llm_level
+        and list(draft.tools or []) == list(preset.tools or [])
+    )
+
+
+def _require_runnable_preset(preset: AgentPreset) -> None:
+    """System agents are integral and always runnable; regular agents honor 停用."""
+    if preset.apid not in SYSTEM_AGENT_APIDS and not preset.enabled:
+        raise AppError("Agent 已停用，请先启用后再运行", status_code=409)
+
+
 @router.get("/api/agent/system")
 def list_system_agents() -> dict:
-    return ok(
-        [
-            {"display_name": name, "apid": apid, "description": desc}
-            for name, apid, desc in SYSTEM_AGENT_DEFINITIONS
-        ]
-    )
+    return ok(_system_agent_definition_payloads())
+
+
+def _system_agent_definition_payloads() -> list[dict]:
+    """System agent identity plus its current built-in default payload。
+
+    ``prompt`` 等字段是内置默认（不是用户当前值），供编辑器做“查看默认/对比”；
+    用户当前值来自 ``/api/agent/console``。
+    """
+    defaults = {str(item["apid"]): item for item in system_agent_presets()}
+    payloads: list[dict] = []
+    for name, apid, desc in SYSTEM_AGENT_DEFINITIONS:
+        default = defaults.get(apid, {})
+        payloads.append({
+            "display_name": name,
+            "apid": apid,
+            "description": desc,
+            "prompt": str(default.get("prompt") or ""),
+            "intelevel": int(default.get("llm_level") or 0),
+            "tools": list(default.get("tools") or []),
+        })
+    return payloads
 
 
 @router.get("/api/agent/console")
@@ -155,16 +241,20 @@ def agent_console() -> dict:
             for config in LLMApiConfigManager().list_configs()
         ]
         presets = AgentPresetManager().list_agent_preset()
-        db_presets = [_db_preset_to_dict(preset) for preset in presets]
+        updated_at_by_apid = {preset.apid: _updated_at_text(preset.apid) for preset in presets}
+        db_presets = [
+            _db_preset_to_dict(preset, updated_at=updated_at_by_apid[preset.apid])
+            for preset in presets
+        ]
         agents = [
             {
                 "id": preset.apid,
                 "name": preset.name,
                 "category": "system" if preset.apid in SYSTEM_AGENT_APIDS else "regular",
-                "enabled": True,
+                "enabled": preset.enabled,
                 "capabilities": list(preset.tools or []),
                 "description": preset.description,
-                "updatedAt": "",
+                "updatedAt": updated_at_by_apid[preset.apid],
                 "prompt": preset.prompt,
                 "level": preset.llm_level,
                 "apid": preset.apid,
@@ -180,7 +270,13 @@ def agent_console() -> dict:
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
-    return ok({"llmLevels": levels, "agents": agents, "agentPresets": db_presets, "history": history})
+    return ok({
+        "llmLevels": levels,
+        "agents": agents,
+        "agentPresets": db_presets,
+        "systemAgents": _system_agent_definition_payloads(),
+        "history": history,
+    })
 
 
 @router.put("/api/agent/llm-config")
@@ -231,29 +327,40 @@ def save_preset(body: PresetInput) -> dict:
     except (TypeError, ValueError):
         raise AppError("intelevel must be 0-4", status_code=422)
     tools = [tool for tool in (body.tools or []) if isinstance(tool, str) and tool.strip()]
+    # 系统 Agent 恒启用：其开关已从界面移除，运行路径也不检查启用状态。
+    enabled = True if apid in SYSTEM_AGENT_APIDS else bool(body.enabled)
+    preset = AgentPreset(
+        apid=apid,
+        name=body.name,
+        description=body.description,
+        prompt=body.prompt,
+        llm_level=level,
+        tools=tools,
+        enabled=enabled,
+    )
     try:
-        AgentPresetManager().upsert_agent_preset(AgentPreset(
-            apid=apid,
-            name=body.name,
-            description=body.description,
-            prompt=body.prompt,
-            llm_level=level,
-            tools=tools,
-        ))
+        AgentPresetManager().upsert_agent_preset(preset)
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
-    return ok({
-        "apid": apid,
-        "name": body.name,
-        "description": body.description,
-        "prompt": body.prompt,
-        "intelevel": level,
-        "tools": tools,
-        "enabled": body.enabled,
-        "updated_at": body.updated_at,
-        "category": body.category or ("system" if apid in SYSTEM_AGENT_APIDS else "regular"),
-    })
+    record_preset_revision(
+        preset,
+        source=normalize_revision_source(body.revision_source),
+        note=body.revision_note,
+    )
+    return ok(_db_preset_to_dict(preset, updated_at=_updated_at_text(apid)))
+
+
+@router.get("/api/agent/presets/{preset_id}/revisions")
+def list_preset_revisions(preset_id: str, limit: int = MAX_REVISIONS_PER_PRESET) -> dict:
+    if not 1 <= limit <= MAX_REVISIONS_PER_PRESET:
+        raise AppError(f"limit must be 1-{MAX_REVISIONS_PER_PRESET}", status_code=422)
+    try:
+        revisions = load_preset_revisions(preset_id, limit=limit)
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
+    return ok([_revision_to_dict(revision) for revision in revisions])
 
 
 @router.delete("/api/agent/presets/{preset_id}")
@@ -270,32 +377,16 @@ def delete_preset(preset_id: str) -> dict:
 
 @router.post("/api/agent/system/{apid}/restore")
 def restore_system_agent(apid: str) -> dict:
-    payload = next((item for item in system_agent_presets() if item.get("apid") == apid), None)
-    if payload is None:
+    if find_system_agent_default(apid) is None:
         raise AppError("系统 Agent 默认配置不存在", status_code=404)
     try:
-        AgentPresetManager().upsert_agent_preset(AgentPreset(
-            apid=str(payload["apid"]),
-            name=str(payload["name"]),
-            description=str(payload["description"]),
-            prompt=str(payload["prompt"]),
-            llm_level=int(payload["llm_level"]),
-            tools=list(payload["tools"] or []),
-        ))
+        preset = apply_system_agent_default(apid)
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
-    return ok({
-        "apid": payload["apid"],
-        "name": payload["name"],
-        "description": payload["description"],
-        "prompt": payload["prompt"],
-        "intelevel": payload["llm_level"],
-        "tools": list(payload["tools"] or []),
-        "enabled": True,
-        "updated_at": "",
-        "category": "system",
-    })
+    if preset is None:
+        raise AppError("系统 Agent 默认配置不存在", status_code=404)
+    return ok(_db_preset_to_dict(preset, updated_at=_updated_at_text(apid)))
 
 
 @router.post("/api/agent/test")
@@ -312,6 +403,7 @@ def run_agent_test(body: AgentTestInput) -> dict:
         return api_error("服务器内部错误", status_code=500)
     if preset is None:
         raise AppError("Agent 不存在", status_code=404)
+    _require_runnable_preset(preset)
     history_manager = ChatHistoryManager()
     hist: ChatHistory | None = None
     raw: dict[str, Any] = {}
@@ -327,10 +419,36 @@ def run_agent_test(body: AgentTestInput) -> dict:
         if session is None:
             raise AppError("会话不存在", status_code=404)
         return ok({"session": session, "reply": None})
+
+    # 会话一旦带草稿快照，后续轮次沿用快照（历史可复核）；换提示词请开新会话。
+    existing_draft = load_history_content(raw).draft if hist is not None else None
+    draft_snapshot = existing_draft
+    override: AgentPreset | None = None
+    if existing_draft is not None:
+        override = _draft_override(preset, existing_draft)
+    elif hist is None and body.draft is not None:
+        try:
+            draft_level = max(0, min(4, int(body.draft.level)))
+        except (TypeError, ValueError):
+            raise AppError("draft.level 必须是 0 到 4 的整数", status_code=422)
+        candidate = ChatHistoryDraft(
+            prompt=body.draft.prompt,
+            llm_level=draft_level,
+            tools=[tool for tool in (body.draft.tools or []) if isinstance(tool, str) and tool.strip()],
+        )
+        if _draft_matches_preset(candidate, preset):
+            # 草稿与已保存配置一致：按已保存运行记录，不标记草稿。
+            draft_snapshot = None
+        else:
+            draft_snapshot = candidate
+            override = _draft_override(preset, candidate)
+
     messages = history_messages(load_history_content(raw)) if hist else []
     messages.append({"role": "user", "content": content})
     try:
-        reply_text = run_chat_tool_agent(agent_id, build_chat_dialog_input(messages))
+        reply_text = run_chat_tool_agent(
+            agent_id, build_chat_dialog_input(messages), preset_override=override,
+        )
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
@@ -339,14 +457,15 @@ def run_agent_test(body: AgentTestInput) -> dict:
     try:
         if hist is None:
             fresh = ChatHistory(name=title, content=build_history_content(
-                apid=agent_id, agent_name=preset.name, messages=messages))
+                apid=agent_id, agent_name=preset.name, messages=messages, draft=draft_snapshot))
             history_manager.add_chat_history(fresh)
             hist = fresh
         else:
             history_manager.edit_chat_history(hist.id, ChatHistory(
                 name=title,
                 content=build_history_content(
-                    apid=agent_id, agent_name=preset.name, messages=messages, existing=raw),
+                    apid=agent_id, agent_name=preset.name, messages=messages,
+                    existing=raw, draft=draft_snapshot),
             ))
             hist = history_manager.get_chat_history(hist.id)
     except Exception:
@@ -411,8 +530,17 @@ def regenerate_session(session_id: str) -> dict:
     base = messages[:-1]
     if not base or base[-1]["role"] != "user":
         raise AppError("没有可重新生成的回复", status_code=400)
+    preset = AgentPresetManager().get_agent_preset(content.apid)
+    if preset is None:
+        raise AppError("Agent 不存在", status_code=404)
+    _require_runnable_preset(preset)
+    override: AgentPreset | None = None
+    if content.draft is not None:
+        override = _draft_override(preset, content.draft)
     try:
-        reply_text = run_chat_tool_agent(content.apid, build_chat_dialog_input(base))
+        reply_text = run_chat_tool_agent(
+            content.apid, build_chat_dialog_input(base), preset_override=override,
+        )
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)

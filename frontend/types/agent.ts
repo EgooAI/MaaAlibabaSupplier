@@ -20,6 +20,21 @@ export interface DbAgentPreset {
   enabled: boolean;
   updated_at: string;
   category?: "system" | "regular";
+  revision_source?: string;
+  revision_note?: string;
+}
+
+export interface AgentPresetRevision {
+  id: number;
+  apid: string;
+  name: string;
+  description: string;
+  prompt: string;
+  intelevel: number;
+  tools: string[];
+  source: string;
+  note: string;
+  created_at: string;
 }
 
 export interface AgentPreset {
@@ -42,10 +57,17 @@ export interface AgentEditValues {
   capabilities?: string[];
 }
 
+export interface AgentSaveOptions {
+  revisionNote?: string;
+}
+
 export interface SystemAgentDefinition {
   display_name: string;
   apid: string;
   description: string;
+  prompt: string;
+  intelevel: number;
+  tools: string[];
 }
 
 export interface LlmLevelConfig {
@@ -82,8 +104,27 @@ export interface AgentTestSession {
   id: ID;
   title: string;
   agentId: ID;
+  draft?: boolean;
   createdAt: string;
   messages: AgentTestMessage[];
+}
+
+export interface AgentTestDraftInput {
+  prompt: string;
+  level: number;
+  tools: string[];
+}
+
+export interface AgentTestInput {
+  agentId: ID;
+  content?: string;
+  sessionId?: ID;
+  draft?: AgentTestDraftInput;
+}
+
+export interface AgentTestResult {
+  session: AgentTestSession;
+  reply?: AgentTestMessage;
 }
 
 export interface AgentConsoleState {
@@ -92,15 +133,4 @@ export interface AgentConsoleState {
   agentPresets?: AgentPreset[];
   systemAgents?: SystemAgentDefinition[];
   history: AgentTestSession[];
-}
-
-export interface AgentTestInput {
-  agentId: ID;
-  content?: string;
-  sessionId?: ID;
-}
-
-export interface AgentTestResult {
-  session: AgentTestSession;
-  reply?: AgentTestMessage;
 }

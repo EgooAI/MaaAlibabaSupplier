@@ -238,6 +238,7 @@ export const httpBackend: OperationsBackend = {
   deleteAgentPreset: (id) => requestJson(`/api/agent/presets/${encodeURIComponent(id)}`, { method: "DELETE" }),
   restoreSystemAgentDefault: (apid) => requestJson(`/api/agent/system/${encodeURIComponent(apid)}/restore`, { method: "POST" }),
   listSystemAgentDefinitions: () => requestJson("/api/agent/system"),
+  listAgentPresetRevisions: (apid, limit) => requestJson(`/api/agent/presets/${encodeURIComponent(apid)}/revisions${limit ? `?limit=${limit}` : ""}`),
   runAgentTest: (input) => requestAi("/api/agent/test", { method: "POST", body: JSON.stringify(input) }),
   listAgentTestHistory: () => requestJson("/api/agent/test-history"),
   undoAgentTestSession: (id) => requestJson(`/api/agent/test-history/${encodeURIComponent(id)}/undo`, { method: "POST" }),

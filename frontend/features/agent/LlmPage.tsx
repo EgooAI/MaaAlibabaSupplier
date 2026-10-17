@@ -8,6 +8,7 @@ import type { LlmLevelConfig } from "@/types/agent";
 import { AppTable } from "@/components/AppTable";
 import { EMPTY_TEXT } from "@/components/empty";
 import { useAgentWorkbench } from "./hooks/useAgentWorkbench";
+import { PromptEditorField } from "./components/PromptEditorField";
 
 type LlmLevelFormValues = Omit<LlmLevelConfig, "level">;
 
@@ -71,6 +72,7 @@ export function LlmPage() {
         onCancel={closeEditor}
         onOk={() => form.submit()}
         confirmLoading={saving}
+        width={760}
         destroyOnHidden
       >
         <Form key={editingLevel?.level} initialValues={editingLevel} form={form} layout="vertical" onFinish={save}>
@@ -92,7 +94,7 @@ export function LlmPage() {
             </Form.Item>
           </div>
           <Form.Item name="system_prompt" label="系统提示词" rules={[{ required: true, message: "请输入系统提示词" }]}>
-            <Input.TextArea rows={4} />
+            <PromptEditorField placeholder="该 Level 下所有 Agent 共享的系统提示词。支持 Markdown 结构。" />
           </Form.Item>
         </Form>
       </Modal>

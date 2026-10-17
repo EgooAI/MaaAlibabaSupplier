@@ -41,8 +41,9 @@ export function SessionListItem({ session, agentName, active, disabled, deleting
             <Typography.Text strong ellipsis>{session.title}</Typography.Text>
             <Typography.Text className="shrink-0 text-xs">{formatAgentSessionDate(session.createdAt)}</Typography.Text>
           </div>
-          <div className="mt-1">
+          <div className="mt-1 flex flex-wrap items-center gap-1">
             <Tag color="blue">{agentName}</Tag>
+            {session.draft ? <Tag color="orange">草稿试运行</Tag> : null}
           </div>
         </div>
         <Dropdown menu={{ items: menuItems, onClick: handleMenuClick }} trigger={["click"]} disabled={disabled}>

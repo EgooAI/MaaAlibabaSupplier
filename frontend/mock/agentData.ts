@@ -126,6 +126,9 @@ export const systemAgents: SystemAgentDefinition[] = systemAgentSources.map((age
   display_name: agent.name,
   apid: agent.apid,
   description: agent.description,
+  prompt: agent.prompt,
+  intelevel: agent.level,
+  tools: [...agent.tools],
 }));
 
 export const agentPresets: AgentPreset[] = [

@@ -1,4 +1,4 @@
-import type { AgentConsoleState, AgentTestInput, AgentTestResult, AgentTestSession, DbAgentPreset, DocumentLlmConfig, SystemAgentDefinition } from "@/types/agent";
+import type { AgentConsoleState, AgentPresetRevision, AgentTestInput, AgentTestResult, AgentTestSession, DbAgentPreset, DocumentLlmConfig, SystemAgentDefinition } from "@/types/agent";
 import type { AssistantSuggestion, ConversationAnalysis, ConversationDetail } from "@/types/chatCanonical";
 import type { ConversationPage, ConversationQuery, InboxOverview, InboxSettings, ReadReceipt } from "@/types/inbox";
 import type { ExportConversationsInput, ExportConversationsResult, OutboxTask, RequestTranslationsInput, RequestTranslationsResult, TranslationQueryInput, TranslationQueryResult, TranslationJobSnapshot, SendMessageInput, SendMessageResult, ConversationRevision } from "@/types/chatOperations";
@@ -76,6 +76,7 @@ export interface OperationsBackend {
   deleteAgentPreset(id: string): Promise<boolean>;
   restoreSystemAgentDefault(apid: string): Promise<DbAgentPreset>;
   listSystemAgentDefinitions(): Promise<SystemAgentDefinition[]>;
+  listAgentPresetRevisions(apid: string, limit?: number): Promise<AgentPresetRevision[]>;
   runAgentTest(input: AgentTestInput): Promise<AgentTestResult>;
   listAgentTestHistory(): Promise<AgentTestSession[]>;
   undoAgentTestSession(id: string): Promise<AgentTestSession>;

@@ -5,7 +5,7 @@ import { createContext, createElement, useContext, useEffect, useRef, useState, 
 import { agentConfigToPreset, agentPresetToConfig, agentPresetToDbPreset, createRegularAgentPreset, dbPresetToAgentPreset, documentToLlmLevelConfig, llmLevelToDocumentConfig, upsertLlmLevel } from "@/domain/agent/agentModel";
 import { nowText } from "@/domain/time";
 import { backend } from "@/services/client";
-import type { AgentConfig, AgentConsoleState, AgentEditValues, DbAgentPreset, LlmLevelConfig } from "@/types/agent";
+import type { AgentConfig, AgentConsoleState, AgentEditValues, AgentSaveOptions, DbAgentPreset, LlmLevelConfig } from "@/types/agent";
 import { useAccount } from "@/features/account/AccountProvider";
 
 function useAgentWorkbenchController() {
@@ -87,11 +87,11 @@ function useAgentWorkbenchController() {
     }
   }
 
-  async function saveAgent(agent: AgentConfig, values: AgentEditValues) {
+  async function saveAgent(agent: AgentConfig, values: AgentEditValues, options?: AgentSaveOptions) {
     if (!beginMutation(agent.id)) return false;
     try {
       const preset = agentConfigToPreset(agent, values, nowText());
-      const saved = await backend.saveAgentPreset(agentPresetToDbPreset(preset));
+      const saved = await backend.saveAgentPreset(agentPresetToDbPreset(preset, options));
       syncAgentState(saved);
       message.success("Agent 已保存");
       return true;
@@ -103,11 +103,11 @@ function useAgentWorkbenchController() {
     }
   }
 
-  async function createAgent(values: AgentEditValues) {
+  async function createAgent(values: AgentEditValues, options?: AgentSaveOptions) {
     if (!beginMutation("new-agent")) return false;
     try {
       const preset = createRegularAgentPreset(values, nowText());
-      const saved = await backend.saveAgentPreset(agentPresetToDbPreset(preset));
+      const saved = await backend.saveAgentPreset(agentPresetToDbPreset(preset, options));
       syncAgentState(saved);
       message.success("Agent 已创建");
       return true;
@@ -116,6 +116,30 @@ function useAgentWorkbenchController() {
       return false;
     } finally {
       endMutation("new-agent");
+    }
+  }
+
+  async function copyAgent(agent: AgentConfig) {
+    if (agent.category !== "regular" || !beginMutation(agent.id)) return false;
+    try {
+      const preset = createRegularAgentPreset({
+        name: `${agent.name} 副本`,
+        description: agent.description,
+        prompt: agent.prompt ?? "",
+        level: agent.level ?? 0,
+        capabilities: agent.capabilities,
+      }, nowText());
+      const saved = await backend.saveAgentPreset(agentPresetToDbPreset(preset, {
+        revisionNote: `复制自 ${agent.name}`,
+      }));
+      syncAgentState(saved);
+      message.success("Agent 已复制");
+      return true;
+    } catch (error: unknown) {
+      message.error(error instanceof Error ? error.message : "Agent 复制失败");
+      return false;
+    } finally {
+      endMutation(agent.id);
     }
   }
 
@@ -176,7 +200,7 @@ function useAgentWorkbenchController() {
     });
   }
 
-  return { state, loading, saveLlmLevel, toggleAgent, saveAgent, createAgent, deleteAgent, resetSystemAgent, mutatingIds, isAgentMutating: (id: string) => mutatingIds.has(id) };
+  return { state, loading, saveLlmLevel, toggleAgent, saveAgent, createAgent, copyAgent, deleteAgent, resetSystemAgent, mutatingIds, isAgentMutating: (id: string) => mutatingIds.has(id) };
 }
 
 type AgentWorkbench = ReturnType<typeof useAgentWorkbenchController>;

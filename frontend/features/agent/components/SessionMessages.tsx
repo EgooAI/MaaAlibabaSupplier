@@ -1,7 +1,7 @@
 "use client";
 
 import { RobotOutlined, ShopOutlined } from "@ant-design/icons";
-import { Avatar, Card, Space, Typography } from "antd";
+import { Alert, Avatar, Card, Space, Typography } from "antd";
 import { renderMessageHtml } from "@/domain/chat/messageHtml";
 import { EMPTY_TEXT } from "@/components/empty";
 import type { AgentTestSession } from "@/types/agent";
@@ -13,6 +13,9 @@ export function SessionMessages({ session }: { session: AgentTestSession }) {
 
   return (
     <Space orientation="vertical" size="middle" className="w-full">
+      {session.draft ? (
+        <Alert type="warning" showIcon message="该会话使用未保存的提示词快照运行，代表当时的草稿内容。" />
+      ) : null}
       {session.messages.map((item) => {
         const isAssistant = item.role === "assistant";
         return (
