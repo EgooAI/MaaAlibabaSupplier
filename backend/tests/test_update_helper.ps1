@@ -81,6 +81,25 @@ try {
         $actual[$key] = @($actual[$key])
         Assert-Rejected { Assert-InstalledBuild $actual $expected } '*Invalid installed build identity*'
     }
+
+    # A result file exists after its first publish, so every later publish
+    # replaces it in place; a plain $null backup path once made all of them fail.
+    $result = Join-Path $scratch 'last-result.json'
+    Write-Json $result @{status='installing'; message='first'; version='v1'}
+    Write-Json $result @{status='installed'; message='second'; version='v2'}
+    if ((Read-Json $result).version -cne 'v2') { throw 'An existing result file was not replaced' }
+    [IO.File]::SetAttributes($result, [IO.FileAttributes]::ReadOnly)
+    Write-Json $result @{status='reboot_required'; message='third'; version='v3'}
+    if ((Read-Json $result).version -cne 'v3') { throw 'A read-only result file was not replaced' }
+    if ([IO.File]::GetAttributes($result) -band [IO.FileAttributes]::ReadOnly) { throw 'The read-only attribute was not cleared' }
+    if ([IO.File]::Exists($result + '.tmp')) { throw 'A published result left its temporary file' }
+    Assert-Rejected {
+        $heldResult = [IO.File]::Open($result, 'Open', 'Read', 'None')
+        try { Write-Json $result @{status='error'; message='blocked'; version='v4'} } finally { $heldResult.Dispose() }
+    } '*' 'IOException'
+    if ((Read-Json $result).version -cne 'v3') { throw 'A held result file was not left untouched' }
+    $checks++
+
     "Passed $checks nondestructive helper checks on PowerShell $($PSVersionTable.PSVersion)."
 } finally {
     if ($null -ne $held) { $held.Dispose() }

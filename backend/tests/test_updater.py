@@ -503,8 +503,8 @@ def test_a_result_older_than_the_running_build_is_reported_as_stale_at_startup(m
     events.clear()
     updates.atomic_json(path / "last-result.json",
                         {"status": "installed", "message": "ok", "version": "v1.2.3"})
-    updates.Updater(manager.install)
-    assert all(event != "update.result" for event, _ in events)
+    assert updates.Updater(manager.install).state["last_result"]["version"] == "v1.2.3"
+    assert events == []
 
 
 def test_update_lifecycle_events_cover_check_download_and_handoff(manager, monkeypatch, tmp_path):

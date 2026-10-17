@@ -9,6 +9,15 @@ Run from the repository root on Windows, using the project's Python environment:
 & ".portable/python/python.exe" -X utf8 tools/validate_schema.py
 ```
 
+`backend/tests/test_update_helper.ps1` additionally verifies the updater helper's
+PowerShell functions (installer hash locking, installed-build identity and result
+publication) without process or installer I/O. It is run manually, outside pytest,
+because tests must not create real subprocesses:
+
+```powershell
+& "backend/tests/test_update_helper.ps1" -ScratchParent $env:TEMP
+```
+
 Always select the repository configuration explicitly, including SDK-only runs:
 
 ```powershell

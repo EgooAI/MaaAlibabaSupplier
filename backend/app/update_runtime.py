@@ -105,10 +105,8 @@ class WindowsUpdateRuntime:
 
         A previous attempt's exited process is not reused. Nothing is armed
         until the application writes the commit file after its response.
-        The PowerShell runtime is resolved again for every attempt: a shell
-        that vanished since registration (for example a Store package auto
-        update replacing the resolved app-execution alias) fails only this
-        attempt, and the next attempt re-resolves it or falls back.
+        The PowerShell runtime is resolved again for every attempt, so a shell
+        that vanished since registration fails only this attempt.
         """
         if self.process is not None and self.process.poll() is None:
             raise UpdateError("An updater helper is already running.")
@@ -134,13 +132,17 @@ class WindowsUpdateRuntime:
                 "installer_sha256": prepared["installer_sha256"],
                 "expected": {key: prepared[key] for key in BUILD_KEYS},
             })
-            env = os.environ.copy()
-            # Preserve MAA_* launch configuration for the restarted backend. Discard
-            # unrelated GitHub credentials and the previous internal MITM token.
-            for key in tuple(env):
-                if key in {"MAA_MITM_INTERNAL_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"}:
-                    env.pop(key)
-            # Keep PowerShell's own error text locally; diagnostics never exports it.
+        except OSError:
+            shutil.rmtree(stage, ignore_errors=True)
+            raise UpdateError("The updater staging area could not be prepared.") from None
+        env = os.environ.copy()
+        # Preserve MAA_* launch configuration for the restarted backend. Discard
+        # unrelated GitHub credentials and the previous internal MITM token.
+        for key in tuple(env):
+            if key in {"MAA_MITM_INTERNAL_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"}:
+                env.pop(key)
+        # Keep PowerShell's own error text locally; diagnostics never exports it.
+        try:
             with (stage / "helper.log").open("ab") as helper_log:
                 process = subprocess.Popen(
                     [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",

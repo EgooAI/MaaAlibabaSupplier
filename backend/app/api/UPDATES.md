@@ -32,19 +32,18 @@ to remain comparable: GitHub run numbers are scoped to a workflow.
 
 A successful workflow without the expected unexpired artifact is an error,
 not permission to stop the application. The existing workflow skips installer
-packaging when CI's `DOTENV` secret is missing. Artifacts currently expire after
-seven days. Each artifact must contain exactly one installer named
-`MaaAlibabaSupplier-v<version>-Setup.exe`, with no additional JSON or other files.
-The installed payload must still include `build-info.json` for verification after
-installation; an old installer lacking that identity cannot complete this check.
+packaging when CI's `DOTENV` secret is missing. Each artifact must contain
+exactly one installer named `MaaAlibabaSupplier-v<version>-Setup.exe`, with no
+additional JSON or other files. The installed payload must still include
+`build-info.json` for verification after installation; an old installer lacking
+that identity cannot complete this check.
 
 ## Supported Installation
 
 Updating requires Windows, valid `build-info.json` in the installation root,
 the bundled interpreter under `backend/python`, and startup through
 `python -m backend.app.main`. Source checkouts and direct ASGI launches cannot
-install updates. The initial version containing this updater must be installed
-normally before in-app updates become available.
+install updates.
 
 The runtime locates `pwsh` first, then `powershell`, then the standard Windows
 PowerShell executable under `%SystemRoot%`. The selected runtime must be outside
@@ -134,12 +133,10 @@ is performed.
 ## Artifact Verification
 
 No separate update manifest is generated, uploaded, or required. CI writes
-`build-info.json` inside the installation payload before compiling Inno Setup.
-The `Compile installer` step checks in Bash that the expected installer is a
-regular file and is nonempty after ISCC succeeds. No separate Python validation
-script or CI validation step is used. This is a basic output check, not a checksum
-or executable-format validation. The workflow uploads `dist/*.exe` inside
-`MaaAlibabaSupplier-Setup`; the updater still requires exactly one installer.
+`build-info.json` inside the installation payload before compiling Inno Setup,
+and uploads `dist/*.exe` inside `MaaAlibabaSupplier-Setup`. CI's own check that
+the installer is a nonempty regular file is an output check, not a checksum or
+executable-format validation; the updater still requires exactly one installer.
 
 Expected repository, commit SHA, run ID, run number, and attempt come directly
 from the selected GitHub Actions run. The application ID and metadata schema are
@@ -170,20 +167,22 @@ Staging and results live outside the installation:
     last-result.json
     <download-stage>/<installer>.exe
     <download-stage>/installer.log
-    <broker-stage>/update-helper.ps1
+    <broker-stage>/update-helper.ps1, bootstrap.json
     <broker-stage>/request.json, accepted.json, go.json, cancel.json
+    <broker-stage>/helper.log
 ```
 
 The backend exposes the last terminal result when it next runs; an interrupted
 `installing` record is ignored rather than shown as active. Staging is bounded:
-each download prunes uuid stage directories beyond the four most recent, and an
-attempt whose helper could not be started deletes its own stage directory.
-Failures after the helper started keep their stage for local inspection, and
-later downloads absorb them into the same window. The helper publishes results
-by replace, then delete+move with short backoff, so a transiently held or
-read-only destination file cannot swallow the terminal record silently. When
-the published result still predates the running build, the backend records it
-as stale. `last-result.json` and its pending `.tmp` are never pruned.
+each download prunes uuid stage directories beyond the four most recent. An
+attempt that could not prepare staging or start its helper deletes its own stage
+directory; failures after the helper started keep their stage for local
+inspection, and later downloads absorb them into the same window. The helper
+replaces `last-result.json` atomically, clearing a read-only attribute first; a
+destination that stays locked still loses the terminal record and leaves only
+the `.tmp`. The backend records an `installed` result that does not describe the
+running build as stale, so a lost write is visible in diagnostics.
+`last-result.json` and its pending `.tmp` are never pruned.
 
 Inno Setup performs an in-place upgrade. It preserves an existing `.env` and
 excludes runtime data, debug files, and MaaFW config/data directories from the

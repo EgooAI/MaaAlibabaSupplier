@@ -25,7 +25,7 @@ Ownership markers are required, read with a fixed bound, and never exported.
 Recognized timestamp, numbered and `.bak.log` rotations are included. The updater's per-install staging
 contributes `last-result.json` at the staging root and `installer.log` from up to
 four recent UUID stage directories. Only those exact updater filenames are
-eligible; bootstrap, request, ready and other IPC files are excluded. The updater
+eligible; bootstrap, request, accepted and other IPC files are excluded. The updater
 prunes stage directories to the same four-recent window itself, and a failed
 attempt's stage may already be deleted. PowerShell helper output is kept
 beside its stage for local inspection but is never exported. Development preview

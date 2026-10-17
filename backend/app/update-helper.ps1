@@ -53,18 +53,13 @@ function Write-Json([string]$Path, $Value) {
     $bytes = [Text.Encoding]::UTF8.GetBytes(($Value | ConvertTo-Json -Depth 8 -Compress))
     $stream = [IO.File]::Open($temporary, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
     try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
-    # A held or read-only destination (scanner, backup, viewer) must never stop
-    # the installation: publish by replace, then by delete+move, with short
-    # backoff; the last resort leaves the .tmp for a later publication pass.
-    for ($attempt = 0; $attempt -lt 4; $attempt++) {
-        if ([IO.File]::Exists($Path)) {
-            try { [IO.File]::Replace($temporary, $Path, $null); return } catch { }
-            try { [IO.File]::SetAttributes($Path, [IO.FileAttributes]::Normal) } catch { }
-            try { [IO.File]::Delete($Path) } catch { }
-        }
-        try { [IO.File]::Move($temporary, $Path); return } catch { }
-        Start-Sleep -Milliseconds 200
+    if (-not [IO.File]::Exists($Path)) { [IO.File]::Move($temporary, $Path); return }
+    # ReplaceFile refuses a read-only destination.
+    if ([IO.File]::GetAttributes($Path) -band [IO.FileAttributes]::ReadOnly) {
+        [IO.File]::SetAttributes($Path, [IO.FileAttributes]::Normal)
     }
+    # A plain $null would bind as an empty backup path, which ReplaceFile rejects.
+    [IO.File]::Replace($temporary, $Path, [NullString]::Value)
 }
 function Matches-Nonce([string]$Name, [string]$Nonce) {
     $path = Join-Path $Stage $Name
@@ -145,8 +140,7 @@ try {
     if (-not [MaaUpdateNative]::Identity($rootHandle, $bootstrap.root_created, $bootstrap.root_path) -or -not [MaaUpdateNative]::Member($rootHandle, $jobHandle)) { throw 'Root identity changed' }
     $armed = $true
     Result 'installing' 'The updater has accepted the handoff. Installation has not yet completed.' $request.expected.version
-    # One kernel operation terminates the entire non-breakaway job. No PID
-    # enumeration, taskkill /T, business shutdown, or grace period.
+    # One kernel operation terminates the entire non-breakaway job.
     if (-not [MaaUpdateNative]::TerminateJobObject($jobHandle, 1)) { throw 'Process termination failed' }
     # Active()==0 is also true for an empty job. Only the root process exiting
     # proves the application actually stopped before Setup replaces its files.

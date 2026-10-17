@@ -107,12 +107,7 @@ _STAGE_KEEP = 4
 
 
 def prune_stage_directories(base: Path, keep: int = _STAGE_KEEP) -> int:
-    """Delete the oldest uuid stage directories beyond a bounded recent window.
-
-    Returns how many directories were removed. Locked entries, junctions,
-    symlinks and anything disappearing mid-scan are skipped, never fatal:
-    pruning is staging maintenance, not update logic.
-    """
+    """Delete uuid stage directories beyond the newest `keep`, best effort."""
     candidates = []
     try:
         for entry in base.iterdir():
@@ -125,7 +120,7 @@ def prune_stage_directories(base: Path, keep: int = _STAGE_KEEP) -> int:
                 continue
     except OSError:
         return 0
-    # (mtime, name, path) — the name tie-break keeps the removal set stable.
+    # The name tie-break keeps the removal set stable for equal timestamps.
     candidates.sort()
     removed = 0
     for _, _, entry in candidates[:max(0, len(candidates) - keep)]:
@@ -288,18 +283,23 @@ class Updater:
             terminal = terminal_result(result)
             if terminal is not None:
                 self.state["last_result"] = terminal
-                if terminal["version"] and self.build.get("version") \
-                        and terminal["version"] != self.build["version"]:
-                    # A published result older than the running build means the
-                    # helper's own terminal write was lost; the installation
-                    # itself is unaffected.
-                    log_event("update.result", status="stale", version=terminal["version"])
+                self._note_stale(terminal)
             elif result.get("status") == "installing":
                 # The previous process did not finish its handoff; expose that in
                 # logs without presenting it as an active installation.
                 log_event("update.result", status="interrupted", version=result.get("version"))
         except (OSError, ValueError, UpdateError):
             pass
+
+    def _note_stale(self, result: dict) -> None:
+        """Report an `installed` result that does not name the running build.
+
+        Only success is expected to match; a mismatch means the helper's own
+        terminal write was lost, not that the installation failed.
+        """
+        if (result["status"] == "installed" and result["version"]
+                and self.build.get("version") and result["version"] != self.build["version"]):
+            log_event("update.result", status="stale", version=result["version"])
 
     def register_runtime(self) -> None:
         if (sys.platform != "win32" or not self.build
@@ -313,9 +313,11 @@ class Updater:
                 raise UpdateError("Invalid updater source configuration.")
             from backend.app.update_runtime import WindowsUpdateRuntime
 
-            resolve_powershell(self.install)  # fail fast at startup; attempts re-resolve it
+            resolve_powershell(self.install)  # attempts re-resolve; here it disables updates when no shell exists
             self.runtime = WindowsUpdateRuntime(self.install, staging_base(self.install))
             self.state.update(supported=True, reason=None)
+        except UpdateError as exc:
+            self.state["reason"] = str(exc)
         except Exception:
             self.state["reason"] = "The independent updater helper or Windows process containment is unavailable."
 
@@ -329,19 +331,20 @@ class Updater:
                 if result is not None and result != self.state["last_result"]:
                     self.state["last_result"] = result
                     log_event("update.result", status=result["status"], version=result.get("version"))
-                    if result["status"] == "installed" and result.get("version") \
-                            and self.build.get("version") and result["version"] != self.build["version"]:
-                        log_event("update.result", status="stale", version=result["version"])
+                    self._note_stale(result)
             return copy.deepcopy(self.state)
+
+    def _clear_handoff_locked(self) -> None:
+        self._handoff_finished.set()
+        self._handoff_id = None
+        self.handoff.clear()
 
     def _cancel_install_locked(self, message: str, reason: str) -> None:
         try:
             self.runtime.cancel()
         except OSError:
             pass
-        self._handoff_finished.set()
-        self._handoff_id = None
-        self.handoff.clear()
+        self._clear_handoff_locked()
         # Before the commit nothing was stopped and the verified installer is
         # untouched, so a cancelled or failed attempt stays installable.
         self.state.update(phase="ready" if self.prepared is not None else "error", error=message)
@@ -524,9 +527,7 @@ class Updater:
         except Exception as exc:
             with self.lock:
                 if self._handoff_id == operation_id:
-                    self._handoff_finished.set()
-                    self._handoff_id = None
-                    self.handoff.clear()
+                    self._clear_handoff_locked()
                     self.state.update(phase="ready", error=None)
             try:
                 self.runtime.cancel()

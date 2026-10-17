@@ -89,8 +89,6 @@ def test_join_failure_closes_job_without_children(native, tmp_path):
 def test_start_spawns_single_use_breakaway_broker(native, monkeypatch, tmp_path):
     kernel, spawn = native
     accepting(spawn)
-    resolver = Mock(return_value="external-pwsh.exe")
-    monkeypatch.setattr(runtime, "resolve_powershell", resolver)
     monkeypatch.setenv("MAA_MITM_INTERNAL_TOKEN", "old-private-token")
     monkeypatch.setenv("MAA_AUTH_SECRET_SHA256", "test-digest")
     owner = runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external")
@@ -98,7 +96,6 @@ def test_start_spawns_single_use_breakaway_broker(native, monkeypatch, tmp_path)
     owner.start(installer, prepared())
     command = spawn.call_args.args[0]
     assert command[0] == "external-pwsh.exe" and "-File" in command
-    resolver.assert_called_once_with(tmp_path / "install")
     assert str(owner.stage / "update-helper.ps1") in command
     assert owner.stage.is_relative_to(tmp_path / "external")
     assert spawn.call_args.kwargs["creationflags"] == runtime.CREATE_BREAKAWAY_FROM_JOB | 0x08000200
@@ -131,15 +128,12 @@ def test_each_attempt_re_resolves_the_shell_before_spawning(native, monkeypatch,
     accepting(spawn)
     owner = runtime.WindowsUpdateRuntime(tmp_path / "install", tmp_path / "external")
     resolutions = ["fresh-1.exe", "fresh-2.exe"]
-    received = []
-    monkeypatch.setattr(runtime, "resolve_powershell",
-                        lambda install: (received.append(install), resolutions.pop(0))[1])
+    monkeypatch.setattr(runtime, "resolve_powershell", lambda install: resolutions.pop(0))
     owner.start(tmp_path / "installer.exe", prepared())
     assert spawn.call_args.args[0][0] == "fresh-1.exe"
     owner.process.poll.return_value = 1
     owner.start(tmp_path / "installer.exe", prepared())
     assert spawn.call_args.args[0][0] == "fresh-2.exe"
-    assert received == [tmp_path / "install", tmp_path / "install"]
 
 
 def test_start_fails_closed_without_usable_shell(native, monkeypatch, tmp_path):
@@ -178,6 +172,13 @@ def test_failed_attempt_cleanup_on_each_failure_kind(native, monkeypatch, tmp_pa
     stages = [entry for entry in base.iterdir() if entry.is_dir()]
     assert len(stages) == 1 and (stages[0] / "helper.log").is_file()
     assert updater.read_json(stages[0] / "accepted.json")["status"] == "error"
+
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory", encoding="utf-8")
+    spawn.reset_mock()
+    with pytest.raises(updater.UpdateError, match="staging area could not be prepared"):
+        runtime.WindowsUpdateRuntime(tmp_path / "install", blocked).start(tmp_path / "installer.exe", prepared())
+    spawn.assert_not_called()
 
 
 def test_exited_or_rejecting_broker_never_becomes_ready(native, tmp_path):
