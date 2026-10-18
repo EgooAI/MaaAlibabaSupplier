@@ -1,7 +1,9 @@
-"""Batch chat export: per-contact TXT files bundled into a ZIP archive.
+"""Batch chat export: per-contact Markdown files bundled into a ZIP archive.
 
 Ported from the legacy NiceGUI batch tab; has no UI dependencies so both the
-HTTP API and (until its removal) the web UI can share it.
+HTTP API and (until its removal) the web UI can share it. Message bodies and the
+transcript come from ``crm.message_markdown`` so the export and the LLM inputs
+structure cards and speakers the same way.
 """
 
 from __future__ import annotations
@@ -11,9 +13,9 @@ import re
 import zipfile
 from datetime import datetime, timezone
 
-from backend.app.shared.cards import TYPE_NAMES, card_reference, parse_card
+from backend.app.shared.crm.message_markdown import EXPORT_OPTIONS, transcript_markdown
 from backend.app.shared.crm.sync import CRMAdapter
-from backend.app.shared.crm.views import CrmConversation, CrmMessage, coerce_epoch
+from backend.app.shared.crm.views import CrmConversation, CrmResolver, coerce_epoch
 
 _INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
@@ -34,23 +36,6 @@ def format_register_date(register_date) -> str:
     if not register_date:
         return ""
     return datetime.fromtimestamp(coerce_epoch(register_date), tz=timezone.utc).strftime("%Y-%m-%d")
-
-
-def message_datetime(message: CrmMessage) -> datetime:
-    return datetime.fromtimestamp(coerce_epoch(message.created_at), tz=timezone.utc).astimezone()
-
-
-def message_text(message: CrmMessage) -> str:
-    if message.user_content_type == 10010:
-        if message.content_label:
-            return message.content_label
-        card = parse_card(message.content)
-        if card is None:
-            return "[卡片]"
-        name = TYPE_NAMES.get(card.card_type) or f"类型{card.card_type}"
-        reference = card_reference(card)
-        return f"[{name}:{reference}]" if reference else f"[{name}]"
-    return message.content_label or ""
 
 
 def clean_filename(name: str) -> str:
@@ -106,26 +91,27 @@ def customer_info_lines(contact: str) -> list[str]:
     return [f"{label}: {front_matter_value(value)}" for label, value in fields]
 
 
-def message_speaker(conv: CrmConversation, resolver, message: CrmMessage) -> str:
-    if message.is_system:
-        return "系统"
-    if resolver.is_self(message.sender_id):
-        return "我的机器人" if message.is_auto_reply else "我"
-    return contact_display_name(conv.contact_ali_id)
-
-
-def conversation_text(conv: CrmConversation, resolver) -> str:
-    lines = ["---", *customer_info_lines(conv.contact_ali_id), "---"]
-    for message in conv.messages:
-        speaker = message_speaker(conv, resolver, message)
-        timestamp = message_datetime(message).strftime("%Y-%m-%d %H:%M:%S")
-        text = message_text(message).replace("\r\n", "\n").replace("\r", "\n")
-        lines.append(f"{speaker} ({timestamp}): {text}")
-        lines.append("")
+def conversation_markdown(conv: CrmConversation, resolver: CrmResolver, *, display_name: str = "") -> str:
+    name = display_name or conv.contact_ali_id
+    lines = [
+        f"# {name}",
+        "",
+        *(f"- {line}" for line in customer_info_lines(conv.contact_ali_id)),
+        "",
+        "---",
+        "",
+        "## 会话记录",
+        "",
+    ]
+    transcript = transcript_markdown(
+        conv.messages, resolver=resolver, options=EXPORT_OPTIONS, limit=None, display_name=name
+    )
+    if transcript:
+        lines.append(transcript)
     return "\n".join(lines).rstrip() + "\n"
 
 
-def build_export_zip(conversations: list[CrmConversation], resolver) -> tuple[bytes, str]:
+def build_export_zip(conversations: list[CrmConversation], resolver: CrmResolver) -> tuple[bytes, str]:
     created_at = datetime.now().strftime("%Y%m%d-%H%M%S")
     archive_name = f"Chats-Export-{created_at}.zip"
     used_names: dict[str, int] = {}
@@ -133,10 +119,11 @@ def build_export_zip(conversations: list[CrmConversation], resolver) -> tuple[by
 
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for conv in conversations:
-            base_name = clean_filename(contact_display_name(conv.contact_ali_id))
+            display_name = contact_display_name(conv.contact_ali_id)
+            base_name = clean_filename(display_name)
             index = used_names.get(base_name, 0) + 1
             used_names[base_name] = index
-            file_name = f"{base_name}.txt" if index == 1 else f"{base_name}_{index}.txt"
-            archive.writestr(file_name, conversation_text(conv, resolver).encode("utf-8"))
+            file_name = f"{base_name}.md" if index == 1 else f"{base_name}_{index}.md"
+            archive.writestr(file_name, conversation_markdown(conv, resolver, display_name=display_name).encode("utf-8"))
 
     return buffer.getvalue(), archive_name

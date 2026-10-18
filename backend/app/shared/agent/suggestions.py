@@ -24,9 +24,9 @@ class ReplySuggestions(BaseModel):
     items: list[SuggestionItem] = Field(description="最多 3 条回复建议，按推荐顺序排列。")
 
 
-def generate_reply_suggestions(conversation: list[tuple[str, str, str]]) -> ReplySuggestions:
+def generate_reply_suggestions(transcript: str) -> ReplySuggestions:
     raw_text = run_chat_tool_agent(
         CHAT_REPLY_SUGGESTION_AGENT_APID,
-        build_reply_suggestion_input(conversation),
+        build_reply_suggestion_input(transcript),
     )
     return ReplySuggestions.model_validate(json.loads(raw_text))

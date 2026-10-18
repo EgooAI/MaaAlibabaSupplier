@@ -100,11 +100,11 @@ export function useBatchManagement(initialQuery: ConversationQuery = {}) {
       const isZip = Boolean(archiveName);
       const blob = isZip
         ? new Blob([Uint8Array.from(atob(result.content), (char) => char.charCodeAt(0))], { type: "application/zip" })
-        : new Blob([result.content], { type: "text/plain;charset=utf-8" });
-      downloadBlob(blob, archiveName ?? "conversation-export.txt");
+        : new Blob([result.content], { type: "text/markdown;charset=utf-8" });
+      downloadBlob(blob, archiveName ?? "conversation-export.md");
       const missing = (result.missing?.length ?? 0) + localSkipped;
       if (missing) message.warning(`有 ${missing} 个所选会话未导出（不可见或无法定位）`);
-      message.success(isZip ? "已导出 ZIP 文件" : "已导出 TXT 文件");
+      message.success(isZip ? "已导出 ZIP 文件" : "已导出 Markdown 文件");
     } catch (error: unknown) {
       if (!(error instanceof AccountChangedError)) message.error(error instanceof Error ? error.message : "会话导出失败");
     } finally {

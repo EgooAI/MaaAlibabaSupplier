@@ -5,7 +5,7 @@ import { Avatar, Button, Tooltip } from "antd";
 import { BusinessCardView } from "@/components/BusinessCardView";
 import { avatarColorOf, avatarInitialOf } from "@/domain/chat/avatarModel";
 import { isTranslatableMessage } from "@/domain/chat/chatModel";
-import { renderMessageHtml } from "@/domain/chat/messageHtml";
+import { renderContentHtml } from "@/domain/render/markdown";
 import type { ChatMessage } from "@/types/chatCanonical";
 
 export function MessageTimeline({
@@ -63,7 +63,7 @@ export function MessageTimeline({
                   {card ? (
                     <BusinessCardView card={card} compact onClick={() => onOpenCard(card.id)} />
                   ) : (
-                    <div className="whitespace-pre-wrap break-words" dangerouslySetInnerHTML={renderMessageHtml(message.content)} />
+                    <div className="whitespace-pre-wrap break-words" dangerouslySetInnerHTML={renderContentHtml(message.content, "rich-text")} />
                   )}
                   {pending ? (
                     <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-400" role="status">
@@ -93,7 +93,7 @@ export function MessageTimeline({
                     <div className="mt-3 border-t border-slate-200/70 pt-2">
                       <div className="flex items-start gap-1.5 text-slate-500">
                         <TranslationOutlined aria-hidden className="mt-[3px] shrink-0 text-xs text-slate-400" />
-                        <div className="min-w-0 flex-1 whitespace-pre-wrap break-words" dangerouslySetInnerHTML={renderMessageHtml(translation)} />
+                        <div className="min-w-0 flex-1 whitespace-pre-wrap break-words" dangerouslySetInnerHTML={renderContentHtml(translation, "rich-text")} />
                         {canTranslate ? (
                           <Tooltip title="重新翻译本条消息">
                             <Button

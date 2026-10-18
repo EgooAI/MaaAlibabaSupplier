@@ -510,7 +510,7 @@ def test_ai_and_export_use_the_visible_ledger_without_marking_read(client, archi
     suggestions = data(client, f"/api/conversations/{sid}/suggestions")
     assert suggestions[0]["content"] == "reply"
     suggest.assert_called_once()
-    assert [entry[2] for entry in suggest.call_args.args[0]] == ["A_VISIBLE_BODY"]
+    assert "A_VISIBLE_BODY" in suggest.call_args.args[0]
     data(client, f"/api/conversations/{sid}/analysis")
     analyze.assert_called_once()
     prompt = analyze.call_args.args[1]

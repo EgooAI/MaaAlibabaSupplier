@@ -26,7 +26,7 @@ from backend.app.shared.agent.system_agents import CHAT_CUSTOMER_STAGE_AGENT_API
 from backend.app.shared.backend.maafw_runner import goto_contact
 from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
 from backend.app.shared.cards import card_view
-from backend.app.shared.chat_format import conversation_transcript
+from backend.app.shared.crm.message_markdown import AGENT_OPTIONS, transcript_markdown
 from backend.app.shared.crm.customer_portrait_store import (
     LOST_REASONS,
     PORTRAIT_STAGES,
@@ -621,8 +621,8 @@ def suggestions(conversation_id: int) -> dict:
     if conv is None:
         raise AppError("会话不存在", status_code=404)
     try:
-        rows = conversation_transcript(conv.messages, CrmResolver(context.self_ali_id))
-        result = generate_reply_suggestions(rows)
+        transcript = transcript_markdown(conv.messages, resolver=CrmResolver(context.self_ali_id), options=AGENT_OPTIONS)
+        result = generate_reply_suggestions(transcript)
     except AppError:
         raise
     except Exception:
@@ -648,8 +648,8 @@ def analysis(conversation_id: int) -> dict:
     if conv is None:
         raise AppError("会话不存在", status_code=404)
     try:
-        rows = conversation_transcript(conv.messages, CrmResolver(context.self_ali_id))
-        raw = run_chat_tool_agent(CHAT_CUSTOMER_STAGE_AGENT_APID, build_analysis_input(task=_STAGE_TASK, conversation=rows))
+        transcript = transcript_markdown(conv.messages, resolver=CrmResolver(context.self_ali_id), options=AGENT_OPTIONS)
+        raw = run_chat_tool_agent(CHAT_CUSTOMER_STAGE_AGENT_APID, build_analysis_input(task=_STAGE_TASK, transcript=transcript))
     except AppError:
         raise
     except Exception:

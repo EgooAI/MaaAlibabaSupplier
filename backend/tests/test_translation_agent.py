@@ -17,6 +17,7 @@ from backend.app.shared.agent.translation import (
     assign_short_hashes,
     translate_texts_to_crm,
 )
+from backend.app.shared.crm.message_markdown import TranscriptLine
 from backend.app.shared.crm.sdk import TranslateManager
 from backend.app.shared.crm.translation_cache import get_translation, translation_cached
 
@@ -55,10 +56,10 @@ class TestShortHash:
 
 class TestBuildTranslationInput:
     ROWS = [
-        ("2026-09-18 10:00", "买家", "Hola, ¿precio?"),
-        ("2026-09-18 10:01", "商家(我)", "你好，请看 <b>报价单</b><br>谢谢"),
-        ("2026-09-18 10:02", "系统", "Auto reception text"),
-        ("2026-09-18 10:03", "买家", "已经翻译过的消息"),
+        TranscriptLine("2026-09-18 10:00", "买家", "Hola, ¿precio?"),
+        TranscriptLine("2026-09-18 10:01", "商家(我)", "你好，请看 <b>报价单</b><br>谢谢"),
+        TranscriptLine("2026-09-18 10:02", "系统", "Auto reception text"),
+        TranscriptLine("2026-09-18 10:03", "买家", "已经翻译过的消息"),
     ]
 
     def test_full_history_context_with_hash_markers_for_any_speaker(self):
@@ -73,16 +74,16 @@ class TestBuildTranslationInput:
         # 上下文保留原始 HTML。
         assert "你好，请看 <b>报价单</b><br>谢谢" in rendered
 
-        assert rendered.index("对话记录：") < rendered.index("翻译规则：") < rendered.index("待翻译条目：")
+        assert rendered.index("## 对话记录") < rendered.index("## 翻译规则") < rendered.index("## 待翻译条目")
         assert NO_NEED_TO_TRANSLATE in rendered and ABNORMAL_MESSAGE in rendered
         assert _items_payload(rendered) == {"items": items}
 
     def test_without_conversation_renders_rules_and_items_only(self):
         annotate = assign_short_hashes(["hello"])
         rendered = build_translation_input([{"text_hash": annotate["hello"], "text": "hello"}])
-        # 规则文本会提到"对话记录"，但不含对话记录章节（带冒号分隔头）。
-        assert "对话记录：" not in rendered
-        assert rendered.startswith("翻译规则")
+        # 规则文本会提到"对话记录"，但不含对话记录章节标题。
+        assert "## 对话记录" not in rendered
+        assert rendered.startswith("## 翻译规则")
 
     def test_empty_items_render_nothing(self):
         assert build_translation_input([], conversation=self.ROWS) == ""
@@ -147,7 +148,10 @@ class TestTranslateTextsToCrm:
         assert get_translation("world") is None
 
     def test_context_lines_carry_job_level_short_hashes(self, agent_output):
-        rows = [("10:00", "买家", "Hola"), ("10:01", "买家", "Bonjour")]
+        rows = [
+            TranscriptLine("10:00", "买家", "Hola"),
+            TranscriptLine("10:01", "买家", "Bonjour"),
+        ]
         annotate = assign_short_hashes(["Hola", "Bonjour"])
         translate_texts_to_crm(["Hola"], conversation=rows, annotate=annotate)
         # 该 chunk 只译 Hola，但上下文里 Bonjour 行也带 job 级短哈希（前缀稳定）。
@@ -158,7 +162,7 @@ class TestTranslateTextsToCrm:
 
     def test_derives_its_own_hashes_when_annotate_missing(self, agent_output):
         agent_output["reply"] = {}
-        translate_texts_to_crm(["hello"], conversation=[("10:00", "买家", "hello")])
+        translate_texts_to_crm(["hello"], conversation=[TranscriptLine("10:00", "买家", "hello")])
         mapping = assign_short_hashes(["hello"])
         assert f"买家: text_hash={mapping['hello']}: hello" in agent_output["input"]
 

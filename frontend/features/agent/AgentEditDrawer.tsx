@@ -3,7 +3,7 @@
 import { Alert, App, Button, Drawer, Form, Grid, Input, Modal, Select, Space, Tabs, Tag, Typography } from "antd";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isAgentLevel, isSystemAgentModified, unregisteredAgentTools } from "@/domain/agent/agentModel";
-import { renderPromptHtml } from "@/domain/agent/promptPreview";
+import { renderContentHtml } from "@/domain/render/markdown";
 import type { AgentConfig, AgentEditValues, AgentPresetRevision, AgentSaveOptions, AgentToolDefinition, LlmLevelConfig, SystemAgentDefinition } from "@/types/agent";
 import { AgentTestPanel } from "./components/AgentTestPanel";
 import { PresetRevisionList } from "./components/PresetRevisionList";
@@ -247,7 +247,7 @@ function AgentEditDrawerBody({ agent, category, systemAgents, tools, llmLevels, 
         <div
           aria-label="默认提示词预览"
           className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
-          dangerouslySetInnerHTML={renderPromptHtml(definition?.prompt ?? "")}
+          dangerouslySetInnerHTML={renderContentHtml(definition?.prompt ?? "", "markdown")}
         />
       </Modal>
 

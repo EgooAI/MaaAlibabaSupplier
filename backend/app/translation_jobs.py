@@ -20,6 +20,7 @@ from loguru import logger
 
 from backend.app.shared.agent.translation import assign_short_hashes, clean_texts, translate_texts_to_crm
 from backend.app.shared.backend.account_context import account_lock, get_account_context
+from backend.app.shared.crm.message_markdown import TranscriptLine
 from backend.app.shared.crm.translation_cache import translation_cached
 from backend.app.task_queue import TaskSnapshot, TaskStatus, get_translation_queue
 from backend.app.shared.utils.log_context import bind_log_context, log_event
@@ -84,11 +85,11 @@ def translation_job(task_id: str) -> TaskSnapshot | None:
     return get_translation_queue().get(task_id)
 
 
-def _conversation_context(conversation_id: int | None) -> list[tuple[str, str, str]] | None:
-    """Full transcript rows for LLM context; None when unavailable (job still runs)."""
+def _conversation_context(conversation_id: int | None) -> list[TranscriptLine] | None:
+    """Full raw transcript rows for LLM context; None when unavailable (job still runs)."""
     if conversation_id is None:
         return None
-    from backend.app.shared.chat_format import conversation_transcript
+    from backend.app.shared.crm.message_markdown import TRANSLATION_OPTIONS, transcript_lines
     from backend.app.shared.crm.sync import CRMAdapter
     from backend.app.shared.crm.views import CrmResolver
 
@@ -100,7 +101,12 @@ def _conversation_context(conversation_id: int | None) -> list[tuple[str, str, s
             conv: Any = CRMAdapter().get_conversation_detail(context.self_ali_id, conversation_id)
         if conv is None or not conv.messages:
             return None
-        return conversation_transcript(conv.messages, CrmResolver(context.self_ali_id), limit=None)
+        return transcript_lines(
+            conv.messages,
+            resolver=CrmResolver(context.self_ali_id),
+            options=TRANSLATION_OPTIONS,
+            limit=None,
+        )
     except Exception:
         # Context is an accelerator, not a precondition: translate without it.
         logger.exception("failed to load translation context for conversation {}", conversation_id)

@@ -158,6 +158,20 @@ def card_reference(card: Card) -> str:
     return ""
 
 
+def product_card_image(message: CrmMessage) -> str:
+    """Cover image URL of a product card, from the MITM enrichment pool.
+
+    Empty when the blob is not a product card or the pool has not seen it yet.
+    Text projections (Markdown export, LLM input) may embed this URL; the UI
+    never renders images, so it stays out of the frontend card view.
+    """
+    card = parse_card(message.content)
+    if card is None or card.card_type not in PRODUCT_CARD_TYPES:
+        return ""
+    product = _enriched_product(product_ids(card))
+    return product.product_image if product is not None else ""
+
+
 def card_view(message: CrmMessage) -> dict | None:
     card = parse_card(message.content)
     if card is None:
@@ -352,5 +366,6 @@ __all__ = [
     "card_reference",
     "card_view",
     "parse_card",
+    "product_card_image",
     "product_ids",
 ]

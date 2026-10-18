@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import NamedTuple
+from typing import NamedTuple, Sequence
 
 from loguru import logger
 
@@ -9,6 +9,7 @@ from backend.app.shared.agent.inputs import build_translation_input
 from backend.app.shared.agent.runner import run_chat_tool_agent
 from backend.app.shared.agent.system_agents import CHAT_TRANSLATION_AGENT_APID
 from backend.app.shared.agent.output_normalizers import parse_translation_payload
+from backend.app.shared.crm.message_markdown import TranscriptLine
 from backend.app.shared.crm.sdk import Translate, TranslateManager
 from backend.app.shared.crm.translation_cache import md5_text_key, translation_cached
 
@@ -65,16 +66,17 @@ def translate_texts_to_crm(
     texts: list[str],
     *,
     force: bool = False,
-    conversation: list[tuple[str, str, str]] | None = None,
+    conversation: Sequence[TranscriptLine] | None = None,
     annotate: dict[str, str] | None = None,
 ) -> TranslationOutcome:
     """Translate chat texts via the translation agent and upsert CRM Translate rows.
 
-    *conversation* is the full ``(timestamp, speaker, text)`` transcript used as LLM
-    context: every historical line is included, translated or not. *annotate* maps the
-    job-level pending texts to short hashes — transcript lines carrying ``text_hash=``
-    are pending translation, lines without the marker are context only. When omitted it
-    is derived from *texts*.
+    *conversation* is the full transcript used as LLM context: every historical
+    line is included, translated or not, and it must be built with
+    ``message_markdown.TRANSLATION_OPTIONS`` so bodies stay verbatim. *annotate*
+    maps the job-level pending texts to short hashes — transcript lines carrying
+    ``text_hash=`` are pending translation, lines without the marker are context
+    only. When omitted it is derived from *texts*.
 
     Already-cached texts are skipped unless *force* (retranslation is the exception).
     Agent protocol values: translation text / NO_NEED_TO_TRANSLATE (already Chinese,

@@ -1,19 +1,16 @@
-"""Input builders for the system chat agents and the agent chat dialog."""
+"""Input builders for the system chat agents and the agent chat dialog.
+
+Message bodies and the transcript skeleton come from
+``crm.message_markdown``; these builders only add the request scaffolding
+(section headings, output rules, JSON payload) around it.
+"""
 
 from __future__ import annotations
 
-import html
 import json
-import re
+from typing import Sequence
 
-
-def strip_html(text: str) -> str:
-    if not text:
-        return ""
-    value = html.unescape(text)
-    value = re.sub(r"<\s*br\s*/?\s*>", "\n", value, flags=re.IGNORECASE)
-    value = re.sub(r"<[^>]+>", "", value)
-    return re.sub(r"\s+", " ", value).strip()
+from backend.app.shared.crm.message_markdown import TranscriptLine
 
 
 # 输出协议正文（system_presets 的提示词与这里的用户输入规则共享同一份，避免两处漂移）。
@@ -28,13 +25,13 @@ TRANSLATION_PROTOCOL_RULES = (
 )
 
 # 稳定的输出协议说明（放在用户输入的稳定前缀区，配合 LLM 前缀缓存）。
-_TRANSLATION_RULES = "翻译规则：\n" + "\n".join(f"- {line}" for line in TRANSLATION_PROTOCOL_RULES)
+_TRANSLATION_RULES = "## 翻译规则\n" + "\n".join(f"- {line}" for line in TRANSLATION_PROTOCOL_RULES)
 
 
 def build_translation_input(
     items: list[dict[str, str]],
     *,
-    conversation: list[tuple[str, str, str]] | None = None,
+    conversation: Sequence[TranscriptLine] | None = None,
     annotate: dict[str, str] | None = None,
 ) -> str:
     """Build translation user input ordered for LLM prompt prefix caching.
@@ -44,10 +41,12 @@ def build_translation_input(
     jobs for the same conversation — share a long common prefix.
 
     *items* entries are ``{"text_hash", "text"}`` for the texts this call must
-    translate. *conversation* is the ``(timestamp, speaker, text)`` transcript
-    (raw text, HTML kept); lines whose text appears in *annotate* get a
-    ``text_hash=`` marker (pending translation, any speaker), lines without the
-    marker are context only — notably messages already translated.
+    translate. *conversation* is the transcript built with
+    ``message_markdown.TRANSLATION_OPTIONS``, i.e. raw bodies: lines whose body
+    appears in *annotate* get a ``text_hash=`` marker (pending translation, any
+    speaker), lines without the marker are context only — notably messages
+    already translated. Keeping the bodies verbatim is what makes the lookup
+    work, so never build this transcript with a Markdown card/strip profile.
     """
     if not items:
         return ""
@@ -57,16 +56,16 @@ def build_translation_input(
 
     if conversation:
         lines: list[str] = []
-        for timestamp, speaker, text in conversation:
-            line = (text or "").strip()
+        for row in conversation:
+            line = (row.body or "").strip()
             if not line:
                 continue
             short = text_to_hash.get(line)
             if short is not None:
-                lines.append(f"[{timestamp}] {speaker}: text_hash={short}: {line}")
+                lines.append(f"[{row.timestamp}] {row.speaker}: text_hash={short}: {line}")
             else:
-                lines.append(f"[{timestamp}] {speaker}: {line}")
-        parts.append("对话记录：")
+                lines.append(f"[{row.timestamp}] {row.speaker}: {line}")
+        parts.append("## 对话记录")
         parts.append("```")
         parts.append("\n".join(lines) if lines else "(empty)")
         parts.append("```")
@@ -74,7 +73,7 @@ def build_translation_input(
 
     parts.append(_TRANSLATION_RULES)
     parts.append("")
-    parts.append("待翻译条目：")
+    parts.append("## 待翻译条目")
     parts.append("```json")
     parts.append(json.dumps({"items": items}, ensure_ascii=False))
     parts.append("```")
@@ -82,32 +81,23 @@ def build_translation_input(
     return "\n".join(parts)
 
 
-def format_conversation_transcript(conversation: list[tuple[str, str, str]]) -> str:
-    lines = [
-        f"[{timestamp}] {speaker}: {safe}"
-        for timestamp, speaker, text in conversation
-        if (safe := strip_html(text))
-    ]
-    return "\n".join(lines) or "(empty)"
+def build_reply_suggestion_input(transcript: str) -> str:
+    return f"## 对话记录\n\n{transcript}"
 
 
-def build_reply_suggestion_input(conversation: list[tuple[str, str, str]]) -> str:
-    return f"对话记录：\n```\n{format_conversation_transcript(conversation)}\n```"
-
-
-def build_analysis_input(*, task: str, conversation: list[tuple[str, str, str]]) -> str:
-    return f"任务：{task}\n\n聊天记录：\n```\n{format_conversation_transcript(conversation)}\n```"
+def build_analysis_input(*, task: str, transcript: str) -> str:
+    return f"## 任务\n\n{task}\n\n## 聊天记录\n\n{transcript}"
 
 
 def build_chat_dialog_input(messages: list[dict[str, str]]) -> str:
-    history = "\n".join(
-        f"{'User' if message['role'] == 'user' else 'Agent'}: {message['content']}"
+    history = "\n\n".join(
+        f"**{'User' if message['role'] == 'user' else 'Agent'}**\n\n{(message.get('content') or '').strip()}"
         for message in messages
     )
     return (
         "You are chatting with the user in a multi-turn dialog.\n"
         "Use the conversation history below as context, and answer the latest User message.\n\n"
-        f"{history}"
+        f"## Conversation\n\n{history}"
     )
 
 
@@ -117,6 +107,4 @@ __all__ = [
     "build_chat_dialog_input",
     "build_reply_suggestion_input",
     "build_translation_input",
-    "format_conversation_transcript",
-    "strip_html",
 ]

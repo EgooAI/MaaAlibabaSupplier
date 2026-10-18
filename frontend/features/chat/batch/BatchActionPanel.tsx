@@ -225,7 +225,7 @@ export function BatchActionPanel({ action, targets, portraitTags, busy, exportin
         {action === "export-chat" ? (
           <>
             <div className="rounded-md border border-slate-100 bg-slate-50 px-2.5 py-2 text-xs leading-relaxed text-slate-600">
-              将导出 <b className="text-blue-600">{targets.length}</b> 个会话的聊天记录 · ZIP（含截图与 TXT；无截图时导出 TXT）
+              将导出 <b className="text-blue-600">{targets.length}</b> 个会话的聊天记录 · ZIP（Markdown 文件）
             </div>
             <Button type="primary" block loading={exporting} disabled={exporting || !targets.length} onClick={() => onExport("chat")}>
               导出 {targets.length} 个会话聊天记录

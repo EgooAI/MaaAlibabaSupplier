@@ -9,9 +9,9 @@ from sqlalchemy import event
 from sqlmodel import Session
 
 from backend.app.shared.backend.im_chat_db import build_conversations, open_readonly
-from backend.app.shared.chat_format import conversation_transcript
 from backend.app.shared.crm import sync
 from backend.app.shared.crm.identities import message_external_id
+from backend.app.shared.crm.message_markdown import TRANSLATION_OPTIONS, transcript_lines
 from backend.app.shared.crm.sdk import Account, Customer, Message
 from backend.app.shared.crm.sync_store import canonical_source_dir, read_sync_state
 from backend.app.shared.crm.views import CrmResolver, message_display_text, resolve_role
@@ -113,7 +113,9 @@ def test_unsupported_type_keeps_activity_direction_and_safe_placeholder(snapshot
     assert label and "opaque" not in label
     assert str(kind if kind is not None else "unknown") in label
     assert conversation.last_content_label == label
-    assert conversation_transcript(conversation.messages, CrmResolver("seller"))[0][2] == label
+    assert transcript_lines(
+        conversation.messages, resolver=CrmResolver("seller"), options=TRANSLATION_OPTIONS
+    )[0].body == label
 
 
 def test_instance_profile_suffix_keeps_seller_direction_and_contact(snapshot):

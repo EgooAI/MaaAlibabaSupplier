@@ -135,8 +135,9 @@ describe("conversation domain model", () => {
     const result = buildConversationExport([translated]);
     expect(result.archive_name).toBeNull();
     const exported = result.content;
-    expect(exported).toContain("客户：Buyer 42");
-    expect(exported).toContain("[2026-09-08 10:10] buyer: 需要报价");
+    expect(exported).toContain("# Buyer 42");
+    expect(exported).toContain("## 会话记录");
+    expect(exported).toContain("**[2026-09-08 10:10] buyer**\n\n需要报价");
     expect(exported).toContain("译文：Quote needed");
   });
 });

@@ -2,7 +2,7 @@
 
 import { RobotOutlined, ShopOutlined } from "@ant-design/icons";
 import { Alert, Avatar, Card, Space, Typography } from "antd";
-import { renderMessageHtml } from "@/domain/chat/messageHtml";
+import { renderContentHtml } from "@/domain/render/markdown";
 import { EMPTY_TEXT } from "@/components/empty";
 import type { AgentTestSession } from "@/types/agent";
 
@@ -28,7 +28,7 @@ export function SessionMessages({ session }: { session: AgentTestSession }) {
               />
               <Card size="small" className={isAssistant ? "bg-slate-50" : "bg-blue-50"}>
                 <Typography.Text className="text-xs">{item.createdAt}</Typography.Text>
-                <div className="mt-2 whitespace-pre-wrap break-words" dangerouslySetInnerHTML={renderMessageHtml(item.content)} />
+                <div className="mt-2 break-words" dangerouslySetInnerHTML={renderContentHtml(item.content, "markdown")} />
               </Card>
             </div>
           </div>

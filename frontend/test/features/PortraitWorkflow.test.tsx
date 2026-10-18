@@ -212,6 +212,6 @@ describe("portrait batch workflow", () => {
     await act(async () => batch.exportSelected());
     expect(mocks.backend.exportConversations).toHaveBeenCalledWith({ conversationIds: [42] });
     expect(mocks.message.warning).toHaveBeenCalledWith("有 1 个所选会话未导出（不可见或无法定位）");
-    expect(mocks.message.success).toHaveBeenCalledWith("已导出 TXT 文件");
+    expect(mocks.message.success).toHaveBeenCalledWith("已导出 Markdown 文件");
   });
 });

@@ -2,7 +2,8 @@
 
 import { Input, Segmented, Typography } from "antd";
 import { useMemo, useState } from "react";
-import { estimatePromptTokens, promptCharCount, renderPromptHtml } from "@/domain/agent/promptPreview";
+import { estimatePromptTokens, promptCharCount } from "@/domain/agent/promptPreview";
+import { renderContentHtml } from "@/domain/render/markdown";
 
 type PromptEditorFieldProps = {
   value?: string;
@@ -14,7 +15,7 @@ type PromptEditorFieldProps = {
 export function PromptEditorField({ value, onChange, placeholder }: PromptEditorFieldProps) {
   const [mode, setMode] = useState<"edit" | "preview" | "split">("split");
   const text = value ?? "";
-  const preview = useMemo(() => renderPromptHtml(text), [text]);
+  const preview = useMemo(() => renderContentHtml(text, "markdown"), [text]);
   const showEditor = mode !== "preview";
   const showPreview = mode !== "edit";
 

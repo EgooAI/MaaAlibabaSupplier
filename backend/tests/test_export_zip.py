@@ -1,3 +1,4 @@
+import json
 import unittest
 import zipfile
 from io import BytesIO
@@ -78,12 +79,44 @@ class ExportZipTestCase(unittest.TestCase):
             text = archive.read(names[0]).decode("utf-8")
         self.assertEqual(len(names), 2)
         self.assertNotEqual(names[0], names[1])
-        self.assertTrue(all(name.endswith(".txt") for name in names))
+        self.assertTrue(all(name.endswith(".md") for name in names))
+        self.assertIn("## 会话记录", text)
         self.assertIn("---", text)
         self.assertIn("客户ID: 20002", text)
-        self.assertIn("我 (", text)
+        self.assertIn("我**", text)
         self.assertTrue(text.endswith("\n"))
         self.assertFalse(text.endswith("\n\n"))
+
+    def test_export_renders_cards_as_markdown(self) -> None:
+        conv = CrmConversation(
+            contact_ali_id="20002",
+            messages=[
+                _message(
+                    "m1",
+                    "产品目录.pdf",
+                    user_content_type=10010,
+                    content=json.dumps({
+                        "cardType": 12,
+                        "params": {
+                            "name": "产品目录.pdf",
+                            "extensionType": "pdf",
+                            "size": "1258291",
+                            "downloadUrl": "https://download.example/f.pdf",
+                        },
+                    }).encode("utf-8"),
+                ),
+            ],
+            last_created_at=1756720000,
+            last_content_label="产品目录.pdf",
+            sid=7,
+            key="alibaba_icbu:10001:20002",
+            participants=(11, 22),
+        )
+        payload, _ = build_export_zip([conv], CrmResolver("10001"))
+        with zipfile.ZipFile(BytesIO(payload)) as archive:
+            text = archive.read(archive.namelist()[0]).decode("utf-8")
+        self.assertIn("**产品目录.pdf**：PDF · 1.2 MB", text)
+        self.assertIn("- [下载文件](https://download.example/f.pdf)", text)
 
 
 if __name__ == "__main__":

@@ -115,14 +115,18 @@ export function buildConversationExport(details: ConversationDetail[]) {
   const content = details
     .map((conversation) => {
       const header = [
-        `客户：${conversation.customer.name}`,
-        `公司：${conversation.customer.company}`,
-        `阶段：${stageLabel(conversation.customer.stage)}`,
+        `# ${conversation.customer.name}`,
+        "",
+        `- 公司：${conversation.customer.company}`,
+        `- 阶段：${stageLabel(conversation.customer.stage)}`,
       ].join("\n");
       const messages = conversation.messages
-        .map((message) => `[${message.createdAt}] ${message.role}: ${message.content}${message.translatedContent ? `\n译文：${message.translatedContent}` : ""}`)
-        .join("\n");
-      return `${header}\n${messages}`;
+        .map((message) => {
+          const body = `**[${message.createdAt}] ${message.role}**\n\n${message.content}`;
+          return message.translatedContent ? `${body}\n\n译文：${message.translatedContent}` : body;
+        })
+        .join("\n\n");
+      return `${header}\n\n---\n\n## 会话记录\n\n${messages}`;
     })
     .join("\n\n---\n\n");
 
