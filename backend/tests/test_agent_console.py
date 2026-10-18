@@ -38,6 +38,10 @@ class AgentConsoleTestCase(unittest.TestCase):
         self.enterContext(mock.patch.dict(os.environ, {
             "MAA_CRM_DB_PATH": str(Path(self.temp_dir.name) / "crm.sqlite"),
         }))
+        # 生产进程在 backend.app.main 启动时注册工具；这里显式建立同样的运行期状态。
+        from agent_tools import register_builtin_tools
+
+        register_builtin_tools()
         self.client = authenticate(TestClient(create_app(), raise_server_exceptions=False))
         self.addCleanup(self.client.close)
 
@@ -80,7 +84,7 @@ class AgentConsoleTestCase(unittest.TestCase):
     def test_preset_crud_and_system_guard(self) -> None:
         created = self.client.post("/api/agent/presets", json={
             "apid": "", "name": "N", "description": "D", "prompt": "P",
-            "intelevel": 2, "tools": ["crm_query"], "enabled": True,
+            "intelevel": 2, "tools": ["calculate"], "enabled": True,
             "updated_at": "", "category": "regular",
         }).json()
         self.assertEqual(created["code"], 0)
@@ -90,6 +94,38 @@ class AgentConsoleTestCase(unittest.TestCase):
         self.assertEqual(deleted, {"code": 0, "msg": "ok", "data": True})
         guard = self.client.delete(f"/api/agent/presets/{TRANSLATION_APID}").json()
         self.assertEqual(guard["data"], False)
+
+    def test_tool_catalog_and_unregistered_tool_guards(self) -> None:
+        tools = self.client.get("/api/agent/console").json()["data"]["tools"]
+        self.assertEqual([tool["name"] for tool in tools], ["calculate"])
+        self.assertTrue(tools[0]["description"])
+
+        rejected = self.client.post("/api/agent/presets", json={
+            "apid": "", "name": "N", "description": "D", "prompt": "P",
+            "intelevel": 0, "tools": ["crm_query"], "enabled": True,
+        })
+        self.assertEqual(rejected.status_code, 422)
+        self.assertIn("crm_query", rejected.json()["msg"])
+
+        # 旧数据里可能残留界面已下线的工具名：运行前必须被拦下并指名，而不是 500。
+        AgentPresetManager().upsert_agent_preset(AgentPreset(
+            apid="agent-stale-tools", name="Stale", description="D", prompt="P",
+            llm_level=0, tools=["crm_query"]))
+        stale_run = self.client.post(
+            "/api/agent/test", json={"agentId": "agent-stale-tools", "content": "hi"}).json()
+        self.assertEqual(stale_run["code"], 1)
+        self.assertIn("crm_query", stale_run["msg"])
+
+        # 草稿工具同样要走校验，否则草稿会绕开保存时的限制。
+        AgentPresetManager().upsert_agent_preset(AgentPreset(
+            apid="agent-healthy", name="Healthy", description="D", prompt="P",
+            llm_level=0, tools=[]))
+        draft_run = self.client.post("/api/agent/test", json={
+            "agentId": "agent-healthy", "content": "hi",
+            "draft": {"prompt": "P2", "level": 0, "tools": ["crm_query"]},
+        }).json()
+        self.assertEqual(draft_run["code"], 1)
+        self.assertIn("crm_query", draft_run["msg"])
 
     def test_preset_enabled_roundtrip_and_system_lock(self) -> None:
         created = self.client.post("/api/agent/presets", json={

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { agentPresetToConfig, agentPresetToDbPreset, canRegenerateAgentTestReply, canUndoAgentTestTurn, copyLlmLevelConfig, createRegularAgentPreset, dbPresetToAgentPreset, displayAgentTools, documentToLlmLevelConfig, filterAgentTestSessionsByCategory, isSystemAgentModified, isValidToolRoundLimit, llmLevelToDocumentConfig, nextAgentTestSessionId, normalizeAgentEditValues, normalizeAgentLevel, normalizeAgentTools, removeLatestAgentTestTurn, replaceLatestAgentTestReply } from "@/domain/agent/agentModel";
-import type { AgentConfig, AgentPreset, AgentTestSession, DocumentLlmConfig, LlmLevelConfig, SystemAgentDefinition } from "@/types/agent";
+import { agentPresetToConfig, agentPresetToDbPreset, canRegenerateAgentTestReply, canUndoAgentTestTurn, copyLlmLevelConfig, createRegularAgentPreset, dbPresetToAgentPreset, documentToLlmLevelConfig, filterAgentTestSessionsByCategory, isSystemAgentModified, isValidToolRoundLimit, llmLevelToDocumentConfig, nextAgentTestSessionId, normalizeAgentEditValues, normalizeAgentLevel, normalizeAgentTools, removeLatestAgentTestTurn, replaceLatestAgentTestReply, unregisteredAgentTools } from "@/domain/agent/agentModel";
+import type { AgentConfig, AgentPreset, AgentTestSession, AgentToolDefinition, DocumentLlmConfig, LlmLevelConfig, SystemAgentDefinition } from "@/types/agent";
 
 const agents: AgentConfig[] = [
   { id: "regular-1", name: "普通 Agent 1", category: "regular", enabled: true, capabilities: [], description: "", updatedAt: "" },
@@ -57,15 +57,14 @@ describe("agent model", () => {
     expect(nextAgentTestSessionId([{ ...sessions[0], id: "only" }], "only")).toBeUndefined();
   });
 
-  it("normalizes tool aliases and ignores object prototype keys", () => {
-    expect(displayAgentTools(["toString", "CRM 查询"])).toEqual(["toString", "CRM 查询"]);
-    expect(normalizeAgentTools(["CRM 查询", "crm_query", "  "])).toEqual(["crm_query"]);
+  it("normalizes tool names and ignores object prototype keys", () => {
+    expect(normalizeAgentTools(["toString", " calculate ", "calculate", "  "])).toEqual(["toString", "calculate"]);
   });
 
   it("normalizes edit values before building presets", () => {
     expect(() => normalizeAgentEditValues({ name: " 报价 ", description: undefined, prompt: " prompt ", level: 2.5, capabilities: [] })).toThrow("Agent 等级必须是 0 到 4 的整数");
     expect(() => normalizeAgentEditValues({ name: " ", prompt: "prompt", level: 0 })).toThrow("请输入名称");
-    expect(createRegularAgentPreset({ name: " 报价 ", prompt: " prompt ", level: 2, capabilities: ["CRM 查询"] }, "2026-09-11", "agent-new")).toMatchObject({ name: "报价", description: "", prompt: "prompt", level: 2, tools: ["crm_query"] });
+    expect(createRegularAgentPreset({ name: " 报价 ", prompt: " prompt ", level: 2, capabilities: [" calculate "] }, "2026-09-11", "agent-new")).toMatchObject({ name: "报价", description: "", prompt: "prompt", level: 2, tools: ["calculate"] });
   });
 
   it("maps the domain preset to the database DTO at the service boundary", () => {
@@ -75,7 +74,7 @@ describe("agent model", () => {
       description: "",
       prompt: "报价",
       level: 4,
-      tools: ["CRM 查询", "quote_template", "CRM 查询"],
+      tools: ["calculate", " calculate ", "calculate"],
       category: "regular",
       enabled: false,
       updated_at: "2026-09-10",
@@ -87,14 +86,20 @@ describe("agent model", () => {
       description: "",
       prompt: "报价",
       intelevel: 4,
-      tools: ["crm_query", "quote_template"],
+      tools: ["calculate"],
       enabled: false,
       updated_at: "2026-09-10",
       category: "regular",
     });
-    expect(agentPresetToConfig(preset)).toMatchObject({ id: "agent-domain-1", apid: "agent-domain-1", enabled: false, level: 4, capabilities: ["crm_query", "quote_template"] });
-    expect(displayAgentTools(preset.tools)).toEqual(["CRM 查询", "报价模板"]);
+    expect(agentPresetToConfig(preset)).toMatchObject({ id: "agent-domain-1", apid: "agent-domain-1", enabled: false, level: 4, capabilities: ["calculate"] });
     expect(() => normalizeAgentLevel(5)).toThrow();
+  });
+
+  it("reports attached tools that the backend never registered", () => {
+    const available: AgentToolDefinition[] = [{ name: "calculate", description: "arithmetic" }];
+    expect(unregisteredAgentTools(["calculate"], available)).toEqual([]);
+    expect(unregisteredAgentTools(["crm_query", "quote_template", "crm_query"], available)).toEqual(["crm_query", "quote_template"]);
+    expect(unregisteredAgentTools(["crm_query"], [])).toEqual(["crm_query"]);
   });
 
   it("derives domain agent state from the database DTO without inventing enabled state", () => {

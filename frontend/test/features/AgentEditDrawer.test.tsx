@@ -57,13 +57,14 @@ afterEach(async () => {
   container.remove();
 });
 
-async function render() {
+async function render(overrides: Partial<AgentConfig> = {}) {
   await act(async () => {
     root.render(
       <AgentEditDrawer
-        agent={agent}
+        agent={{ ...agent, ...overrides }}
         category="regular"
         systemAgents={[]}
+        tools={[{ name: "calculate", description: "Perform basic arithmetic." }]}
         llmLevels={[]}
         open
         saving={false}
@@ -109,5 +110,20 @@ describe("AgentEditDrawer unsaved guard", () => {
     await act(async () => config.onOk());
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("AgentEditDrawer tool catalog", () => {
+  it("warns about attached tools the backend never registered", async () => {
+    await render({ capabilities: ["calculate", "crm_query"] });
+
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("以下工具未注册，该 Agent 无法运行：crm_query");
+  });
+
+  it("stays quiet when every attached tool is registered", async () => {
+    await render({ capabilities: ["calculate"] });
+
+    expect(document.body.textContent).not.toContain("未注册");
   });
 });

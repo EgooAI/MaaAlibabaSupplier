@@ -6,7 +6,7 @@
 
 - `shared` — 主后端，`app` 与 agent 共享。含以下子包：
   - `backend/` — 业务逻辑：邮件（`email.py`）、IM 访问（`im_chat_db.py` / `im_db_middleware.py`）、目录布局（`im_layout.py`）、系统状态（`status.py`）。
-  - `agent/` — Chat/Agent 工具层：系统 Agent 身份常量（`system_agents.py`）、输入构造（`inputs.py`）、统一执行（`runner.py`，超限抛 `AgentRunError`，支持未保存草稿预设）、翻译写入 CRM（`translation.py`，短哈希标记与三值协议）、回复建议（`suggestions.py`）、系统预设补种（`system_presets.py`，指纹匹配、不覆盖用户编辑）、预设版本历史（`preset_history.py`）、输出归一化（`output_normalizers.py`）。
+  - `agent/` — Chat/Agent 工具层：系统 Agent 身份常量（`system_agents.py`）、输入构造（`inputs.py`）、统一执行（`runner.py`，超限抛 `AgentRunError`，支持未保存草稿预设）、翻译写入 CRM（`translation.py`，短哈希标记与三值协议）、回复建议（`suggestions.py`）、系统预设补种（`system_presets.py`，指纹匹配、不覆盖用户编辑）、预设版本历史（`preset_history.py`）、工具清单与未注册工具判定（`tools.py`）、输出归一化（`output_normalizers.py`）。
   - `crm/` — 应用侧 CRM 适配层。`__init__.py` 是 API/业务稳定入口；`sync.py` 的 `CRMAdapter` 直接承担 SDK 读写（路由不再经过转发层）；`paths.py` 解析 CRM 库路径；`outbox_state.py` 是出站状态、转换表、可编辑字段与风险判定的单一来源；`translation_cache.py` 译文表读写（32 位 md5 主键，`get_translation()` 的空串为 NO_NEED 哨兵，`get_translations()` 批量复用同一 Manager）。
   - `utils/` — 环境变量、IM 解密、WAL 处理、日志等。
   - `mitm/` — MITM 解析器与数据池。

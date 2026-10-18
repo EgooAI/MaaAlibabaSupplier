@@ -1,10 +1,10 @@
 "use client";
 
-import { App, Button, Drawer, Form, Grid, Input, Modal, Select, Space, Tabs, Tag, Typography } from "antd";
+import { Alert, App, Button, Drawer, Form, Grid, Input, Modal, Select, Space, Tabs, Tag, Typography } from "antd";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AGENT_TOOL_OPTIONS, isAgentLevel, isSystemAgentModified } from "@/domain/agent/agentModel";
+import { isAgentLevel, isSystemAgentModified, unregisteredAgentTools } from "@/domain/agent/agentModel";
 import { renderPromptHtml } from "@/domain/agent/promptPreview";
-import type { AgentConfig, AgentEditValues, AgentPresetRevision, AgentSaveOptions, LlmLevelConfig, SystemAgentDefinition } from "@/types/agent";
+import type { AgentConfig, AgentEditValues, AgentPresetRevision, AgentSaveOptions, AgentToolDefinition, LlmLevelConfig, SystemAgentDefinition } from "@/types/agent";
 import { AgentTestPanel } from "./components/AgentTestPanel";
 import { PresetRevisionList } from "./components/PresetRevisionList";
 import { PromptDiffView } from "./components/PromptDiffView";
@@ -18,6 +18,7 @@ export type AgentEditDrawerProps = {
   agent?: AgentConfig;
   category: AgentConfig["category"];
   systemAgents: SystemAgentDefinition[];
+  tools: AgentToolDefinition[];
   llmLevels: LlmLevelConfig[];
   title?: string;
   open: boolean;
@@ -70,7 +71,7 @@ type AgentEditDrawerBodyProps = AgentEditDrawerProps & {
   onCancel: () => void;
 };
 
-function AgentEditDrawerBody({ agent, category, systemAgents, llmLevels, saving, onCancel, onSave, onDirtyChange }: AgentEditDrawerBodyProps) {
+function AgentEditDrawerBody({ agent, category, systemAgents, tools, llmLevels, saving, onCancel, onSave, onDirtyChange }: AgentEditDrawerBodyProps) {
   const { message } = App.useApp();
   const [form] = Form.useForm<AgentEditValues>();
   const initialValues = useMemo<AgentEditValues>(() => ({
@@ -97,6 +98,16 @@ function AgentEditDrawerBody({ agent, category, systemAgents, llmLevels, saving,
       label: config?.model_name ? `Level ${level} · ${config.model_name}` : `Level ${level}（未配置模型）`,
     };
   }), [llmLevels]);
+
+  // 只提供后端真实注册的工具，避免界面承诺尚未实现的能力。
+  const toolOptions = useMemo(
+    () => tools.map((tool) => ({ value: tool.name, label: tool.name, title: tool.description })),
+    [tools],
+  );
+  const staleTools = useMemo(
+    () => unregisteredAgentTools(draft.capabilities, tools),
+    [draft.capabilities, tools],
+  );
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -199,9 +210,18 @@ function AgentEditDrawerBody({ agent, category, systemAgents, llmLevels, saving,
             <Input.TextArea rows={2} placeholder="一句话说明这个 Agent 负责什么。" />
           </Form.Item>
           {category === "regular" ? (
-            <Form.Item name="capabilities" label="能力" className="md:col-span-2">
-              <Select mode="tags" tokenSeparators={[",", "，"]} options={[...AGENT_TOOL_OPTIONS]} placeholder="选择或输入工具名称" />
+            <Form.Item name="capabilities" label="能力" className="md:col-span-2" extra="只列出后端已注册的工具；新增工具需先在运行时装好实现。">
+              <Select mode="multiple" options={toolOptions} placeholder="选择该 Agent 可调用的工具" />
             </Form.Item>
+          ) : null}
+          {staleTools.length > 0 ? (
+            <Alert
+              className="md:col-span-2"
+              type="warning"
+              showIcon
+              message={`以下工具未注册，该 Agent 无法运行：${staleTools.join("、")}`}
+              description="请从「能力」中移除它们后再保存或试运行。"
+            />
           ) : null}
         </div>
 

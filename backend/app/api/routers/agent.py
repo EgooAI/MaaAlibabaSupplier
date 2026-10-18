@@ -31,6 +31,7 @@ from backend.app.shared.agent.system_presets import (
     find_system_agent_default,
     system_agent_presets,
 )
+from backend.app.shared.agent.tools import list_registered_tools, unknown_tool_names
 from backend.app.shared.crm.sdk import (
     AgentPreset,
     AgentPresetManager,
@@ -192,6 +193,12 @@ def _require_runnable_preset(preset: AgentPreset) -> None:
     """System agents are integral and always runnable; regular agents honor 停用."""
     if preset.apid not in SYSTEM_AGENT_APIDS and not preset.enabled:
         raise AppError("Agent 已停用，请先启用后再运行", status_code=409)
+    unknown = unknown_tool_names(preset.tools or [])
+    if unknown:
+        raise AppError(
+            f"该 Agent 挂载了未注册的工具：{'、'.join(unknown)}。请先在编辑器中移除后再运行。",
+            status_code=409,
+        )
 
 
 @router.get("/api/agent/system")
@@ -288,6 +295,7 @@ def agent_console() -> dict:
         "agents": agents,
         "agentPresets": db_presets,
         "systemAgents": _system_agent_definition_payloads(),
+        "tools": list_registered_tools(),
         "history": history,
     })
 
@@ -340,6 +348,12 @@ def save_preset(body: PresetInput) -> dict:
     except (TypeError, ValueError):
         raise AppError(f"intelevel must be 0-{LLM_MAX_LEVEL}", status_code=422)
     tools = [tool for tool in (body.tools or []) if isinstance(tool, str) and tool.strip()]
+    unknown = unknown_tool_names(tools)
+    if unknown:
+        raise AppError(
+            f"未注册的工具：{'、'.join(unknown)}。请只使用工具清单中的已实现工具。",
+            status_code=422,
+        )
     # 系统 Agent 恒启用：其开关已从界面移除，运行路径也不检查启用状态。
     enabled = True if apid in SYSTEM_AGENT_APIDS else bool(body.enabled)
     preset = AgentPreset(
@@ -455,6 +469,9 @@ def run_agent_test(body: AgentTestInput) -> dict:
         else:
             draft_snapshot = candidate
             override = _draft_override(preset, candidate)
+    if override is not None:
+        # 草稿里也可能挂着未注册的工具，同样在运行前拦截。
+        _require_runnable_preset(override)
 
     messages = history_messages(load_history_content(raw)) if hist else []
     messages.append({"role": "user", "content": content})
@@ -550,6 +567,7 @@ def regenerate_session(session_id: str) -> dict:
     override: AgentPreset | None = None
     if content.draft is not None:
         override = _draft_override(preset, content.draft)
+        _require_runnable_preset(override)
     try:
         reply_text = run_chat_tool_agent(
             content.apid, build_chat_dialog_input(base), preset_override=override,

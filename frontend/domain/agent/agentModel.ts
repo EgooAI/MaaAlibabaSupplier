@@ -1,4 +1,4 @@
-import type { AgentConfig, AgentEditValues, AgentPreset, AgentSaveOptions, AgentTestMessage, AgentTestSession, DbAgentPreset, DocumentLlmConfig, LlmLevelConfig, SystemAgentDefinition } from "@/types/agent";
+import type { AgentConfig, AgentEditValues, AgentPreset, AgentSaveOptions, AgentTestMessage, AgentTestSession, AgentToolDefinition, DbAgentPreset, DocumentLlmConfig, LlmLevelConfig, SystemAgentDefinition } from "@/types/agent";
 import { formatMonthDay } from "@/domain/time";
 
 export type AgentTestTurn = {
@@ -14,16 +14,6 @@ export const SYSTEM_AGENT_APIDS = {
   stageAnalysis: "agent-f6fb1e0ddff44d27bb3e19e243a70584",
   intentAnalysis: "agent-c9b80fdfad234392b55d84de93a186ae",
 } as const;
-
-export const AGENT_TOOL_OPTIONS = [
-  { label: "CRM 查询", value: "crm_query" },
-  { label: "报价模板", value: "quote_template" },
-  { label: "订单摘要", value: "order_summary" },
-  { label: "物流计算", value: "logistics_calculator" },
-] as const;
-
-const TOOL_LABELS = new Map<string, string>(AGENT_TOOL_OPTIONS.map((option) => [option.value, option.label]));
-const TOOL_NAMES = new Map<string, string>(AGENT_TOOL_OPTIONS.map((option) => [option.label, option.value]));
 
 export function getLatestAgentTestTurn(session: AgentTestSession): AgentTestTurn | null {
   const endIndex = session.messages.length - 1;
@@ -89,21 +79,15 @@ export function normalizeAgentLevel(value: number) {
   return value;
 }
 
-export function agentToolToDisplayLabel(tool: string) {
-  return TOOL_LABELS.get(tool) ?? tool;
-}
-
-export function agentToolToRegisteredName(tool: string) {
-  return TOOL_NAMES.get(tool) ?? tool;
-}
-
 export function normalizeAgentTools(tools: string[] = []) {
-  const names = tools.map((tool) => agentToolToRegisteredName(tool.trim())).filter(Boolean);
+  const names = tools.map((tool) => tool.trim()).filter(Boolean);
   return Array.from(new Set(names));
 }
 
-export function displayAgentTools(tools: string[] = []) {
-  return normalizeAgentTools(tools).map(agentToolToDisplayLabel);
+/** Attached tools the backend never registered: they make the Agent unrunnable. */
+export function unregisteredAgentTools(tools: string[] = [], available: AgentToolDefinition[] = []) {
+  const registered = new Set(available.map((tool) => tool.name));
+  return normalizeAgentTools(tools).filter((tool) => !registered.has(tool));
 }
 
 export function agentPresetToDbPreset(preset: AgentPreset, revision?: AgentSaveOptions): DbAgentPreset {

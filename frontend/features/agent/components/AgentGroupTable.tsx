@@ -5,7 +5,7 @@ import { Button, Card, Space, Switch, Tag, Tooltip, Typography } from "antd";
 import Link from "next/link";
 import { AppTable } from "@/components/AppTable";
 import { StatusTag } from "@/components/StatusTag";
-import { displayAgentTools, isSystemAgentModified } from "@/domain/agent/agentModel";
+import { isSystemAgentModified } from "@/domain/agent/agentModel";
 import { formatDateTime } from "@/domain/time";
 import type { AgentConfig, SystemAgentDefinition } from "@/types/agent";
 
@@ -52,7 +52,7 @@ export function AgentGroupTable({ category, agents, systemAgents, loading, isMut
             ),
           },
           { title: "类型", dataIndex: "category", render: (value: AgentCategory) => <StatusTag status={value} /> },
-          ...(category === "regular" ? [{ title: "能力", dataIndex: "capabilities", render: (items: string[]) => <Space wrap>{displayAgentTools(items).map((item) => <Tag key={item}>{item}</Tag>)}</Space> }] : []),
+          ...(category === "regular" ? [{ title: "能力", dataIndex: "capabilities", render: (items: string[]) => <Space wrap>{items.map((item) => <Tag key={item}>{item}</Tag>)}</Space> }] : []),
           { title: "提示词", dataIndex: "prompt", width: 320, ellipsis: true },
           { title: "最近修改", dataIndex: "updatedAt", width: 160, render: (value: string) => value ? formatDateTime(value) : "—" },
           {

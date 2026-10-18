@@ -24,6 +24,7 @@ export function AgentPage({ category }: AgentPageProps) {
   const workbench = useAgentWorkbench();
   const agents = workbench.state?.agents ?? [];
   const systemAgents = workbench.state?.systemAgents ?? [];
+  const tools = workbench.state?.tools ?? [];
   const llmLevels = workbench.state?.llmLevels ?? [];
   const visibleAgents = filterAgentsByCategory(agents, category);
   const [editingAgent, setEditingAgent] = useState<AgentConfig>();
@@ -72,6 +73,7 @@ export function AgentPage({ category }: AgentPageProps) {
         agent={editingAgent}
         category={category}
         systemAgents={systemAgents}
+        tools={tools}
         llmLevels={llmLevels}
         title={createOpen ? "新增普通 Agent" : undefined}
         open={Boolean(editingAgent) || createOpen}

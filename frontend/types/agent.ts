@@ -70,6 +70,12 @@ export interface SystemAgentDefinition {
   tools: string[];
 }
 
+/** A tool the backend actually registered; only these can be attached to an Agent. */
+export interface AgentToolDefinition {
+  name: string;
+  description: string;
+}
+
 export interface LlmLevelConfig {
   level: number;
   base_url: string;
@@ -132,5 +138,6 @@ export interface AgentConsoleState {
   agents: AgentConfig[];
   agentPresets?: AgentPreset[];
   systemAgents?: SystemAgentDefinition[];
+  tools?: AgentToolDefinition[];
   history: AgentTestSession[];
 }

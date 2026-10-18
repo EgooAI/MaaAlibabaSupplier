@@ -84,7 +84,7 @@ const regularAgentSources = [
     description: "根据产品、MOQ 和客户历史生成报价跟进话术。",
     prompt: "你是报价跟进助手，需要用英文生成清晰、专业、可直接发送的回复。",
     level: 2,
-    tools: ["crm_query", "quote_template"],
+    tools: ["calculate"],
     updatedAt: "2026-08-11T09:25:00+08:00",
   },
   {
@@ -93,7 +93,7 @@ const regularAgentSources = [
     description: "审阅客户需求中的履约、价格、付款风险。",
     prompt: "识别潜在订单风险并给出卖家可执行建议。",
     level: 3,
-    tools: ["crm_query", "order_summary", "logistics_calculator"],
+    tools: [],
     updatedAt: "2026-08-11T09:25:00+08:00",
   },
 ] as const;
@@ -161,6 +161,12 @@ export const agentConsole: AgentConsoleState = {
   agents: agentPresets.map(agentPresetToConfig),
   agentPresets,
   systemAgents,
+  tools: [
+    {
+      name: "calculate",
+      description: "Perform basic arithmetic with operation: add, subtract, multiply, or divide.",
+    },
+  ],
   history: [
     {
       id: "hist-001",
