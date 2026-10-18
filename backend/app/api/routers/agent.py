@@ -39,6 +39,7 @@ from backend.app.shared.crm.sdk import (
     ChatHistoryManager,
     LLMApiConfig,
     LLMApiConfigManager,
+    LLM_MAX_LEVEL,
 )
 from backend.app.shared.crm.views import format_created_at
 
@@ -219,27 +220,39 @@ def _system_agent_definition_payloads() -> list[dict]:
     return payloads
 
 
+def _llm_level_payloads() -> list[dict]:
+    """The complete LLM level grid, including levels without a saved row.
+
+    只回传数据库已有的行会让“只配了一个模型”的实例看起来只有一个等级，而
+    LLM 页没有新增入口，其余等级便无从配置。这里为缺失的等级合成空白模板行
+    （沿用列默认值），用户保存时才真正落库。
+    """
+    configs = {config.level: config for config in LLMApiConfigManager().list_configs()}
+    payloads: list[dict] = []
+    for level in range(LLM_MAX_LEVEL + 1):
+        config = configs.get(level) or LLMApiConfig(level=level, base_url="", api_key="", model_name="")
+        payloads.append({
+            "level": config.level,
+            "base_url": config.base_url,
+            "api_key": config.api_key,
+            "model_name": config.model_name,
+            "system_prompt": config.system_prompt,
+            "context": config.context,
+            "max_tool_rounds": config.max_tool_rounds,
+            # 兼容旧前端 camel 键。
+            "baseUrl": config.base_url,
+            "apiKey": config.api_key,
+            "modelName": config.model_name,
+            "systemPrompt": config.system_prompt,
+            "maxToolRounds": config.max_tool_rounds,
+        })
+    return payloads
+
+
 @router.get("/api/agent/console")
 def agent_console() -> dict:
     try:
-        levels = [
-            {
-                "level": config.level,
-                "base_url": config.base_url,
-                "api_key": config.api_key,
-                "model_name": config.model_name,
-                "system_prompt": config.system_prompt,
-                "context": config.context,
-                "max_tool_rounds": config.max_tool_rounds,
-                # 兼容旧前端 camel 键。
-                "baseUrl": config.base_url,
-                "apiKey": config.api_key,
-                "modelName": config.model_name,
-                "systemPrompt": config.system_prompt,
-                "maxToolRounds": config.max_tool_rounds,
-            }
-            for config in LLMApiConfigManager().list_configs()
-        ]
+        levels = _llm_level_payloads()
         presets = AgentPresetManager().list_agent_preset()
         updated_at_by_apid = {preset.apid: _updated_at_text(preset.apid) for preset in presets}
         db_presets = [
@@ -323,9 +336,9 @@ def save_llm_config(body: LlmConfigInput) -> dict:
 def save_preset(body: PresetInput) -> dict:
     apid = (body.apid or "").strip() or f"agent-{uuid.uuid4().hex}"
     try:
-        level = max(0, min(4, int(body.intelevel)))
+        level = max(0, min(LLM_MAX_LEVEL, int(body.intelevel)))
     except (TypeError, ValueError):
-        raise AppError("intelevel must be 0-4", status_code=422)
+        raise AppError(f"intelevel must be 0-{LLM_MAX_LEVEL}", status_code=422)
     tools = [tool for tool in (body.tools or []) if isinstance(tool, str) and tool.strip()]
     # 系统 Agent 恒启用：其开关已从界面移除，运行路径也不检查启用状态。
     enabled = True if apid in SYSTEM_AGENT_APIDS else bool(body.enabled)
@@ -428,9 +441,9 @@ def run_agent_test(body: AgentTestInput) -> dict:
         override = _draft_override(preset, existing_draft)
     elif hist is None and body.draft is not None:
         try:
-            draft_level = max(0, min(4, int(body.draft.level)))
+            draft_level = max(0, min(LLM_MAX_LEVEL, int(body.draft.level)))
         except (TypeError, ValueError):
-            raise AppError("draft.level 必须是 0 到 4 的整数", status_code=422)
+            raise AppError(f"draft.level 必须是 0 到 {LLM_MAX_LEVEL} 的整数", status_code=422)
         candidate = ChatHistoryDraft(
             prompt=body.draft.prompt,
             llm_level=draft_level,

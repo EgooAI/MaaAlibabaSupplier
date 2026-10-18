@@ -245,6 +245,11 @@ export function upsertLlmLevel(levels: LlmLevelConfig[], next: LlmLevelConfig) {
     : [...levels, next].sort((a, b) => a.level - b.level);
 }
 
+/** Full configuration of one level applied to another; only the level id changes. */
+export function copyLlmLevelConfig(source: LlmLevelConfig, targetLevel: number): LlmLevelConfig {
+  return { ...source, level: targetLevel };
+}
+
 function stringValue(value: unknown) {
   return typeof value === "string" ? value : "";
 }

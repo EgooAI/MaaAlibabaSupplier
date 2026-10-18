@@ -46,7 +46,7 @@ function useAgentWorkbenchController() {
     };
   }, [message]);
 
-  async function saveLlmLevel(config: LlmLevelConfig) {
+  async function saveLlmLevel(config: LlmLevelConfig, successText = "LLM 参数已保存") {
     try {
       const saved = await backend.saveLlmConfig(llmLevelToDocumentConfig(config));
       setState((currentState) => {
@@ -55,7 +55,7 @@ function useAgentWorkbenchController() {
         const nextLevels = upsertLlmLevel(currentState.llmLevels ?? [], savedLevel);
         return { ...currentState, llmLevels: nextLevels };
       });
-      message.success("LLM 参数已保存");
+      message.success(successText);
       await refreshConnection();
       return true;
     } catch (error: unknown) {

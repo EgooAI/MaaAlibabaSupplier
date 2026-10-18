@@ -60,7 +60,12 @@ class AgentConsoleTestCase(unittest.TestCase):
         console = body["data"]
         for key in ("llmLevels", "agents", "agentPresets", "history"):
             self.assertIn(key, console)
-        self.assertTrue(any(level["level"] == 4 for level in console["llmLevels"]))
+        # 只保存了一个等级也要看到完整网格：其余等级是可填写的空白行，
+        # 否则 LLM 页没有新增入口，用户无从配置其它等级。
+        levels = console["llmLevels"]
+        self.assertEqual([level["level"] for level in levels], [0, 1, 2, 3, 4])
+        self.assertEqual([level["model_name"] for level in levels], ["", "", "", "", "m"])
+        self.assertTrue(all(isinstance(level["context"], int) and level["context"] > 0 for level in levels))
 
     def test_llm_config_rejects_blank_required_fields(self) -> None:
         base = {

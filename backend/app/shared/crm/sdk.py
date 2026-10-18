@@ -30,6 +30,7 @@ Customer = models.Customer
 CustomerManager = core.CustomerManager
 LLMApiConfig = models.LLMApiConfig
 LLMApiConfigManager = core.LLMApiConfigManager
+LLM_MAX_LEVEL = models.LLM_MAX_LEVEL
 Message = models.Message
 MessageManager = core.MessageManager
 Meta = models.Meta
@@ -62,6 +63,7 @@ __all__ = [
     "CustomerManager",
     "LLMApiConfig",
     "LLMApiConfigManager",
+    "LLM_MAX_LEVEL",
     "Message",
     "MessageManager",
     "Meta",

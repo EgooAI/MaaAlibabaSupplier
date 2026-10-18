@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { agentPresetToConfig, agentPresetToDbPreset, canRegenerateAgentTestReply, canUndoAgentTestTurn, createRegularAgentPreset, dbPresetToAgentPreset, displayAgentTools, documentToLlmLevelConfig, filterAgentTestSessionsByCategory, isSystemAgentModified, isValidToolRoundLimit, llmLevelToDocumentConfig, nextAgentTestSessionId, normalizeAgentEditValues, normalizeAgentLevel, normalizeAgentTools, removeLatestAgentTestTurn, replaceLatestAgentTestReply } from "@/domain/agent/agentModel";
-import type { AgentConfig, AgentPreset, AgentTestSession, DocumentLlmConfig, SystemAgentDefinition } from "@/types/agent";
+import { agentPresetToConfig, agentPresetToDbPreset, canRegenerateAgentTestReply, canUndoAgentTestTurn, copyLlmLevelConfig, createRegularAgentPreset, dbPresetToAgentPreset, displayAgentTools, documentToLlmLevelConfig, filterAgentTestSessionsByCategory, isSystemAgentModified, isValidToolRoundLimit, llmLevelToDocumentConfig, nextAgentTestSessionId, normalizeAgentEditValues, normalizeAgentLevel, normalizeAgentTools, removeLatestAgentTestTurn, replaceLatestAgentTestReply } from "@/domain/agent/agentModel";
+import type { AgentConfig, AgentPreset, AgentTestSession, DocumentLlmConfig, LlmLevelConfig, SystemAgentDefinition } from "@/types/agent";
 
 const agents: AgentConfig[] = [
   { id: "regular-1", name: "普通 Agent 1", category: "regular", enabled: true, capabilities: [], description: "", updatedAt: "" },
@@ -120,6 +120,20 @@ describe("agent model", () => {
     expect(llmLevelToDocumentConfig(level)).toMatchObject({ level: 2, max_tool_rounds: null });
     expect(isValidToolRoundLimit(0)).toBe(false);
     expect(isValidToolRoundLimit(null)).toBe(true);
+  });
+
+  it("copies a level's whole configuration onto the selected target level", () => {
+    const source: LlmLevelConfig = {
+      level: 0,
+      base_url: "https://llm.example/v1",
+      api_key: "secret",
+      model_name: "model-a",
+      system_prompt: "prompt",
+      context: 16000,
+      max_tool_rounds: null,
+    };
+    expect(copyLlmLevelConfig(source, 3)).toEqual({ ...source, level: 3 });
+    expect(source.level).toBe(0);
   });
 
   it("detects modified system agents against their built-in default", () => {
