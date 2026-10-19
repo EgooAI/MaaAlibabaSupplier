@@ -6,7 +6,7 @@ import type { ConversationGroupMode } from "@/domain/chat/chatModel";
 import { mergeConversationDetail } from "@/domain/chat/chatModel";
 import { AccountChangedError, useAccount, useAccountBackend } from "@/features/account/AccountProvider";
 import { loadDraft, saveDraft } from "@/features/account/draftStorage";
-import type { AssistantSuggestion, ConversationDetail } from "@/types/chatCanonical";
+import type { AssistantSuggestion, AssistantSuggestionResult, ConversationDetail } from "@/types/chatCanonical";
 import { useConversationSummaries } from "./useConversationSummaries";
 import { useConversationTranslation } from "./useConversationTranslation";
 import { usePortraitTags } from "./usePortraitTags";
@@ -40,6 +40,9 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
   const [detailLoading, setDetailLoading] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [suggestions, setSuggestions] = useState<AssistantSuggestion[]>([]);
+  const [suggestionReasoning, setSuggestionReasoning] = useState("");
+  const [suggestionRestricted, setSuggestionRestricted] = useState(false);
+  const [selectedIntentId, setSelectedIntentId] = useState<string>();
   const [suggestionOpen, setSuggestionOpen] = useState(false);
   const [suggestionError, setSuggestionError] = useState<string>();
   const [analysisOpen, setAnalysisOpen] = useState(false);
@@ -70,6 +73,10 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
     setActiveConversation(next);
   }, []);
 
+  // Suggestion drafts remember which intent they came from, so the eventual
+  // submission can accept that intent and discard its siblings.
+  const pendingIntentRef = useRef<{ content: string; intentId: string } | null>(null);
+
   const translation = useConversationTranslation(
     activeConversation, activeIdRef, activeConversationRef, selectionRef, commitConversation,
   );
@@ -80,9 +87,24 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
   const setDraft = useCallback((value: string) => {
     const id = activeIdRef.current;
     if (!id) return;
+    // Editing the inserted suggestion detaches it from its intent: the send is
+    // then a plain manual message, not the accepted suggestion.
+    if (pendingIntentRef.current && value !== pendingIntentRef.current.content) {
+      pendingIntentRef.current = null;
+      setSelectedIntentId(undefined);
+    }
     setDrafts((current) => ({ ...current, [id]: value }));
     try { saveDraft(() => localStorage, account, id, value); } catch { warnStorage(); }
   }, [account, warnStorage]);
+
+  /** Read-and-clear the intent tied to the current draft, if it still matches. */
+  const takePendingIntent = useCallback((content: string) => {
+    const pending = pendingIntentRef.current;
+    if (!pending || pending.content !== content) return undefined;
+    pendingIntentRef.current = null;
+    setSelectedIntentId(undefined);
+    return pending.intentId;
+  }, []);
 
   const selectConversation = useCallback(async (id: string) => {
     const requestId = detailRequestRef.current + 1;
@@ -92,6 +114,8 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
     ++suggestionRequestRef.current;
     ++analysisRequestRef.current;
     setActiveConversationId(id);
+    pendingIntentRef.current = null;
+    setSelectedIntentId(undefined);
     resetTranslation();
     try {
       const saved = loadDraft(() => localStorage, account, id, warnStorage);
@@ -176,11 +200,18 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
     suggestionRequestRef.current = requestId;
     setSuggestionOpen(true);
     setSuggestions([]);
+    setSuggestionReasoning("");
+    setSuggestionRestricted(false);
+    setSelectedIntentId(undefined);
     setSuggestionError(undefined);
 
     try {
-      const nextSuggestions = await backend.getAssistantSuggestions(conversationId);
-      if (suggestionRequestRef.current === requestId && activeIdRef.current === conversationId) setSuggestions(nextSuggestions);
+      const result: AssistantSuggestionResult = await backend.getAssistantSuggestions(conversationId);
+      if (suggestionRequestRef.current === requestId && activeIdRef.current === conversationId) {
+        setSuggestions(result.items ?? []);
+        setSuggestionReasoning(result.reasoning ?? "");
+        setSuggestionRestricted(Boolean(result.restricted));
+      }
     } catch (error) {
       if (suggestionRequestRef.current === requestId && activeIdRef.current === conversationId) {
         const text = operationErrorMessage(error, "回复建议加载失败", "本次建议可能仍在生成，丢失的结果无法重新读取；稍后人工决定是否重新生成，可能重复调用模型");
@@ -190,8 +221,10 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
     }
   }, [activeConversation?.id, backend, message]);
 
-  const insertSuggestion = useCallback((content: string) => {
-    setDraft(content);
+  const insertSuggestion = useCallback((item: AssistantSuggestion) => {
+    pendingIntentRef.current = item.intentId ? { content: item.content, intentId: item.intentId } : null;
+    setSelectedIntentId(item.intentId ?? undefined);
+    setDraft(item.content);
     setSuggestionOpen(false);
     message.success("已插入到回复框");
   }, [message, setDraft]);
@@ -286,9 +319,13 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
     suggestions,
     suggestionOpen,
     suggestionError,
+    suggestionReasoning,
+    suggestionRestricted,
+    selectedIntentId,
     setSuggestionOpen,
     openSuggestions,
     insertSuggestion,
+    takePendingIntent,
     analysisOpen,
     setAnalysisOpen,
     analysisLoading: analysisState.loading,

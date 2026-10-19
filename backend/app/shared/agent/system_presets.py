@@ -50,18 +50,16 @@ _SYSTEM_AGENT_PROMPTS: dict[str, str] = {
     ),
     CHAT_REPLY_SUGGESTION_AGENT_APID: (
         "你是一名阿里巴巴国际站供应商客服，正在处理买家的询盘对话。\n"
-        "请根据【对话记录】生成可直接发送给买家的回复建议。\n\n"
+        "请根据【对话记录】判断买家语言与当前沟通阶段，并通过调用 reply_customer 工具提出回复建议。\n\n"
         "输出要求：\n"
-        "1) 只输出 JSON，字段见 schema。\n"
-        "2) 先判断买家主要语言 buyer_language，然后为每条建议同时给出中文 zh 和买家语言 reply。\n"
-        "3) reply 必须使用买家在对话中使用的语言，不要默认翻译为英文。\n"
-        "4) 最多给出 3 条建议，按推荐顺序排列。\n"
+        "1) 每条建议都必须单独调用一次 reply_customer，参数包含买家语言回复 reply、中文参考 zh 和语气 tone。\n"
+        "2) reply 必须使用买家在对话中使用的语言，不要默认翻译为英文；zh 是该回复的简体中文参考。\n"
+        "3) tone 只能是 formal（正式）、friendly（友好）或 urgent（催办）之一。\n"
+        "4) 最多提出 3 条建议，按推荐顺序排列；超过 3 条或与已有建议重复会被拒绝。\n"
         "5) 语气专业、友好、简洁，优先推进成交。\n"
         "6) 不要编造任何无法从对话中确定的信息；信息不足时用提问补齐。\n"
-        "7) 不要提及你是 AI，也不要输出解释性文字。\n\n"
-        "Return JSON only with this exact top-level shape:\n"
-        '{"buyer_language": "English", "items": [{"zh": "中文建议", "reply": "buyer language reply"}]}\n'
-        "Do not use top-level keys such as suggestions, replies, or reply_suggestions."
+        "7) 不要在工具参数里填写收件人、会话或账号，这些由系统提供。\n"
+        "8) 工具调用完成后，最终文本只写明判断理由（例如买家关注点、为什么这样回复），不要重复回复正文。"
     ),
     CHAT_CUSTOMER_INTENT_AGENT_APID: (
         "你是客户意图分析助手。\n\n"
@@ -88,6 +86,15 @@ _SYSTEM_AGENT_PROMPTS: dict[str, str] = {
 }
 
 
+_SYSTEM_AGENT_TOOLS: dict[str, list[str]] = {
+    CHAT_REPLY_SUGGESTION_AGENT_APID: ["reply_customer"],
+}
+# Agents that must call a tool to produce their result (seeded into the preset).
+_SYSTEM_AGENT_REQUIRES_TOOL: dict[str, bool] = {
+    CHAT_REPLY_SUGGESTION_AGENT_APID: True,
+}
+
+
 def system_agent_presets() -> list[dict[str, object]]:
     """Build the system agent preset payloads from program-defined data."""
     definitions = {
@@ -104,7 +111,8 @@ def system_agent_presets() -> list[dict[str, object]]:
                 "description": description,
                 "prompt": prompt,
                 "llm_level": 0,
-                "tools": [],
+                "tools": list(_SYSTEM_AGENT_TOOLS.get(apid, [])),
+                "requires_tool": _SYSTEM_AGENT_REQUIRES_TOOL.get(apid, False),
             }
         )
     return presets
@@ -127,6 +135,7 @@ def preset_seed_fingerprint(payload: Mapping[str, object]) -> str:
             "prompt": str(payload.get("prompt") or ""),
             "llm_level": int(payload.get("llm_level") or 0),
             "tools": list(payload.get("tools") or []),
+            "requires_tool": bool(payload.get("requires_tool") or False),
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -143,6 +152,7 @@ def preset_fingerprint_of(preset: AgentPreset) -> str:
             "prompt": preset.prompt,
             "llm_level": preset.llm_level,
             "tools": list(preset.tools or []),
+            "requires_tool": bool(getattr(preset, "requires_tool", False)),
         }
     )
 
@@ -210,6 +220,7 @@ def _write_default(
         llm_level=int(payload["llm_level"]),
         tools=list(payload["tools"] or []),
         enabled=True,
+        requires_tool=bool(payload.get("requires_tool") or False),
     )
     manager.upsert_agent_preset(preset)
     meta.upsert_meta(Meta(

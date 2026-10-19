@@ -1,5 +1,5 @@
 import { SYSTEM_AGENT_APIDS, agentPresetToConfig } from "@/domain/agent/agentModel";
-import type { AgentConsoleState, AgentPreset, DocumentLlmConfig, LlmLevelConfig, SystemAgentDefinition } from "@/types/agent";
+import type { AgentConsoleState, AgentPreset, AgentToolDefinition, DocumentLlmConfig, LlmLevelConfig, SystemAgentDefinition } from "@/types/agent";
 
 const systemAgentSources = [
   {
@@ -156,17 +156,28 @@ export const agentPresets: AgentPreset[] = [
   })),
 ];
 
+export const agentTools: AgentToolDefinition[] = [
+  {
+    name: "calculate",
+    title: "计算器",
+    category: "read",
+    description: "Perform basic arithmetic with operation: add, subtract, multiply, or divide.",
+    parameters: { operation: "add / subtract / multiply / divide", a: "左操作数", b: "右操作数" },
+  },
+  {
+    name: "reply_customer",
+    title: "回复客户",
+    category: "effect",
+    description: "向当前会话的买家提出一条回复建议；不会自动发送。",
+    parameters: { reply: "买家语言回复", zh: "中文参考", tone: "formal / friendly / urgent" },
+  },
+];
+
 export const agentConsole: AgentConsoleState = {
   llmLevels,
   agents: agentPresets.map(agentPresetToConfig),
   agentPresets,
   systemAgents,
-  tools: [
-    {
-      name: "calculate",
-      description: "Perform basic arithmetic with operation: add, subtract, multiply, or divide.",
-    },
-  ],
   history: [
     {
       id: "hist-001",

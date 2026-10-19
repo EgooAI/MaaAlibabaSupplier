@@ -1,4 +1,4 @@
-import type { DbAgentPreset, DocumentLlmConfig } from "@/types/agent";
+import type { DbAgentPreset, DocumentLlmConfig, AgentToolDefinition } from "@/types/agent";
 import { adaptConversationDetail, adaptConversationSummary } from "@/services/chatAdapter";
 import type { ConversationAggregateDto } from "@/types/chatTransport";
 import type { ConversationRevision, TranslationJobSnapshot } from "@/types/chatOperations";
@@ -233,6 +233,7 @@ export const httpBackend: OperationsBackend = {
   clearAliKey: (aliId, epoch) => requestJson(`/api/settings/ali-keys/${encodeURIComponent(aliId)}`, { method: "DELETE", headers: { "X-Account-Epoch": epoch } }),
 
   getAgentConsole: () => requestJson("/api/agent/console"),
+  listAgentTools: () => requestJson<AgentToolDefinition[]>("/api/agent/tools"),
   saveLlmConfig: (input: DocumentLlmConfig) => requestJson("/api/agent/llm-config", { method: "PUT", body: JSON.stringify(input) }),
   saveAgentPreset: (input: DbAgentPreset) => requestJson("/api/agent/presets", { method: "POST", body: JSON.stringify(input) }),
   deleteAgentPreset: (id) => requestJson(`/api/agent/presets/${encodeURIComponent(id)}`, { method: "DELETE" }),
@@ -241,8 +242,10 @@ export const httpBackend: OperationsBackend = {
   listAgentPresetRevisions: (apid, limit) => requestJson(`/api/agent/presets/${encodeURIComponent(apid)}/revisions${limit ? `?limit=${limit}` : ""}`),
   runAgentTest: (input) => requestAi("/api/agent/test", { method: "POST", body: JSON.stringify(input) }),
   listAgentTestHistory: () => requestJson("/api/agent/test-history"),
+  getAgentSession: (id) => requestJson(`/api/agent/sessions/${encodeURIComponent(id)}`),
+  forkAgentSession: (input) => requestJson("/api/agent/fork", { method: "POST", body: JSON.stringify(input) }),
   undoAgentTestSession: (id) => requestJson(`/api/agent/test-history/${encodeURIComponent(id)}/undo`, { method: "POST" }),
   regenerateAgentTestSessionReply: (id) => requestAi(`/api/agent/test-history/${encodeURIComponent(id)}/regenerate`, { method: "POST" }),
   deleteAgentTestSession: (id) => requestVoid(`/api/agent/test-history/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  branchAgentTestSession: (id) => requestJson(`/api/agent/test-history/${encodeURIComponent(id)}/branch`, { method: "POST" }),
+  branchAgentTestSession: (id, messageIndex) => requestJson(`/api/agent/test-history/${encodeURIComponent(id)}/branch`, { method: "POST", body: JSON.stringify(messageIndex === undefined ? {} : { messageIndex }) }),
 };

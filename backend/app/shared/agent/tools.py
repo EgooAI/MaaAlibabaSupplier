@@ -13,22 +13,35 @@ from collections.abc import Iterable
 from backend.app.shared.crm.sdk import ensure_sdk_path
 
 
-def list_registered_tools() -> list[dict[str, str]]:
-    """Registered tools as ``{"name", "description"}``, sorted by name.
+def list_registered_tools() -> list[dict]:
+    """Registered tools as API payloads, sorted by name.
 
-    Description follows the pipeline's convention: the callable docstring, which
-    is also what the model sees as the tool description.
+    Each entry carries ``name``, ``title`` (中文名), ``category``
+    (``read`` / ``effect``), ``description`` and ``parameters`` (name → 说明).
+    The description follows the pipeline's default: the callable docstring, which
+    is also what the model sees unless the registration supplied metadata.
     """
     ensure_sdk_path()
     from agent_pipeline.registry import tool_registry
+    from agent_pipeline.tools import build_tool_schema
 
-    return [
-        {
+    specs = tool_registry.list_specs()
+    payloads: list[dict] = []
+    for name, tool in sorted(tool_registry.list().items()):
+        spec = specs.get(name)
+        title = getattr(spec, "title", "") if spec is not None else ""
+        payloads.append({
             "name": name,
-            "description": (inspect.getdoc(tool) or f"Call the {name} tool.").strip(),
-        }
-        for name, tool in sorted(tool_registry.list().items())
-    ]
+            "title": title or name,
+            "category": getattr(spec, "category", "read") if spec is not None else "read",
+            "description": (getattr(spec, "description", "") if spec is not None else "")
+            or (inspect.getdoc(tool) or f"Call the {name} tool.").strip(),
+            "parameters": {
+                parameter_name: entry.get("description", "")
+                for parameter_name, entry in build_tool_schema(tool, spec)["properties"].items()
+            },
+        })
+    return payloads
 
 
 def unknown_tool_names(names: Iterable[str]) -> list[str]:

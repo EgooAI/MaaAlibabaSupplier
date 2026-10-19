@@ -110,7 +110,7 @@ export function useOutbox(sid: string) {
     return () => { clearInterval(timer); document.removeEventListener("visibilitychange", visibleRefresh); };
   }, [refresh]);
 
-  async function submit(content: string, action: PendingIntent["action"], fixedIntent?: PendingIntent) {
+  async function submit(content: string, action: PendingIntent["action"], fixedIntent?: PendingIntent, intentId?: string) {
     if (locked.current || blocked || !snapshot?.capabilities.operate_client || !content.trim()) return false;
     locked.current = true;
     setBusy(true);
@@ -150,7 +150,11 @@ export function useOutbox(sid: string) {
       }
       persisted = true;
       if (existing) { accept([existing], true); setError(undefined); return true; }
-      const result = await backend.sendMessage({ conversationId: sid, content: intent.content, action: intent.action, idempotency_key: intent.key });
+      const result = await backend.sendMessage({
+        conversationId: sid, content: intent.content, action: intent.action,
+        idempotency_key: intent.key,
+        ...(intentId ? { intent_id: intentId } : {}),
+      });
       if (!active.current) return false;
       if (result.outbox.idempotency_key !== intent.key || String(result.outbox.conversation_id) !== sid) throw new Error("任务响应不匹配");
       accept([result.outbox], true);

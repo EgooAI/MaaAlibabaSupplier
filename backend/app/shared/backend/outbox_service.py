@@ -134,6 +134,7 @@ class OutboxService:
     def submit(
         self, context: AccountContext, conversation_id: int, contact_ali_id: str,
         login_id: str, content: str, action: str, idempotency_key: str,
+        *, intent_id: str | None = None,
     ) -> dict:
         self.start()
         with self._condition:
@@ -141,7 +142,8 @@ class OutboxService:
             record, created = self.store.create(
                 **self._scope(context), conversation_id=conversation_id, contact_ali_id=contact_ali_id,
                 login_id=login_id, content=content, action=action, idempotency_key=idempotency_key,
-                origin_request_id=capture_log_context().get("request_id"), origin_account_epoch=context.epoch,
+                origin_request_id=intent_id or capture_log_context().get("request_id"),
+                origin_account_epoch=context.epoch,
             )
         if not created:
             return record

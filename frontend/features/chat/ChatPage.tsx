@@ -19,6 +19,7 @@ import { TranslationToolbar } from "./conversation/TranslationToolbar";
 import { useChatWorkbench } from "./hooks/useChatWorkbench";
 import { DataDirBanner } from "@/features/settings/DataDirBanner";
 import { AssistantSuggestionModal } from "./modals/AssistantSuggestionModal";
+import { ForkSessionDrawer } from "./modals/ForkSessionDrawer";
 import { ChatAnalysisModal } from "./modals/ChatAnalysisModal";
 import { OutboxWorkspace } from "./outbox/OutboxWorkspace";
 import { useAccount } from "@/features/account/AccountProvider";
@@ -54,6 +55,7 @@ function ChatWorkspace() {
   }, [params, changeQuery]);
   const active = workbench.activeConversation;
   const [customerInfoOpen, setCustomerInfoOpen] = useState(false);
+  const [forkIndex, setForkIndex] = useState<number>();
   const [analysisFocus, setAnalysisFocus] = useState<AnalysisFocus>("intent");
   const { scrollRef, showJumpButton, handleScroll, scrollToBottom } = useStickToBottom({ sessionKey: active?.id ?? "", followKey: active?.messages.length ?? 0 });
 
@@ -162,6 +164,7 @@ function ChatWorkspace() {
                   failedIds={workbench.translationFailedIds}
                   onTranslate={canUseAi ? (item, force) => void workbench.translateMessages([item], { force }) : undefined}
                   onOpenCard={workbench.setActiveCardId}
+                  onForkFromMessage={canUseAi ? (index) => setForkIndex(index) : undefined}
                 />
               </div>
             )}
@@ -185,6 +188,7 @@ function ChatWorkspace() {
               conversation={active}
               value={workbench.draft}
               onChange={workbench.setDraft}
+              takePendingIntent={workbench.takePendingIntent}
               onOpenSuggestions={workbench.openSuggestions}
               onOpenIntentAnalysis={() => void openAnalysis("intent")}
               onOpenStageAnalysis={() => void openAnalysis("stage")}
@@ -210,7 +214,13 @@ function ChatWorkspace() {
         </div>
       </div>
 
-      <AssistantSuggestionModal open={workbench.suggestionOpen} suggestions={workbench.suggestions} error={workbench.suggestionError} onClose={() => workbench.setSuggestionOpen(false)} onInsert={workbench.insertSuggestion} />
+      <AssistantSuggestionModal open={workbench.suggestionOpen} suggestions={workbench.suggestions} reasoning={workbench.suggestionReasoning} restricted={workbench.suggestionRestricted} error={workbench.suggestionError} onClose={() => workbench.setSuggestionOpen(false)} onInsert={workbench.insertSuggestion} />
+      <ForkSessionDrawer
+        conversation={active}
+        open={forkIndex !== undefined}
+        messageIndex={forkIndex}
+        onClose={() => setForkIndex(undefined)}
+      />
       <ChatAnalysisModal open={workbench.analysisOpen} analysis={active?.analysis} focus={analysisFocus} loading={workbench.analysisLoading} error={workbench.analysisError} onClose={() => workbench.setAnalysisOpen(false)} />
       <CustomerInfo
         conversation={active}

@@ -45,16 +45,18 @@ from backend.app.updater import register_update_runtime
 
 
 def _register_agent_runtime() -> None:
-    """Register LLM levels, built-in tools and output normalizers once at startup.
+    """Register LLM levels, tools and output normalizers once at startup.
 
     注册动作只需要执行一次（幂等覆盖），不要在每次调用工具 Agent 时重复注册。
     """
     from agent_pipeline.llm_api import register_default_llms
     from agent_tools import register_builtin_tools
     from backend.app.shared.agent.output_normalizers import register_system_output_normalizers
+    from backend.app.shared.agent.runner import register_business_tools
 
     register_default_llms()
     register_builtin_tools()
+    register_business_tools()
     register_system_output_normalizers()
 
 

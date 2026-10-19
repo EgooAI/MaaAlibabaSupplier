@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from backend.app.api.main import create_app
 from backend.tests.auth_client import authenticate
 from backend.app.shared.agent.chat_history_content import build_history_content
+from backend.app.shared.agent.runner import ChatAgentTurn
 from backend.app.shared.crm.sdk import AgentPreset, AgentPresetManager, ChatHistory, ChatHistoryManager
 
 TRANSLATION_APID = "agent-1bad27aabaac439da678f31d53855b5d"
@@ -96,9 +97,11 @@ class AgentConsoleTestCase(unittest.TestCase):
         self.assertEqual(guard["data"], False)
 
     def test_tool_catalog_and_unregistered_tool_guards(self) -> None:
-        tools = self.client.get("/api/agent/console").json()["data"]["tools"]
+        tools = self.client.get("/api/agent/tools").json()["data"]
         self.assertEqual([tool["name"] for tool in tools], ["calculate"])
+        self.assertEqual(tools[0]["category"], "read")
         self.assertTrue(tools[0]["description"])
+        self.assertNotIn("tools", self.client.get("/api/agent/console").json()["data"])
 
         rejected = self.client.post("/api/agent/presets", json={
             "apid": "", "name": "N", "description": "D", "prompt": "P",
@@ -216,12 +219,12 @@ class AgentConsoleTestCase(unittest.TestCase):
             prompt="已保存提示词", llm_level=0, tools=[]))
         overrides: list[str] = []
 
-        def fake_runner(_apid: str, _user_input: str, *, preset_override: object = None) -> str:
+        def fake_runner(apid: str, user_input: str, *, preset_override: object = None, **_kwargs):
             overrides.append(preset_override.prompt if preset_override is not None else "(saved)")
-            return "回复"
+            return ChatAgentTurn(text="回复", apid=apid, agent_name="草稿测试")
 
         with mock.patch(
-            "backend.app.api.routers.agent.run_chat_tool_agent", side_effect=fake_runner,
+            "backend.app.api.routers.agent.run_chat_agent", side_effect=fake_runner,
         ):
             created = self.client.post("/api/agent/test", json={
                 "agentId": "agent-draft", "content": "你好",
@@ -250,7 +253,8 @@ class AgentConsoleTestCase(unittest.TestCase):
         AgentPresetManager().upsert_agent_preset(AgentPreset(
             apid="agent-saved", name="S", description="D", prompt="P", llm_level=0, tools=[]))
         with mock.patch(
-            "backend.app.api.routers.agent.run_chat_tool_agent", return_value="回复",
+            "backend.app.api.routers.agent.run_chat_agent",
+            return_value=ChatAgentTurn(text="回复", apid="agent-saved", agent_name="S"),
         ) as runner:
             created = self.client.post("/api/agent/test", json={
                 "agentId": "agent-saved", "content": "你好",
@@ -258,6 +262,55 @@ class AgentConsoleTestCase(unittest.TestCase):
             }).json()["data"]
         self.assertFalse(created["session"]["draft"])
         self.assertIsNone(runner.call_args.kwargs["preset_override"])
+
+    def test_requires_tool_preset_round_trip_and_guard(self) -> None:
+        created = self.client.post("/api/agent/presets", json={
+            "apid": "", "name": "R", "description": "D", "prompt": "P",
+            "intelevel": 0, "tools": ["calculate"], "requires_tool": True,
+        }).json()["data"]
+        self.assertTrue(created["requires_tool"])
+        listed = next(agent for agent in self.client.get("/api/agent/console").json()["data"]["agents"]
+                      if agent["id"] == created["apid"])
+        self.assertTrue(listed["requiresTool"])
+
+        rejected = self.client.post("/api/agent/presets", json={
+            "apid": "agent-requires-none", "name": "R", "description": "D", "prompt": "P",
+            "intelevel": 0, "tools": [], "requires_tool": True,
+        })
+        self.assertEqual(rejected.status_code, 422)
+
+    def test_requires_tool_draft_run_forces_a_tool_choice(self) -> None:
+        AgentPresetManager().upsert_agent_preset(AgentPreset(
+            apid="agent-force", name="F", description="D", prompt="P", llm_level=0, tools=["calculate"]))
+        seen: list[str] = []
+
+        def fake_runner(apid: str, user_input: str, **kwargs):
+            seen.append(kwargs.get("tool_choice", "auto"))
+            return ChatAgentTurn(text="ok", apid=apid, agent_name="F")
+
+        with mock.patch("backend.app.api.routers.agent.run_chat_agent", side_effect=fake_runner):
+            body = self.client.post("/api/agent/test", json={
+                "agentId": "agent-force", "content": "你好",
+                "draft": {"prompt": "P", "level": 0, "tools": ["calculate"], "requiresTool": True},
+            }).json()
+        self.assertEqual(body["code"], 0)
+        # The router passes ``auto``; the preset's requires_tool escalates it.
+        self.assertEqual(seen, ["auto"])
+
+    def test_analysis_limit_returns_409_not_500(self) -> None:
+        from backend.app.shared.agent.runner import AgentRunError
+
+        AgentPresetManager().upsert_agent_preset(AgentPreset(
+            apid="agent-limited", name="L", description="D", prompt="P", llm_level=0, tools=[]))
+        with mock.patch(
+            "backend.app.api.routers.agent.run_chat_agent",
+            side_effect=AgentRunError("调用超过次数限制", status_code=409, kind="tool_rounds_limited"),
+        ):
+            response = self.client.post("/api/agent/test", json={
+                "agentId": "agent-limited", "content": "hi",
+            })
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("次数限制", response.json()["msg"])
 
     def test_history_undo_branch_delete(self) -> None:
         raw_id = _seed_session()

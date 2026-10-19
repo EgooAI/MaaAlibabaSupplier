@@ -5,13 +5,14 @@ import { createContext, createElement, useContext, useEffect, useRef, useState, 
 import { agentConfigToPreset, agentPresetToConfig, agentPresetToDbPreset, createRegularAgentPreset, dbPresetToAgentPreset, documentToLlmLevelConfig, llmLevelToDocumentConfig, upsertLlmLevel } from "@/domain/agent/agentModel";
 import { nowText } from "@/domain/time";
 import { backend } from "@/services/client";
-import type { AgentConfig, AgentConsoleState, AgentEditValues, AgentSaveOptions, DbAgentPreset, LlmLevelConfig } from "@/types/agent";
+import type { AgentConfig, AgentConsoleState, AgentEditValues, AgentSaveOptions, AgentToolDefinition, DbAgentPreset, LlmLevelConfig } from "@/types/agent";
 import { useAccount } from "@/features/account/AccountProvider";
 
 function useAgentWorkbenchController() {
   const { refresh: refreshConnection } = useAccount();
   const { message } = App.useApp();
   const [state, setState] = useState<AgentConsoleState>();
+  const [tools, setTools] = useState<AgentToolDefinition[]>([]);
   const [loading, setLoading] = useState(true);
   const [mutatingIds, setMutatingIds] = useState<Set<string>>(new Set());
   const mutatingRef = useRef<Set<string>>(new Set());
@@ -30,9 +31,13 @@ function useAgentWorkbenchController() {
 
   useEffect(() => {
     let mounted = true;
-    backend.getAgentConsole()
-      .then((data) => {
-        if (mounted) setState(data);
+    // The tool catalog is optional: a backend without it still loads the console,
+    // and the editor simply offers no attachable tools.
+    Promise.all([backend.getAgentConsole(), backend.listAgentTools?.() ?? Promise.resolve([])])
+      .then(([data, catalog]) => {
+        if (!mounted) return;
+        setState(data);
+        setTools(catalog);
       })
       .catch((error: unknown) => {
         if (mounted) message.error(error instanceof Error ? error.message : "Agent 控制台加载失败");
@@ -74,6 +79,7 @@ function useAgentWorkbenchController() {
         prompt: agent.prompt ?? "",
         level: agent.level ?? 0,
         capabilities: agent.capabilities,
+        requiresTool: agent.requiresTool,
       }, updatedAt);
       const saved = await backend.saveAgentPreset(agentPresetToDbPreset(preset));
       syncAgentState(saved);
@@ -200,7 +206,10 @@ function useAgentWorkbenchController() {
     });
   }
 
-  return { state, loading, saveLlmLevel, toggleAgent, saveAgent, createAgent, copyAgent, deleteAgent, resetSystemAgent, mutatingIds, isAgentMutating: (id: string) => mutatingIds.has(id) };
+  return {
+    state, tools, loading, saveLlmLevel, toggleAgent, saveAgent, createAgent, copyAgent,
+    deleteAgent, resetSystemAgent, mutatingIds, isAgentMutating: (id: string) => mutatingIds.has(id),
+  };
 }
 
 type AgentWorkbench = ReturnType<typeof useAgentWorkbenchController>;

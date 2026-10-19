@@ -1,6 +1,6 @@
 "use client";
 
-import { Alert, App, Button, Drawer, Form, Grid, Input, Modal, Select, Space, Tabs, Tag, Typography } from "antd";
+import { Alert, App, Button, Drawer, Form, Grid, Input, Modal, Select, Space, Switch, Tabs, Tag, Typography } from "antd";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isAgentLevel, isSystemAgentModified, unregisteredAgentTools } from "@/domain/agent/agentModel";
 import { renderContentHtml } from "@/domain/render/markdown";
@@ -80,6 +80,7 @@ function AgentEditDrawerBody({ agent, category, systemAgents, tools, llmLevels, 
     prompt: agent?.prompt ?? "",
     level: agent?.level ?? 0,
     capabilities: agent?.capabilities ?? [],
+    requiresTool: Boolean(agent?.requiresTool),
   }), [agent]);
   const [draft, setDraft] = useState<AgentEditValues>(initialValues);
   const [activeTab, setActiveTab] = useState("prompt");
@@ -101,7 +102,11 @@ function AgentEditDrawerBody({ agent, category, systemAgents, tools, llmLevels, 
 
   // 只提供后端真实注册的工具，避免界面承诺尚未实现的能力。
   const toolOptions = useMemo(
-    () => tools.map((tool) => ({ value: tool.name, label: tool.name, title: tool.description })),
+    () => tools.map((tool) => ({
+      value: tool.name,
+      label: tool.title && tool.title !== tool.name ? `${tool.title}（${tool.name}）` : tool.name,
+      title: tool.description,
+    })),
     [tools],
   );
   const staleTools = useMemo(
@@ -127,6 +132,7 @@ function AgentEditDrawerBody({ agent, category, systemAgents, tools, llmLevels, 
       prompt: revision.prompt,
       level: revision.intelevel,
       capabilities: revision.tools,
+      requiresTool: Boolean(revision.requires_tool),
     };
     form.setFieldsValue(values);
     setDraft((current) => ({ ...current, ...values }));
@@ -214,6 +220,15 @@ function AgentEditDrawerBody({ agent, category, systemAgents, tools, llmLevels, 
               <Select mode="multiple" options={toolOptions} placeholder="选择该 Agent 可调用的工具" />
             </Form.Item>
           ) : null}
+          <Form.Item
+            name="requiresTool"
+            label="必须调用工具"
+            valuePropName="checked"
+            className="md:col-span-2"
+            extra="开启后，模型必须至少调用一次工具；达到调用上限时会强制收尾，并保留已发生的调用记录。"
+          >
+            <Switch disabled={(draft.capabilities ?? []).length === 0} />
+          </Form.Item>
           {staleTools.length > 0 ? (
             <Alert
               className="md:col-span-2"

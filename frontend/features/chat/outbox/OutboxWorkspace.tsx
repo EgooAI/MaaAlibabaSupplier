@@ -12,10 +12,10 @@ import { useOutbox } from "./useOutbox";
 import { ScreenshotConfirmation } from "./ScreenshotConfirmation";
 import type { PendingIntent } from "./intentStorage";
 
-export function OutboxWorkspace({ conversation, ...composer }: Omit<ChatComposerProps, "onSend" | "loading"> & { conversation: ConversationDetail }) {
+export function OutboxWorkspace({ conversation, takePendingIntent, ...composer }: Omit<ChatComposerProps, "onSend" | "loading"> & { conversation: ConversationDetail; takePendingIntent?: (content: string) => string | undefined }) {
   const { snapshot, blocked } = useAccount();
   const outbox = useOutbox(conversation.id);
-  const [submission, setSubmission] = useState<{ content: string; action?: "send" | "test"; newIntent?: boolean; intent?: PendingIntent }>();
+  const [submission, setSubmission] = useState<{ content: string; action?: "send" | "test"; newIntent?: boolean; intent?: PendingIntent; intentId?: string }>();
   const [reviewId, setReviewId] = useState<string>();
   const [retry, setRetry] = useState<OutboxTask>();
   const [tasksOpen, setTasksOpen] = useState(false);
@@ -31,7 +31,9 @@ export function OutboxWorkspace({ conversation, ...composer }: Omit<ChatComposer
 
   async function submit(action: "send" | "test") {
     if (!submission) return;
-    if (await outbox.submit(submission.content, action, submission.intent)) setSubmission((current) => current === submission ? undefined : current);
+    if (await outbox.submit(submission.content, action, submission.intent, submission.intentId)) {
+      setSubmission((current) => current === submission ? undefined : current);
+    }
   }
 
   return <>
@@ -67,7 +69,11 @@ export function OutboxWorkspace({ conversation, ...composer }: Omit<ChatComposer
       </article>)}
     </section>
     </Drawer>
-    <ChatComposer {...composer} loading={outbox.busy} onSend={() => setSubmission({ content: composer.value.trim() })} />
+    <ChatComposer {...composer} loading={outbox.busy} onSend={() => {
+      const content = composer.value.trim();
+      // A submission only accepts the intent while the text still matches it.
+      setSubmission({ content, intentId: takePendingIntent?.(content) });
+    }} />
     <Modal title={submission?.newIntent ? "新建发送：再次确认" : "确认收件人与提交内容"} open={Boolean(submission)} onCancel={() => setSubmission(undefined)} footer={<Space wrap>
       <Button onClick={() => setSubmission(undefined)}>返回编辑</Button>
       {(!submission?.action || submission.action === "test") && <Button disabled={!canOperate || outbox.storageError || !conversation.customer.loginId} loading={outbox.busy} onClick={() => void submit("test")}>确认收件人，开始搜索（仅填入）</Button>}

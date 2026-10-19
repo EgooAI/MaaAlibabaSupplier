@@ -1,4 +1,4 @@
-import { agentConsole, agentPresets, llmLevels, systemAgents } from "@/mock/agentData";
+import { agentConsole, agentPresets, agentTools, llmLevels, systemAgents } from "@/mock/agentData";
 import { businessCards } from "@/mock/cardData";
 import { assistantSuggestions, conversationAggregates } from "@/mock/conversationData";
 import { mockSelfInfo } from "@/mock/selfData";
@@ -316,7 +316,16 @@ export const mockBackend: OperationsBackend = {
   getAssistantSuggestions: async (conversationId) => {
     requireSystemAgent(SYSTEM_AGENT_APIDS.replySuggestion);
     buildConversationDetail(conversationId);
-    return delay(structuredClone(assistantSuggestions));
+    return delay({
+      items: structuredClone(assistantSuggestions).map((item, index) => ({
+        ...item,
+        intentId: `intent-mock-${index + 1}`,
+        status: "requested",
+      })),
+      batchId: "batch-mock",
+      reasoning: "买家在确认样品与证书，先给出可执行的下一步。",
+      restricted: false,
+    });
   },
 
   analyzeConversation: async (conversationId) => {
@@ -624,6 +633,8 @@ export const mockBackend: OperationsBackend = {
 
   getAgentConsole: () => delay(structuredClone(consoleStore)),
 
+  listAgentTools: () => delay(structuredClone(agentTools)),
+
   saveLlmConfig: async (input) => {
     const savedDocument = structuredClone(input);
     const savedLevel = documentToLlmLevelConfig(savedDocument);
@@ -666,49 +677,104 @@ export const mockBackend: OperationsBackend = {
     structuredClone(revisionStore.filter((revision) => revision.apid === apid).slice(0, limit ?? 50)),
   ),
 
-  runAgentTest: async ({ agentId, content, sessionId, draft }) => {
+  runAgentTest: async ({ agentId, content, sessionId, draft, inputMode = "buyer" }) => {
     const agent = consoleStore.agents.find((item) => item.id === agentId);
     if (!canRunAgentExecution(agent)) throw new Error("Agent 不存在或未启用");
     const now = nowText();
+    const trace = agent.id === SYSTEM_AGENT_APIDS.replySuggestion
+      ? {
+          toolCalls: [{
+            callId: `call-${crypto.randomUUID()}`, name: "reply_customer",
+            arguments: { reply: "Sure, sending the certificate now.", zh: "好的，这就发证书。", tone: "friendly" },
+            ok: true, content: { recorded: true, index: 1 }, error: null, durationMs: 12, round: 1,
+          }],
+          intents: [{
+            intentId: `intent-${crypto.randomUUID()}`, kind: "reply_customer", status: "simulated",
+            reply: "Sure, sending the certificate now.", zh: "好的，这就发证书。", tone: "friendly",
+          }],
+          iterations: 2, durationMs: 640, mode: "live" as const,
+        }
+      : { toolCalls: [], intents: [], iterations: 1, durationMs: 320, mode: "live" as const };
+    const reply = {
+      id: `assistant-${crypto.randomUUID()}`,
+      role: "assistant" as const,
+      content: `模拟回复：${agent.name} 已根据接口文档约定返回处理建议。`,
+      createdAt: now,
+      ...trace,
+    };
 
     if (sessionId) {
       const existingSession = getAgentSession(sessionId);
-      if (existingSession.agentId !== agentId || !content?.trim()) throw new Error("Agent 会话请求无效");
-      const userMessage = { id: `user-${crypto.randomUUID()}`, role: "user" as const, content: content.trim(), createdAt: now };
-      const reply = {
-        id: `assistant-${crypto.randomUUID()}`,
-        role: "assistant" as const,
-        content: `模拟回复：${agent.name} 已根据接口文档约定返回处理建议。`,
-        createdAt: now,
+      if (existingSession.agentId !== agentId) throw new Error("Agent 会话请求无效");
+      const appended = inputMode === "buyer" && content?.trim()
+        ? [{ id: `user-${crypto.randomUUID()}`, role: "user" as const, content: content.trim(), createdAt: now }]
+        : [];
+      const simulated = existingSession.type === "fork" || existingSession.type === "playground";
+      const session = {
+        ...existingSession,
+        messages: [...existingSession.messages, ...appended, { ...reply, mode: simulated ? "simulated" as const : "live" as const }],
       };
-      const session = { ...existingSession, messages: [...existingSession.messages, userMessage, reply] };
       consoleStore = { ...consoleStore, history: consoleStore.history.map((item) => item.id === session.id ? session : item) };
-      return delay({ session, reply }, 520);
+      return delay({ session, reply: session.messages[session.messages.length - 1], restricted: false }, 520);
     }
 
     const draftRun = Boolean(draft) && !(
       draft!.prompt === (agent.prompt ?? "")
       && draft!.level === (agent.level ?? 0)
+      && Boolean(draft!.requiresTool) === Boolean(agent.requiresTool)
       && JSON.stringify(normalizeAgentTools(draft!.tools)) === JSON.stringify(normalizeAgentTools(agent.capabilities))
     );
+      const session: AgentTestSession = {
+        id: `session-${crypto.randomUUID()}`,
+        title: `${agent.name} 测试`,
+        agentId,
+        draft: draftRun,
+        createdAt: now,
+        ...(draftRun
+          ? {
+              pinned: {
+                kind: "draft" as const,
+                prompt: draft!.prompt,
+                llm_level: draft!.level,
+                tools: draft!.tools,
+                requires_tool: Boolean(draft!.requiresTool),
+              },
+            }
+          : { pinned: { kind: "preset" as const, prompt: agent.prompt ?? "", llm_level: agent.level ?? 0, tools: agent.capabilities, requires_tool: Boolean(agent.requiresTool) } }),
+        messages: content?.trim() ? [
+          { id: `user-${crypto.randomUUID()}`, role: "user", content: content.trim(), createdAt: now },
+          reply,
+        ] : [reply],
+      };
+    consoleStore = { ...consoleStore, history: [session, ...consoleStore.history] };
+    return delay({ session, reply: session.messages[1] ?? session.messages[0], restricted: false }, 520);
+  },
+
+  getAgentSession: async (id) => {
+    const session = getAgentSession(id);
+    return delay({ session: structuredClone(session), frozenInput: "冻结的历史消息" });
+  },
+
+  forkAgentSession: async ({ agentId, conversationId, messageIndex }) => {
+    const conversation = buildConversationDetail(String(conversationId));
+    const now = nowText();
     const session: AgentTestSession = {
       id: `session-${crypto.randomUUID()}`,
-      title: `${agent.name} 测试`,
+      title: `模拟会话 · #${messageIndex + 1}`,
       agentId,
-      draft: draftRun,
       createdAt: now,
-      messages: content?.trim() ? [
-        { id: `user-${crypto.randomUUID()}`, role: "user", content: content.trim(), createdAt: now },
-        {
-          id: `assistant-${crypto.randomUUID()}`,
-          role: "assistant",
-          content: `模拟回复：${agent.name} 已根据接口文档约定返回处理建议。`,
-          createdAt: now,
-        },
-      ] : [],
+      type: "fork",
+      source: {
+        conversationId: Number(conversationId),
+        messageIndex,
+        conversationTitle: conversation.customer.name,
+        frozenChars: 42,
+      },
+      pinned: { kind: "preset", prompt: "", llm_level: 0, tools: [], requires_tool: false },
+      messages: [],
     };
     consoleStore = { ...consoleStore, history: [session, ...consoleStore.history] };
-    return delay({ session, reply: session.messages[1] }, 520);
+    return delay(structuredClone(session));
   },
 
   listAgentTestHistory: () => delay(structuredClone(consoleStore.history)),
@@ -745,9 +811,10 @@ export const mockBackend: OperationsBackend = {
     return delay(undefined);
   },
 
-  branchAgentTestSession: async (id) => {
+  branchAgentTestSession: async (id, messageIndex) => {
     const source = getAgentSession(id);
-    const branch = { ...structuredClone(source), id: `session-${crypto.randomUUID()}`, title: `${source.title} - 分支`, createdAt: nowText() };
+    const messages = messageIndex === undefined ? source.messages : source.messages.slice(0, messageIndex + 1);
+    const branch = { ...structuredClone(source), id: `session-${crypto.randomUUID()}`, title: `${source.title} - 分支`, createdAt: nowText(), messages };
     consoleStore = { ...consoleStore, history: [branch, ...consoleStore.history] };
     return delay(branch);
   },
@@ -821,6 +888,7 @@ function recordMockRevision(preset: AgentPreset, source?: string, note?: string)
     && head.description === preset.description
     && head.prompt === preset.prompt
     && head.intelevel === preset.level
+    && Boolean(head.requires_tool) === Boolean(preset.requiresTool)
     && JSON.stringify(head.tools) === JSON.stringify(tools)) {
     return;
   }
@@ -832,6 +900,7 @@ function recordMockRevision(preset: AgentPreset, source?: string, note?: string)
     prompt: preset.prompt,
     intelevel: preset.level,
     tools,
+    requires_tool: Boolean(preset.requiresTool),
     source: source ?? "manual",
     note: note ?? "",
     created_at: nowText(),

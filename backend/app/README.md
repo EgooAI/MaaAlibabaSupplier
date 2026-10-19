@@ -6,7 +6,7 @@
 
 - `shared` — 主后端，`app` 与 agent 共享。含以下子包：
   - `backend/` — 业务逻辑：邮件（`email.py`）、IM 访问（`im_chat_db.py` / `im_db_middleware.py`）、目录布局（`im_layout.py`）、系统状态（`status.py`）。
-  - `agent/` — Chat/Agent 工具层：系统 Agent 身份常量（`system_agents.py`）、输入构造（`inputs.py`）、统一执行（`runner.py`，超限抛 `AgentRunError`，支持未保存草稿预设）、翻译写入 CRM（`translation.py`，短哈希标记与三值协议）、回复建议（`suggestions.py`）、系统预设补种（`system_presets.py`，指纹匹配、不覆盖用户编辑）、预设版本历史（`preset_history.py`）、工具清单与未注册工具判定（`tools.py`）、输出归一化（`output_normalizers.py`）。
+  - `agent/` — Chat/Agent 工具层：系统 Agent 身份常量（`system_agents.py`）、输入构造（`inputs.py`）、统一执行（`runner.py`，结构化 `ChatAgentTurn` + 薄封装 `run_chat_tool_agent`，支持未保存草稿预设与运行上下文）、回复建议（`suggestions.py`，由 `reply_customer` 意图驱动）、回复工具（`reply_tool.py`，效果类工具与参数校验）、效果分发（`effect_dispatch.py`，live 落库 / simulated 只记录 / 无作用域拒绝）、翻译写入 CRM（`translation.py`，短哈希标记与三值协议）、系统预设补种（`system_presets.py`，指纹匹配、不覆盖用户编辑、写入 `requires_tool`）、预设版本历史（`preset_history.py`）、工具清单与未注册工具判定（`tools.py`）、输出归一化（`output_normalizers.py`，仅剩翻译与分析类，回复建议已不再使用）。
   - `crm/` — 应用侧 CRM 适配层。`__init__.py` 是 API/业务稳定入口；`sync.py` 的 `CRMAdapter` 直接承担 SDK 读写（路由不再经过转发层）；`paths.py` 解析 CRM 库路径；`outbox_state.py` 是出站状态、转换表、可编辑字段与风险判定的单一来源；`translation_cache.py` 译文表读写（32 位 md5 主键，`get_translation()` 的空串为 NO_NEED 哨兵，`get_translations()` 批量复用同一 Manager）；`message_markdown.py` 是消息 → Markdown 的唯一投影（LLM 输入与聊天导出共用，卡片结构化取 `shared/cards.py`，正文不转义以保翻译保真）。
   - `utils/` — 环境变量、IM 解密、WAL 处理、日志等。
   - `mitm/` — MITM 解析器与数据池。
@@ -77,6 +77,16 @@ APP -> 127.0.0.1:8084 Yak/Yakit MITM -> 127.0.0.1:8085 Python receiver -> parser
 - 不支持显示的消息类型保留原字段及方向、时间，并展示占位，避免整个会话活动不可见。
 - `sync_store.py` 按卖家和规范化源目录保存已提交版本、来源版本、最近成功时间与本次新增/更新/未变计数。状态读取不建表、不触发迁移或同步。
 - 手动刷新检查源数据并重读当前会话，即使消息版本未变也能更新联系人资料。收件箱列表和首页统计使用独立的一致读事务；详情与 revision 观察仍不承诺属于同一个读快照。
+
+### Agent 工具调用、回复意图与模拟会话
+
+- SDK 的 `AgentPipeline` 返回完整调用记录（`tool_call_records`）与按轮次分组的 `tool_exchanges`；同一轮可执行多个调用，轮次上限按 LLM 调用次数计算，触顶时用 `tool_choice: none` 收尾，已有调用与意图不丢。工具失败（未知工具、非法参数、异常、超时）回传给模型继续运行；供应商拒绝强制 `tool_choice` 时自动降级为 `auto` 重试一次。
+- 工具元数据（`ToolSpec`：中文名、分类、可重复次数、参数说明、超时）由宿主注册；`requires_tool` 存在 preset 与 revision 中，经追加式迁移添加，旧库默认关闭。
+- `reply_customer` 是唯一的效果类工具：参数只有买家语言回复、中文参考与语气，没有收件人；会话作用域由宿主注入的 `ToolContext` 提供，模型看不到。工具内校验空内容、重复、超过 3 条与占位符，拒绝原因回传给模型改写。
+- `intent_store.py` 在应用 CRM 中保存 `app_agent_intent`：live 运行写 `requested`，采纳一条时同批其余变 `discarded`；模拟只写进会话记录。提交发送时经 `origin_request_id` 关联意图并把该意图标记为 `accepted`。没有自动发送路径。
+- 会话内容 schema 升到 v3：assistant 消息携带 `toolCalls` 与 `intents`，会话记录所有者（卖家 + 数据目录）、钉定版本（preset 或草稿快照）与分叉来源（会话、消息序号、冻结输入）。旧会话缺少字段时按空列表处理，首次写入补上归属。
+- `POST /api/agent/fork` 用与正式运行相同的 Markdown 投影冻结截至该消息的对话，模拟会话首个输入与该时刻的正式输入逐字符一致；后续轮次 = 冻结前缀 + 本会话新增对话。模拟会话固定 `simulated` 模式，从不创建 outbox。
+- `GET /api/agent/tools` 返回工具清单（名称、中文名、分类、说明、参数说明），`/api/agent/console` 不再附带。
 
 ### 出站任务与截图确认
 

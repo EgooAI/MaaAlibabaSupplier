@@ -32,6 +32,8 @@ export interface SendMessageInput {
   content: string;
   action: "test" | "send";
   idempotency_key: string;
+  /** The reply intent this submission accepts; ignored when the text was edited. */
+  intent_id?: string;
 }
 
 export interface OutboxTask {

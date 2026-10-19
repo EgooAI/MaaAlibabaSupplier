@@ -13,6 +13,7 @@ from zipfile import ZipFile
 import pytest
 
 from backend.app.api.routers import conversations
+from backend.app.shared.agent.suggestions import ReplySuggestion, ReplySuggestionResult
 from backend.app.shared.backend import account_context
 from backend.app.shared.backend.im_chat_db import ContactConv, MessageRow
 from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
@@ -498,7 +499,10 @@ def test_ai_and_export_use_the_visible_ledger_without_marking_read(client, archi
     sid, = before[context.data_dir][0]
     b_only_sid, = set(before[directory_b][0]) - {sid}
     assert before[context.data_dir][0][sid]["unread_count"] == 1
-    suggest = Mock(return_value=SimpleNamespace(items=[SimpleNamespace(zh="suggestion", reply="reply")]))
+    suggest = Mock(return_value=ReplySuggestionResult(
+        suggestions=[ReplySuggestion(intent_id="intent-1", reply="reply", zh="suggestion", tone="formal", status="requested")],
+        batch_id="batch-1",
+    ))
     analyze = Mock(return_value='{"stage":"new","confidence":0.5}')
     mark_read = Mock(side_effect=AssertionError("AI/export must not mark read"))
     snapshot = Mock(side_effect=AssertionError("AI/export must not capture read snapshots"))
@@ -508,7 +512,7 @@ def test_ai_and_export_use_the_visible_ledger_without_marking_read(client, archi
     monkeypatch.setattr(InboxStore, "snapshot", snapshot)
 
     suggestions = data(client, f"/api/conversations/{sid}/suggestions")
-    assert suggestions[0]["content"] == "reply"
+    assert suggestions["items"][0]["content"] == "reply"
     suggest.assert_called_once()
     assert "A_VISIBLE_BODY" in suggest.call_args.args[0]
     data(client, f"/api/conversations/{sid}/analysis")
@@ -519,6 +523,7 @@ def test_ai_and_export_use_the_visible_ledger_without_marking_read(client, archi
     for endpoint in ("suggestions", "analysis"):
         assert client.get(f"/api/conversations/{b_only_sid}/{endpoint}").status_code == 404
     assert suggest.call_count == analyze.call_count == 1
+    assert suggest.call_args.kwargs["scope"].conversation_id == sid
 
     response = client.post("/api/conversations/export", json={"conversationIds": [sid, b_only_sid]})
     assert response.status_code == 200, response.text

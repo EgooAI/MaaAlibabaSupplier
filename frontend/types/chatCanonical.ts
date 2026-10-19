@@ -106,6 +106,18 @@ export interface AssistantSuggestion {
   id: ID;
   title: string;
   content: string;
-  tone: "formal" | "friendly" | "urgent";
+  tone: "formal" | "friendly" | "urgent" | string;
   zh?: string;
+  /** The stored reply intent this suggestion came from. */
+  intentId?: string | null;
+  status?: "requested" | "accepted" | "discarded" | "simulated" | string;
+}
+
+export interface AssistantSuggestionResult {
+  items: AssistantSuggestion[];
+  batchId?: string;
+  /** The Agent's own reasoning; replies live in ``items``, not in this text. */
+  reasoning?: string;
+  /** True when the run hit its tool budget and the result may be incomplete. */
+  restricted?: boolean;
 }

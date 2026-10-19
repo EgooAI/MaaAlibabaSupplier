@@ -24,7 +24,7 @@ export function AgentPage({ category }: AgentPageProps) {
   const workbench = useAgentWorkbench();
   const agents = workbench.state?.agents ?? [];
   const systemAgents = workbench.state?.systemAgents ?? [];
-  const tools = workbench.state?.tools ?? [];
+  const tools = workbench.tools ?? [];
   const llmLevels = workbench.state?.llmLevels ?? [];
   const visibleAgents = filterAgentsByCategory(agents, category);
   const [editingAgent, setEditingAgent] = useState<AgentConfig>();

@@ -14,7 +14,6 @@ from typing import Any
 from backend.app.shared.agent.system_agents import (
     CHAT_CUSTOMER_INTENT_AGENT_APID,
     CHAT_CUSTOMER_STAGE_AGENT_APID,
-    CHAT_REPLY_SUGGESTION_AGENT_APID,
     CHAT_TRANSLATION_AGENT_APID,
 )
 
@@ -62,31 +61,6 @@ def _normalize_translation(raw_text: str) -> str:
     return json.dumps({"translations": parse_translation_payload(raw_text)}, ensure_ascii=False)
 
 
-def _normalize_suggestion(raw_text: str) -> str:
-    payload = _load_json_object(raw_text)
-    buyer_language = payload.get("buyer_language")
-    if not isinstance(buyer_language, str) or not buyer_language.strip():
-        raise ValueError("buyer_language must be a non-empty string")
-
-    items = payload.get("items")
-    if not isinstance(items, list):
-        raise ValueError("items must be a list")
-
-    normalized_items: list[dict[str, str]] = []
-    for item in items[:3]:
-        if not isinstance(item, dict):
-            raise ValueError("each suggestion item must be an object")
-        zh = item.get("zh")
-        reply = item.get("reply")
-        if not isinstance(zh, str) or not isinstance(reply, str):
-            raise ValueError("each suggestion item requires string fields zh and reply")
-        normalized_items.append({"zh": zh.strip(), "reply": reply.strip()})
-    return json.dumps(
-        {"buyer_language": buyer_language.strip(), "items": normalized_items},
-        ensure_ascii=False,
-    )
-
-
 def _normalize_intent(raw_text: str) -> str:
     payload = _load_json_object(raw_text)
     intent = payload.get("intent")
@@ -125,13 +99,18 @@ def _normalize_stage(raw_text: str) -> str:
 
 
 def register_system_output_normalizers() -> None:
-    """Register the four system-agent output normalizers (idempotent)."""
+    """Register output normalizers for the agents that still need text parsing.
+
+    The reply-suggestion agent is now tool-driven: its replies come from
+    ``reply_customer`` intents, so it has no normalizer. Output normalizers are
+    the legacy mechanism for agents that must return structured text; new agents
+    should use effect tools instead.
+    """
     from backend.app.shared.crm.sdk import ensure_sdk_path
     from agent_pipeline.registry import register_output_normalizer
 
     ensure_sdk_path()
     register_output_normalizer(CHAT_TRANSLATION_AGENT_APID, _normalize_translation)
-    register_output_normalizer(CHAT_REPLY_SUGGESTION_AGENT_APID, _normalize_suggestion)
     register_output_normalizer(CHAT_CUSTOMER_INTENT_AGENT_APID, _normalize_intent)
     register_output_normalizer(CHAT_CUSTOMER_STAGE_AGENT_APID, _normalize_stage)
 

@@ -88,8 +88,10 @@ describe("agent model", () => {
       intelevel: 4,
       tools: ["calculate"],
       enabled: false,
+      requires_tool: false,
       updated_at: "2026-09-10",
       category: "regular",
+      revision_note: undefined,
     });
     expect(agentPresetToConfig(preset)).toMatchObject({ id: "agent-domain-1", apid: "agent-domain-1", enabled: false, level: 4, capabilities: ["calculate"] });
     expect(() => normalizeAgentLevel(5)).toThrow();
@@ -107,7 +109,7 @@ describe("agent model", () => {
     expect(preset).toMatchObject({ id: "agent-db-2", category: "regular", enabled: false, level: 0, updated_at: "2026-09-11" });
     expect(preset).not.toHaveProperty("apid");
     expect(preset).not.toHaveProperty("intelevel");
-    expect(agentPresetToDbPreset(preset)).toEqual({ apid: "agent-db-2", name: "DB Agent", description: "", prompt: "prompt", intelevel: 0, tools: [], enabled: false, updated_at: "2026-09-11", category: "regular" });
+    expect(agentPresetToDbPreset(preset)).toEqual({ apid: "agent-db-2", name: "DB Agent", description: "", prompt: "prompt", intelevel: 0, tools: [], enabled: false, requires_tool: false, updated_at: "2026-09-11", category: "regular", revision_note: undefined });
   });
 
   it("round-trips nullable max tool rounds without converting null to zero", () => {

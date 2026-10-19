@@ -17,6 +17,7 @@ export function MessageTimeline({
   failedIds,
   onTranslate,
   onOpenCard,
+  onForkFromMessage,
 }: {
   messages: ChatMessage[];
   buyerId?: string;
@@ -26,10 +27,12 @@ export function MessageTimeline({
   failedIds?: ReadonlySet<string>;
   onTranslate?: (message: ChatMessage, force?: boolean) => void;
   onOpenCard: (cardId: string) => void;
+  /** Start a simulated session from this message's point in the conversation. */
+  onForkFromMessage?: (index: number) => void;
 }) {
   return (
     <div className="flex w-full flex-col gap-5">
-      {messages.map((message) => {
+      {messages.map((message, index) => {
         // Auto-reception replies (role "system") are sent by our own account:
         // align them with the seller side so the sender is not misread.
         const isSelfSide = message.role === "seller" || message.role === "system";
@@ -58,7 +61,19 @@ export function MessageTimeline({
               )}
               </div>
               <div className="min-w-0">
-                <div className={`mb-1.5 text-[11px] text-slate-400 ${isSelfSide ? "text-right" : ""}`}>{message.createdAt}</div>
+                <div className={`mb-1.5 flex items-center gap-1.5 text-[11px] text-slate-400 ${isSelfSide ? "justify-end" : ""}`}>
+                  <span>{message.createdAt}</span>
+                  {onForkFromMessage ? (
+                    <button
+                      type="button"
+                      className="text-[11px] text-blue-500 underline-offset-2 hover:underline"
+                      aria-label="从此开始模拟"
+                      onClick={() => onForkFromMessage(index)}
+                    >
+                      从此开始模拟
+                    </button>
+                  ) : null}
+                </div>
                 <div className={`group rounded-2xl px-3 py-2.5 text-sm leading-relaxed [overflow-wrap:anywhere] sm:px-4 ${message.role === "seller" ? "rounded-tr-sm bg-blue-50" : isSystem ? "bg-slate-100 text-slate-600" : "rounded-tl-sm border border-slate-100 bg-white"}`}>
                   {card ? (
                     <BusinessCardView card={card} compact onClick={() => onOpenCard(card.id)} />

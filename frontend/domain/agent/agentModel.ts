@@ -99,6 +99,7 @@ export function agentPresetToDbPreset(preset: AgentPreset, revision?: AgentSaveO
     intelevel: normalizeAgentLevel(preset.level),
     tools: normalizeAgentTools(preset.tools),
     enabled: preset.enabled,
+    requires_tool: Boolean(preset.requiresTool),
     updated_at: preset.updated_at,
     category: preset.category,
     revision_note: revision?.revisionNote,
@@ -109,6 +110,7 @@ export function isSystemAgentModified(agent: AgentConfig, definition: SystemAgen
   if (!definition) return false;
   return (agent.prompt ?? "") !== definition.prompt
     || (agent.level ?? 0) !== definition.intelevel
+    || Boolean(agent.requiresTool) !== Boolean(definition.requires_tool)
     || JSON.stringify(normalizeAgentTools(agent.capabilities)) !== JSON.stringify(normalizeAgentTools(definition.tools));
 }
 
@@ -122,6 +124,7 @@ export function dbPresetToAgentPreset(input: DbAgentPreset, current?: AgentPrese
     prompt: input.prompt,
     level: normalizeAgentLevel(input.intelevel),
     tools: normalizeAgentTools(input.tools),
+    requiresTool: Boolean(input.requires_tool),
     updated_at: updatedAt,
   };
 }
@@ -139,6 +142,7 @@ export function agentPresetToConfig(preset: AgentPreset): AgentConfig {
     prompt: preset.prompt,
     level: normalizeAgentLevel(preset.level),
     apid: id,
+    requiresTool: Boolean(preset.requiresTool),
   };
 }
 
@@ -157,6 +161,7 @@ export function normalizeAgentEditValues(values: AgentEditValues) {
     prompt,
     level: normalizeAgentLevel(numberValue(values.level)),
     capabilities: normalizeAgentTools(values.capabilities),
+    requiresTool: Boolean(values.requiresTool),
   };
 }
 
@@ -171,6 +176,7 @@ export function agentConfigToPreset(agent: AgentConfig, values: AgentEditValues,
     prompt: normalized.prompt,
     level: normalized.level,
     tools: normalized.capabilities,
+    requiresTool: normalized.requiresTool,
     updated_at: updatedAt,
   };
 }
@@ -186,6 +192,7 @@ export function createRegularAgentPreset(values: AgentEditValues, updatedAt: str
     prompt: normalized.prompt,
     level: normalized.level,
     tools: normalized.capabilities,
+    requiresTool: normalized.requiresTool,
     updated_at: updatedAt,
   };
 }

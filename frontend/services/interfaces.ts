@@ -1,5 +1,5 @@
-import type { AgentConsoleState, AgentPresetRevision, AgentTestInput, AgentTestResult, AgentTestSession, DbAgentPreset, DocumentLlmConfig, SystemAgentDefinition } from "@/types/agent";
-import type { AssistantSuggestion, ConversationAnalysis, ConversationDetail } from "@/types/chatCanonical";
+import type { AgentConsoleState, AgentPresetRevision, AgentTestInput, AgentTestResult, AgentTestSession, AgentToolDefinition, DbAgentPreset, DocumentLlmConfig, ForkAgentSessionInput, SystemAgentDefinition } from "@/types/agent";
+import type { AssistantSuggestionResult, ConversationAnalysis, ConversationDetail } from "@/types/chatCanonical";
 import type { ConversationPage, ConversationQuery, InboxOverview, InboxSettings, ReadReceipt } from "@/types/inbox";
 import type { ExportConversationsInput, ExportConversationsResult, OutboxTask, RequestTranslationsInput, RequestTranslationsResult, TranslationQueryInput, TranslationQueryResult, TranslationJobSnapshot, SendMessageInput, SendMessageResult, ConversationRevision } from "@/types/chatOperations";
 import type { PortraitBatchInput, PortraitBatchResult, PortraitExportInput, PortraitExportResult, PortraitOperationEntry, PortraitTag } from "@/types/portrait";
@@ -33,7 +33,7 @@ export interface OperationsBackend {
   // Pure read of committed revision and sync status, including stale archives.
   getConversationRevision(): Promise<ConversationRevision>;
   getConversation(id: string): Promise<ConversationDetail>;
-  getAssistantSuggestions(conversationId: string): Promise<AssistantSuggestion[]>;
+  getAssistantSuggestions(conversationId: string): Promise<AssistantSuggestionResult>;
   analyzeConversation(conversationId: string): Promise<ConversationAnalysis>;
   sendMessage(input: SendMessageInput): Promise<SendMessageResult>;
   listOutbox(conversationId: string): Promise<OutboxTask[]>;
@@ -71,6 +71,7 @@ export interface OperationsBackend {
   clearAliKey(aliId: string, epoch: AccountEpoch): Promise<AliIdList>;
 
   getAgentConsole(): Promise<AgentConsoleState>;
+  listAgentTools(): Promise<AgentToolDefinition[]>;
   saveLlmConfig(input: DocumentLlmConfig): Promise<DocumentLlmConfig>;
   saveAgentPreset(input: DbAgentPreset): Promise<DbAgentPreset>;
   deleteAgentPreset(id: string): Promise<boolean>;
@@ -79,8 +80,10 @@ export interface OperationsBackend {
   listAgentPresetRevisions(apid: string, limit?: number): Promise<AgentPresetRevision[]>;
   runAgentTest(input: AgentTestInput): Promise<AgentTestResult>;
   listAgentTestHistory(): Promise<AgentTestSession[]>;
+  getAgentSession(id: string): Promise<{ session: AgentTestSession; frozenInput: string }>;
+  forkAgentSession(input: ForkAgentSessionInput): Promise<AgentTestSession>;
   undoAgentTestSession(id: string): Promise<AgentTestSession>;
   regenerateAgentTestSessionReply(id: string): Promise<AgentTestSession>;
   deleteAgentTestSession(id: string): Promise<void>;
-  branchAgentTestSession(id: string): Promise<AgentTestSession>;
+  branchAgentTestSession(id: string, messageIndex?: number): Promise<AgentTestSession>;
 }

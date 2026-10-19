@@ -20,9 +20,12 @@ from backend.app.shared.backend.account_context import AccountContext, get_accou
 from backend.app.shared.backend.outbox_service import get_outbox_service
 from backend.app.shared.backend.gui_session import capture_gui_session, run_guarded
 from backend.app.shared.agent.inputs import build_analysis_input
-from backend.app.shared.agent.runner import run_chat_tool_agent
-from backend.app.shared.agent.suggestions import generate_reply_suggestions
-from backend.app.shared.agent.system_agents import CHAT_CUSTOMER_STAGE_AGENT_APID
+from backend.app.shared.agent.reply_tool import ReplyScope
+from backend.app.shared.agent.runner import AgentRunError, run_chat_tool_agent
+from backend.app.shared.agent.suggestions import NoReplyIntentError, generate_reply_suggestions
+from backend.app.shared.agent.system_agents import CHAT_CUSTOMER_STAGE_AGENT_APID, CHAT_REPLY_SUGGESTION_AGENT_APID
+from backend.app.shared.crm.intent_store import IntentStore, STATUS_REQUESTED
+from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.backend.maafw_runner import goto_contact
 from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
 from backend.app.shared.cards import card_view
@@ -55,7 +58,6 @@ from backend.app.task_queue import TaskStatus, get_task_queue
 router = APIRouter(route_class=AccountRoute)
 
 _STAGE_TASK = "分析客户当前所处成交阶段，并给出下一步推进建议。"
-_TONE_CYCLE = ("formal", "friendly", "urgent")
 _SCORE_RE = re.compile(r"(\d+(?:\.\d+)?)")
 
 
@@ -159,6 +161,8 @@ class SendMessageInput(BaseModel):
     content: str = Field(min_length=1)
     action: Literal["send", "test"]
     idempotency_key: str = Field(min_length=1, max_length=128, pattern=r"\S")
+    # The reply intent this submission accepts; optional for hand-typed messages.
+    intent_id: str | None = Field(default=None, max_length=64)
 
 
 class ExportConversationsInput(BaseModel):
@@ -607,11 +611,51 @@ def send_message(conversation_id: int, body: SendMessageInput) -> dict:
     if not login_id:
         raise AppError("联系人缺少 login_id，无法安全跳转客户端", status_code=503)
 
+    intent = None
+    if body.intent_id:
+        intent = _accepted_intent(context, body.intent_id, conversation_id)
+
     task = get_outbox_service().submit(
         context, conversation_id, conv.contact_ali_id, login_id,
         content, body.action, body.idempotency_key,
+        intent_id=intent["id"] if intent is not None else None,
     )
+    # The outbox row exists now; accepting the intent is a separate, atomic mark.
+    if intent is not None:
+        _mark_intent_accepted(context, intent["id"], task["id"])
     return ok({"outbox": public_task(task)})
+
+
+def _accepted_intent(context: AccountContext, intent_id: str, conversation_id: int) -> dict:
+    """Load and validate the intent a submission accepts.
+
+    A rejected intent must not block a manual send: the merchant may simply type
+    the reply themselves. The load failure is reported only when the intent is
+    not the current account's or no longer requestable.
+    """
+    store = IntentStore()
+    intent = store.get(intent_id, seller=context.self_ali_id, data_dir=context.data_dir)
+    if intent is None:
+        raise AppError("回复意图不存在或不属于当前账号", status_code=404)
+    if intent["conversation_id"] not in (None, conversation_id):
+        raise AppError("回复意图与当前会话不一致", status_code=409)
+    if intent["status"] != STATUS_REQUESTED:
+        raise AppError("该回复已被采纳或丢弃，请重新生成建议", status_code=409)
+    return intent
+
+
+def _mark_intent_accepted(context: AccountContext, intent_id: str, outbox_id: str) -> None:
+    try:
+        IntentStore().transition(
+            intent_id, "accepted", seller=context.self_ali_id, data_dir=context.data_dir,
+        )
+    except Exception as exc:
+        # The outbox task is the durable record. A failed mark must be visible
+        # without pretending the send was not queued.
+        log_event(
+            "agent.intent_accept_failed", outbox_id=outbox_id,
+            intent_id=intent_id, error_type=type(exc).__name__,
+        )
 
 
 @router.get("/api/conversations/{conversation_id}/suggestions")
@@ -620,25 +664,39 @@ def suggestions(conversation_id: int) -> dict:
     conv = _scoped_conversation(store, context, conversation_id, CRMAdapter())
     if conv is None:
         raise AppError("会话不存在", status_code=404)
+    transcript = transcript_markdown(
+        conv.messages, resolver=CrmResolver(context.self_ali_id), options=AGENT_OPTIONS, limit=None,
+    )
+    # Prior replies feed the prompt so the model does not repeat them, and the
+    # returned batch is sent as one group when the merchant accepts one.
+    prior = IntentStore().list_conversation(
+        conversation_id, seller=context.self_ali_id, data_dir=context.data_dir, limit=6,
+    )
+    scope = ReplyScope(
+        seller=context.self_ali_id,
+        data_dir=context.data_dir,
+        apid=CHAT_REPLY_SUGGESTION_AGENT_APID,
+        agent_name="建议",
+        conversation_id=conversation_id,
+        prior_replies=tuple(str(item["reply"]) for item in prior),
+    )
     try:
-        transcript = transcript_markdown(conv.messages, resolver=CrmResolver(context.self_ali_id), options=AGENT_OPTIONS)
-        result = generate_reply_suggestions(transcript)
+        result = generate_reply_suggestions(transcript, scope=scope)
+    except NoReplyIntentError as exc:
+        raise AppError(str(exc), status_code=409)
+    except AgentRunError as exc:
+        raise AppError(exc.message, status_code=exc.status_code)
     except AppError:
         raise
     except Exception:
         logger.exception("request failed")
         return api_error("服务器内部错误", status_code=500)
-    items = [
-        {
-            "id": f"sug-{index}",
-            "title": item.zh[:16] if len(item.zh) > 16 else item.zh,
-            "content": item.reply,
-            "tone": _TONE_CYCLE[index % len(_TONE_CYCLE)],
-            "zh": item.zh,
-        }
-        for index, item in enumerate(result.items[:3])
-    ]
-    return ok(items)
+    return ok({
+        "items": [item.to_payload(index) for index, item in enumerate(result.suggestions[:3])],
+        "batchId": result.batch_id,
+        "reasoning": result.reasoning,
+        "restricted": result.restricted,
+    })
 
 
 @router.get("/api/conversations/{conversation_id}/analysis")
@@ -650,6 +708,8 @@ def analysis(conversation_id: int) -> dict:
     try:
         transcript = transcript_markdown(conv.messages, resolver=CrmResolver(context.self_ali_id), options=AGENT_OPTIONS)
         raw = run_chat_tool_agent(CHAT_CUSTOMER_STAGE_AGENT_APID, build_analysis_input(task=_STAGE_TASK, transcript=transcript))
+    except AgentRunError as exc:
+        raise AppError(exc.message, status_code=exc.status_code)
     except AppError:
         raise
     except Exception:
