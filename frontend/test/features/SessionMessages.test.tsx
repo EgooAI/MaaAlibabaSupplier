@@ -161,6 +161,56 @@ describe("SessionMessages", () => {
     expect(container.textContent).toContain("已采纳");
   });
 
+  it("renders a cached product lookup instead of raw JSON", async () => {
+    const lookup: AgentTestSession = {
+      ...session,
+      messages: [{
+        id: "m11", role: "assistant", content: "", createdAt: "",
+        toolCalls: [{
+          callId: "c1", name: "query_product", ok: true,
+          arguments: { product_id: "1601713005360", keywords: "" },
+          content: {
+            total: 1, returned: 1,
+            items: [{
+              product_id: "1601713005360", card_id: "1601713005360",
+              title: "Camping Wagon", price: "$12.90-16.80", moq: "1Unit",
+              expired: false, url: "https://example.test/p/1",
+            }],
+            coverage: "只覆盖本机已收到的商品卡片，不是完整商品目录；没有结果不代表商品不存在。",
+          },
+        }],
+      }],
+    };
+    await act(async () => {
+      root.render(<SessionMessages session={lookup} />);
+    });
+
+    const card = container.querySelector("button[aria-expanded]");
+    act(() => card?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(container.textContent).toContain("Camping Wagon");
+    expect(container.textContent).toContain("MOQ 1Unit");
+    expect(container.textContent).toContain("不是完整商品目录");
+    expect(container.textContent).not.toContain('"product_id"');
+  });
+
+  it("marks a truncated result with its original size", async () => {
+    const truncated: AgentTestSession = {
+      ...session,
+      messages: [{
+        id: "m12", role: "assistant", content: "", createdAt: "",
+        toolCalls: [{
+          callId: "c1", name: "crm_lookup", arguments: { q: "a" }, ok: true,
+          content: "x".repeat(40), originalChars: 9000,
+        }],
+      }],
+    };
+    await act(async () => {
+      root.render(<SessionMessages session={truncated} />);
+    });
+
+    expect(container.textContent).toContain("已截断");
+  });
+
   it("shows the fork notice and only cards when the final text is empty", async () => {
     const cardsOnly: AgentTestSession = {
       ...session,

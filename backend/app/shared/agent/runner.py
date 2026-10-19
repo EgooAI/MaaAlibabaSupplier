@@ -80,10 +80,16 @@ def register_business_tools() -> list[str]:
     ensure_sdk_path()
     from agent_pipeline.registry import register_tool
 
+    from backend.app.shared.agent.product_tool import (
+        TOOL_NAME as PRODUCT_TOOL_NAME,
+        TOOL_SPEC as PRODUCT_TOOL_SPEC,
+        query_product,
+    )
     from backend.app.shared.agent.reply_tool import TOOL_NAME, TOOL_SPEC, reply_customer
 
     register_tool(TOOL_NAME, reply_customer, spec=TOOL_SPEC)
-    return [TOOL_NAME]
+    register_tool(PRODUCT_TOOL_NAME, query_product, spec=PRODUCT_TOOL_SPEC)
+    return [TOOL_NAME, PRODUCT_TOOL_NAME]
 
 
 def agent_role(apid: str) -> str:
@@ -256,7 +262,7 @@ def _dispatch_intents(
 
 
 def _record_payload(record) -> dict[str, Any]:
-    return {
+    payload = {
         "callId": record.call_id,
         "name": record.name,
         "arguments": record.arguments,
@@ -266,6 +272,9 @@ def _record_payload(record) -> dict[str, Any]:
         "durationMs": round(record.duration_ms, 1),
         "round": record.round,
     }
+    if record.original_chars is not None:
+        payload["originalChars"] = record.original_chars
+    return payload
 
 
 def _usage_payload(usage) -> dict[str, Any]:

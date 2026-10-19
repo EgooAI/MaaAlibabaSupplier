@@ -122,6 +122,8 @@ export interface AgentToolCallRecord {
   error?: string | null;
   durationMs?: number;
   round?: number;
+  /** Set when a read result was cut to the executor's size limit. */
+  originalChars?: number | null;
 }
 
 export interface AgentTurnIntent {

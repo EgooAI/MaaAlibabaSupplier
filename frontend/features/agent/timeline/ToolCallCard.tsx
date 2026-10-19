@@ -4,6 +4,7 @@ import { CopyOutlined, DownOutlined, MessageOutlined, UpOutlined } from "@ant-de
 import { Button, Space, Tag, Tooltip, Typography } from "antd";
 import { useState } from "react";
 import { renderContentHtml } from "@/domain/render/markdown";
+import type { AgentToolCallRecord } from "@/types/agent";
 import { toolRendererOf, type ToolRendererProps } from "./toolRenderers";
 
 /** One tool call: name, status, timing, argument summary and a collapsible result. */
@@ -33,6 +34,11 @@ export function ToolCallCard({ call, simulated, intent }: ToolRendererProps) {
             ) : null}
             {typeof call.durationMs === "number" ? (
               <Typography.Text type="secondary" className="text-[11px]">{Math.round(call.durationMs)} ms</Typography.Text>
+            ) : null}
+            {typeof call.originalChars === "number" ? (
+              <Tooltip title={`结果已截断，原始长度 ${call.originalChars} 字符`}>
+                <Tag color="orange">已截断</Tag>
+              </Tooltip>
             ) : null}
             {call.round ? <Typography.Text type="secondary" className="text-[11px]">第 {call.round} 轮</Typography.Text> : null}
           </span>
@@ -106,6 +112,64 @@ export function ReplyCustomerResult({ call, simulated, intent }: ToolRendererPro
           <span className="whitespace-pre-wrap break-words">{zh}</span>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * ``query_product`` renders the cached card summaries instead of raw JSON: each
+ * hit shows title, price, MOQ and a link, plus the coverage note the tool always
+ * returns so a miss is not read as "the product does not exist".
+ */
+export function ProductQueryResult({ call }: { call: AgentToolCallRecord }) {
+  const payload = (call.content && typeof call.content === "object" ? call.content : {}) as {
+    total?: number;
+    returned?: number;
+    items?: Array<Record<string, unknown>>;
+    coverage?: string;
+  };
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const coverage = typeof payload.coverage === "string" ? payload.coverage : "";
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-2">
+      <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+        <span>命中 {payload.total ?? items.length} 条</span>
+        {typeof payload.returned === "number" && payload.returned < (payload.total ?? 0) ? (
+          <Tag color="blue">已显示前 {payload.returned} 条</Tag>
+        ) : null}
+      </div>
+      {items.length ? (
+        <ul className="flex flex-col gap-2">
+          {items.map((item, index) => {
+            const title = typeof item.title === "string" ? item.title : "(未命名商品)";
+            const productId = typeof item.product_id === "string" ? item.product_id : "";
+            const price = typeof item.price === "string" ? item.price : "";
+            const moq = typeof item.moq === "string" ? item.moq : "";
+            const url = typeof item.url === "string" ? item.url : "";
+            return (
+              <li key={`${productId || title}-${index}`} className="border-t border-slate-100 pt-1 first:border-0 first:pt-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Typography.Text strong className="text-xs">{title}</Typography.Text>
+                  {item.expired === true ? <Tag color="default">已下架</Tag> : null}
+                </div>
+                <div className="mt-0.5 flex flex-wrap gap-x-3 text-[11px] text-slate-500">
+                  {price ? <span>{price}</span> : null}
+                  {moq ? <span>MOQ {moq}</span> : null}
+                  {productId ? <span>ID {productId}</span> : null}
+                </div>
+                {url ? (
+                  <a className="text-[11px]" href={url} target="_blank" rel="noopener noreferrer">
+                    查看商品
+                  </a>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <Typography.Text type="secondary" className="text-xs">没有匹配的已缓存商品。</Typography.Text>
+      )}
+      {coverage ? <div className="mt-2 text-[11px] text-slate-400">{coverage}</div> : null}
     </div>
   );
 }

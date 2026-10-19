@@ -392,6 +392,11 @@ class ProductCardPool(_DictPool[ProductCard]):
                     return card
             return None
 
+    def list_cards(self) -> list[ProductCard]:
+        """Snapshot of every cached card, for read-only lookups by a caller."""
+        with self._lock:
+            return list(self._data.values())
+
 
 def get_product_card_pool() -> ProductCardPool:
     return ProductCardPool()
