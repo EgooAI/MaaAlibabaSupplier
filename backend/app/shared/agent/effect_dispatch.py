@@ -12,7 +12,7 @@ from typing import Any
 
 from agent_pipeline.types import EffectIntent
 
-from backend.app.shared.agent.reply_tool import INTENT_KIND, ReplyScope
+from backend.app.shared.agent.reply_tool import INTENT_KIND, TONE_VALUES, ReplyScope, validate_reply
 from backend.app.shared.crm.intent_store import (
     MODE_LIVE,
     MODE_SIMULATED,
@@ -114,18 +114,18 @@ class IntentDispatcher:
         return result
 
     @staticmethod
-    def _scope_of(intent: EffectIntent) -> Any:
-        return intent.content.get("scope")
-
-    @staticmethod
     def _reply_payload(intent: EffectIntent, scope: ReplyScope) -> dict[str, Any]:
         reply = str(intent.content.get("reply") or "").strip()
-        if not reply:
-            raise ValueError("回复内容为空")
+        reason = validate_reply(reply, prior_replies=())
+        if reason is not None:
+            raise ValueError(reason)
+        tone = str(intent.content.get("tone") or "formal").strip().lower()
+        if tone not in TONE_VALUES:
+            raise ValueError(f"tone 只能是 {'、'.join(TONE_VALUES)} 之一。")
         return {
             "reply": reply,
             "zh": str(intent.content.get("zh") or "").strip() or reply,
-            "tone": str(intent.content.get("tone") or "formal"),
+            "tone": tone,
             "conversationId": scope.conversation_id,
             "apid": scope.apid,
             "agentName": scope.agent_name,

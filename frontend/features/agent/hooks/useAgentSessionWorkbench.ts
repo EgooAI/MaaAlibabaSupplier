@@ -25,10 +25,11 @@ export function useAgentSessionWorkbench() {
 
   useEffect(() => {
     let mounted = true;
-    Promise.all([backend.getAgentConsole(), backend.listAgentTestHistory()])
-      .then(([consoleState, history]) => {
+    backend.getAgentConsole()
+      .then(async (consoleState) => {
         if (!mounted) return;
         const regularAgents = filterAgentsByCategory(consoleState.agents, "regular");
+        const history = consoleState.history ?? await backend.listAgentTestHistory();
         const regularSessions = filterAgentTestSessionsByCategory(history, consoleState.agents, "regular");
         setAgents(regularAgents);
         setSessions(regularSessions);

@@ -79,6 +79,17 @@ describe("http adapter contract", () => {
     expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([75000, 75000, 75000, 75000, 8000, 8000]);
   });
 
+  it("binds Agent requests to the current account epoch", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ code: 0, msg: "ok", data: { agents: [], history: [] } }),
+      { headers: { "X-Account-Epoch": "mock-1" } },
+    ));
+
+    await httpBackend.getAgentConsole();
+
+    expect(new Headers(vi.mocked(fetch).mock.calls[0][1]?.headers).get("X-Account-Epoch")).toBe("mock-1");
+  });
+
   it("sends authenticated update requests with exact payloads and no account epoch", async () => {
     accountSession.invalidate();
     const data = { supported: false, phase: "idle", reason: "source build" };

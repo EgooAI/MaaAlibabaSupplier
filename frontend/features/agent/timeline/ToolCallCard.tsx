@@ -7,7 +7,7 @@ import { renderContentHtml } from "@/domain/render/markdown";
 import { toolRendererOf, type ToolRendererProps } from "./toolRenderers";
 
 /** One tool call: name, status, timing, argument summary and a collapsible result. */
-export function ToolCallCard({ call, simulated }: ToolRendererProps) {
+export function ToolCallCard({ call, simulated, intent }: ToolRendererProps) {
   // Failures start open so the reason is visible without a click; a successful
   // call starts collapsed. The user's toggle wins after the first interaction.
   const [open, setOpen] = useState(!call.ok);
@@ -28,6 +28,9 @@ export function ToolCallCard({ call, simulated }: ToolRendererProps) {
             <Typography.Text strong className="text-xs">{call.name}</Typography.Text>
             <Tag color={call.ok ? "green" : "red"}>{call.ok ? "成功" : "失败"}</Tag>
             {simulated ? <Tag color="gold">模拟</Tag> : null}
+            {intent && !simulated ? (
+              <Tag color={intentColor(intent.status)}>{intentLabel(intent.status, false)}</Tag>
+            ) : null}
             {typeof call.durationMs === "number" ? (
               <Typography.Text type="secondary" className="text-[11px]">{Math.round(call.durationMs)} ms</Typography.Text>
             ) : null}
@@ -50,7 +53,7 @@ export function ToolCallCard({ call, simulated }: ToolRendererProps) {
             </div>
             {call.ok ? (
               renderer ? (
-                renderer.render({ call, simulated })
+                renderer.render({ call, simulated, intent })
               ) : (
                 <pre className="max-h-60 overflow-auto rounded bg-white p-2 text-[11px] leading-relaxed text-slate-600">
                   {formatValue(call.content)}
@@ -70,7 +73,7 @@ export function ToolCallCard({ call, simulated }: ToolRendererProps) {
  * ``reply_customer`` renders as the customer-facing bubble it proposes, not as
  * raw parameters: the reply body first, the Chinese reference under it.
  */
-export function ReplyCustomerResult({ call, simulated }: ToolRendererProps) {
+export function ReplyCustomerResult({ call, simulated, intent }: ToolRendererProps) {
   const args = call.arguments ?? {};
   const reply = typeof args.reply === "string" ? args.reply : "";
   const zh = typeof args.zh === "string" ? args.zh : "";
@@ -84,7 +87,7 @@ export function ReplyCustomerResult({ call, simulated }: ToolRendererProps) {
   return (
     <div className="rounded-xl border border-blue-100 bg-white p-3">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <Tag color={simulated ? "gold" : "blue"}>{simulated ? "模拟" : "待确认"}</Tag>
+        <Tag color={simulated ? "gold" : intentColor(intent?.status)}>{intentLabel(intent?.status, simulated)}</Tag>
         {tone ? <Tag>{tone}</Tag> : null}
         <Tooltip title="复制回复正文">
           <Button
@@ -105,6 +108,19 @@ export function ReplyCustomerResult({ call, simulated }: ToolRendererProps) {
       ) : null}
     </div>
   );
+}
+
+function intentLabel(status: string | undefined, simulated: boolean): string {
+  if (simulated) return "模拟";
+  if (status === "accepted") return "已采纳";
+  if (status === "discarded") return "已丢弃";
+  return "待确认";
+}
+
+function intentColor(status: string | undefined): string {
+  if (status === "accepted") return "green";
+  if (status === "discarded") return "default";
+  return "blue";
 }
 
 function formatValue(value: unknown): string {

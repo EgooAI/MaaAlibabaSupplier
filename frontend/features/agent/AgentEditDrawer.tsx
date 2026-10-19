@@ -144,7 +144,10 @@ function AgentEditDrawerBody({ agent, category, systemAgents, tools, llmLevels, 
   }
 
   function handleFinish(formValues: AgentEditValues) {
-    onSave(formValues, revisionRef.current);
+    onSave({
+      ...formValues,
+      requiresTool: Boolean(formValues.requiresTool && (formValues.capabilities ?? []).length),
+    }, revisionRef.current);
   }
 
   const promptTab = (
@@ -227,7 +230,7 @@ function AgentEditDrawerBody({ agent, category, systemAgents, tools, llmLevels, 
             className="md:col-span-2"
             extra="开启后，模型必须至少调用一次工具；达到调用上限时会强制收尾，并保留已发生的调用记录。"
           >
-            <Switch disabled={(draft.capabilities ?? []).length === 0} />
+            <Switch disabled={(draft.capabilities ?? []).length === 0 && !draft.requiresTool} />
           </Form.Item>
           {staleTools.length > 0 ? (
             <Alert

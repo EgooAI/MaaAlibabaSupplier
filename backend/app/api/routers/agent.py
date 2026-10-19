@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from agent_pipeline.tools import ToolContext
 
 from backend.app.api.envelope import AppError, api_error, ok
+from backend.app.api.account_scope import AccountRoute
 from backend.app.shared.agent.chat_history_content import (
     SCHEMA_VERSION,
     ChatHistoryContent,
@@ -58,7 +59,7 @@ from backend.app.shared.crm.sdk import (
 )
 from backend.app.shared.crm.views import format_created_at
 
-router = APIRouter()
+router = APIRouter(route_class=AccountRoute)
 
 MAX_FROZEN_INPUT_CHARS = 60_000
 
@@ -1142,6 +1143,8 @@ def get_session(session_id: str) -> dict:
         raise AppError("会话不存在", status_code=404)
     raw = hist.content if isinstance(hist.content, dict) else {}
     content = load_history_content(raw)
+    if content.session_type not in ("fork", "playground"):
+        raise AppError("模拟会话不存在", status_code=404)
     return ok({
         "session": session,
         "frozenInput": content.source.frozen_input if content.source is not None else "",

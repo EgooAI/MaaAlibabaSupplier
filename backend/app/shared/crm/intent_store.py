@@ -20,6 +20,7 @@ import time
 from contextlib import closing, contextmanager
 from collections.abc import Iterable, Iterator
 from pathlib import Path
+from threading import Lock
 from uuid import uuid4
 
 from backend.app.shared.crm.paths import default_crm_database_path
@@ -40,6 +41,9 @@ TRANSITIONS = {
     STATUS_DISCARDED: frozenset(),
     STATUS_SIMULATED: frozenset(),
 }
+
+_INITIALIZATION_LOCK = Lock()
+_INITIALIZED_DATABASES: set[Path] = set()
 
 
 class IntentConflict(RuntimeError):
@@ -85,38 +89,42 @@ class IntentStore:
 
     def initialize(self) -> None:
         """Create only the app-owned intent table; reads never initialize."""
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        statuses = ",".join(f"'{status}'" for status in sorted(STATUSES))
-        modes = ",".join(f"'{mode}'" for mode in sorted(MODES))
-        with self._connection(write=True, create=True) as conn:
-            conn.execute(f"""
-                CREATE TABLE IF NOT EXISTS app_agent_intent (
-                    id TEXT PRIMARY KEY,
-                    seller TEXT NOT NULL,
-                    data_dir TEXT NOT NULL,
-                    apid TEXT NOT NULL,
-                    agent_name TEXT NOT NULL,
-                    revision_id INTEGER,
-                    conversation_id INTEGER,
-                    batch_id TEXT NOT NULL,
-                    mode TEXT NOT NULL CHECK(mode IN ({modes})),
-                    reply TEXT NOT NULL,
-                    zh TEXT NOT NULL,
-                    tone TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK(status IN ({statuses})),
-                    call_id TEXT,
-                    created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL
+        with _INITIALIZATION_LOCK:
+            if self.database_path in _INITIALIZED_DATABASES:
+                return
+            self.database_path.parent.mkdir(parents=True, exist_ok=True)
+            statuses = ",".join(f"'{status}'" for status in sorted(STATUSES))
+            modes = ",".join(f"'{mode}'" for mode in sorted(MODES))
+            with self._connection(write=True, create=True) as conn:
+                conn.execute(f"""
+                    CREATE TABLE IF NOT EXISTS app_agent_intent (
+                        id TEXT PRIMARY KEY,
+                        seller TEXT NOT NULL,
+                        data_dir TEXT NOT NULL,
+                        apid TEXT NOT NULL,
+                        agent_name TEXT NOT NULL,
+                        revision_id INTEGER,
+                        conversation_id INTEGER,
+                        batch_id TEXT NOT NULL,
+                        mode TEXT NOT NULL CHECK(mode IN ({modes})),
+                        reply TEXT NOT NULL,
+                        zh TEXT NOT NULL,
+                        tone TEXT NOT NULL,
+                        status TEXT NOT NULL CHECK(status IN ({statuses})),
+                        call_id TEXT,
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL
+                    )
+                """)
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS app_agent_intent_batch ON app_agent_intent "
+                    "(seller, data_dir, batch_id)"
                 )
-            """)
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS app_agent_intent_batch ON app_agent_intent "
-                "(seller, data_dir, batch_id)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS app_agent_intent_conversation ON app_agent_intent "
-                "(seller, data_dir, conversation_id, created_at)"
-            )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS app_agent_intent_conversation ON app_agent_intent "
+                    "(seller, data_dir, conversation_id, created_at)"
+                )
+            _INITIALIZED_DATABASES.add(self.database_path)
 
     def _read(self, sql: str, parameters: tuple) -> list[sqlite3.Row]:
         if not self.database_path.is_file():

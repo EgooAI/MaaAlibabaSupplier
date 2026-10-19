@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
-import type { AgentToolCallRecord } from "@/types/agent";
+import type { AgentToolCallRecord, AgentTurnIntent } from "@/types/agent";
 
 export type ToolRendererProps = {
   call: AgentToolCallRecord;
+  intent?: AgentTurnIntent;
   /** Simulated turns never queue a send. */
   simulated: boolean;
 };

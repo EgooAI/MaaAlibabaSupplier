@@ -1,6 +1,6 @@
 "use client";
 
-import { Alert, App, Button, Drawer, Form, Radio, Select, Space, Tag, Typography } from "antd";
+import { Alert, App, Button, Drawer, Form, Select, Space, Tag, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { backend } from "@/services/client";
@@ -9,7 +9,6 @@ import type { ConversationDetail } from "@/types/chatCanonical";
 
 type ForkValues = {
   agentId?: string;
-  versionKind?: "preset" | "draft";
   revisionId?: number | null;
 };
 
@@ -37,7 +36,6 @@ export function ForkSessionDrawer({
   const [error, setError] = useState<string>();
 
   const agentId = Form.useWatch("agentId", form);
-  const versionKind = Form.useWatch("versionKind", form);
   const revisions = useMemo(() => (agentId ? revisionsByAgent[agentId] ?? [] : []), [agentId, revisionsByAgent]);
 
   useEffect(() => {
@@ -71,7 +69,6 @@ export function ForkSessionDrawer({
         agentId: String(values.agentId),
         conversationId: Number(conversation.id),
         messageIndex,
-        versionKind: values.versionKind ?? "preset",
         revisionId: values.revisionId ?? null,
       });
       onClose();
@@ -98,10 +95,10 @@ export function ForkSessionDrawer({
         if (!visible) return;
         // Reset per opening here instead of in an effect body.
         setError(undefined);
-        form.setFieldsValue({ agentId: undefined, versionKind: "preset", revisionId: null });
+         form.setFieldsValue({ agentId: undefined, revisionId: null });
       }}
     >
-      <Form form={form} layout="vertical" initialValues={{ versionKind: "preset" }} onFinish={submit}>
+       <Form form={form} layout="vertical" onFinish={submit}>
         <Typography.Paragraph type="secondary">
           选中的对话会按正式运行时的 Markdown 投影冻结为输入；之后在这个模拟会话里扮演买家继续对话，不会发送给客户。
         </Typography.Paragraph>
@@ -113,24 +110,16 @@ export function ForkSessionDrawer({
             onChange={() => form.setFieldsValue({ revisionId: null })}
           />
         </Form.Item>
-        <Form.Item name="versionKind" label="版本">
-          <Radio.Group options={[
-            { label: "已保存版本", value: "preset" },
-            { label: "未保存草稿", value: "draft" },
-          ]} />
+        <Form.Item name="revisionId" label="历史版本" extra="留空表示使用当前保存的配置。">
+          <Select
+            allowClear
+            placeholder="当前保存的配置"
+            options={revisions.map((revision) => ({
+              value: revision.id,
+              label: `${revision.created_at} · ${revision.prompt.slice(0, 24)}`,
+            }))}
+          />
         </Form.Item>
-        {versionKind === "preset" ? (
-          <Form.Item name="revisionId" label="历史版本" extra="留空表示使用当前保存的配置。">
-            <Select
-              allowClear
-              placeholder="当前保存的配置"
-              options={revisions.map((revision) => ({
-                value: revision.id,
-                label: `${revision.created_at} · ${revision.prompt.slice(0, 24)}`,
-              }))}
-            />
-          </Form.Item>
-        ) : null}
         {preview ? (
           <div className="mb-3 rounded border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
             <Space size={4} className="mb-1">

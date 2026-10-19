@@ -27,19 +27,24 @@ export function ToolCallTimeline({ message }: { message: AgentTestMessage }) {
       {calls.length ? (
         <div className="flex flex-col gap-1.5">
           {calls.map((call, index) => (
-            <ToolCallCard key={call.callId ?? `${message.id}-tool-${index}`} call={call} simulated={simulated} />
+            <ToolCallCard
+              key={call.callId ?? `${message.id}-tool-${index}`}
+              call={call}
+              intent={message.intents?.find((item) => item.callId && item.callId === call.callId)}
+              simulated={simulated}
+            />
           ))}
         </div>
       ) : null}
       {text ? (
         <div className="whitespace-pre-wrap break-words text-sm" dangerouslySetInnerHTML={renderContentHtml(text, "markdown")} />
       ) : null}
-      <TurnFooter message={message} roundsLabel="LLM 轮次" />
+      <TurnFooter message={message} />
     </div>
   );
 }
 
-export function TurnFooter({ message }: { message: AgentTestMessage; roundsLabel?: string }) {
+export function TurnFooter({ message }: { message: AgentTestMessage }) {
   const parts: string[] = [];
   if (message.iterations) parts.push(`LLM ${message.iterations} 轮`);
   if (typeof message.durationMs === "number" && message.durationMs > 0) {

@@ -59,7 +59,7 @@ export function filterAgentsByCategory(agents: AgentConfig[], category: AgentCon
 
 export function filterAgentTestSessionsByCategory(sessions: AgentTestSession[], agents: AgentConfig[], category: AgentConfig["category"]) {
   const agentIds = new Set(filterAgentsByCategory(agents, category).map((agent) => agent.id));
-  return sessions.filter((session) => agentIds.has(session.agentId));
+  return sessions.filter((session) => session.type !== "fork" && session.type !== "playground" && agentIds.has(session.agentId));
 }
 
 export function canRunAgentExecution(agent: AgentConfig | undefined): agent is AgentConfig {
@@ -99,7 +99,7 @@ export function agentPresetToDbPreset(preset: AgentPreset, revision?: AgentSaveO
     intelevel: normalizeAgentLevel(preset.level),
     tools: normalizeAgentTools(preset.tools),
     enabled: preset.enabled,
-    requires_tool: Boolean(preset.requiresTool),
+    requires_tool: Boolean(preset.requiresTool && normalizeAgentTools(preset.tools).length),
     updated_at: preset.updated_at,
     category: preset.category,
     revision_note: revision?.revisionNote,

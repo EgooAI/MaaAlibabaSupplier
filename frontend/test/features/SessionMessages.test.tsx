@@ -137,6 +137,30 @@ describe("SessionMessages", () => {
     expect(container.textContent).toContain("模拟");
   });
 
+  it("shows the persisted reply intent status on a live tool card", async () => {
+    const accepted: AgentTestSession = {
+      ...session,
+      messages: [{
+        id: "m10", role: "assistant", content: "", createdAt: "", mode: "live",
+        toolCalls: [{
+          callId: "c1", name: "reply_customer", ok: true,
+          arguments: { reply: "We can ship tomorrow.", zh: "明天可以发货。", tone: "friendly" },
+        }],
+        intents: [{
+          intentId: "intent-1", kind: "reply_customer", status: "accepted", callId: "c1",
+          reply: "We can ship tomorrow.", zh: "明天可以发货。", tone: "friendly",
+        }],
+      }],
+    };
+    await act(async () => {
+      root.render(<SessionMessages session={accepted} />);
+    });
+
+    const card = container.querySelector("button[aria-expanded]");
+    act(() => card?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(container.textContent).toContain("已采纳");
+  });
+
   it("shows the fork notice and only cards when the final text is empty", async () => {
     const cardsOnly: AgentTestSession = {
       ...session,

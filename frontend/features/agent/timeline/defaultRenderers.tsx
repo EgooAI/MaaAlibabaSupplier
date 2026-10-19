@@ -10,7 +10,7 @@ registerToolRenderer("reply_customer", {
     if (!reply) return "";
     return reply.length > 60 ? `${reply.slice(0, 57)}...` : reply;
   },
-  render: ({ call, simulated }) => <ReplyCustomerResult call={call} simulated={simulated} />,
+  render: ({ call, simulated, intent }) => <ReplyCustomerResult call={call} simulated={simulated} intent={intent} />,
 });
 
 export {};

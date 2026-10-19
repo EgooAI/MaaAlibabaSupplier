@@ -96,12 +96,14 @@ def test_two_forks_from_one_message_receive_identical_frozen_input(client, archi
     context = account_context.get_account_context()
     conv = sync.CRMAdapter().get_conversation_detail(context.self_ali_id, sid)
     index = first_session["source"]["messageIndex"]
-    expected = build_reply_suggestion_input(transcript_markdown(
+    frozen = transcript_markdown(
         conv.messages[: index + 1],
         resolver=CrmResolver(context.self_ali_id), options=AGENT_OPTIONS, limit=None,
-    ))
-    assert calls[0]["user_input"].startswith(expected)
-    assert "买家追问交期" in calls[0]["user_input"]
+    )
+    expected = build_reply_suggestion_input(
+        f"{frozen}\n\n## 继续对话\n\n**User**\n\n买家追问交期"
+    )
+    assert calls[0]["user_input"] == expected
 
 
 def test_pinned_revision_changes_behaviour_but_keeps_the_frozen_prefix(client, archive, monkeypatch):
@@ -190,6 +192,17 @@ def test_fork_rejects_unknown_message_and_unscoped_agent(client, archive):
     assert _fork(client, sid, 99).status_code == 404
     assert _fork(client, 9999, 0).status_code == 404
     assert _fork(client, sid, 0, agentId="agent-missing").status_code == 404
+
+
+def test_playground_session_endpoint_rejects_regular_test_session(client):
+    hist = ChatHistory(name="regular", content=build_history_content(
+        apid="agent-test", agent_name="Test", messages=[], session_type="test",
+    ))
+    ChatHistoryManager().add_chat_history(hist)
+
+    response = client.get(f"/api/agent/sessions/{hist.id}")
+
+    assert response.status_code == 404
 
 
 def test_legacy_unscoped_session_is_adopted_on_first_write(client, archive, monkeypatch):

@@ -134,6 +134,7 @@ function useAgentWorkbenchController() {
         prompt: agent.prompt ?? "",
         level: agent.level ?? 0,
         capabilities: agent.capabilities,
+        requiresTool: agent.requiresTool,
       }, nowText());
       const saved = await backend.saveAgentPreset(agentPresetToDbPreset(preset, {
         revisionNote: `复制自 ${agent.name}`,

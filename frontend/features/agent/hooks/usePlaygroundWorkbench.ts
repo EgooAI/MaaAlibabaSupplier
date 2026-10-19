@@ -28,10 +28,11 @@ export function usePlaygroundWorkbench(initialSessionId?: string) {
 
   useEffect(() => {
     let mounted = true;
-    Promise.all([backend.getAgentConsole(), backend.listAgentTestHistory()])
-      .then(([state, history]) => {
+    backend.getAgentConsole()
+      .then(async (state) => {
         if (!mounted) return;
         setAgents(state.agents ?? []);
+        const history = state.history ?? await backend.listAgentTestHistory();
         const playground = history.filter(isPlaygroundSession);
         setSessions(playground);
         setActiveSessionId((current) => current && playground.some((item) => item.id === current)
@@ -54,6 +55,9 @@ export function usePlaygroundWorkbench(initialSessionId?: string) {
     backend.getAgentSession(activeSessionId)
       .then(({ session, frozenInput: frozen }) => {
         if (cancelled || selected !== selection.current) return;
+        if (!isPlaygroundSession(session)) {
+          throw new Error("该会话不是模拟会话，无法在 Playground 中打开");
+        }
         setActiveSession(session);
         setFrozenInput(frozen);
         setFrozenInputError(undefined);
@@ -80,6 +84,7 @@ export function usePlaygroundWorkbench(initialSessionId?: string) {
 
   async function run() {
     if (!activeSession || running) return;
+    const selected = selection.current;
     const content = draft.trim();
     if (inputMode === "buyer" && !content) return;
     setRunning(true);
@@ -91,6 +96,7 @@ export function usePlaygroundWorkbench(initialSessionId?: string) {
         sessionId: activeSession.id,
         inputMode,
       });
+      if (selected !== selection.current) return;
       replaceSession(result.session);
       setDraft("");
     } catch (caught: unknown) {
@@ -102,10 +108,13 @@ export function usePlaygroundWorkbench(initialSessionId?: string) {
 
   async function regenerate() {
     if (!activeSession || running) return;
+    const selected = selection.current;
     setRunning(true);
     setError(undefined);
     try {
-      replaceSession(await backend.regenerateAgentTestSessionReply(activeSession.id));
+      const result = await backend.regenerateAgentTestSessionReply(activeSession.id);
+      if (selected !== selection.current) return;
+      replaceSession(result);
     } catch (caught: unknown) {
       setError(operationErrorMessage(caught, "重新生成失败"));
     } finally {
@@ -115,9 +124,11 @@ export function usePlaygroundWorkbench(initialSessionId?: string) {
 
   async function forkHere(index: number) {
     if (!activeSession || running) return;
+    const selected = selection.current;
     setRunning(true);
     try {
       const copy = await backend.branchAgentTestSession(activeSession.id, index);
+      if (selected !== selection.current) return;
       setSessions((current) => [copy, ...current.filter((item) => item.id !== copy.id)]);
       setActiveSessionId(copy.id);
       message.success("已从该回合分叉");

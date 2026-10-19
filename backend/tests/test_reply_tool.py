@@ -20,6 +20,7 @@ from agent_pipeline import (
     tool_registry,
 )
 from agent_pipeline.llm import StaticLLMClient
+from agent_pipeline.types import EffectIntent
 
 from backend.app.shared.agent.effect_dispatch import IntentDispatcher
 from backend.app.shared.agent.reply_tool import (
@@ -109,6 +110,16 @@ class ReplyToolTestCase(unittest.TestCase):
         schema = build_tool_schema(reply_customer, TOOL_SPEC)
         self.assertEqual(sorted(schema["properties"]), ["reply", "tone", "zh"])
         self.assertEqual(schema["required"], ["reply", "zh"])
+
+    def test_dispatcher_revalidates_direct_intents(self) -> None:
+        intent = EffectIntent(
+            kind=INTENT_KIND,
+            content={"scope": self._scope(), "reply": "Hello", "tone": "angry"},
+        )
+
+        dispatched = IntentDispatcher().dispatch([intent], mode="simulated", batch_id="batch")
+
+        self.assertEqual(dispatched.intents, [])
 
 
 class PipelineIntentTestCase(unittest.TestCase):

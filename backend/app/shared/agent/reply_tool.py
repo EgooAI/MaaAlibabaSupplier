@@ -103,9 +103,6 @@ def reply_customer(
             "zh": reference,
             "tone": normalized_tone,
             "scope": scope,
-            # Kept for the dispatcher's own scope check; not exposed to the browser.
-            "apid": scope.apid,
-            "conversation_id": scope.conversation_id,
         },
         # Sequence numbers count the run, not the call or the round.
         sequence=ctx.next_sequence(),
