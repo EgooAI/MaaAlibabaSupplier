@@ -198,6 +198,37 @@ The response contract and initialization limits are documented in
 platform unread counts or verified delivery acknowledgements. Tests use temporary
 archives, synthetic messages and mocked model calls, not real customer data.
 
+## Agent Coverage
+
+- `test_agent_console.py` covers the console projection, preset CRUD, revision
+  restore, and the runnable guards (disabled agent, unregistered tools,
+  `requires_tool` without tools).
+- `test_agent_playground.py` covers fork fidelity (the frozen prefix equals the
+  live projection byte for byte), pinned revisions, account isolation, and the
+  rule that a playground endpoint refuses ordinary test sessions.
+- `test_agent_experiments.py` covers the experiment lifecycle: the three
+  starting points, variant caps, asynchronous runs with per-variant status,
+  cancellation, checkpoint-based retries (one buyer message per step), promote
+  to the current preset, and invisibility across accounts.
+- `test_reply_tool.py` covers the effect tool's validation (empty, duplicate,
+  count, placeholders), the dispatcher's re-validation of directly built
+  intents, and simulated runs producing no persisted rows.
+- `test_intent_store.py` covers the legal state edges, batch discard on
+  acceptance, and seller/data-directory isolation.
+- `test_chat_history_content.py` covers schema compatibility: old sessions load
+  with empty tool/intent lists, and new fields survive a save/load round trip.
+- `test_system_agent_seeding.py` covers seed idempotency and the rule that a
+  merchant-edited prompt is never overwritten.
+- SDK tests (`backend/app/crm_sdk/tests/`) cover the pipeline's call protocol,
+  cancellation boundaries, the experiment table and variant ownership. Run them
+  through the standalone verifier before claiming host compatibility.
+
+Frontend coverage lives in `frontend/test/features/`: the timeline renders one
+card per call and opens failures by default; the experiment board aligns steps
+across variants; the create modal maps editor drafts and pasted text into the
+request shape. These run against a mock adapter, so they do not establish real
+model behaviour or browser layout.
+
 ## Translation Coverage
 
 - `test_translation_agent.py` covers the LLM input shape (full-history context

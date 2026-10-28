@@ -8,7 +8,8 @@ import { nowText } from "@/domain/time";
 import { adaptConversationDetail, adaptConversationSummary } from "@/services/chatAdapter";
 import { buildSystemStatusSnapshot, taskSnapshotToTaskItem } from "@/domain/status/statusModel";
 import { SYSTEM_AGENT_APIDS, agentPresetToConfig, agentPresetToDbPreset, canRunAgentExecution, dbPresetToAgentPreset, documentToLlmLevelConfig, getLatestAgentTestTurn, normalizeAgentTools, removeLatestAgentTestTurn, replaceLatestAgentTestReply, upsertLlmLevel } from "@/domain/agent/agentModel";
-import type { AgentConsoleState, AgentPreset, AgentPresetRevision, AgentTestSession, DbAgentPreset } from "@/types/agent";
+import type { AgentConsoleState, AgentPreset, AgentPresetRevision, AgentSessionPin, AgentTestMessage, AgentTestSession, DbAgentPreset } from "@/types/agent";
+import type { CreateExperimentInput, Experiment, ExperimentSource, ExperimentSummary, ExperimentVariantInput, RunSnapshot, UpdateExperimentInput } from "@/types/experiment";
 import type { BusinessCard } from "@/types/cards";
 import type { ConversationDetail } from "@/types/chatCanonical";
 import type { ConversationAggregateDto } from "@/types/chatTransport";
@@ -18,7 +19,8 @@ import type { SelfInfo } from "@/types/home";
 import type { AliIdList, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskSnapshot } from "@/types/status";
 import type { OperationsBackend } from "@/services/interfaces";
 import { connectionSnapshot } from "@/mock/connectionData";
-import { ApiError } from "@/services/httpAdapter";
+import { ApiError, ExperimentRunConflict } from "@/services/httpAdapter";
+import { isRunFinished } from "@/types/experiment";
 import type { InboxSettings } from "@/types/inbox";
 import type {
   LostReason,
@@ -28,6 +30,11 @@ import type {
   PortraitStage,
   PortraitTag,
 } from "@/types/portrait";
+
+type MockVariant = { id: string; label: string };
+
+/** A stored experiment row: variants are ids into the session store, not sessions. */
+type MockExperiment = Omit<Experiment, "variants"> & { variants: MockVariant[] };
 
 type MockPortrait = {
   stage: PortraitStage;
@@ -91,6 +98,18 @@ const portraitOperations: MockPortraitOperation[] = [];
 const portraitReceipts = new Map<string, { payload: string; result: PortraitBatchResult }>();
 let portraitRevision = 0;
 let tagRevision = 0;
+// Variants are ordinary playground sessions in ``consoleStore.history``: the
+// experiment row keeps only their ids and labels, and the turns stay in the
+// session store where the playground reads them.
+let experimentStore: MockExperiment[] = [];
+let experimentSeq = 0;
+const runStore = new Map<string, RunSnapshot>();
+// Mirrors the backend's limits so the mock refuses what the server would.
+const MAX_EXPERIMENT_VARIANTS = 4;
+const MAX_EXPERIMENT_STEPS = 20;
+const EXPERIMENT_RUN_DELAY_MS = 120;
+// The frozen prefix a source-less session and a session-sourced experiment share.
+const MOCK_FROZEN_INPUT = "冻结的历史消息";
 
 function portraitUsage(tagId: string) {
   return [...portraits.values()].filter((record) => record.tags.has(tagId)).length;
@@ -205,6 +224,9 @@ export const mockBackend: OperationsBackend = {
     portraitReceipts.clear();
     portraitRevision = 0;
     tagRevision = 0;
+    experimentStore = [];
+    experimentSeq = 0;
+    runStore.clear();
     return delay(undefined);
   },
 
@@ -752,7 +774,7 @@ export const mockBackend: OperationsBackend = {
 
   getAgentSession: async (id) => {
     const session = getAgentSession(id);
-    return delay({ session: structuredClone(session), frozenInput: "冻结的历史消息" });
+    return delay({ session: structuredClone(session), frozenInput: MOCK_FROZEN_INPUT });
   },
 
   forkAgentSession: async ({ agentId, conversationId, messageIndex }) => {
@@ -818,6 +840,241 @@ export const mockBackend: OperationsBackend = {
     consoleStore = { ...consoleStore, history: [branch, ...consoleStore.history] };
     return delay(branch);
   },
+
+  createExperiment: async (input) => {
+    const agent = consoleStore.agents.find((item) => item.id === input.agentId);
+    if (!canRunAgentExecution(agent)) throw new ApiError("Agent 不存在", "/api/agent/experiments", { status: 404 });
+    if (input.variants.length < 1) throw new ApiError("实验至少需要一个变体", "/api/agent/experiments", { status: 422 });
+    if (input.variants.length > MAX_EXPERIMENT_VARIANTS) {
+      throw new ApiError(`一个实验最多 ${MAX_EXPERIMENT_VARIANTS} 个变体`, "/api/agent/experiments", { status: 422 });
+    }
+    const { frozenPrefix, source, messages } = resolveExperimentSource(input);
+    const experiment: MockExperiment = {
+      id: String(++experimentSeq),
+      agentId: input.agentId,
+      name: input.name?.trim() || `${agent.name} 对比实验`,
+      frozenPrefix,
+      source,
+      steps: [],
+      annotations: [],
+      notes: "",
+      progress: {},
+      createdAt: nowText(),
+      updatedAt: nowText(),
+      activeRunId: null,
+      variants: [],
+    };
+    experimentStore = [experiment, ...experimentStore];
+    // Every variant inherits the same starting turns so the comparison shares one history.
+    for (const [index, variant] of input.variants.entries()) {
+      const pinned = resolveVariantPin(input.agentId, variant);
+      const label = variant.label?.trim() || `变体 ${index + 1}`;
+      const session = newVariantSession(experiment, label, pinned, agent.name, messages);
+      experiment.variants.push({ id: session.id, label });
+    }
+    return delay(projectExperiment(saveExperiment(experiment)));
+  },
+
+  listExperiments: async (agentId) => delay(
+    experimentStore
+      .filter((experiment) => !agentId || experiment.agentId === agentId)
+      .map(projectExperimentSummary),
+  ),
+
+  getExperiment: async (id) => delay(projectExperiment(experimentOrThrow(id))),
+
+  updateExperiment: async (id, input: UpdateExperimentInput) => {
+    const experiment = experimentOrThrow(id);
+    const next = { ...experiment };
+    if (input.name !== undefined) next.name = input.name.trim();
+    if (input.notes !== undefined) next.notes = input.notes;
+    if (input.annotations !== undefined) {
+      for (const annotation of input.annotations) {
+        variantOf(experiment, annotation.variantId);
+        if (!(annotation.step >= 0 && annotation.step < experiment.steps.length)) {
+          throw new ApiError("批注指向的步骤不存在", "/api/agent/experiments", { status: 422 });
+        }
+        if (!["", "better", "worse"].includes(annotation.verdict)) {
+          throw new ApiError("verdict 只能是 better、worse 或空", "/api/agent/experiments", { status: 422 });
+        }
+      }
+      next.annotations = structuredClone(input.annotations);
+    }
+    return delay(projectExperiment(saveExperiment(next)));
+  },
+
+  addExperimentStep: async (id, { mode, text, label = "" }) => {
+    const experiment = experimentOrThrow(id);
+    if (mode !== "buyer" && mode !== "agent") {
+      throw new ApiError("mode 只能是 agent、buyer", "/api/agent/experiments", { status: 422 });
+    }
+    if (experiment.steps.length >= MAX_EXPERIMENT_STEPS) {
+      throw new ApiError(`一个实验最多 ${MAX_EXPERIMENT_STEPS} 步`, "/api/agent/experiments", { status: 422 });
+    }
+    const body = text.trim();
+    if (mode === "buyer" && !body) {
+      throw new ApiError("买家模式下步骤内容不能为空", "/api/agent/experiments", { status: 422 });
+    }
+    const steps = [...experiment.steps, { index: experiment.steps.length, mode, text: body, label: label.trim() }];
+    return delay(projectExperiment(saveExperiment({ ...experiment, steps })));
+  },
+
+  addExperimentVariant: async (id, input) => {
+    const experiment = experimentOrThrow(id);
+    const agent = consoleStore.agents.find((item) => item.id === experiment.agentId);
+    if (!canRunAgentExecution(agent)) throw new ApiError("Agent 不存在", "/api/agent/experiments", { status: 404 });
+    if (experiment.variants.length >= MAX_EXPERIMENT_VARIANTS) {
+      throw new ApiError(`一个实验最多 ${MAX_EXPERIMENT_VARIANTS} 个变体`, "/api/agent/experiments", { status: 422 });
+    }
+    const pinned = resolveVariantPin(experiment.agentId, input);
+    // Seed from the shared buyer turns, not another variant's answers.
+    const shared = sharedBuyerMessages(experiment.variants.map((variant) => getAgentSession(variant.id)));
+    const label = input.label?.trim() || "变体 1";
+    const session = newVariantSession(experiment, label, pinned, agent.name, shared);
+    return delay(projectExperiment(saveExperiment({
+      ...experiment,
+      variants: [...experiment.variants, { id: session.id, label }],
+    })));
+  },
+
+  removeExperimentVariant: async (id, variantId) => {
+    const experiment = experimentOrThrow(id);
+    const variant = variantOf(experiment, variantId);
+    // The session exists only for this comparison, so it goes with the variant.
+    consoleStore = { ...consoleStore, history: consoleStore.history.filter((session) => session.id !== variant.id) };
+    const progress = Object.fromEntries(Object.entries(experiment.progress).map(([step, record]) => [
+      step,
+      {
+        variants: (record.variants ?? []).filter((item) => item !== variant.id),
+        before: Object.fromEntries(Object.entries(record.before ?? {}).filter(([key]) => key !== variant.id)),
+      },
+    ]));
+    const annotations = experiment.annotations.filter((annotation) => annotation.variantId !== variant.id);
+    return delay(projectExperiment(saveExperiment({
+      ...experiment,
+      variants: experiment.variants.filter((item) => item.id !== variant.id),
+      progress,
+      annotations,
+    })));
+  },
+
+  deleteExperiment: async (id) => {
+    const experiment = experimentOrThrow(id);
+    const ids = new Set(experiment.variants.map((variant) => variant.id));
+    consoleStore = { ...consoleStore, history: consoleStore.history.filter((session) => !ids.has(session.id)) };
+    experimentStore = experimentStore.filter((item) => item.id !== experiment.id);
+    return delay(undefined);
+  },
+
+  startExperimentRun: async (id, stepIndex, force = false) => {
+    const experiment = experimentOrThrow(id);
+    const step = experiment.steps[stepIndex];
+    if (!step) throw new ApiError("步骤不存在", "/api/agent/experiments", { status: 404 });
+    if (!experiment.variants.length) throw new ApiError("实验没有可运行的变体", "/api/agent/experiments", { status: 422 });
+    // One active run per (experiment, step): a double click attaches to the run already going.
+    const active = experiment.activeRunId ? runStore.get(experiment.activeRunId) : undefined;
+    if (active && active.stepIndex === stepIndex) {
+      throw new ExperimentRunConflict("该步骤已有运行中的任务", "/api/agent/experiments", active.runId);
+    }
+    const record = experiment.progress[String(stepIndex)];
+    const done = record?.variants ?? [];
+    const pending = experiment.variants.filter((variant) => force || !done.includes(variant.id));
+    if (!pending.length) throw new ApiError("该步骤已经运行过，如需重试请显式确认", "/api/agent/experiments", { status: 409 });
+    if (stepIndex > 0 && !experiment.progress[String(stepIndex - 1)]?.variants?.length) {
+      throw new ApiError("请先运行上一步", "/api/agent/experiments", { status: 409 });
+    }
+    const runId = crypto.randomUUID().replaceAll("-", "");
+    const snapshot: RunSnapshot = {
+      runId,
+      experimentId: experiment.id,
+      stepIndex,
+      status: "running",
+      startedAt: Date.now() / 1000,
+      finishedAt: null,
+      variants: pending.map((variant) => ({ variantId: variant.id, status: "running" as const, error: null, durationMs: 0 })),
+    };
+    runStore.set(runId, snapshot);
+    saveExperiment({ ...experiment, activeRunId: runId });
+    await new Promise((resolve) => setTimeout(resolve, EXPERIMENT_RUN_DELAY_MS));
+
+    const checkpoint = record?.before ?? {};
+    const results = pending.map((variant) => {
+      const session = getAgentSession(variant.id);
+      // A retried step first truncates back to its checkpoint so the buyer
+      // message is appended exactly once; ``before`` records where that is.
+      const before = checkpoint[variant.id] ?? session.messages.length;
+      const messages = session.messages.slice(0, Math.min(before, session.messages.length));
+      if (step.mode === "buyer") {
+        messages.push({ id: `user-step-${stepIndex}`, role: "user", content: step.text, createdAt: nowText() });
+      }
+      const durationMs = 50 + Math.round(Math.random() * 150);
+      messages.push(experimentReply(variant.label, step.text, durationMs));
+      // The session store never carries the experiment's label: that is the row's business.
+      const updated: AgentTestSession = { ...session, messages };
+      consoleStore = { ...consoleStore, history: consoleStore.history.map((item) => (item.id === session.id ? updated : item)) };
+      return { variantId: variant.id, before, durationMs };
+    });
+
+    const finished: RunSnapshot = {
+      ...snapshot,
+      status: "completed",
+      finishedAt: Date.now() / 1000,
+      variants: results.map((result) => ({ variantId: result.variantId, status: "completed", error: null, durationMs: result.durationMs })),
+    };
+    runStore.set(runId, finished);
+    saveExperiment({
+      ...experimentOrThrow(experiment.id),
+      activeRunId: null,
+      progress: {
+        ...experiment.progress,
+        [String(stepIndex)]: {
+          variants: [...new Set([...done, ...results.map((result) => result.variantId)])],
+          before: Object.fromEntries(results.map((result) => [result.variantId, checkpoint[result.variantId] ?? result.before])),
+        },
+      },
+    });
+    return structuredClone(finished);
+  },
+
+  getExperimentRun: async (runId) => delay(structuredClone(runOrThrow(runId))),
+
+  cancelExperimentRun: async (runId) => {
+    const snapshot = runOrThrow(runId);
+    const experiment = experimentStore.find((item) => item.id === snapshot.experimentId);
+    if (experiment?.activeRunId === runId) saveExperiment({ ...experiment, activeRunId: null });
+    if (isRunFinished(snapshot.status)) return delay(structuredClone(snapshot));
+    const cancelled: RunSnapshot = {
+      ...snapshot,
+      status: "cancelled",
+      finishedAt: Date.now() / 1000,
+      variants: snapshot.variants.map((variant) => ({ ...variant, status: "cancelled" as const })),
+    };
+    runStore.set(runId, cancelled);
+    return delay(structuredClone(cancelled));
+  },
+
+  promoteExperimentVariant: async (id, variantId, note) => {
+    const experiment = experimentOrThrow(id);
+    const variant = variantOf(experiment, variantId);
+    const session = getAgentSession(variant.id);
+    const pinned = session.pinned;
+    if (!pinned?.prompt) throw new ApiError("该变体没有可保存的版本", "/api/agent/experiments", { status: 422 });
+    const current = agentPresetStore.find((preset) => preset.id === experiment.agentId);
+    if (!current) throw new ApiError("Agent 不存在", "/api/agent/experiments", { status: 404 });
+    const promoted: AgentPreset = {
+      ...current,
+      name: pinned.name || current.name,
+      prompt: pinned.prompt,
+      level: pinned.llm_level ?? current.level,
+      tools: normalizeAgentTools(pinned.tools),
+      // Promotion saves the version, not the switch: keep the agent's state.
+      requiresTool: Boolean(pinned.requires_tool),
+    };
+    agentPresetStore = agentPresetStore.map((preset) => (preset.id === promoted.id ? promoted : preset));
+    syncConsoleAgents();
+    recordMockRevision(promoted, "manual", note || `从实验「${experiment.name || experiment.id}」的变体提升`);
+    return delay(agentPresetToDbPreset(promoted));
+  },
 };
 
 function buildConversationDetail(id: string): ConversationDetail {
@@ -853,6 +1110,183 @@ function getAgentSession(id: string) {
   const session = consoleStore.history.find((item) => item.id === id);
   if (!session) throw new Error("Agent 会话不存在");
   return session;
+}
+
+// ---------------------------------------------------------------------------
+// Experiments
+
+function experimentOrThrow(id: string): MockExperiment {
+  const experiment = experimentStore.find((item) => item.id === id);
+  if (!experiment) throw new ApiError("实验不存在", "/api/agent/experiments", { status: 404 });
+  return experiment;
+}
+
+function variantOf(experiment: MockExperiment, variantId: string): MockVariant {
+  const variant = experiment.variants.find((item) => item.id === variantId);
+  if (!variant) throw new ApiError("变体不存在", "/api/agent/experiments", { status: 404 });
+  return variant;
+}
+
+/** Persist an edited experiment; the caller reads it back through ``projectExperiment``. */
+function saveExperiment(experiment: MockExperiment) {
+  const stamped = { ...experiment, updatedAt: nowText() };
+  experimentStore = experimentStore.map((item) => (item.id === stamped.id ? stamped : item));
+  return stamped;
+}
+
+/**
+ * Project a stored experiment onto the API shape: variants are read from the
+ * session store, so a variant keeps its turns exactly like the playground's.
+ */
+function projectExperiment(experiment: MockExperiment): Experiment {
+  return structuredClone({
+    ...experiment,
+    variants: experiment.variants.map((variant) => ({
+      ...getAgentSession(variant.id),
+      label: variant.label,
+    })),
+  });
+}
+
+function projectExperimentSummary(experiment: MockExperiment): ExperimentSummary {
+  return structuredClone({
+    ...experiment,
+    variants: experiment.variants.map((variant) => {
+      const session = getAgentSession(variant.id);
+      return {
+        id: session.id,
+        label: variant.label,
+        turnCount: session.messages.length,
+        draft: Boolean(session.draft),
+        pinned: session.pinned ?? null,
+      };
+    }),
+  });
+}
+
+/** The pin a variant runs: a snapshot of a draft, or of the agent's saved version. */
+function resolveVariantPin(agentId: string, input: ExperimentVariantInput): AgentSessionPin {
+  if (input.versionKind !== "preset" && input.versionKind !== "draft") {
+    throw new ApiError("versionKind must be preset or draft", "/api/agent/experiments", { status: 422 });
+  }
+  if (input.versionKind === "draft") {
+    if (!input.draft) throw new ApiError("draft is required when versionKind=draft", "/api/agent/experiments", { status: 422 });
+    return {
+      kind: "draft",
+      prompt: input.draft.prompt,
+      llm_level: input.draft.level,
+      tools: normalizeAgentTools(input.draft.tools),
+      requires_tool: Boolean(input.draft.requiresTool),
+    };
+  }
+  const agent = consoleStore.agents.find((item) => item.id === agentId);
+  if (!canRunAgentExecution(agent)) throw new Error("Agent 不存在或未启用");
+  return {
+    kind: "preset",
+    revision_id: input.revisionId ?? null,
+    prompt: agent.prompt ?? "",
+    llm_level: agent.level ?? 0,
+    tools: normalizeAgentTools(agent.capabilities),
+    requires_tool: Boolean(agent.requiresTool),
+  };
+}
+
+/** Create one playground session for a variant; the caller records its label on the experiment row. */
+function newVariantSession(
+  experiment: MockExperiment, label: string, pinned: AgentSessionPin, agentName: string,
+  messages: AgentTestMessage[] = [],
+): AgentTestSession {
+  const session: AgentTestSession = {
+    id: `session-${crypto.randomUUID()}`,
+    // The title repeats the label so the playground history reads the same way.
+    title: `${agentName} · ${label}`,
+    agentId: experiment.agentId,
+    draft: pinned.kind === "draft",
+    createdAt: nowText(),
+    type: "playground",
+    parentId: null,
+    requiresTool: Boolean(pinned.requires_tool),
+    pinned,
+    source: { ...experiment.source, frozenChars: experiment.frozenPrefix.length },
+    messages: structuredClone(messages),
+  };
+  consoleStore = { ...consoleStore, history: [session, ...consoleStore.history] };
+  return session;
+}
+
+/** The turns a variant added now starts from: the shared buyer turns of its siblings. */
+function sharedBuyerMessages(variants: { messages: AgentTestMessage[] }[]): AgentTestMessage[] {
+  const shortest = Math.min(...variants.map((variant) => variant.messages.length));
+  const first = variants[0]?.messages ?? [];
+  const common: AgentTestMessage[] = [];
+  for (let index = 0; index < shortest; index += 1) {
+    const message = first[index];
+    if (!variants.every((variant) => JSON.stringify(variant.messages[index]) === JSON.stringify(message))) break;
+    common.push(structuredClone(message));
+  }
+  return common.filter((message) => message.role === "user");
+}
+
+function resolveExperimentSource(input: CreateExperimentInput): { frozenPrefix: string; source: ExperimentSource; messages: AgentTestMessage[] } {
+  const { source } = input;
+  if (source.kind === "conversation") {
+    if (source.conversationId === undefined || source.messageIndex === undefined) {
+      throw new ApiError("conversation 来源需要 conversationId 和 messageIndex", "/api/agent/experiments", { status: 422 });
+    }
+    const conversation = conversationStore.find((item) => conversationMatchesId(item, String(source.conversationId)));
+    const frozen = `冻结的会话消息 · #${source.messageIndex + 1}`;
+    return {
+      frozenPrefix: frozen,
+      source: {
+        kind: "conversation",
+        conversationId: source.conversationId,
+        messageIndex: source.messageIndex,
+        conversationTitle: conversation?.name ?? "",
+        frozenChars: frozen.length,
+      },
+      messages: [],
+    };
+  }
+  if (source.kind === "session") {
+    if (!source.sessionId) throw new ApiError("session 来源需要 sessionId", "/api/agent/experiments", { status: 422 });
+    const session = getAgentSession(source.sessionId);
+    if (session.agentId !== input.agentId) throw new ApiError("会话不属于该 Agent", "/api/agent/experiments", { status: 400 });
+    const frozen = MOCK_FROZEN_INPUT;
+    return {
+      frozenPrefix: frozen,
+      source: {
+        kind: "session",
+        sessionId: session.id,
+        conversationId: session.source?.conversationId ?? null,
+        conversationTitle: session.source?.conversationTitle ?? "",
+        frozenChars: frozen.length,
+      },
+      // A continued experiment starts where that session is: every variant inherits its turns.
+      messages: structuredClone(session.messages),
+    };
+  }
+  return { frozenPrefix: source.text ?? "", source: { kind: "text" }, messages: [] };
+}
+
+/** Simulated assistant reply for one variant on one step; label makes the variants comparable. */
+function experimentReply(label: string, stepText: string, durationMs: number): AgentTestMessage {
+  return {
+    id: `assistant-${crypto.randomUUID()}`,
+    role: "assistant",
+    content: `[${label}] 对「${stepText}」的回复`,
+    createdAt: nowText(),
+    toolCalls: [],
+    intents: [],
+    iterations: 1,
+    durationMs,
+    mode: "simulated",
+  };
+}
+
+function runOrThrow(runId: string): RunSnapshot {
+  const snapshot = runStore.get(runId);
+  if (!snapshot) throw new ApiError("运行不存在", "/api/agent/runs", { status: 404 });
+  return snapshot;
 }
 
 function requireSystemAgent(apid: string) {

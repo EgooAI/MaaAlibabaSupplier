@@ -16,7 +16,6 @@ from backend.app.shared.agent.chat_history_content import (
     ChatHistoryContent,
     ChatHistoryDraft,
     ChatHistoryPin,
-    ChatHistoryScope,
     ChatHistorySource,
     assistant_turn_payload,
     build_history_content,
@@ -24,6 +23,7 @@ from backend.app.shared.agent.chat_history_content import (
     load_history_content,
 )
 from backend.app.shared.agent.inputs import build_chat_dialog_input
+from backend.app.shared.agent.freezing import freeze_conversation_message
 from backend.app.shared.agent.preset_history import (
     MAX_REVISIONS_PER_PRESET,
     latest_revision,
@@ -33,6 +33,22 @@ from backend.app.shared.agent.preset_history import (
 )
 from backend.app.shared.agent.reply_tool import ReplyScope
 from backend.app.shared.agent.runner import ChatAgentTurn, run_chat_agent
+from backend.app.shared.agent.versions import (
+    adopt_scope as _adopt_scope,
+    current_scope as _current_scope,
+    draft_matches_preset as _draft_matches_preset,
+    draft_override as _draft_override,
+    find_revision as _find_revision,
+    parse_draft as _parse_draft,
+    pin_to_draft as _pin_to_draft,
+    pinned_from_draft as _pinned_from_draft,
+    pinned_from_preset as _pinned_from_preset,
+    pinned_from_revision as _pinned_from_revision,
+    pinned_override as _pinned_override,
+    pinned_to_preset,
+    require_runnable_preset as _require_runnable_preset,
+    scope_allows as _scope_allows,
+)
 from backend.app.shared.crm.intent_store import (
     MODE_SIMULATED,
     STATUS_REQUESTED,
@@ -60,8 +76,6 @@ from backend.app.shared.crm.sdk import (
 from backend.app.shared.crm.views import format_created_at
 
 router = APIRouter(route_class=AccountRoute)
-
-MAX_FROZEN_INPUT_CHARS = 60_000
 
 
 class LlmConfigInput(BaseModel):
@@ -173,48 +187,10 @@ def _updated_at_text(apid: str) -> str:
 
 # ---------------------------------------------------------------------------
 # Session ownership
-
-
-def _current_scope() -> ChatHistoryScope:
-    from backend.app.shared.backend.account_context import get_account_context
-
-    context = get_account_context()
-    return ChatHistoryScope(seller=context.self_ali_id, data_dir=context.data_dir)
-
-
-def _scope_allows(content: ChatHistoryContent) -> bool:
-    """Sessions without a scope belong to the current account (legacy behaviour).
-
-    A scoped session is only visible to the seller + data directory that owns it.
-    """
-    scope = content.scope
-    if scope is None or (not scope.seller and not scope.data_dir):
-        return True
-    current = _current_scope()
-    if not current.seller or not current.data_dir:
-        return False
-    if scope.seller and scope.seller != current.seller:
-        return False
-    if scope.data_dir and _normalize_dir(scope.data_dir) != _normalize_dir(current.data_dir):
-        return False
-    return True
-
-
-def _normalize_dir(value: str) -> str:
-    from pathlib import Path
-
-    try:
-        return str(Path(value).expanduser().resolve()).casefold()
-    except (OSError, RuntimeError):
-        return value.strip().casefold()
-
-
-def _adopt_scope(content: ChatHistoryContent) -> bool:
-    """Attach the current scope to an unscoped legacy session; returns changed."""
-    if content.scope is not None and (content.scope.seller or content.scope.data_dir):
-        return False
-    content.scope = _current_scope()
-    return True
+#
+# Scope, pin and runnability helpers live in ``shared.agent.versions`` so the
+# experiment service can use them without importing a router. They keep their
+# historical private names here.
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +221,9 @@ def _session_to_dict(hist: ChatHistory) -> dict | None:
         "createdAt": created,
         "type": content.session_type,
         "parentId": content.parent_id,
+        # Variants belong to an experiment; the playground list hides them so a
+        # session is not continued outside the comparison that owns it.
+        "experimentId": str(hist.experiment_id) if hist.experiment_id is not None else None,
         "requiresTool": content.requires_tool,
         "pinned": content.pinned.model_dump() if content.pinned is not None else None,
         "source": _public_source(content.source),
@@ -298,45 +277,6 @@ def _load_session(manager: ChatHistoryManager, session_id: str) -> ChatHistory:
         raise AppError("会话不存在", status_code=404)
     return hist
 
-
-def _draft_override(preset: AgentPreset, draft: ChatHistoryDraft) -> AgentPreset:
-    """Build the unsaved draft preset used to run one draft test session."""
-    return AgentPreset(
-        apid=preset.apid,
-        name=preset.name,
-        description=preset.description,
-        prompt=draft.prompt,
-        llm_level=draft.llm_level,
-        tools=list(draft.tools),
-        enabled=True,
-        requires_tool=bool(draft.requires_tool),
-    )
-
-
-def _draft_matches_preset(draft: ChatHistoryDraft, preset: AgentPreset) -> bool:
-    return (
-        draft.prompt == preset.prompt
-        and draft.llm_level == preset.llm_level
-        and list(draft.tools or []) == list(preset.tools or [])
-        and bool(draft.requires_tool) == bool(getattr(preset, "requires_tool", False))
-    )
-
-
-def _require_runnable_preset(preset: AgentPreset) -> None:
-    """System agents are integral and always runnable; regular agents honor 停用."""
-    if preset.apid not in SYSTEM_AGENT_APIDS and not preset.enabled:
-        raise AppError("Agent 已停用，请先启用后再运行", status_code=409)
-    unknown = unknown_tool_names(preset.tools or [])
-    if unknown:
-        raise AppError(
-            f"该 Agent 挂载了未注册的工具：{'、'.join(unknown)}。请先在编辑器中移除后再运行。",
-            status_code=409,
-        )
-    if bool(getattr(preset, "requires_tool", False)) and not (preset.tools or []):
-        raise AppError(
-            "该 Agent 要求必须调用工具，但没有挂载任何工具。请添加工具或关闭「必须调用工具」。",
-            status_code=409,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -576,38 +516,6 @@ def restore_system_agent(apid: str) -> dict:
 # Running sessions
 
 
-def _pinned_from_preset(preset: AgentPreset) -> ChatHistoryPin:
-    return ChatHistoryPin(
-        kind="preset",
-        revision_id=None,
-        name=preset.name,
-        prompt=preset.prompt,
-        llm_level=preset.llm_level,
-        tools=list(preset.tools or []),
-        requires_tool=bool(getattr(preset, "requires_tool", False)),
-    )
-
-
-def _pinned_from_draft(draft: ChatHistoryDraft) -> ChatHistoryPin:
-    return ChatHistoryPin(
-        kind="draft",
-        name="",
-        prompt=draft.prompt,
-        llm_level=draft.llm_level,
-        tools=list(draft.tools),
-        requires_tool=bool(draft.requires_tool),
-    )
-
-
-def _pin_to_draft(pin: ChatHistoryPin | None) -> ChatHistoryDraft | None:
-    if pin is None or pin.kind != "draft":
-        return None
-    return ChatHistoryDraft(
-        prompt=pin.prompt, llm_level=pin.llm_level, tools=list(pin.tools),
-        requires_tool=bool(pin.requires_tool),
-    )
-
-
 def _run_turn(
     *,
     apid: str,
@@ -619,6 +527,7 @@ def _run_turn(
     conversation_id: int | None,
     revision_id: int | None,
     prior_replies: tuple[str, ...],
+    cancel_token: Any = None,
 ) -> ChatAgentTurn:
     """Run one turn; forked sessions send the frozen prefix as the input body."""
     from backend.app.shared.backend.account_context import get_account_context
@@ -650,6 +559,7 @@ def _run_turn(
         mode=mode,
         conversation_id=conversation_id,
         revision_id=revision_id,
+        cancel_token=cancel_token,
     )
 
 
@@ -842,30 +752,6 @@ def _playground_draft(pinned: ChatHistoryPin | None) -> ChatHistoryDraft | None:
     return _pin_to_draft(pinned)
 
 
-def _pinned_override(preset: AgentPreset, pinned: ChatHistoryPin | None) -> AgentPreset | None:
-    """Run a session against the version it was pinned to, not the current one."""
-    if pinned is None or not pinned.prompt:
-        return None
-    if (
-        pinned.kind == "preset"
-        and pinned.prompt == preset.prompt
-        and pinned.llm_level == preset.llm_level
-        and list(pinned.tools) == list(preset.tools or [])
-        and bool(pinned.requires_tool) == bool(getattr(preset, "requires_tool", False))
-    ):
-        return None
-    return AgentPreset(
-        apid=preset.apid,
-        name=pinned.name or preset.name,
-        description=preset.description,
-        prompt=pinned.prompt,
-        llm_level=pinned.llm_level,
-        tools=list(pinned.tools),
-        enabled=True,
-        requires_tool=bool(pinned.requires_tool),
-    )
-
-
 def _agent_run_error(exc: Exception):
     """Map SDK/runner failures to explicit status codes instead of a blanket 500."""
     from backend.app.shared.agent.runner import AgentRunError
@@ -1013,14 +899,6 @@ def branch_session(session_id: str, body: BranchInput | None = None) -> dict:
 # Playground: fork from a real conversation message
 
 
-def _conversation_title(conv: Any) -> str:
-    for attr in ("title", "contact_ali_id"):
-        value = getattr(conv, attr, "")
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return str(getattr(conv, "sid", "") or "")
-
-
 @router.post("/api/agent/fork")
 def fork_from_message(body: ForkMessageInput) -> dict:
     """Freeze the conversation up to one message and start a simulated session.
@@ -1029,11 +907,6 @@ def fork_from_message(body: ForkMessageInput) -> dict:
     exactly what a live run would have received. The string is stored rather than
     a message reference: later changes to the source must not rewrite it.
     """
-    from backend.app.api.routers.conversations import _scoped_conversation, _inbox_store
-    from backend.app.shared.crm.message_markdown import AGENT_OPTIONS, transcript_markdown
-    from backend.app.shared.crm.sync import CRMAdapter
-    from backend.app.shared.crm.views import CrmResolver
-
     agent_id = (body.agentId or "").strip()
     if not agent_id:
         raise AppError("agentId is required", status_code=422)
@@ -1044,40 +917,17 @@ def fork_from_message(body: ForkMessageInput) -> dict:
         raise AppError("Agent 不存在", status_code=404)
     _require_runnable_preset(preset)
 
-    store, context = _inbox_store()
-    adapter = CRMAdapter()
-    conv = _scoped_conversation(store, context, body.conversationId, adapter)
-    if conv is None:
-        raise AppError("会话不存在", status_code=404)
-    if body.messageIndex >= len(conv.messages):
-        raise AppError("消息不存在", status_code=404)
-    frozen = transcript_markdown(
-        conv.messages[: body.messageIndex + 1],
-        resolver=CrmResolver(context.self_ali_id),
-        options=AGENT_OPTIONS,
-        limit=None,
-    )
-    if len(frozen) > MAX_FROZEN_INPUT_CHARS:
-        raise AppError(
-            f"从该消息开始需要冻结 {len(frozen)} 字的上下文，超过 {MAX_FROZEN_INPUT_CHARS} 字上限；请选择更早的消息。",
-            status_code=422,
-        )
+    frozen, provenance = freeze_conversation_message(body.conversationId, body.messageIndex)
 
     override: AgentPreset | None = None
     pinned: ChatHistoryPin
-    draft_snapshot: ChatHistoryDraft | None = None
     revision_id: int | None = None
     if body.versionKind == "draft":
         if body.draft is None:
             raise AppError("draft is required when versionKind=draft", status_code=422)
-        try:
-            draft_level = max(0, min(LLM_MAX_LEVEL, int(body.draft.level)))
-        except (TypeError, ValueError):
-            raise AppError(f"draft.level 必须是 0 到 {LLM_MAX_LEVEL} 的整数", status_code=422)
-        draft_snapshot = ChatHistoryDraft(
-            prompt=body.draft.prompt, llm_level=draft_level,
-            tools=[tool for tool in (body.draft.tools or []) if isinstance(tool, str) and tool.strip()],
-            requires_tool=bool(body.draft.requires_tool),
+        draft_snapshot = _parse_draft(
+            prompt=body.draft.prompt, level=body.draft.level,
+            tools=body.draft.tools, requires_tool=body.draft.requires_tool,
         )
         pinned = _pinned_from_draft(draft_snapshot)
         override = _draft_override(preset, draft_snapshot)
@@ -1085,31 +935,17 @@ def fork_from_message(body: ForkMessageInput) -> dict:
     else:
         pinned = _pinned_from_preset(preset)
         if body.revisionId is not None:
-            revision = next(
-                (item for item in load_preset_revisions(agent_id, limit=MAX_REVISIONS_PER_PRESET)
-                 if item.id == body.revisionId),
-                None,
-            )
+            revision = _find_revision(agent_id, body.revisionId)
             if revision is None:
                 raise AppError("版本不存在", status_code=404)
             revision_id = revision.id
-            pinned = ChatHistoryPin(
-                kind="preset", revision_id=revision.id, name=revision.name,
-                prompt=revision.prompt, llm_level=revision.llm_level,
-                tools=list(revision.tools or []),
-                requires_tool=bool(getattr(revision, "requires_tool", False)),
-            )
-            override = AgentPreset(
-                apid=preset.apid, name=revision.name, description=preset.description,
-                prompt=revision.prompt, llm_level=revision.llm_level,
-                tools=list(revision.tools or []), enabled=True,
-                requires_tool=bool(getattr(revision, "requires_tool", False)),
-            )
+            pinned = _pinned_from_revision(revision)
+            override = pinned_to_preset(preset, pinned)
 
     source = ChatHistorySource(
         message_index=body.messageIndex,
         conversation_id=body.conversationId,
-        conversation_title=_conversation_title(conv),
+        conversation_title=provenance["conversationTitle"],
         frozen_input=frozen,
     )
     title = f"{preset.name} · 从消息 #{body.messageIndex + 1} 模拟"

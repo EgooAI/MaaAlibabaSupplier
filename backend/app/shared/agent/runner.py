@@ -123,6 +123,7 @@ def run_chat_agent(
     mode: str = "live",
     conversation_id: int | None = None,
     revision_id: int | None = None,
+    cancel_token: Any = None,
 ) -> ChatAgentTurn:
     """Run one agent turn and return its structured result.
 
@@ -157,6 +158,7 @@ def run_chat_agent(
         agent_preset=resolved_override,
         tool_context=context,
         tool_choice=tool_choice,
+        cancel_token=cancel_token,
     )
 
     batch_id = uuid4().hex
@@ -169,6 +171,11 @@ def run_chat_agent(
     except AgentRunError:
         raise
     except Exception as exc:
+        # A cancelled turn is not a failure: the caller decides how to report it.
+        from agent_pipeline import RunCancelledError
+
+        if isinstance(exc, RunCancelledError):
+            raise
         # Preset resolution failures are configuration problems; surface them as
         # such instead of a generic 500 so the merchant knows what to fix.
         from agent_pipeline import AgentPresetResolutionError

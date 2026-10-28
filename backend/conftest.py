@@ -136,4 +136,24 @@ def isolated_backend():
             try:
                 yield
             finally:
+                _restore_agent_registries()
                 _cleanup_runtime()
+
+
+def _restore_agent_registries() -> None:
+    """Restore the process-global tool registry after suites that clear it.
+
+    Several Agent suites clear ``tool_registry`` (and sometimes ``llm_registry``)
+    to assert exact contents. Those registries are process-global, so without a
+    reset later suites see an application with no tools and fail for reasons
+    unrelated to the code under test. Registration is idempotent.
+    """
+    try:
+        from agent_tools import register_builtin_tools
+        from backend.app.shared.agent.runner import register_business_tools
+
+        register_builtin_tools()
+        register_business_tools()
+    except Exception:
+        # A suite may be asserting a broken import path; do not mask its failure.
+        pass

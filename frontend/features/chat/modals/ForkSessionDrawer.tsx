@@ -1,9 +1,10 @@
 "use client";
 
-import { Alert, App, Button, Drawer, Form, Select, Space, Tag, Typography } from "antd";
+import { Alert, App, Button, Drawer, Form, Select, Space, Tag, Tooltip, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { backend } from "@/services/client";
+import { ExperimentCreateModal } from "@/features/agent/experiment/ExperimentCreateModal";
 import type { AgentConfig, AgentPresetRevision, AgentTestSession } from "@/types/agent";
 import type { ConversationDetail } from "@/types/chatCanonical";
 
@@ -34,8 +35,10 @@ export function ForkSessionDrawer({
   const [revisionsByAgent, setRevisionsByAgent] = useState<Record<string, AgentPresetRevision[]>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>();
+  const [compareOpen, setCompareOpen] = useState(false);
 
   const agentId = Form.useWatch("agentId", form);
+  const revisionId = Form.useWatch("revisionId", form);
   const revisions = useMemo(() => (agentId ? revisionsByAgent[agentId] ?? [] : []), [agentId, revisionsByAgent]);
 
   useEffect(() => {
@@ -85,55 +88,77 @@ export function ForkSessionDrawer({
   const preview = conversation && messageIndex !== undefined ? conversation.messages[messageIndex] : undefined;
 
   return (
-    <Drawer
-      title="从此开始模拟"
-      open={open}
-      onClose={onClose}
-      width={460}
-      destroyOnHidden
-      afterOpenChange={(visible) => {
-        if (!visible) return;
-        // Reset per opening here instead of in an effect body.
-        setError(undefined);
-         form.setFieldsValue({ agentId: undefined, revisionId: null });
-      }}
-    >
-       <Form form={form} layout="vertical" onFinish={submit}>
-        <Typography.Paragraph type="secondary">
-          选中的对话会按正式运行时的 Markdown 投影冻结为输入；之后在这个模拟会话里扮演买家继续对话，不会发送给客户。
-        </Typography.Paragraph>
-        {error ? <Alert type="warning" showIcon message={error} className="mb-3" /> : null}
-        <Form.Item name="agentId" label="Agent" rules={[{ required: true, message: "请选择 Agent" }]}>
-          <Select
-            placeholder="选择接手这个对话的 Agent"
-            options={agents.map((agent) => ({ value: agent.id, label: agent.name, disabled: !agent.enabled }))}
-            onChange={() => form.setFieldsValue({ revisionId: null })}
-          />
-        </Form.Item>
-        <Form.Item name="revisionId" label="历史版本" extra="留空表示使用当前保存的配置。">
-          <Select
-            allowClear
-            placeholder="当前保存的配置"
-            options={revisions.map((revision) => ({
-              value: revision.id,
-              label: `${revision.created_at} · ${revision.prompt.slice(0, 24)}`,
-            }))}
-          />
-        </Form.Item>
-        {preview ? (
-          <div className="mb-3 rounded border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-            <Space size={4} className="mb-1">
-              <Tag>消息 #{messageIndex! + 1}</Tag>
-              <span>{preview.createdAt}</span>
-            </Space>
-            <div className="line-clamp-4 whitespace-pre-wrap break-words">{preview.content}</div>
+    <>
+      <Drawer
+        title="从此开始模拟"
+        open={open}
+        onClose={onClose}
+        width={460}
+        destroyOnHidden
+        afterOpenChange={(visible) => {
+          if (!visible) return;
+          // Reset per opening here instead of in an effect body.
+          setError(undefined);
+          setCompareOpen(false);
+           form.setFieldsValue({ agentId: undefined, revisionId: null });
+        }}
+      >
+         <Form form={form} layout="vertical" onFinish={submit}>
+          <Typography.Paragraph type="secondary">
+            选中的对话会按正式运行时的 Markdown 投影冻结为输入；之后在这个模拟会话里扮演买家继续对话，不会发送给客户。
+          </Typography.Paragraph>
+          {error ? <Alert type="warning" showIcon message={error} className="mb-3" /> : null}
+          <Form.Item name="agentId" label="Agent" rules={[{ required: true, message: "请选择 Agent" }]}>
+            <Select
+              placeholder="选择接手这个对话的 Agent"
+              options={agents.map((agent) => ({ value: agent.id, label: agent.name, disabled: !agent.enabled }))}
+              onChange={() => form.setFieldsValue({ revisionId: null })}
+            />
+          </Form.Item>
+          <Form.Item name="revisionId" label="历史版本" extra="留空表示使用当前保存的配置。">
+            <Select
+              allowClear
+              placeholder="当前保存的配置"
+              options={revisions.map((revision) => ({
+                value: revision.id,
+                label: `${revision.created_at} · ${revision.prompt.slice(0, 24)}`,
+              }))}
+            />
+          </Form.Item>
+          {preview ? (
+            <div className="mb-3 rounded border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+              <Space size={4} className="mb-1">
+                <Tag>消息 #{messageIndex! + 1}</Tag>
+                <span>{preview.createdAt}</span>
+              </Space>
+              <div className="line-clamp-4 whitespace-pre-wrap break-words">{preview.content}</div>
+            </div>
+          ) : null}
+          <div className="flex justify-end gap-2">
+            <Button onClick={onClose}>取消</Button>
+            <Tooltip title={agentId ? "" : "请先选择 Agent"}>
+              <Button disabled={!agentId || !conversation} onClick={() => setCompareOpen(true)}>创建对比实验</Button>
+            </Tooltip>
+            <Button type="primary" htmlType="submit" loading={submitting} disabled={!conversation}>开始模拟</Button>
           </div>
-        ) : null}
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose}>取消</Button>
-          <Button type="primary" htmlType="submit" loading={submitting} disabled={!conversation}>开始模拟</Button>
-        </div>
-      </Form>
-    </Drawer>
+        </Form>
+      </Drawer>
+
+      <ExperimentCreateModal
+        open={compareOpen}
+        onClose={() => setCompareOpen(false)}
+        initialAgentId={agentId}
+        initialRevisionId={typeof revisionId === "number" ? revisionId : undefined}
+        conversationTitle={conversation?.customer.name}
+        source={conversation && messageIndex !== undefined
+          ? { kind: "conversation", conversationId: Number(conversation.id), messageIndex }
+          : undefined}
+        onCreated={(experiment) => {
+          setCompareOpen(false);
+          onClose();
+          router.push(`/agent/experiments?experiment=${experiment.id}`);
+        }}
+      />
+    </>
   );
 }

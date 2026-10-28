@@ -1,9 +1,11 @@
 "use client";
 
-import { PlusOutlined, SendOutlined } from "@ant-design/icons";
+import { ExperimentOutlined, PlusOutlined, SendOutlined } from "@ant-design/icons";
 import { Alert, App, Button, Input, Radio, Space, Typography } from "antd";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
 import { normalizeAgentTools } from "@/domain/agent/agentModel";
+import { ExperimentCreateModal } from "@/features/agent/experiment/ExperimentCreateModal";
 import { backend } from "@/services/client";
 import type { AgentConfig, AgentEditValues, AgentTestMessage } from "@/types/agent";
 import { SessionMessages } from "./SessionMessages";
@@ -20,6 +22,7 @@ type AgentTestPanelProps = {
  */
 export function AgentTestPanel({ agent, values }: AgentTestPanelProps) {
   const { message } = App.useApp();
+  const router = useRouter();
   const [input, setInput] = useState("");
   const [inputMode, setInputMode] = useState<"buyer" | "agent">("buyer");
   const [sessionId, setSessionId] = useState<string>();
@@ -28,6 +31,15 @@ export function AgentTestPanel({ agent, values }: AgentTestPanelProps) {
   const [running, setRunning] = useState(false);
   const [restricted, setRestricted] = useState(false);
   const [error, setError] = useState<string>();
+  const [experimentOpen, setExperimentOpen] = useState(false);
+
+  /** The draft this run would use: the experiment compares it without running here. */
+  const draft = useMemo(() => ({
+    prompt: values.prompt ?? "",
+    level: values.level ?? 0,
+    tools: normalizeAgentTools(values.capabilities ?? []),
+    requiresTool: Boolean(values.requiresTool),
+  }), [values.prompt, values.level, values.capabilities, values.requiresTool]);
 
   async function run() {
     const content = input.trim();
@@ -42,14 +54,7 @@ export function AgentTestPanel({ agent, values }: AgentTestPanelProps) {
         inputMode,
         ...(sessionId
           ? { sessionId }
-          : {
-              draft: {
-                prompt: values.prompt ?? "",
-                level: values.level ?? 0,
-                tools: normalizeAgentTools(values.capabilities ?? []),
-                requiresTool: Boolean(values.requiresTool),
-              },
-            }),
+          : { draft }),
       });
       setSessionId(String(result.session.id));
       setMessages(result.session.messages);
@@ -126,8 +131,23 @@ export function AgentTestPanel({ agent, values }: AgentTestPanelProps) {
         >
           {sessionId ? "继续试运行" : "试运行"}
         </Button>
+        {agent?.id ? (
+          <Button icon={<ExperimentOutlined />} disabled={running} onClick={() => setExperimentOpen(true)}>加入对比实验</Button>
+        ) : null}
         {sessionId ? <Button icon={<PlusOutlined />} disabled={running} onClick={resetSession}>新会话</Button> : null}
       </Space>
+
+      <ExperimentCreateModal
+        open={experimentOpen}
+        onClose={() => setExperimentOpen(false)}
+        initialAgentId={agent?.id ? String(agent.id) : undefined}
+        initialDraft={draft}
+        source={{ kind: "text", text: "" }}
+        onCreated={(experiment) => {
+          setExperimentOpen(false);
+          router.push(`/agent/experiments?experiment=${experiment.id}`);
+        }}
+      />
     </div>
   );
 }

@@ -188,6 +188,8 @@ export interface AgentTestSession {
   /** test / playground / fork */
   type?: "test" | "playground" | "fork";
   parentId?: string | null;
+  /** Set when this session is one variant of an experiment. */
+  experimentId?: string | null;
   requiresTool?: boolean;
   pinned?: AgentSessionPin | null;
   source?: AgentSessionSource | null;

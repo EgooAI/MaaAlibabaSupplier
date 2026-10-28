@@ -11,6 +11,8 @@ describe("routes single source", () => {
     expect(resolveSelectedKey("/agent/llm")).toBe("/agent/llm");
     expect(resolveSelectedKey("/agent/playground")).toBe("/agent/playground");
     expect(resolveSelectedKey("/agent/playground/session-1")).toBe("/agent/playground");
+    expect(resolveSelectedKey("/agent/experiments")).toBe("/agent/experiments");
+    expect(resolveSelectedKey("/agent/experiments/?experiment=3")).toBe("/agent/experiments");
     expect(resolveSelectedKey("/status")).toBe("/status");
     expect(resolveSelectedKey("/settings")).toBe("/settings");
   });

@@ -14,6 +14,7 @@ export const ROUTES: RouteInfo[] = [
   { path: "/agent", title: "自动化", navParent: "/agent" },
   { path: "/agent/llm", title: "LLM", navParent: "/agent" },
   { path: "/agent/playground", title: "Playground", navParent: "/agent" },
+  { path: "/agent/experiments", title: "对比实验", navParent: "/agent" },
   { path: "/agent/system-agents", title: "系统 Agent", navParent: "/agent" },
   { path: "/agent/regular-agents", title: "普通 Agent", navParent: "/agent" },
   { path: "/status", title: "系统状态", navParent: "settings" },
@@ -29,6 +30,7 @@ export function resolveSelectedKey(pathname: string): string {
   if (pathname.startsWith("/agent/system-agents")) return "/agent/system-agents";
   if (pathname.startsWith("/agent/regular-agents")) return "/agent/regular-agents";
   if (pathname.startsWith("/agent/playground")) return "/agent/playground";
+  if (pathname.startsWith("/agent/experiments")) return "/agent/experiments";
   if (pathname.startsWith("/agent/llm")) return "/agent/llm";
   if (pathname === "/agent" || pathname.startsWith("/agent/")) return "/agent/llm";
   if (pathname.startsWith("/settings")) return "/settings";

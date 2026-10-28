@@ -1,8 +1,10 @@
 """Account selection shared by requests, background work and GUI guards."""
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from threading import RLock
+from typing import Iterator
 from uuid import uuid4
 
 from backend.app.shared.utils.app_config import read_app_config
@@ -12,6 +14,11 @@ from backend.app.shared.utils.log_context import log_event
 account_lock = RLock()
 _context_lock = RLock()
 _context = None
+# A worker started for one account keeps that account even if the user switches
+# meanwhile. Bound per thread/context, so requests are unaffected.
+_bound_context: ContextVar["AccountContext | None"] = ContextVar(
+    "bound_account_context", default=None
+)
 
 
 @dataclass(frozen=True)
@@ -31,6 +38,9 @@ def _switched(previous: str | None) -> None:
 
 
 def get_account_context() -> AccountContext:
+    bound = _bound_context.get()
+    if bound is not None:
+        return bound
     global _context
     with _context_lock:
         config = read_app_config()
@@ -41,6 +51,22 @@ def get_account_context() -> AccountContext:
             _context = AccountContext(ali_id, data_dir, uuid4().hex)
             _switched(previous)
         return _context
+
+
+@contextmanager
+def bind_account_context(context: AccountContext) -> Iterator[AccountContext]:
+    """Run work as the account that started it, even after a switch.
+
+    Background threads otherwise resolve whatever account is selected when they
+    happen to read the config, so a run started for seller A could read or write
+    in seller B's workspace. Binding keeps the captured scope for the duration
+    of the work; callers must therefore capture the context before dispatching.
+    """
+    token = _bound_context.set(context)
+    try:
+        yield context
+    finally:
+        _bound_context.reset(token)
 
 
 def invalidate_account_context() -> AccountContext:

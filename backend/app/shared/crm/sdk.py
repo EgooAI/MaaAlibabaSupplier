@@ -47,6 +47,9 @@ AgentPreset = models.AgentPreset
 AgentPresetManager = core.AgentPresetManager
 AgentPresetRevision = models.AgentPresetRevision
 AgentPresetRevisionManager = core.AgentPresetRevisionManager
+Experiment = models.Experiment
+ExperimentManager = core.ExperimentManager
+MAX_VARIANTS_PER_EXPERIMENT = core.experiment.MAX_VARIANTS_PER_EXPERIMENT
 
 __all__ = [
     "Account",
@@ -61,9 +64,12 @@ __all__ = [
     "ChatHistoryManager",
     "Customer",
     "CustomerManager",
+    "Experiment",
+    "ExperimentManager",
     "LLMApiConfig",
     "LLMApiConfigManager",
     "LLM_MAX_LEVEL",
+    "MAX_VARIANTS_PER_EXPERIMENT",
     "Message",
     "MessageManager",
     "Meta",

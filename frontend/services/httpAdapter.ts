@@ -25,8 +25,10 @@ export class ApiError extends Error {
   readonly path: string;
   readonly kind: ApiErrorKind;
   readonly requestId?: string;
+  /** The envelope's `data` on a failed response; a 409 keeps payload evidence here. */
+  readonly details?: unknown;
 
-  constructor(message: string, path: string, options?: { code?: number; status?: number; cause?: unknown; kind?: ApiErrorKind; requestId?: string }) {
+  constructor(message: string, path: string, options?: { code?: number; status?: number; cause?: unknown; kind?: ApiErrorKind; requestId?: string; details?: unknown }) {
     super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
     this.name = "ApiError";
     this.path = path;
@@ -34,7 +36,26 @@ export class ApiError extends Error {
     this.status = options?.status;
     this.kind = options?.kind ?? (options?.status || options?.code ? "http" : options?.cause instanceof TypeError ? "transport" : "protocol");
     this.requestId = options?.requestId;
+    this.details = options?.details;
   }
+}
+
+/** A duplicate run start: the step already has a run, whose id travels in the 409 body. */
+export class ExperimentRunConflict extends ApiError {
+  readonly runId: string;
+
+  constructor(message: string, path: string, runId: string, options?: { requestId?: string }) {
+    super(message, path, { status: 409, requestId: options?.requestId });
+    this.name = "ExperimentRunConflict";
+    this.runId = runId;
+  }
+}
+
+/** The run id a conflict body carried, or undefined when this failure means something else. */
+function conflictRunId(error: unknown): string | undefined {
+  if (!(error instanceof ApiError) || error.status !== 409 || !isPlainObject(error.details)) return undefined;
+  const runId = error.details.runId;
+  return typeof runId === "string" && runId ? runId : undefined;
 }
 
 function parseApiResponse<T>(payload: unknown, path: string): T {
@@ -75,7 +96,7 @@ async function request<T>(path: string, mode: "json" | "void" | "png" | "shutdow
     const body = mode === "png" && response.ok ? await response.blob() : await response.text();
     auth.assertCurrent();
     account.ticket?.assertCurrent(response.headers.get("X-Account-Epoch"));
-    if (!response.ok) throw new ApiError(envelopeMessage(body as string, path), path, { status: response.status });
+    if (!response.ok) throw new ApiError(envelopeMessage(body as string, path), path, { status: response.status, details: envelopeDetails(body as string) });
     if (mode === "png") {
       if (response.headers.get("X-Account-Epoch") !== account.ticket!.epoch) throw new AccountChangedError();
       if (response.headers.get("Content-Type")?.split(";")[0] !== "image/png") throw new ApiError("截图格式无效", path);
@@ -96,7 +117,7 @@ async function request<T>(path: string, mode: "json" | "void" | "png" | "shutdow
     account.ticket?.assertCurrent();
     if (error instanceof AccountChangedError) throw error;
     if (error instanceof ApiError) {
-      throw new ApiError(error.message, path, { code: error.code, status: error.status, kind: error.kind, requestId, cause: error.cause });
+      throw new ApiError(error.message, path, { code: error.code, status: error.status, kind: error.kind, requestId, cause: error.cause, details: error.details });
     }
     throw new ApiError(timeout.aborted ? `请求等待超时：${path}` : `API request failed: ${path}`, path, { cause: error, kind: timeout.aborted ? "timeout" : "transport", requestId });
   }
@@ -114,6 +135,16 @@ function envelopeMessage(text: string, path: string): string {
     // fall through
   }
   return `API request failed: ${path}`;
+}
+
+/** The envelope's `data` of a failed response, when the body carries one. */
+function envelopeDetails(text: string): unknown {
+  try {
+    const payload = JSON.parse(text) as Partial<ApiResponse<unknown>>;
+    return isPlainObject(payload) && "data" in payload ? payload.data : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function requestInit(init?: RequestInit): RequestInit {
@@ -248,4 +279,28 @@ export const httpBackend: OperationsBackend = {
   regenerateAgentTestSessionReply: (id) => requestAi(`/api/agent/test-history/${encodeURIComponent(id)}/regenerate`, { method: "POST" }),
   deleteAgentTestSession: (id) => requestVoid(`/api/agent/test-history/${encodeURIComponent(id)}`, { method: "DELETE" }),
   branchAgentTestSession: (id, messageIndex) => requestJson(`/api/agent/test-history/${encodeURIComponent(id)}/branch`, { method: "POST", body: JSON.stringify(messageIndex === undefined ? {} : { messageIndex }) }),
+
+  createExperiment: (input) => requestJson("/api/agent/experiments", { method: "POST", body: JSON.stringify(input) }),
+  listExperiments: (agentId) => requestJson(`/api/agent/experiments${agentId ? `?agentId=${encodeURIComponent(agentId)}` : ""}`),
+  getExperiment: (id) => requestJson(`/api/agent/experiments/${encodeURIComponent(id)}`),
+  updateExperiment: (id, input) => requestJson(`/api/agent/experiments/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(input) }),
+  addExperimentStep: (id, input) => requestJson(`/api/agent/experiments/${encodeURIComponent(id)}/steps`, { method: "POST", body: JSON.stringify(input) }),
+  addExperimentVariant: (id, input) => requestJson(`/api/agent/experiments/${encodeURIComponent(id)}/variants`, { method: "POST", body: JSON.stringify(input) }),
+  removeExperimentVariant: (id, variantId) => requestJson(`/api/agent/experiments/${encodeURIComponent(id)}/variants/${encodeURIComponent(variantId)}`, { method: "DELETE" }),
+  deleteExperiment: (id) => requestVoid(`/api/agent/experiments/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  startExperimentRun: async (id, stepIndex, force = false) => {
+    const path = `/api/agent/experiments/${encodeURIComponent(id)}/runs`;
+    try {
+      // The run continues in the background: this only returns its first snapshot.
+      return await requestJson(path, { method: "POST", body: JSON.stringify({ stepIndex, force }) });
+    } catch (error) {
+      // A second click on the same step answers 409 with the run already in progress.
+      const runId = conflictRunId(error);
+      if (!runId) throw error;
+      throw new ExperimentRunConflict(error instanceof ApiError ? error.message : "该步骤已有运行中的任务", path, runId, { requestId: error instanceof ApiError ? error.requestId : undefined });
+    }
+  },
+  getExperimentRun: (runId) => requestJson(`/api/agent/runs/${encodeURIComponent(runId)}`),
+  cancelExperimentRun: (runId) => requestJson(`/api/agent/runs/${encodeURIComponent(runId)}`, { method: "DELETE" }),
+  promoteExperimentVariant: (id, variantId, note) => requestJson(`/api/agent/experiments/${encodeURIComponent(id)}/promote`, { method: "POST", body: JSON.stringify({ variantId, note: note ?? "" }) }),
 };

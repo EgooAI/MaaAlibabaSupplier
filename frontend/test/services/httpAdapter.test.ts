@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { httpBackend } from "@/services/httpAdapter";
+import { ExperimentRunConflict, httpBackend } from "@/services/httpAdapter";
 import type { ConversationAggregateDto } from "@/types/chatTransport";
 import type { ConversationQuery } from "@/types/inbox";
 import { accountSession } from "@/services/accountSession";
@@ -432,5 +432,65 @@ describe("http adapter contract", () => {
   ] as const)("rejects %s responses", async (_label, body, call, error) => {
     globalThis.fetch = vi.fn().mockResolvedValue(new Response(body, { status: 200 }));
     await expect(call()).rejects.toThrow(error);
+  });
+});
+
+describe("http adapter experiments", () => {
+  const envelope = (data: unknown, status = 200, code = 0, msg = "ok") =>
+    new Response(JSON.stringify({ code, msg, data }), { status, headers: { "X-Account-Epoch": "mock-1" } });
+
+  it("creates an experiment with the camelCase body at the account-scoped path", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(envelope({ id: "7" }));
+    globalThis.fetch = fetchMock;
+    const input = {
+      agentId: "agent-quote",
+      name: "对比",
+      source: { kind: "conversation" as const, conversationId: 42, messageIndex: 3 },
+      variants: [
+        { label: "当前版", versionKind: "preset" as const, revisionId: 5 },
+        { label: "草稿", versionKind: "draft" as const, draft: { prompt: "p", level: 2, tools: ["calculate"], requiresTool: true } },
+      ],
+    };
+    await httpBackend.createExperiment(input);
+    const [path, init] = fetchMock.mock.calls[0];
+    expect(path).toBe("/api/agent/experiments");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual(input);
+    expect(new Headers(init.headers).get("X-Account-Epoch")).toBe("mock-1");
+  });
+
+  it("raises ExperimentRunConflict with the active run id on a 409, and leaves other 409s as plain errors", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(envelope({ runId: "run-active" }, 409, 1, "该步骤已有运行中的任务"))
+      .mockResolvedValueOnce(envelope(null, 409, 1, "该步骤已经运行过，如需重试请显式确认"));
+    globalThis.fetch = fetchMock;
+    const conflict = await httpBackend.startExperimentRun("7", 1).catch((error: unknown) => error);
+    expect(conflict).toBeInstanceOf(ExperimentRunConflict);
+    expect(conflict).toMatchObject({ runId: "run-active", status: 409, message: "该步骤已有运行中的任务" });
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/agent/experiments/7/runs");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ stepIndex: 1, force: false });
+
+    const already = await httpBackend.startExperimentRun("7", 1, true).catch((error: unknown) => error);
+    expect(already).not.toBeInstanceOf(ExperimentRunConflict);
+    expect(already).toMatchObject({ status: 409, message: "该步骤已经运行过，如需重试请显式确认" });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ stepIndex: 1, force: true });
+  });
+
+  it("returns the experiment's variants as sessions with labels, together with its steps", async () => {
+    const experiment = {
+      id: "7", agentId: "agent-quote", name: "对比", frozenPrefix: "hi", source: { kind: "text" },
+      steps: [{ index: 0, mode: "buyer", text: "price?", label: "" }], annotations: [], notes: "", progress: {},
+      createdAt: "2026-09-09 10:00", updatedAt: "2026-09-09 10:00", activeRunId: "run-1",
+      variants: [
+        { id: "11", title: "报价 · A", agentId: "agent-quote", createdAt: "", type: "playground", label: "A", pinned: { kind: "preset" }, messages: [] },
+        { id: "12", title: "报价 · B", agentId: "agent-quote", createdAt: "", type: "playground", label: "B", pinned: { kind: "draft" }, draft: true, messages: [] },
+      ],
+    };
+    globalThis.fetch = vi.fn().mockResolvedValue(envelope(experiment));
+    const result = await httpBackend.getExperiment("7");
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe("/api/agent/experiments/7");
+    expect(result.steps).toEqual([{ index: 0, mode: "buyer", text: "price?", label: "" }]);
+    expect(result.variants.map((variant) => [variant.id, variant.label, variant.draft ?? false])).toEqual([["11", "A", false], ["12", "B", true]]);
+    expect(result.activeRunId).toBe("run-1");
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { AppstoreOutlined, CommentOutlined, DashboardOutlined, ExperimentOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PoweroffOutlined, RobotOutlined, SelectOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
+import { AppstoreOutlined, CommentOutlined, DashboardOutlined, ExperimentOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PoweroffOutlined, RobotOutlined, SelectOutlined, SettingOutlined, SwapOutlined, UserOutlined } from "@ant-design/icons";
 import { Avatar, Button, Grid, Layout, Menu, Tooltip, Typography } from "antd";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -34,6 +34,7 @@ const navItems = [
     children: [
       { key: "/agent/llm", icon: <SettingOutlined />, label: <Link href="/agent/llm">LLM</Link> },
       { key: "/agent/playground", icon: <ExperimentOutlined />, label: <Link href="/agent/playground">Playground</Link> },
+      { key: "/agent/experiments", icon: <SwapOutlined />, label: <Link href="/agent/experiments">对比实验</Link> },
       { key: "/agent/system-agents", icon: <RobotOutlined />, label: <Link href="/agent/system-agents">系统 Agent</Link> },
       { key: "/agent/regular-agents", icon: <RobotOutlined />, label: <Link href="/agent/regular-agents">普通 Agent</Link> },
     ],

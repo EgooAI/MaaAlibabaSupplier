@@ -7,6 +7,7 @@ import type { SelfInfo } from "@/types/home";
 import type { AccountEpoch, ConnectionSnapshot } from "@/types/connection";
 import type { UpdateState } from "@/types/update";
 import type { AliIdList, CreateTestTaskInput, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestEntry, NodeTestSubmission, SystemStatusSnapshot, TaskItem, TaskSnapshot } from "@/types/status";
+import type { CreateExperimentInput, Experiment, ExperimentSummary, ExperimentVariantInput, RunSnapshot, UpdateExperimentInput } from "@/types/experiment";
 
 export interface OperationsBackend {
   getConnection(): Promise<ConnectionSnapshot>;
@@ -86,4 +87,18 @@ export interface OperationsBackend {
   regenerateAgentTestSessionReply(id: string): Promise<AgentTestSession>;
   deleteAgentTestSession(id: string): Promise<void>;
   branchAgentTestSession(id: string, messageIndex?: number): Promise<AgentTestSession>;
+
+  createExperiment(input: CreateExperimentInput): Promise<Experiment>;
+  listExperiments(agentId?: string): Promise<ExperimentSummary[]>;
+  getExperiment(id: string): Promise<Experiment>;
+  updateExperiment(id: string, input: UpdateExperimentInput): Promise<Experiment>;
+  addExperimentStep(id: string, input: { mode: "buyer" | "agent"; text: string; label?: string }): Promise<Experiment>;
+  addExperimentVariant(id: string, input: ExperimentVariantInput): Promise<Experiment>;
+  removeExperimentVariant(id: string, variantId: string): Promise<Experiment>;
+  deleteExperiment(id: string): Promise<void>;
+  // Submission receipt; the caller polls the run until it reaches a terminal state.
+  startExperimentRun(id: string, stepIndex: number, force?: boolean): Promise<RunSnapshot>;
+  getExperimentRun(runId: string): Promise<RunSnapshot>;
+  cancelExperimentRun(runId: string): Promise<RunSnapshot>;
+  promoteExperimentVariant(id: string, variantId: string, note?: string): Promise<DbAgentPreset>;
 }

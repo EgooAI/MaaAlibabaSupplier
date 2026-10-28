@@ -8,6 +8,9 @@ import type { AgentConfig, AgentTestSession } from "@/types/agent";
 
 /** Sessions the Playground owns: forked/simulated ones only. */
 export function isPlaygroundSession(session: AgentTestSession) {
+  // Experiment variants are playground sessions too, but their transcript is
+  // owned by the comparison board; continuing them here would desync the run.
+  if (session.experimentId) return false;
   return session.type === "fork" || session.type === "playground";
 }
 

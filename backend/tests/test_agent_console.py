@@ -98,9 +98,14 @@ class AgentConsoleTestCase(unittest.TestCase):
 
     def test_tool_catalog_and_unregistered_tool_guards(self) -> None:
         tools = self.client.get("/api/agent/tools").json()["data"]
-        self.assertEqual([tool["name"] for tool in tools], ["calculate"])
-        self.assertEqual(tools[0]["category"], "read")
-        self.assertTrue(tools[0]["description"])
+        by_name = {tool["name"]: tool for tool in tools}
+        # The catalog reflects whatever the process registered: the SDK's
+        # built-in calculator plus the host business tools. Order is registration
+        # order, which other suites can influence, so compare as a set.
+        self.assertEqual(set(by_name), {"calculate", "reply_customer", "query_product"})
+        self.assertEqual(by_name["calculate"]["category"], "read")
+        self.assertEqual(by_name["reply_customer"]["category"], "effect")
+        self.assertTrue(by_name["calculate"]["description"])
         self.assertNotIn("tools", self.client.get("/api/agent/console").json()["data"])
 
         rejected = self.client.post("/api/agent/presets", json={

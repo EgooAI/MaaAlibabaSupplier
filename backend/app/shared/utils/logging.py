@@ -81,7 +81,7 @@ _RUNTIME_MESSAGES = (
     "Card sweep iteration failed", "Card sweep shutdown failed",
     "Yak MITM shutdown failed", "MITM receiver shutdown failed", "Task queue",
     "Authentication storage unavailable", "Unhandled authentication middleware error",
-    "LLM runtime registration failed",
+    "LLM runtime registration failed", "Experiment run failed",
     "Shutdown requested via API; stopping uvicorn server", "Failed to shut down Maa AgentServer",
     "[agent] stopping Maa AgentServer...", "[agent] interrupted; shutting down...",
     "[agent] AgentServer.join() still blocking after shutdown; forcing exit",
