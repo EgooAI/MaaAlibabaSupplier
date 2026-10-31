@@ -2,47 +2,36 @@
 
 阿里卖家（Alibaba Supplier）智能客服与自动化助手。
 
-项目将 **MITM 数据采集**、**本地 CRM**、**LLM Agent** 与 **MaaFramework 图像识别自动化** 组合成一个本地工作台：自动归档阿里国际站的客户会话，翻译买家消息，生成回复建议与客户分析，并在可确认的前提下代操作客户端完成消息发送。
-
-> 本项目由 [MaaFramework](https://github.com/MaaXYZ/MaaFramework) 驱动 GUI 自动化能力，Web 界面基于 [NiceGUI](https://nicegui.io/)。
-
-## 界面预览
-
-| 自身信息 | 聊天工作台 |
-| --- | --- |
-| ![自身信息](docs/screenshots/01-home.jpg) | ![聊天工作台](docs/screenshots/02-chat.jpg) |
-
-| 批量客户管理 | Agent / LLM 配置 |
-| --- | --- |
-| ![批量客户管理](docs/screenshots/03-batch.jpg) | ![Agent 配置](docs/screenshots/04-agent.jpg) |
-
-> 截图中的账号、客户与密钥信息均已脱敏。
+项目把 **MITM 数据采集**、**本地 CRM**、**LLM Agent** 与 **MaaFramework 图像识别自动化** 组合成本地工作台：自动归档阿里国际站的客户会话，翻译买家消息，生成回复建议与客户分析，并在人工确认的前提下代操作客户端完成消息发送。Web 工作台由 FastAPI 后端与 Next.js 前端组成。
 
 ## 功能特性
 
-- **本地 CRM**：通过 Yak MITM 拦截阿里卖家客户端接口，解析登录账号、客户资料、会话、商品/询盘卡片；解密本地加密 IM 数据库，统一归并写入 SQLModel + SQLite，多平台标识（`ali_id` / `login_id` / `encrypt_account_id` 等）自动合并到同一客户。
-- **聊天工作台**：会话分组与检索、消息流渲染、未读/待回复筛选、客户信息侧栏、商品/询盘/通用卡片展示，以及批量客户管理（全选、分组选择、导出聊天记录）。
-- **AI 客服能力**：对接 OpenAI 兼容接口，提供买家消息多语言翻译、AI 回复建议、客户意图分析、客户所处阶段分析；支持多级 LLM 参数、系统 Agent 与自定义 AgentPreset、工具调用轮次控制。
-- **RPA 自动化**：基于 MaaFramework 模板匹配与任务流水线，自动跳转指定联系人、写入或粘贴文本并发送消息，配合后台任务队列完成批量触达。
-- **运行支撑**：统一编排 MaaFW 子进程、Yak MITM 代理、Python 接收器与 NiceGUI Web 服务，提供系统状态页与 SMTP 邮件通知。
+- **收件箱与聊天工作台**：统计待回复、超时、本工作台未读、历史待确认与等待客户；会话列表按时间 / 状态 / 对话数分组与检索；消息流渲染、商品与询盘卡片展示、未读筛选、客户信息侧栏。
+- **翻译与 AI 建议**：买家消息多语言翻译写入本地 CRM，支持翻译缺失重译；AI 回复建议（`reply_customer` 工具驱动）、客户意图分析、客户所处阶段分析。
+- **发件箱确认**：草稿编辑与发送前确认，发送记录可追溯；工具效果按 live / simulated / 无作用域分别落库、记录或拒绝。
+- **批量管理**：多选会话，维护业务阶段与业务标签、流失信息，按未读 / 待回复筛选，导出聊天记录。
+- **Agent 控制台**：系统 Agent（翻译 / 建议 / 客户意图分析 / 客户所处阶段分析）、普通 Agent、Playground 调试、对比实验、多级 LLM 配置、预设版本历史与工具清单。
+- **设置与系统状态**：数据目录、卖家账号、AES Key、客户端接入与同步校验；MITM 代理、接收器、任务与截图连接测试的状态观察。
+- **本地 CRM SDK**：`backend/app/crm_sdk` 为独立子模块，基于 SQLModel + SQLite，可脱离宿主应用单独使用。
 
 ## 技术栈
 
 | 层次 | 技术 |
 | --- | --- |
-| 语言 | Python 3.10+ |
-| Web / UI | NiceGUI、Quasar |
-| GUI 自动化 | MaaFramework（图像识别、Pipeline、Custom Action/Recognition） |
+| 后端 | Python 3.12、FastAPI、uvicorn |
+| 前端 | Next.js 16、React 19、TypeScript、Ant Design 6、Tailwind CSS |
+| 数据存储 | SQLite、SQLModel / SQLAlchemy，独立 `crm_sdk` 子模块 |
 | 数据采集 | Yak MITM、HTTP/JSON 解析、SQLite 加密库解密 |
-| 数据存储 | SQLite、SQLModel / SQLAlchemy |
-| AI | OpenAI 兼容 API、工具调用、AgentPreset |
+| GUI 自动化 | MaaFramework（Pipeline、模板匹配、Custom Action/Recognition） |
+| AI | OpenAI 兼容 API、工具调用、AgentPreset、多级 LLM 参数 |
 
 ## 快速开始
 
 ### 环境要求
 
 - Windows 10/11
-- Python 3.10 及以上（推荐 3.12）
+- Python 3.12
+- Node.js 与 pnpm（前端）
 - 已安装并登录阿里卖家客户端
 - [Yak](https://yaklang.com/) CLI（用于本地 MITM 代理）
 - [MaaFramework](https://github.com/MaaXYZ/MaaFramework/releases) win-x64 运行时
@@ -53,72 +42,84 @@
 git clone https://github.com/EgooAI/MaaAlibabaSupplier.git
 cd MaaAlibabaSupplier
 
-# 1. Python 依赖
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r app/requirements.txt
+# 安装前端依赖、后端依赖、MaaFramework 运行时与 Yak（含开发依赖）
+python tools/install_all.py --dev
 
-# 2. MaaFramework 运行时
-#    将 MaaFramework win-x64 压缩包解压到 deps/，然后执行：
-python tools/install.py
-
-# 3. 环境变量
+# 环境变量
 copy .env.example .env
-#    按需修改 ALIBABA_DATA_DIR、MAAFW_EXECUTABLE、YAK_EXECUTABLE 等
+# 必填 MAA_AUTH_SECRET_SHA256：登录密钥的 SHA-256 摘要，生成方式见 .env.example
 ```
 
 ### 启动
 
+后端（仓库根目录）：
+
 ```bash
-python app/main.py
+python -m backend.app.main
 ```
 
-启动后将依次拉起 MaaFW、MITM 接收器、Yak MITM 代理与 Web 服务，浏览器访问 <http://127.0.0.1:8787>。
+启动时依次拉起 MaaFW、MITM 接收器、Yak MITM 代理、IM 同步服务与 HTTP API，默认监听 `127.0.0.1:8787`。
 
-仅调试 Web 界面时，可跳过 MaaFW 与 Yak，直接启动 NiceGUI：
+前端（另开终端）：
 
 ```bash
-python -c "from app.web.server import run; run()"
+cd frontend
+BACKEND_ORIGIN=http://127.0.0.1:8787 pnpm dev
+```
+
+浏览器访问 <http://127.0.0.1:3000>，使用 .env 中配置的登录密钥登录。
+
+也可用脚本同时重启前后端预览（自动解析 `.env` 中的端口）：
+
+```powershell
+pwsh -NoProfile -File tools/restart-dev-preview.ps1
 ```
 
 ### 配置说明
 
-完整变量见 [.env.example](.env.example)，常用的几项：
+完整变量见 [.env.example](.env.example)，常用几项：
 
 | 变量 | 说明 |
 | --- | --- |
-| `ALIBABA_DATA_DIR` | 阿里卖家客户端数据目录（含 `{ali_id}@icbu/database/im.sqlite`） |
-| `MAAFW_EXECUTABLE` | `MaaPiCli.exe` 路径 |
-| `MAAFW_WORKDIR` | MaaFW 工作目录，默认 `./install` |
+| `MAA_AUTH_SECRET_SHA256` | 必填，登录密钥的 SHA-256 十六进制摘要 |
+| `MAA_API_HOST` / `MAA_API_PORT` | 后端 API 监听地址与端口，默认 `127.0.0.1:8787` |
+| `MAA_CRM_DB_PATH` | 本地 CRM 数据库路径，默认 `backend/data/crm.sqlite` |
+| `MAA_POOLS_DB_PATH` | MITM 数据池数据库路径，默认 `data/pools.db` |
 | `MITM_PROXY_PORT` | Yak MITM 监听端口，默认 `8084` |
 | `MITM_RECEIVER_PORT` | Python 接收器端口，默认 `8085` |
-| `MAA_WEB_PORT` | Web UI 端口，默认 `8787` |
-| `SYSTEM_PROMPT` | 追加到所有 LLM 请求的全局系统提示词 |
+| `FRONTEND_PORT` / `BACKEND_ORIGIN` | 开发预览的前端端口与后端地址 |
 
-LLM 的 Base URL、API Key 与模型名在 Web 端 **Agent → LLM 配置** 中维护，保存到本地 `data/crm.sqlite`。
+LLM 的 Base URL、API Key 与模型名在前端 **自动化 → LLM** 页面按 Level 维护，保存在本地 CRM 数据库。
 
 ## 项目结构
 
 ```text
-app/
-  main.py         # 启动入口：MaaFW / MITM / Web 编排
-  shared/         # 业务层：backend、agent、crm、mitm、utils
-  crm_sdk/        # 可独立使用的本地 CRM SDK（SQLModel + SQLite）
-  web/            # NiceGUI 页面与组件
-  mitm/           # MITM 接收器
-  agent/          # Maa Custom Action / Recognition
-assets/           # MaaFramework 资源：image / pipeline / model
-yak_mitm.yak      # Yak MITM 代理脚本
+backend/
+  app/
+    api/          # FastAPI 路由与鉴权
+    shared/       # 业务层：backend、agent、crm、mitm、utils
+    crm_sdk/      # 独立本地 CRM SDK（Git 子模块）
+    agent/        # Maa Custom Action / Recognition
+  assets/         # MaaFramework 资源：image / pipeline / model
+  yak_mitm.yak    # Yak MITM 代理脚本
+frontend/
+  app/            # Next.js 路由
+  features/       # 页面功能：聊天、批量、Agent、设置等
+  components/     # 通用组件
+  services/       # API 适配与登录 / 账号会话
+  domain/         # 领域模型与纯函数
+tools/            # 安装、打包与开发辅助脚本
+docs/             # 业务与接口文档
 ```
 
-更细的模块说明见 [AGENTS.md](AGENTS.md)、[app/README.md](app/README.md) 与 [assets/README.md](assets/README.md)。
+更细的模块说明见 [AGENTS.md](AGENTS.md)、[backend/app/README.md](backend/app/README.md) 与 [docs/](docs/)。
 
 ## 数据与隐私
 
-- 客户、会话、消息与译文均保存在本地 SQLite（`data/crm.sqlite`、`data/pools.db`），不会上传到项目方服务器。
+- 客户、会话、消息、译文与配置均保存在本地 SQLite，不会上传到项目方服务器。
 - MITM 代理与接收器只监听 `127.0.0.1`。
 - 除用户自行配置的 LLM 接口外，程序不向外部服务发送业务数据。
 
 ## 许可证
 
-[MIT](LICENSE)
+[MIT](LICENSE) © 2026 EgooAI
