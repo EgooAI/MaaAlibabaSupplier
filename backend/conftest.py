@@ -122,8 +122,16 @@ def _cleanup_runtime():
         common._DATABASE_LOCKS._items.clear()
 
 
+def _is_sdk_test(request) -> bool:
+    sdk_tests = Path(__file__).resolve().parent / "app" / "crm_sdk" / "tests"
+    return sdk_tests in Path(request.node.path).resolve().parents
+
+
 @pytest.fixture(autouse=True)
-def isolated_backend():
+def isolated_backend(request):
+    # SDK tests own the registry and assert its exact contents (for example that
+    # importing the package registers nothing), so the host must not repopulate it.
+    host_test = not _is_sdk_test(request)
     _cleanup_runtime()
     with TemporaryDirectory(prefix="test-", dir=Path.cwd()) as temporary:
         with pytest.MonkeyPatch.context() as patch:
@@ -133,10 +141,17 @@ def isolated_backend():
 
             patch.setattr(main, "LOGIN_LIMITER", auth.LoginLimiter())
             patch.setattr(updater, "_instance", None)
+            if host_test:
+                _restore_agent_registries()
+            else:
+                registry = sys.modules.get("agent_pipeline.registry")
+                if registry is not None:
+                    registry.tool_registry.clear()
             try:
                 yield
             finally:
-                _restore_agent_registries()
+                if host_test:
+                    _restore_agent_registries()
                 _cleanup_runtime()
 
 

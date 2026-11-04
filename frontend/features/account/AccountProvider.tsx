@@ -5,10 +5,12 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, us
 import { backend } from "@/services/client";
 import { accountSession, AccountChangedError, captureAccount, scopeBackend } from "@/services/accountSession";
 import { authSession } from "@/services/authSession";
-import type { AccountEpoch } from "@/types/connection";
+import type { AccountEpoch, ConnectionSnapshot } from "@/types/connection";
 import { flushDrafts } from "./draftStorage";
 
 const STORAGE_EVENT_KEY = "maa:account-changed";
+const CONNECT_RETRY_MS = 60_000;
+const connectKey = (snapshot: ConnectionSnapshot) => `${snapshot.account.epoch}|${snapshot.client.detail}`;
 
 function useAccountController() {
   const session = useSyncExternalStore(accountSession.subscribe, accountSession.get, accountSession.server);
@@ -22,6 +24,8 @@ function useAccountController() {
   const request = useRef(0);
   const mutation = useRef(false);
   const mounted = useRef(true);
+  const connecting = useRef(false);
+  const connectAttempt = useRef({ key: "", at: 0 });
   const [authGeneration] = useState(() => authSession.get().generation);
   const isCurrent = useCallback(() => mounted.current && authSession.get().generation === authGeneration, [authGeneration]);
   const refreshReads = useCallback(() => setReadRefreshSequence((value) => value + 1), []);
@@ -97,6 +101,23 @@ function useAccountController() {
       if (mounted.current) setSyncBusy(false);
     }
   }, [isCurrent]);
+
+  // Connecting only initializes the window binding and sends no input, so it
+  // runs without invalidating the workspace. A failed attempt is retried when
+  // the reported window state changes or after a backoff, never on every poll.
+  useEffect(() => {
+    const current = session.snapshot;
+    if (!current || session.blocked || connecting.current || current.client.connected || !current.account.self_ali_id) return;
+    const last = connectAttempt.current;
+    if (last.key === connectKey(current) && Date.now() - last.at < CONNECT_RETRY_MS) return;
+    connecting.current = true;
+    void (async () => {
+      try { await backend.connectClient(captureAccount().epoch); } catch { /* The refreshed client detail reports the reason. */ }
+      const next = isCurrent() ? await refresh() : undefined;
+      connectAttempt.current = { key: connectKey(next ?? current), at: Date.now() };
+      connecting.current = false;
+    })();
+  }, [session.snapshot, session.blocked, refresh, isCurrent]);
 
   useEffect(() => {
     mounted.current = true;

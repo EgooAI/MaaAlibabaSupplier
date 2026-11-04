@@ -8,7 +8,7 @@ import { useAccount } from "@/features/account/AccountProvider";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { authSession, AUTH_STORAGE_KEY } from "@/services/authSession";
 import { httpBackend } from "@/services/httpAdapter";
-import { connectionSnapshot } from "@/mock/connectionData";
+import { connectionSnapshot as baseSnapshot } from "@/mock/connectionData";
 import { memoryLocks, memoryStorage } from "@/test/support/authFixture";
 
 vi.mock("antd", () => {
@@ -24,6 +24,7 @@ vi.mock("antd", () => {
   };
 });
 
+const connectionSnapshot = { ...baseSnapshot, client: { connected: true, window_generation: "window-a", detail: "客户端窗口已连接" } };
 const response = (data: unknown, status = 200, headers?: HeadersInit) => new Response(JSON.stringify({ code: status === 200 ? 0 : 1, msg: "ok", data }), { status, headers });
 let container: HTMLDivElement;
 let root: Root;

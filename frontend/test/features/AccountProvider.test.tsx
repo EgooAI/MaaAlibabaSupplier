@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountProvider, useAccount, useAccountBackend } from "@/features/account/AccountProvider";
 import { accountSession } from "@/services/accountSession";
-import { connectionSnapshot } from "@/mock/connectionData";
+import { connectionSnapshot as baseSnapshot } from "@/mock/connectionData";
 import type { ConnectionSnapshot } from "@/types/connection";
 import type { OperationsBackend } from "@/services/interfaces";
 import { httpBackend } from "@/services/httpAdapter";
@@ -17,6 +17,13 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("antd", () => ({ App: { useApp: () => ({ message: mocks.message }) } }));
 vi.mock("@/services/client", () => ({ backend: mocks.backend }));
+
+const connectionSnapshot: ConnectionSnapshot = { ...baseSnapshot, client: { connected: true, window_generation: "window-a", detail: "客户端窗口已连接" } };
+const offline = (detail: string, overrides: Partial<ConnectionSnapshot["account"]> = {}): ConnectionSnapshot => ({
+  ...baseSnapshot,
+  account: { ...baseSnapshot.account, ...overrides },
+  client: { connected: false, window_generation: "", detail },
+});
 
 let root: Root;
 let container: HTMLDivElement;
@@ -156,6 +163,40 @@ describe("shared account provider", () => {
     expect(mocks.backend.getConnection).toHaveBeenCalledTimes(4);
     expect(mocks.backend.connectClient).not.toHaveBeenCalled();
     expect(mocks.backend.retryConnection).not.toHaveBeenCalled();
+  });
+
+  it("connects an unconnected client without invalidating the workspace", async () => {
+    mocks.backend.getConnection.mockResolvedValueOnce(offline("window closed")).mockResolvedValue(connectionSnapshot);
+    mocks.backend.connectClient.mockResolvedValue(connectionSnapshot);
+    await mount();
+    expect(mocks.backend.connectClient).toHaveBeenCalledExactlyOnceWith(connectionSnapshot.account.epoch);
+    expect(account.snapshot?.client.connected).toBe(true);
+    expect(account.blocked).toBe(false);
+    expect(localStorage.getItem("maa:account-changed")).toBeNull();
+    await act(async () => vi.advanceTimersByTimeAsync(120_000));
+    expect(mocks.backend.connectClient).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a failed connection only when the window state changes or after the backoff", async () => {
+    mocks.backend.getConnection.mockImplementation(async () => offline("window missing"));
+    mocks.backend.connectClient.mockRejectedValue(new Error("503"));
+    await mount();
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(mocks.backend.connectClient).toHaveBeenCalledTimes(1);
+    mocks.backend.getConnection.mockImplementation(async () => offline("window opened"));
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    expect(mocks.backend.connectClient).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(40_000));
+    expect(mocks.backend.connectClient).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(20_000));
+    expect(mocks.backend.connectClient).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not connect before a seller is selected", async () => {
+    mocks.backend.getConnection.mockResolvedValue(offline("window closed", { self_ali_id: "" }));
+    await mount();
+    await act(async () => vi.advanceTimersByTimeAsync(120_000));
+    expect(mocks.backend.connectClient).not.toHaveBeenCalled();
   });
 
   it("rejects out-of-order observations and remounts the workspace on epoch change", async () => {

@@ -8,7 +8,7 @@ import { useChatWorkbench } from "@/features/chat/hooks/useChatWorkbench";
 import { useBatchManagement } from "@/features/chat/hooks/useBatchManagement";
 import { accountSession } from "@/services/accountSession";
 import { adaptConversationDetail, adaptConversationSummary } from "@/services/chatAdapter";
-import { connectionSnapshot } from "@/mock/connectionData";
+import { connectionSnapshot as baseSnapshot } from "@/mock/connectionData";
 import type { ConnectionSnapshot } from "@/types/connection";
 import type { ConversationAggregateDto } from "@/types/chatTransport";
 import type { ConversationDetail } from "@/types/chatCanonical";
@@ -33,6 +33,8 @@ vi.mock("antd", () => ({
   Descriptions: ({ items }: { items: Array<{ key: string; label: string; children: ReactNode }> }) => <dl>{items.map((item) => <div key={item.key}><dt>{item.label}</dt><dd>{item.children}</dd></div>)}</dl>,
 }));
 vi.mock("@/services/client", () => ({ backend: mocks.backend }));
+
+const connectionSnapshot: ConnectionSnapshot = { ...baseSnapshot, client: { connected: true, window_generation: "window-a", detail: "客户端窗口已连接" } };
 
 const aggregate: ConversationAggregateDto = {
   sid: 42, name: "Buyer", participants: [], messages: [],

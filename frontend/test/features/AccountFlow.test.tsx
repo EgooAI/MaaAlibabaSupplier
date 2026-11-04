@@ -3,7 +3,7 @@ import { act, type ReactNode, type ButtonHTMLAttributes } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountProvider } from "@/features/account/AccountProvider";
-import { ClientCard, ConnectionFlowCard, SyncCard } from "@/features/account/AccountFlow";
+import { ConnectionFlowCard, SyncCard } from "@/features/account/AccountFlow";
 import { DataDirBanner } from "@/features/settings/DataDirBanner";
 import { accountSession } from "@/services/accountSession";
 import { connectionSnapshot } from "@/mock/connectionData";
@@ -41,6 +41,8 @@ beforeEach(async () => {
   accountSession.clear();
   Object.defineProperty(document, "hidden", { configurable: true, value: false });
   snapshot = structuredClone(connectionSnapshot);
+  snapshot.client = { connected: true, window_generation: "window-a", detail: "客户端窗口已连接" };
+  snapshot.capabilities.operate_client = true;
   mocks.backend.getConnection.mockImplementation(async () => structuredClone(snapshot));
   mocks.backend.retryConnection.mockImplementation(async () => structuredClone(snapshot));
   container = document.createElement("div");
@@ -55,31 +57,25 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-const mount = async () => { await act(async () => root.render(<AccountProvider><ConnectionFlowCard /><SyncCard /><ClientCard /><DataDirBanner /></AccountProvider>)); };
+const mount = async () => { await act(async () => root.render(<AccountProvider><ConnectionFlowCard /><SyncCard /><DataDirBanner /></AccountProvider>)); };
 const poll = async () => { await act(async () => { await vi.advanceTimersByTimeAsync(10_000); }); };
 const step = (key: string) => container.querySelector(`[data-step="${key}"]`)!;
 const syncButton = () => container.querySelector<HTMLButtonElement>('section[aria-label="密钥与聊天同步"] button')!;
 
 describe("account connection flow", () => {
-  it("finishes client access after connecting without a seller confirmation action", async () => {
+  it("connects the client automatically for the selected seller", async () => {
+    snapshot.client = { connected: false, window_generation: "", detail: "客户端尚未连接，请先连接客户端。" };
+    snapshot.capabilities.operate_client = false;
     mocks.backend.connectClient.mockImplementation(async () => {
       snapshot.client = { connected: true, window_generation: "window-a", detail: "客户端窗口已连接" };
       snapshot.capabilities.operate_client = true;
       return structuredClone(snapshot);
     });
     await mount();
-    expect(container.textContent).toContain("只读模式：客户端尚未接入");
-    const button = container.querySelector<HTMLButtonElement>('section[aria-label="客户端接入"] button')!;
-    await act(async () => button.click());
     expect(mocks.backend.connectClient).toHaveBeenCalledExactlyOnceWith(snapshot.account.epoch);
     expect(step("client").getAttribute("data-status")).toBe("finish");
-    expect(step("client").textContent).toContain("客户端接入");
     expect(accountSession.get().snapshot?.capabilities.operate_client).toBe(true);
-    expect(container.querySelectorAll('section[aria-label="客户端接入"] button')).toHaveLength(1);
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
-    expect(container.textContent).not.toContain("人工确认");
     expect(container.textContent).not.toContain("只读模式");
-    expect(container.textContent).toContain("截图并确认联系人与内容");
   });
 
   it("observes verifying, valid and committed ready states without submitting a retry", async () => {

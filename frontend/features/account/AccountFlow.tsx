@@ -1,7 +1,6 @@
 "use client";
 
-import { Alert, App, Button, Card, Space, Steps, Typography } from "antd";
-import { backend } from "@/services/client";
+import { Alert, Button, Card, Space, Steps, Typography } from "antd";
 import { useAccount } from "./AccountProvider";
 import { flowSteps } from "./flowSteps";
 import { SyncStatus } from "./SyncStatus";
@@ -40,28 +39,6 @@ export function SyncCard() {
         {source?.last_error ? (
           <Alert type={retrying ? "warning" : "error"} showIcon title={source.last_error} description={retrying ? "后台将自动重试，无需重复点击；已有存档可能过期。" : "请检查数据目录、账号及密钥，修正后点击上方按钮重新验证并同步。"} />
         ) : null}
-      </Space>
-    </Card>
-  );
-}
-
-export function ClientCard() {
-  const { snapshot, blocked, mutating, mutate } = useAccount();
-  const { message } = App.useApp();
-  const run = async (operation: () => Promise<unknown>) => {
-    try { await mutate(operation); }
-    catch (err) { message.error(err instanceof Error ? err.message : "操作失败，请刷新状态后重试"); }
-  };
-  if (!snapshot) return null;
-  const canAct = !blocked && !mutating && Boolean(snapshot.account.self_ali_id);
-  return (
-    <Card title="客户端接入">
-      <Space orientation="vertical" size="middle" className="w-full">
-        <Alert type={snapshot.client.connected ? "success" : "warning"} showIcon title={snapshot.client.connected ? "客户端已接入" : "客户端尚未接入"} description={snapshot.client.detail} />
-        <Space wrap>
-          <Button loading={mutating} disabled={!canAct} onClick={() => void run(() => backend.connectClient(snapshot.account.epoch))}>{snapshot.client.connected ? "重新接入客户端" : "接入客户端"}</Button>
-        </Space>
-        <Typography.Text type="secondary">选择卖家并接入客户端后即可操作。接入仅初始化客户端，不执行点击；发送和填入仍需查看截图并确认联系人与内容。</Typography.Text>
       </Space>
     </Card>
   );

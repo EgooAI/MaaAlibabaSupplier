@@ -42,7 +42,7 @@ export function flowSteps(snapshot: ConnectionSnapshot): FlowStepItem[] {
     {
       key: "client",
       title: "客户端接入",
-      content: client.connected ? "客户端已接入" : "未接入客户端",
+      content: client.connected ? "客户端已接入" : client.detail || "等待客户端窗口",
       status: client.connected ? "finish" : "wait",
     },
     {

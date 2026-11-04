@@ -30,7 +30,7 @@ export function DataDirBanner({ compact = false }: { compact?: boolean }) {
     );
   }
   if (!snapshot.client.connected) {
-    const description = "当前可以阅读聊天、编辑草稿；发送、填入测试和跳转联系人需要先在设置中接入客户端。";
+    const description = "当前可以阅读聊天、编辑草稿；发送、填入测试和跳转联系人需要客户端窗口。请确认接待中心已打开，系统会自动接入。";
     return (
       <Alert
         type="warning"

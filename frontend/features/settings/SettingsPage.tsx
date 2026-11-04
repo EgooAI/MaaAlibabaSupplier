@@ -7,7 +7,7 @@ import { AliIdentityCard } from "./AliIdentityCard";
 import { useDataDirSettings } from "./hooks/useDataDirSettings";
 import { useShutdownApp } from "./hooks/useShutdownApp";
 import { useAccount } from "@/features/account/AccountProvider";
-import { ClientCard, ConnectionFlowCard, SyncCard } from "@/features/account/AccountFlow";
+import { ConnectionFlowCard, SyncCard } from "@/features/account/AccountFlow";
 import { InboxSettingsCard } from "./InboxSettingsCard";
 import { UpdateCard } from "./UpdateCard";
 
@@ -68,7 +68,6 @@ export function AccountSetup() {
       <Col span={24}>
         <AliIdentityCard key={JSON.stringify([snapshot?.data_dir.path, snapshot?.account.epoch])} dataDirOk={snapshot?.data_dir.state === "ok"} />
       </Col>
-      <Col xs={24} xl={12}><ClientCard /></Col>
       <Col xs={24} xl={12}><InboxSettingsCard /></Col>
     </Row>
   );
