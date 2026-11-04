@@ -76,7 +76,9 @@ function parseJsonPayload(text: string, path: string): unknown {
   }
 }
 
-async function request<T>(path: string, mode: "json" | "void" | "png" | "shutdown", init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
+const IMAGE_TIMEOUT_MS = 30000;
+
+async function request<T>(path: string, mode: "json" | "void" | "png" | "image" | "shutdown", init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const auth = captureAuth();
   const account = prepareAccountRequest(path, init);
   const headers = new Headers(account.init?.headers);
@@ -93,13 +95,18 @@ async function request<T>(path: string, mode: "json" | "void" | "png" | "shutdow
       void authSession.unauthorized(auth.generation, requestId);
       auth.assertCurrent();
     }
-    const body = mode === "png" && response.ok ? await response.blob() : await response.text();
+    const body = (mode === "png" || mode === "image") && response.ok ? await response.blob() : await response.text();
     auth.assertCurrent();
     account.ticket?.assertCurrent(response.headers.get("X-Account-Epoch"));
     if (!response.ok) throw new ApiError(envelopeMessage(body as string, path), path, { status: response.status, details: envelopeDetails(body as string) });
     if (mode === "png") {
       if (response.headers.get("X-Account-Epoch") !== account.ticket!.epoch) throw new AccountChangedError();
       if (response.headers.get("Content-Type")?.split(";")[0] !== "image/png") throw new ApiError("截图格式无效", path);
+      return body as T;
+    }
+    if (mode === "image") {
+      if (response.headers.get("X-Account-Epoch") !== account.ticket!.epoch) throw new AccountChangedError();
+      if (!response.headers.get("Content-Type")?.startsWith("image/")) throw new ApiError("图片格式无效", path);
       return body as T;
     }
     const text = body as string;
@@ -235,6 +242,8 @@ export const httpBackend: OperationsBackend = {
     const path = `/api/outbox/${encodeURIComponent(id)}/screenshot/${encodeURIComponent(screenshotId)}?version=${encodeURIComponent(version)}`;
     return request<Blob>(path, "png", { cache: "no-store" });
   },
+  getMessageImage: (conversationId, externalMid) =>
+    request<Blob>(`/api/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(externalMid)}/image`, "image", undefined, IMAGE_TIMEOUT_MS),
   exportConversations: (input) => requestJson("/api/conversations/export", { method: "POST", body: JSON.stringify(input) }),
   gotoContact: (conversationId, loginId) => requestJson(`/api/conversations/${encodeURIComponent(conversationId)}/goto-contact`, { method: "POST", body: JSON.stringify({ login_id: loginId }) }),
 

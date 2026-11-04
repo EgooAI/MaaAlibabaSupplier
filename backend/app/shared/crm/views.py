@@ -45,6 +45,8 @@ class CrmConversationDigest:
 
 
 CARD_CONTENT_TYPE = 10010
+IMAGE_CONTENT_TYPE = 7
+VIDEO_CONTENT_TYPE = 9
 
 
 def _extra_of(account: Any) -> dict:
@@ -112,12 +114,20 @@ def normalize_message_type(message: CrmMessage) -> str:
         return "system"
     if is_card_message(message):
         return "card"
+    if message.user_content_type == IMAGE_CONTENT_TYPE:
+        return "image"
+    if message.user_content_type == VIDEO_CONTENT_TYPE:
+        return "video"
     return "text"
 
 
 def message_display_text(message: CrmMessage) -> str:
     if is_card_message(message):
         return message.content_label or "[卡片]"
+    if message.user_content_type == IMAGE_CONTENT_TYPE:
+        return "[图片]"
+    if message.user_content_type == VIDEO_CONTENT_TYPE:
+        return "[视频]"
     if message.user_content_type not in (0, CARD_CONTENT_TYPE):
         return f"[暂不支持的消息类型: {message.user_content_type if message.user_content_type is not None else 'unknown'}]"
     return message.content_label or ""
@@ -125,6 +135,8 @@ def message_display_text(message: CrmMessage) -> str:
 
 __all__ = [
     "CARD_CONTENT_TYPE",
+    "IMAGE_CONTENT_TYPE",
+    "VIDEO_CONTENT_TYPE",
     "CrmConversation",
     "CrmMessage",
     "CrmConversationDigest",

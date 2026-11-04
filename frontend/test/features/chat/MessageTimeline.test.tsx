@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MessageTimeline } from "@/features/chat/conversation/MessageTimeline";
+import { ApiError } from "@/services/httpAdapter";
 import type { ChatMessage } from "@/types/chatCanonical";
 
 let root: Root;
@@ -34,6 +35,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await act(async () => root.unmount());
   container.remove();
 });
@@ -67,6 +69,38 @@ describe("message timeline", () => {
     expect(translateButtons).toHaveLength(1);
     await act(async () => translateButtons[0].click());
     expect(onTranslate).toHaveBeenCalledExactlyOnceWith(target);
+  });
+
+  it("loads image messages through the account backend, skips translation, and reports expired files", async () => {
+    const original = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+    Object.assign(URL, { createObjectURL: vi.fn(() => "blob:chat-image"), revokeObjectURL: vi.fn() });
+    vi.stubGlobal("IntersectionObserver", class {
+      constructor(private readonly callback: (entries: { isIntersecting: boolean }[]) => void) {}
+      observe() { this.callback([{ isIntersecting: true }]); }
+      disconnect() {}
+    });
+    const loadImage = vi.fn(async (_conversationId: string, externalMid: string) => {
+      if (externalMid === "gone") throw new ApiError("图片已失效或已被平台删除", "/image", { status: 404 });
+      return new Blob(["x"], { type: "image/png" });
+    });
+    try {
+      await render({
+        messages: [
+          message({ id: "pic", type: "image", content: "[图片]", image: { width: 400, height: 300 } }),
+          message({ id: "gone", type: "image", content: "[图片]", image: { width: 400, height: 300 } }),
+        ],
+        conversationId: "42",
+        loadImage,
+        onTranslate: vi.fn(),
+        onOpenCard: vi.fn(),
+      });
+      expect(loadImage.mock.calls).toEqual([["42", "pic"], ["42", "gone"]]);
+      expect(container.querySelector("img")?.getAttribute("src")).toBe("blob:chat-image");
+      expect(container.textContent).toContain("图片已失效");
+      expect([...container.querySelectorAll("button")].some(button => button.textContent === "翻译")).toBe(false);
+    } finally {
+      Object.assign(URL, { createObjectURL: original.create, revokeObjectURL: original.revoke });
+    }
   });
 
   it("invokes force retranslate from the translation block and retry from the failed marker", async () => {

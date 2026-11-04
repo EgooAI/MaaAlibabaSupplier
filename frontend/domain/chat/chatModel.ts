@@ -65,9 +65,9 @@ export function conversationTimeLabel(value: string) {
   return formatMonthDay(value);
 }
 
-/** 可翻译消息：非卡片、不携带卡片、内容非空（文本气泡）。 */
+/** 可翻译消息：非卡片、非图片/视频、不携带卡片、内容非空（文本气泡）。 */
 export function isTranslatableMessage(message: ChatMessage) {
-  return message.role !== "card" && !message.card && message.content.trim().length > 0;
+  return message.role !== "card" && !message.card && message.type !== "image" && message.type !== "video" && message.content.trim().length > 0;
 }
 
 /** 已解决 = 已缓存：非空译文，或空串 NO_NEED 哨兵（无需翻译）。null 表示尚未缓存。 */

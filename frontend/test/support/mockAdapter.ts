@@ -398,6 +398,7 @@ export const mockBackend: OperationsBackend = {
     return delay(structuredClone(task));
   },
   getOutboxScreenshot: async () => { throw new Error("Mock 不提供真实客户端截图"); },
+  getMessageImage: async () => { throw new Error("Mock 不提供聊天图片"); },
 
   exportConversations: async ({ conversationIds }) => {
     const selected = [];

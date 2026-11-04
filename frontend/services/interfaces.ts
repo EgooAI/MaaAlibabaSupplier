@@ -43,6 +43,7 @@ export interface OperationsBackend {
   cancelOutbox(id: string, version: number): Promise<OutboxTask>;
   retryOutbox(id: string, version: number): Promise<OutboxTask>;
   getOutboxScreenshot(id: string, screenshotId: string, version: number): Promise<Blob>;
+  getMessageImage(conversationId: string, externalMid: string): Promise<Blob>;
   exportConversations(input: ExportConversationsInput): Promise<ExportConversationsResult>;
   gotoContact(conversationId: string, loginId: string): Promise<{ status: string }>;
 

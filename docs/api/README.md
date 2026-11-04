@@ -40,7 +40,19 @@
 
 ### API 请求发送
 
-目前不能做到 API 请求的*主动*发送。对 API 的操作能力仅局限于被动监听应用程序的行为。
+对阿里巴巴 API 的操作能力仅局限于被动监听应用程序的行为。唯一的例外是聊天图片：后端在前端打开会话时，向 `clouddisk.alibaba.com` 和 `s.alicdn.com` 发起只读 GET 请求取图，见下一节。
+
+## 关于聊天消息中的图片与视频
+
+图片消息的 `user_content_type = 7`，视频为 `9`。客户和卖家发送的图片结构相同。
+
+- `content` BLOB 是二进制头加一段 JSON，含 `url`、`fileId`、`width`、`height`、`size`（均可能是字符串），解析统一在 `backend/app/shared/images.py`；
+- `url` 形如 `https://clouddisk.alibaba.com/file/redirectFileUrl.htm?...`，带账号绑定的签名参数，只在后端使用，接口响应不下发；
+- 无 Cookie 请求该地址返回 302，跳转到 `s.alicdn.com/@chat-files/...` 的签名 CDN 链接，有效期约 30 小时，所以每次取图都要重新走一遍跳转；
+- 签名错误时返回 200 和空响应体。文件已被删除时跳转到 `.../expiredFile.png`。两种情况后端都按“图片已失效”处理，返回 404；
+- 取图逻辑在 `backend/app/shared/backend/image_fetch.py`，只允许 https 和上述两个主机，最多跳转 3 次，只接受 jpeg/png/gif/webp，上限 20MB；
+- 图片不落盘，接口为 `GET /api/conversations/{id}/messages/{external_mid}/image`；
+- 视频目前只显示 `[视频]` 占位，不取内容。图片和视频不参与翻译，AI 上下文和导出只保留 `[图片]` / `[视频]` 文字。
 
 ## 关于聊天消息中的产品卡片
 

@@ -107,6 +107,8 @@ describe("conversation domain model", () => {
     // 携带卡片载荷的消息即使角色不是卡片也不可翻译（UI 不渲染其译文）。
     expect(isTranslatableMessage({ ...messages[0], card: { id: "card-1" } as ChatMessage["card"] })).toBe(false);
     expect(isTranslatableMessage({ ...messages[0], content: "   " })).toBe(false);
+    expect(isTranslatableMessage({ ...messages[0], type: "image", content: "[图片]" })).toBe(false);
+    expect(isTranslatableMessage({ ...messages[0], type: "video", content: "[视频]" })).toBe(false);
   });
 
   it.each([

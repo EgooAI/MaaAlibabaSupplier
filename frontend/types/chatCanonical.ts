@@ -68,6 +68,8 @@ export interface ChatMessage {
   rawContent?: unknown;
   translatedContent?: string;
   card?: BusinessCard;
+  /** Display size of an image message; the bytes load through `getMessageImage`. */
+  image?: { width: number; height: number };
 }
 
 export interface Conversation {

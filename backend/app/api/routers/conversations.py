@@ -6,17 +6,18 @@ from base64 import b64encode
 from dataclasses import replace
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
 from typing import Literal
 from sqlmodel import Session, select
 
 from backend.app.api.envelope import AppError, api_error, ok, user_message
-from backend.app.api.account_scope import AccountRoute, request_epoch
+from backend.app.api.account_scope import AccountRoute, OutboxObservationRoute, outbox_context, request_epoch
 from backend.app.api.connection import _INTERNAL_SOURCE_FIELDS, safe_has_selected_archive
 from backend.app.api.routers.outbox import public_task
 from backend.app.shared.backend.account_context import AccountContext, get_account_context
+from backend.app.shared.backend.image_fetch import ImageFetchError, ImageUnavailable, fetch_image
 from backend.app.shared.backend.outbox_service import get_outbox_service
 from backend.app.shared.backend.gui_session import capture_gui_session, run_guarded
 from backend.app.shared.agent.inputs import build_analysis_input
@@ -29,6 +30,7 @@ from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.backend.maafw_runner import goto_contact
 from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
 from backend.app.shared.cards import card_view
+from backend.app.shared.images import image_view, parse_image
 from backend.app.shared.crm.message_markdown import AGENT_OPTIONS, transcript_markdown
 from backend.app.shared.crm.customer_portrait_store import (
     LOST_REASONS,
@@ -38,7 +40,14 @@ from backend.app.shared.crm.customer_portrait_store import (
 )
 from backend.app.shared.crm.identities import PLATFORM_PID, message_external_id
 from backend.app.shared.crm.inbox_store import InboxStore
-from backend.app.shared.crm.inbox_queries import has_archive_messages, observe_inbox, public_state, query_inbox, scoped_message_ids
+from backend.app.shared.crm.inbox_queries import (
+    has_archive_messages,
+    message_in_scope,
+    observe_inbox,
+    public_state,
+    query_inbox,
+    scoped_message_ids,
+)
 from backend.app.shared.crm.sdk import AccountMapping
 from backend.app.shared.crm.sync import CRMAdapter
 from backend.app.shared.crm.views import (
@@ -56,6 +65,8 @@ from backend.app.shared.export_zip import build_export_zip
 from backend.app.task_queue import TaskStatus, get_task_queue
 
 router = APIRouter(route_class=AccountRoute)
+# Image fetches are slow network reads: they must not hold the account lock.
+images = APIRouter(route_class=OutboxObservationRoute)
 
 _STAGE_TASK = "分析客户当前所处成交阶段，并给出下一步推进建议。"
 _SCORE_RE = re.compile(r"(\d+(?:\.\d+)?)")
@@ -214,6 +225,7 @@ def _build_aggregate(adapter: CRMAdapter, self_ali_id: str, conv: CrmConversatio
         role = resolve_role(message, resolver)
         content = message_display_text(message)
         card = card_view(message)
+        image = image_view(message)
         if card is not None and card["id"] not in seen_cards:
             seen_cards.add(card["id"])
             cards.append(card)
@@ -227,7 +239,11 @@ def _build_aggregate(adapter: CRMAdapter, self_ali_id: str, conv: CrmConversatio
                 "sid": conv.sid,
                 "sender": sender_aid,
                 "read": None,
-                "content": {"card_id": card["id"], "label": content} if card is not None else content,
+                "content": (
+                    {"card_id": card["id"], "label": content} if card is not None
+                    else {"label": content, "image": image} if image is not None
+                    else content
+                ),
                 "type": normalize_message_type(message),
             },
             "created_at": created,
@@ -800,3 +816,25 @@ def goto_contact_api(conversation_id: int, body: GotoContactInput) -> dict:
     current = get_task_queue().get(snap.task_id)
     status = str(current.status) if current else str(TaskStatus.PENDING)
     return ok({"task_snapshot": _snap_to_dict(current) if current else None, "status": status})
+
+
+@images.get("/api/conversations/{conversation_id}/messages/{external_mid}/image")
+def get_message_image(conversation_id: int, external_mid: str) -> Response:
+    context = outbox_context.get()
+    if not message_in_scope(InboxStore(), context.self_ali_id, context.data_dir, conversation_id, external_mid):
+        raise AppError("图片不存在", status_code=404)
+    message = CRMAdapter().get_message(context.self_ali_id, conversation_id, external_mid)
+    image = parse_image(message) if message is not None else None
+    if image is None:
+        raise AppError("图片不存在", status_code=404)
+    try:
+        fetched = fetch_image(image.url)
+    except ImageUnavailable:
+        raise AppError("图片已失效或已被平台删除", status_code=404) from None
+    except ImageFetchError as exc:
+        log_event("image.fetch_failed", reason=str(exc))
+        raise AppError("图片获取失败，请稍后重试", status_code=502) from None
+    return Response(fetched.body, media_type=fetched.content_type)
+
+
+router.include_router(images)

@@ -44,6 +44,14 @@ def scoped_message_ids(store: InboxStore, seller: str, data_dir: str, sid: int) 
         )}
 
 
+def message_in_scope(store: InboxStore, seller: str, data_dir: str, sid: int, external_mid: str) -> bool:
+    with store._connection() as conn:
+        return conn.execute(
+            "SELECT 1 FROM app_inbox_message WHERE seller=? AND data_dir=? AND sid=? AND external_mid=?",
+            (seller, canonical_source_dir(data_dir), sid, external_mid),
+        ).fetchone() is not None
+
+
 def has_archive_messages(store: InboxStore, seller: str) -> bool:
     if not store.database_path.is_file():
         return False

@@ -157,6 +157,8 @@ function ChatWorkspace() {
                 {!active.messages.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无聊天消息" /> : null}
                 <MessageTimeline
                   messages={active.messages}
+                  conversationId={active.id}
+                  loadImage={workbench.loadMessageImage}
                   buyerId={active.customer.id}
                   buyerName={active.customer.name}
                   showTranslations={workbench.translationVisible}

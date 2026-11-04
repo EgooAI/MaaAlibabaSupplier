@@ -134,7 +134,16 @@ function adaptMessage(item: ConversationMessageDto, cards: BusinessCard[]): Chat
     type: message.type,
     rawContent: message.content,
     card,
+    image: contentImage(message.content),
   };
+}
+
+function contentImage(content: unknown) {
+  if (!content || typeof content !== "object" || !("image" in content)) return undefined;
+  const image = content.image;
+  if (!image || typeof image !== "object" || !("width" in image) || !("height" in image)) return undefined;
+  const { width, height } = image;
+  return typeof width === "number" && typeof height === "number" ? { width, height } : undefined;
 }
 
 function adaptAnalysis(input: ConversationAnalysisDto | undefined): ConversationAnalysis | undefined {

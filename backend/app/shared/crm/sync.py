@@ -515,6 +515,18 @@ class CRMAdapter:
                 participants=tuple(session_meta.participants or []),
             )
 
+    def get_message(self, self_ali_id: str, sid: int, external_mid: str) -> CrmMessage | None:
+        """One stored message, only when it belongs to this seller's session ``sid``."""
+        prefix = session_key_prefix(self_ali_id)
+        with Session(self.engine) as session:
+            session_meta = session.get(SessionMeta, sid)
+            if session_meta is None or not str(session_meta.key or "").startswith(prefix):
+                return None
+            message = session.get(Message, external_mid)
+            if message is None or message.sid != sid:
+                return None
+            return _crm_message_from_sdk(message)
+
 
 def sync_user_infos(infos: list[UserInfo]) -> Future:
     """Queue one transaction for a batch; a contact list must not commit per user."""

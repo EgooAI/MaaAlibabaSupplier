@@ -292,8 +292,14 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
     }
   }
 
+  const loadMessageImage = useCallback(
+    (conversationId: string, externalMid: string) => backend.getMessageImage(conversationId, externalMid),
+    [backend],
+  );
+
   return {
     ...summaries,
+    loadMessageImage,
     markingRead,
     markRead,
     activeConversation,

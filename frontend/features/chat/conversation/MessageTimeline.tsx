@@ -3,6 +3,7 @@
 import { InfoCircleOutlined, LoadingOutlined, ReloadOutlined, RobotOutlined, ShopOutlined, TranslationOutlined } from "@ant-design/icons";
 import { Avatar, Button, Tooltip } from "antd";
 import { BusinessCardView } from "@/components/BusinessCardView";
+import { MessageImage } from "./MessageImage";
 import { avatarColorOf, avatarInitialOf } from "@/domain/chat/avatarModel";
 import { isTranslatableMessage } from "@/domain/chat/chatModel";
 import { renderContentHtml } from "@/domain/render/markdown";
@@ -18,6 +19,8 @@ export function MessageTimeline({
   onTranslate,
   onOpenCard,
   onForkFromMessage,
+  conversationId,
+  loadImage,
 }: {
   messages: ChatMessage[];
   buyerId?: string;
@@ -29,6 +32,9 @@ export function MessageTimeline({
   onOpenCard: (cardId: string) => void;
   /** Start a simulated session from this message's point in the conversation. */
   onForkFromMessage?: (index: number) => void;
+  /** Conversation the messages belong to; image bytes are fetched per message through it. */
+  conversationId?: string;
+  loadImage?: (conversationId: string, externalMid: string) => Promise<Blob>;
 }) {
   return (
     <div className="flex w-full flex-col gap-5">
@@ -77,6 +83,8 @@ export function MessageTimeline({
                 <div className={`group rounded-2xl px-3 py-2.5 text-sm leading-relaxed [overflow-wrap:anywhere] sm:px-4 ${message.role === "seller" ? "rounded-tr-sm bg-blue-50" : isSystem ? "bg-slate-100 text-slate-600" : "rounded-tl-sm border border-slate-100 bg-white"}`}>
                   {card ? (
                     <BusinessCardView card={card} compact onClick={() => onOpenCard(card.id)} />
+                  ) : message.type === "image" && message.image && conversationId && loadImage ? (
+                    <MessageImage conversationId={conversationId} message={message} load={loadImage} />
                   ) : (
                     <div className="whitespace-pre-wrap break-words" dangerouslySetInnerHTML={renderContentHtml(message.content, "rich-text")} />
                   )}

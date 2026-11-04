@@ -133,6 +133,10 @@ UI/业务以 `app.shared.crm` 为稳定入口：
 
 `get_self_info(self_ali_id=None)` 按显式身份或当前手选身份读取 CRM（首次 IM 同步即写入 self 行），无回退到其他卖家。卡片池与输入草稿仍属 UI/业务缓存，不并入 CRM core。重同步勿阻塞 MITM 或 IM 解密锁，宜后台队列。
 
+### 聊天图片
+
+图片消息（`user_content_type = 7`）的签名 URL 只留在后端，会话详情只下发 `{label, image:{width,height}}`。图片经 `GET /api/conversations/{id}/messages/{external_mid}/image` 实时取回，不落盘。该接口使用 `OutboxObservationRoute`，不持账号锁，并用 `message_in_scope` 校验消息属于当前卖家、数据目录和会话。上游访问集中在 `shared/backend/image_fetch.py`（主机白名单、最多 3 次跳转、20MB 上限、4 并发）。文件失效返回 404，上游不可用返回 502。响应的 `Cache-Control` 由认证中间件统一设为 `no-store`。视频（`9`）只显示 `[视频]` 占位。协议细节见 `docs/api/README.md`。
+
 ### CRM 领域约定
 
 - 业务上 `Customer` : `Account` 为 1:1（SDK 允许多 Account，本业务不拆）；`Customer` 是实体，`Account` 是其聊天账号；原始数据多在 Account 侧采集再归并到 Customer。
