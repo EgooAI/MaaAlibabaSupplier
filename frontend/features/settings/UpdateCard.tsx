@@ -9,7 +9,7 @@ import type { UpdateState } from "@/types/update";
 import { useAppUpdate } from "./hooks/useAppUpdate";
 
 const phaseLabels: Record<UpdateState["phase"], string> = {
-  idle: "待检查", checking: "正在检查", available: "有可用版本", downloading: "正在下载",
+  idle: "待检查", checking: "正在检查", downloading: "正在下载",
   ready: "可安装", installing: "正在更新", error: "更新出错",
 };
 
@@ -52,9 +52,9 @@ function UpdateControls() {
 
   return <Card title="程序更新" extra={<Tag color={restarting ? "processing" : state?.phase === "ready" ? "success" : "default"}>{restarting ? "等待重新连接" : state ? phaseLabels[state.phase] : error ? "状态不可用" : "读取状态"}</Tag>}>
     <Space orientation="vertical" size="middle" className="w-full">
-      <Typography.Text type="secondary">{state?.auto === false
-        ? "后台自动检查已关闭，请手动检查更新；发现新版本后会自动下载。安装需要手动确认，安装后将立即重启程序。"
-        : "程序每 5 分钟在后台检查指定 GitHub Actions 来源，发现新版本后自动下载并校验。安装需要手动确认，安装后将立即重启程序。"}</Typography.Text>
+      {state?.supported ? <Typography.Text type="secondary">{state.auto
+        ? "程序每 5 分钟在后台检查指定 GitHub Actions 来源，发现新版本后自动下载并校验。安装需要手动确认，安装后将立即重启程序。"
+        : "后台自动检查已关闭，请手动检查更新；发现新版本后会自动下载。安装需要手动确认，安装后将立即重启程序。"}</Typography.Text> : null}
       {!state && pending ? <Spin size="small" aria-label="读取更新状态" /> : null}
       {state ? <>
         <Descriptions size="small" column={{ xs: 1, sm: 2, lg: 3 }} styles={{ content: { overflowWrap: "anywhere", minWidth: 0 } }} items={[

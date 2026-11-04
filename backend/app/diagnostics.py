@@ -123,7 +123,7 @@ def _native_context(tail: str) -> dict:
     return _correlation(fields)
 
 
-_UPDATER_PHASES = {"idle", "checking", "available", "downloading", "ready", "installing", "error"}
+_UPDATER_PHASES = {"idle", "checking", "downloading", "ready", "installing", "error"}
 _UPDATER_RESULTS = {"installed", "error", "reboot_required", "cancelled", "installing"}
 _SAFE_VERSION = re.compile(r"v?[A-Za-z0-9][A-Za-z0-9._+-]{0,127}")
 

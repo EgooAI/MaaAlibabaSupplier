@@ -88,13 +88,12 @@ envelopes. No seller epoch or idle-task gate is required.
 | --- | --- | --- |
 | `GET /api/app/update` | None | Local build, source, `auto` flag, progress, candidate and previous result |
 | `POST /api/app/update/check` | `{}` | Starts one asynchronous GitHub check, then downloads a newer build |
-| `POST /api/app/update/download` | `{"candidate_id":"..."}` | Starts download and local verification of the current candidate; the UI no longer uses it |
 | `POST /api/app/update/install` | `{"candidate_id":"...","confirm":true}` | Starts the single-use helper for an already verified candidate |
 
 Candidates have opaque server-generated IDs. The browser cannot submit an
 installer URL, executable path, process ID, or command. Duplicate active
-operations receive 409. The phases are `idle`, `checking`, `available`,
-`downloading`, `ready`, `installing`, and `error`.
+operations receive 409. The phases are `idle`, `checking`, `downloading`,
+`ready`, `installing`, and `error`.
 
 Download and verification run while the application remains usable. The updater
 checks GitHub's ZIP digest before extracting a bounded, flat, single-file archive.
@@ -106,9 +105,9 @@ a ready candidate.
 A build whose installer is already downloading or ready is not downloaded again,
 whether the check was scheduled or manual. A newer build replaces the ready one
 only after it is verified; if that download fails, the earlier verified installer
-stays installable. Before writing, the download requires free disk space of twice
-the artifact size plus 512 MiB, because the archive and the extracted installer
-coexist until unpacking ends. Installation re-checks that the installer file
+stays installable. When the response reports the artifact size, the download
+requires free disk space of twice that size plus 512 MiB, because the archive and
+the extracted installer coexist until unpacking ends. Installation re-checks that the installer file
 still exists and returns 409 when security software or a cleanup removed it.
 
 Confirmation starts one single-use helper for that attempt and blocks new API
@@ -199,8 +198,8 @@ A ready candidate is not persisted, so a restart discards it and the next check
 downloads it again. Logs remain, and each download prunes uuid stage directories
 beyond the four most recent, not counting the one in use. An
 attempt that could not prepare staging or start its helper deletes its own stage
-directory; failures after the helper started keep their stage for local
-inspection, and later downloads absorb them into the same window. The helper
+directory; failures after the helper started keep their logs for inspection,
+while the next startup or completed operation deletes the stray installer. The helper
 replaces `last-result.json` atomically, clearing a read-only attribute first; a
 destination that stays locked still loses the terminal record and leaves only
 the `.tmp`. The backend records an `installed` result that does not describe the

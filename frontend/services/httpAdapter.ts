@@ -174,8 +174,8 @@ function prepareAccountRequest(path: string, init?: RequestInit) {
   const { capabilities, client } = accountSession.get().snapshot!;
   const operates = /\/goto-contact$/.test(path) || (/\/conversations\/[^/]+\/messages$/.test(path) && init?.method === "POST") || /\/outbox\/[^/]+\/(confirm|retry)$/.test(path);
   const usesAi = /\/(suggestions|analysis)$/.test(path) || (path === "/api/messages/translations" && init?.method === "POST");
-  if (operates && !capabilities.operate_client) throw new Error("请先在设置中选择卖家账号并接入客户端");
-  if (path === "/api/status/node-test" && !client.connected) throw new Error("请先在设置中接入客户端，再运行只读界面检查");
+  if (operates && !capabilities.operate_client) throw new Error("请先选择卖家账号，并等待客户端窗口自动接入");
+  if (path === "/api/status/node-test" && !client.connected) throw new Error("请先等待客户端窗口自动接入，再运行只读界面检查");
   if (usesAi && !capabilities.use_ai) throw new Error("AI 暂不可用，请检查账号数据和模型配置");
   const headers = new Headers(init?.headers);
   headers.set("X-Account-Epoch", ticket.epoch);
@@ -194,7 +194,6 @@ export const httpBackend: OperationsBackend = {
   shutdownApp: () => request("/api/app/shutdown", "shutdown", { method: "POST" }),
   getAppUpdate: () => requestJson("/api/app/update"),
   checkAppUpdate: () => requestJson("/api/app/update/check", { method: "POST", body: JSON.stringify({}) }),
-  downloadAppUpdate: (candidateId) => requestJson("/api/app/update/download", { method: "POST", body: JSON.stringify({ candidate_id: candidateId }) }),
   installAppUpdate: (candidateId) => requestJson("/api/app/update/install", { method: "POST", body: JSON.stringify({ candidate_id: candidateId, confirm: true }) }),
 
   requestTranslations: (input) => requestJson("/api/messages/translations", { method: "POST", body: JSON.stringify(input) }),

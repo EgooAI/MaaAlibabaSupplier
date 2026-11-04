@@ -142,7 +142,7 @@ def test_check_selects_newest_trusted_run_and_downloads_it(manager, monkeypatch,
     assert candidate["run_id"] == 22 and len(candidate["id"]) == 32
     assert candidate["url"] == "https://github.com/EgooAI/MaaAlibabaSupplier/actions/runs/22"
     assert any("/runs/22/artifacts?" in call.args[0] for call in github.json.call_args_list)
-    assert manager.selected["artifact_id"] == 99
+    assert "/actions/artifacts/99/zip" in github.download.call_args.args[0]
     assert "digest" not in candidate
 
 
@@ -987,6 +987,17 @@ def test_scheduled_cycle_leaves_the_state_alone_when_current_or_offline(manager,
     assert manager._busy is False
 
 
+def test_guarded_operation_releases_busy_when_interrupted(manager):
+    manager._busy = True
+
+    def stop():
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        manager._run_guarded("checking", stop)
+    assert manager._busy is False
+
+
 def test_schedule_waits_five_minutes_and_backs_off_after_failures(manager, monkeypatch):
     waits = []
 
@@ -999,7 +1010,6 @@ def test_schedule_waits_five_minutes_and_backs_off_after_failures(manager, monke
     manager._stop = Stop()
     monkeypatch.setattr(manager, "_scheduled_cycle", lambda: next(results))
     manager._schedule()
-    assert updates.AUTO_CHECK_INTERVAL == 300
     assert waits == [updates.AUTO_FIRST_DELAY, 600, 1200, 300]
 
 
@@ -1054,5 +1064,5 @@ def test_download_fails_before_writing_when_the_disk_is_short(tmp_path, monkeypa
     progress = Mock()
     with pytest.raises(updates.UpdateError, match="disk space"):
         github.download("/download", tmp_path / "archive", progress)
-    assert (tmp_path / "archive").stat().st_size == 0
+    assert not (tmp_path / "archive").exists()
     progress.assert_not_called()

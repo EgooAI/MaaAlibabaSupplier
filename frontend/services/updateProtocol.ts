@@ -18,7 +18,7 @@ export function parseUpdateState(value: unknown): UpdateState {
     || typeof value.auto !== "boolean"
     || !isNullableString(value.reason)
     || typeof value.phase !== "string"
-    || !["idle", "checking", "available", "downloading", "ready", "installing", "error"].includes(value.phase)
+    || !["idle", "checking", "downloading", "ready", "installing", "error"].includes(value.phase)
     || !isRecord(value.current)
     || typeof value.current.version !== "string"
     || !isNullableString(value.current.sha)

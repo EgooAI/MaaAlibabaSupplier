@@ -24,11 +24,8 @@ class UpdateCheck(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class UpdateDownload(UpdateCheck):
+class UpdateInstall(UpdateCheck):
     candidate_id: str = Field(min_length=1, max_length=100, strict=True)
-
-
-class UpdateInstall(UpdateDownload):
     confirm: Literal[True]
 
     @field_validator("confirm", mode="before")
@@ -47,11 +44,6 @@ def update_state() -> dict:
 @router.post("/api/app/update/check")
 def check_update(body: UpdateCheck) -> dict:
     return ok(get_updater().check())
-
-
-@router.post("/api/app/update/download")
-def download_update(body: UpdateDownload) -> dict:
-    return ok(get_updater().download(body.candidate_id))
 
 
 @router.post("/api/app/update/install")

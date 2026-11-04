@@ -17,6 +17,7 @@ from backend.app.api.envelope import AppError, err, user_message
 from backend.app.shared.backend.account_context import get_account_context
 from backend.app.shared.utils.settings import FRONTEND_DEV_ORIGINS, resolve_repo_root
 from backend.app.shared.utils.log_context import bind_log_context
+from backend.app.updater import stop_update_scheduler
 
 from backend.app.api.routers import agent, app as app_router, auth, cards, conversations, experiments, messages, outbox, portraits, self, settings, status
 
@@ -27,7 +28,10 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await run_in_threadpool(store.initialize)
-        yield
+        try:
+            yield
+        finally:
+            stop_update_scheduler()
 
     app = FastAPI(title="MaaAlibabaSupplier API", docs_url=None, redoc_url=None,
                   openapi_url=None, lifespan=lifespan)

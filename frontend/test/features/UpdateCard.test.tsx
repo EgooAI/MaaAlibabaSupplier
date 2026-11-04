@@ -168,14 +168,6 @@ describe("application update", () => {
     expect(mocks.backend.checkAppUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps reading a ready state locally without a remote check", async () => {
-    mocks.backend.getAppUpdate.mockResolvedValue(update({ phase: "ready", candidate }));
-    await render();
-    await advance(30_000);
-    expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(2);
-    expect(mocks.backend.checkAppUpdate).not.toHaveBeenCalled();
-  });
-
   it("does not poll once the backend reports installing", async () => {
     mocks.backend.getAppUpdate.mockResolvedValue(update({ phase: "installing", candidate }));
     await render();
@@ -278,13 +270,6 @@ describe("application update", () => {
     await advance(60_000);
     expect(mocks.backend.installAppUpdate).toHaveBeenCalledTimes(1);
     expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(1);
-  });
-
-  it.each(["available", "downloading", "error"] as const)("offers no manual download control in the %s phase", async (phase) => {
-    mocks.backend.getAppUpdate.mockResolvedValue(update({ phase, candidate }));
-    await render();
-    const labels = [...container.querySelectorAll("button")].map((node) => node.textContent);
-    expect(labels.some((text) => text?.includes("下载"))).toBe(false);
   });
 
   it("shows a backend error state, hides installation, and recovers through local polling", async () => {

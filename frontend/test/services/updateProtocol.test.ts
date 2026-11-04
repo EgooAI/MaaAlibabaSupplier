@@ -3,7 +3,7 @@ import { parseInstallAcceptance, parseUpdateState } from "@/services/updateProto
 import type { UpdateState } from "@/types/update";
 
 const snapshot: UpdateState = {
-  supported: true, auto: true, reason: null, phase: "available",
+  supported: true, auto: true, reason: null, phase: "ready",
   current: { version: "v1", sha: null, run_id: 7 },
   source: { repository: "example/app", branch: "main", workflow: "build.yml", artifact: "app" },
   candidate: { id: "42:2", version: "v2", sha: "abc123", run_id: 42, run_attempt: 2, created_at: "2026-09-18T10:00:00Z", url: "https://github.com/example/app/actions/runs/42" },

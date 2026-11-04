@@ -34,8 +34,8 @@ describe("outbox HTTP contract and account isolation", () => {
     accountSession.accept(structuredClone(connectionSnapshot));
     const fetch = vi.fn().mockImplementation(() => Promise.resolve(response(outboxTask())));
     vi.stubGlobal("fetch", fetch);
-    await expect(httpBackend.confirmOutbox("task", 1, "frame")).rejects.toThrow("接入客户端");
-    await expect(httpBackend.retryOutbox("task", 1)).rejects.toThrow("接入客户端");
+    await expect(httpBackend.confirmOutbox("task", 1, "frame")).rejects.toThrow("客户端窗口");
+    await expect(httpBackend.retryOutbox("task", 1)).rejects.toThrow("客户端窗口");
     expect(fetch).not.toHaveBeenCalled();
     await httpBackend.getOutbox("task");
     await httpBackend.cancelOutbox("task", 1);

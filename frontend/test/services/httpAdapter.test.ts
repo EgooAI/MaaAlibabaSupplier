@@ -97,12 +97,10 @@ describe("http adapter contract", () => {
     globalThis.fetch = fetchMock;
     await expect(httpBackend.getAppUpdate()).resolves.toEqual(data);
     await httpBackend.checkAppUpdate();
-    await httpBackend.downloadAppUpdate("run/42:attempt/2");
     await httpBackend.installAppUpdate("run/42:attempt/2");
     expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method ?? "GET", init.body && JSON.parse(init.body)])).toEqual([
       ["/api/app/update", "GET", undefined],
       ["/api/app/update/check", "POST", {}],
-      ["/api/app/update/download", "POST", { candidate_id: "run/42:attempt/2" }],
       ["/api/app/update/install", "POST", { candidate_id: "run/42:attempt/2", confirm: true }],
     ]);
     for (const [, init] of fetchMock.mock.calls) {
@@ -116,7 +114,6 @@ describe("http adapter contract", () => {
   it.each([
     () => httpBackend.getAppUpdate(),
     () => httpBackend.checkAppUpdate(),
-    () => httpBackend.downloadAppUpdate("candidate"),
     () => httpBackend.installAppUpdate("candidate"),
   ])("aborts update requests on auth teardown and rejects late responses without retrying", async (call) => {
     let resolve!: (value: Response) => void;
@@ -291,8 +288,8 @@ describe("http adapter contract", () => {
   it.each(["send", "test"] as const)("blocks %s while the client is disconnected", async (action) => {
     accountSession.accept(structuredClone(connectionSnapshot));
     globalThis.fetch = vi.fn();
-    await expect(httpBackend.sendMessage({ conversationId: "42", content: "hello", action, idempotency_key: "key" })).rejects.toThrow("接入客户端");
-    await expect(httpBackend.gotoContact("42", "buyer")).rejects.toThrow("接入客户端");
+    await expect(httpBackend.sendMessage({ conversationId: "42", content: "hello", action, idempotency_key: "key" })).rejects.toThrow("客户端窗口");
+    await expect(httpBackend.gotoContact("42", "buyer")).rejects.toThrow("客户端窗口");
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -309,7 +306,7 @@ describe("http adapter contract", () => {
   it("rejects read-only diagnostics while disconnected", async () => {
     accountSession.accept(structuredClone(connectionSnapshot));
     globalThis.fetch = vi.fn();
-    await expect(httpBackend.runNodeTest()).rejects.toThrow("接入客户端");
+    await expect(httpBackend.runNodeTest()).rejects.toThrow("客户端窗口");
     expect(fetch).not.toHaveBeenCalled();
   });
 

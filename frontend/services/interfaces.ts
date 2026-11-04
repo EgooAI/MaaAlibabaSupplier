@@ -19,7 +19,6 @@ export interface OperationsBackend {
   shutdownApp(): Promise<{ accepted: boolean }>;
   getAppUpdate(): Promise<UpdateState>;
   checkAppUpdate(): Promise<UpdateState>;
-  downloadAppUpdate(candidateId: string): Promise<UpdateState>;
   installAppUpdate(candidateId: string): Promise<{ accepted: true }>;
 
   requestTranslations(input: RequestTranslationsInput): Promise<RequestTranslationsResult>;
