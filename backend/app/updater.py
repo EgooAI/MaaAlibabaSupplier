@@ -103,17 +103,51 @@ def staging_base(install: Path) -> Path:
 
 
 _STAGE_NAME = re.compile(r"[0-9a-f]{32}")
+_ARTIFACT_NAME = re.compile(r"MaaAlibabaSupplier-v[A-Za-z0-9][A-Za-z0-9.+_-]*-Setup\.exe|artifact\.zip(\.part)?")
 _STAGE_KEEP = 4
+AUTO_CHECK_INTERVAL = 300.0
+AUTO_FIRST_DELAY = 60.0
+AUTO_BACKOFF_MAX = 6 * 3600.0
+DISK_MARGIN = 512 * 1024**2
 
 
-def prune_stage_directories(base: Path, keep: int = _STAGE_KEEP) -> int:
-    """Delete uuid stage directories beyond the newest `keep`, best effort."""
+def purge_stale_artifacts(base: Path, protected: set[Path]) -> int:
+    """Delete downloaded installers and archives outside `protected` stages, best effort.
+
+    Logs and helper files stay for diagnostics; the count-based prune bounds them.
+    """
+    removed = 0
+    try:
+        entries = list(base.iterdir())
+    except OSError:
+        return 0
+    for entry in entries:
+        try:
+            if (not _STAGE_NAME.fullmatch(entry.name) or not entry.is_dir()
+                    or entry.is_symlink() or entry.is_junction() or entry.resolve() in protected):
+                continue
+            for item in entry.iterdir():
+                if item.is_file() and not item.is_symlink() and _ARTIFACT_NAME.fullmatch(item.name):
+                    item.unlink()
+                    removed += 1
+        except OSError:
+            continue
+    if removed:
+        log_event("update.prune", status="artifacts", removed=removed)
+    return removed
+
+
+def prune_stage_directories(base: Path, keep: int = _STAGE_KEEP, protected: frozenset[Path] | set[Path] = frozenset()) -> int:
+    """Delete uuid stage directories beyond the newest `keep`, best effort.
+
+    Protected directories are neither counted nor removed.
+    """
     candidates = []
     try:
         for entry in base.iterdir():
             try:
                 if (not _STAGE_NAME.fullmatch(entry.name) or not entry.is_dir()
-                        or entry.is_symlink() or entry.is_junction()):
+                        or entry.is_symlink() or entry.is_junction() or entry.resolve() in protected):
                     continue
                 candidates.append((entry.stat().st_mtime, entry.name, entry))
             except OSError:
@@ -206,6 +240,9 @@ class GitHub:
             total = int(length) if length else None
             if total is not None and not 0 < total <= MAX_ZIP:
                 raise UpdateError("Artifact exceeds the download size limit.")
+            # The archive and the extracted installer coexist until unpacking ends.
+            if total is not None and shutil.disk_usage(target.parent).free < 2 * total + DISK_MARGIN:
+                raise UpdateError("Not enough free disk space for the update.")
             while block := response.read1(1024 * 1024):
                 size += len(block)
                 if size > MAX_ZIP or time.monotonic() > deadline:
@@ -263,6 +300,9 @@ class Updater:
         self.build = {}
         self.selected = None
         self.prepared = None
+        self._busy = False
+        self._stage = None
+        self._stop = threading.Event()
         source = {"repository": os.environ.get("MAA_UPDATE_REPOSITORY", "EgooAI/MaaAlibabaSupplier"),
                   "branch": os.environ.get("MAA_UPDATE_BRANCH", "main"),
                   "workflow": os.environ.get("MAA_UPDATE_WORKFLOW", "install.yml"),
@@ -277,7 +317,7 @@ class Updater:
                       "phase": "idle", "current": {"version": self.build.get("version", "development"),
                                                     "sha": self.build.get("sha"), "run_id": self.build.get("run_id")},
                       "source": source, "candidate": None, "downloaded_bytes": 0, "total_bytes": None,
-                      "error": None, "last_result": None}
+                      "error": None, "last_result": None, "auto": False}
         try:
             result = read_json(staging_base(self.install) / "last-result.json")
             terminal = terminal_result(result)
@@ -315,7 +355,11 @@ class Updater:
 
             resolve_powershell(self.install)  # attempts re-resolve; here it disables updates when no shell exists
             self.runtime = WindowsUpdateRuntime(self.install, staging_base(self.install))
-            self.state.update(supported=True, reason=None)
+            self.state.update(supported=True, reason=None, auto=os.environ.get("MAA_UPDATE_AUTO", "1") != "0")
+            # Nothing references earlier downloads after a restart.
+            self.reconcile_staging()
+            if self.state["auto"]:
+                self._start_scheduler()
         except UpdateError as exc:
             self.state["reason"] = str(exc)
         except Exception:
@@ -368,34 +412,142 @@ class Updater:
         if self.state["phase"] in {"checking", "downloading", "installing"} or self.handoff.is_set():
             raise AppError("An update operation is already active.", status_code=409)
 
+    def _admit_operation(self) -> None:
+        """Admits a check or download; caller holds the lock. `_run_guarded` releases it."""
+        self._admit()
+        if self._busy:
+            raise AppError("An update operation is already active.", status_code=409)
+        self._busy = True
+
+    def _run_guarded(self, phase: str, operation) -> bool:
+        """Runs one operation to its end, then deletes downloads nothing references.
+
+        Returns whether the operation failed. The caller has set `_busy`.
+        """
+        failed = False
+        try:
+            operation()
+        except Exception as exc:
+            failed = True
+            with self.lock:
+                # A failed download may already have restored a verified candidate.
+                if self.state["phase"] in {"checking", "downloading"}:
+                    self.state.update(phase="ready" if self.prepared is not None else "error",
+                                      error=self._message(exc))
+            log_event("update.failed", phase=phase, status="failed", exception_type=type(exc).__name__)
+        try:
+            self.reconcile_staging()
+        finally:
+            with self.lock:
+                self._busy = False
+        return failed
+
     def _start(self, phase: str, operation) -> dict:
         self.state.update(phase=phase, error=None)
-
-        def run():
-            try:
-                operation()
-            except Exception as exc:
-                with self.lock:
-                    self.state.update(phase="error", error=str(exc) if isinstance(exc, UpdateError)
-                                      else "Update operation failed. Check access, disk space, and artifact availability.")
-                log_event("update.failed", phase=phase, status="failed", exception_type=type(exc).__name__)
         response = copy.deepcopy(self.state)
         try:
-            threading.Thread(target=run, daemon=True, name="manual-updater").start()
+            threading.Thread(target=self._run_guarded, args=(phase, operation), daemon=True, name="manual-updater").start()
         except Exception:
+            self._busy = False
             self.state.update(phase="error", error="Could not start the update operation.")
             raise AppError(self.state["error"], status_code=503) from None
         return response
 
     def check(self) -> dict:
         with self.lock:
-            self._admit()
-            self.selected = self.prepared = None
-            self.state.update(candidate=None, downloaded_bytes=0, total_bytes=None)
-            return self._start("checking", self._check)
+            self._admit_operation()
+            return self._start("checking", lambda: self._cycle(announce=True))
 
-    def _check(self) -> None:
+    def _scheduled_cycle(self) -> bool:
+        """Runs one background cycle unless another operation is active. Returns False after a failure."""
+        with self.lock:
+            if (not self.state["supported"] or self.state["phase"] not in {"idle", "ready", "error"}
+                    or self.handoff.is_set() or self._busy):
+                return True
+            self._busy = True
+        return not self._run_guarded("auto", lambda: self._cycle(announce=False))
+
+    def _schedule(self) -> None:
+        failures = 0
+        delay = AUTO_FIRST_DELAY
+        while not self._stop.wait(delay):
+            failures = min(failures + 1, 16) if not self._scheduled_cycle() else 0
+            delay = min(AUTO_CHECK_INTERVAL * 2 ** failures, AUTO_BACKOFF_MAX)
+
+    def _start_scheduler(self) -> None:
+        threading.Thread(target=self._schedule, daemon=True, name="auto-updater").start()
+
+    @staticmethod
+    def _message(exc: Exception) -> str:
+        return str(exc) if isinstance(exc, UpdateError) else \
+            "Update operation failed. Check access, disk space, and artifact availability."
+
+    def _protected_locked(self) -> set[Path]:
+        """Stage directories still referenced by a verified or running download."""
+        protected = set()
+        if self.prepared is not None:
+            protected.add(self.prepared[0].parent.resolve())
+        if self._stage is not None:
+            protected.add(self._stage.resolve())
+        return protected
+
+    def reconcile_staging(self) -> int:
+        """Deletes downloaded installers and archives that no verified candidate references."""
+        with self.lock:
+            if self.handoff.is_set() or self.state["phase"] == "installing":
+                return 0
+            try:
+                return purge_stale_artifacts(staging_base(self.install), self._protected_locked())
+            except UpdateError:
+                return 0
+
+    def _holds(self, run: dict) -> bool:
+        """Whether this run's installer is already downloaded and verified. Caller holds the lock."""
+        return (self.prepared is not None and self.selected is not None
+                and (self.selected["run_id"], self.selected["run_attempt"]) == (run["id"], run["run_attempt"]))
+
+    def _cycle(self, announce: bool) -> None:
+        """Checks GitHub and downloads a newer build.
+
+        A build whose installer is already verified is not downloaded again.
+        Scheduled cycles (`announce` false) leave the state alone unless they download.
+        """
         github = GitHub()
+        run = self._latest_run(github)
+        with self.lock:
+            if run is None or self._holds(run):
+                if announce:
+                    if self.prepared is None:
+                        self.selected = None
+                        self.state.update(candidate=None, downloaded_bytes=0, total_bytes=None)
+                    self.state["phase"] = "ready" if self.prepared is not None else "idle"
+                    log_event("update.check", status="current", run_id=self.build.get("run_id"))
+                return
+        selected, candidate = self._resolve(github, run)
+        log_event("update.check", status="candidate", run_id=run["id"],
+                  run_number=run["run_number"], run_attempt=run["run_attempt"])
+        self._download_candidate(selected, candidate)
+
+    def _download_candidate(self, selected: dict, candidate: dict) -> None:
+        with self.lock:
+            if self.handoff.is_set() or self.state["phase"] == "installing":
+                return
+            previous = (self.selected, self.state["candidate"])
+            self.selected = selected
+            self.state.update(phase="downloading", candidate=candidate, downloaded_bytes=0, total_bytes=None, error=None)
+        log_event("update.download", status="started", run_id=selected["run_id"])
+        try:
+            self._download(selected)
+        except Exception as exc:
+            with self.lock:
+                # A verified installer stays installable when its replacement fails.
+                if self.prepared is not None:
+                    self.selected, self.state["candidate"] = previous
+                self.state.update(phase="ready" if self.prepared is not None else "error", error=self._message(exc))
+            raise
+
+    def _latest_run(self, github: GitHub) -> dict | None:
+        """Returns the newest eligible run when it is newer than the running build."""
         source = self.state["source"]
         prefix = "/repos/" + source["repository"] + "/actions"
         query = urllib.parse.urlencode({"branch": source["branch"], "event": "push", "status": "success", "per_page": 100})
@@ -414,10 +566,13 @@ class Updater:
         # A higher attempt can rebuild dependencies without changing head_sha.
         if run is None or (self.build.get("repository") == source["repository"] and
                 (run["run_number"], run["run_attempt"]) <= (self.build["run_number"], self.build["run_attempt"])):
-            with self.lock:
-                self.state["phase"] = "idle"
-            log_event("update.check", status="current", run_id=self.build.get("run_id"))
-            return
+            return None
+        return run
+
+    def _resolve(self, github: GitHub, run: dict) -> tuple[dict, dict]:
+        """Selects the unique installer artifact of a run and builds its candidate."""
+        source = self.state["source"]
+        prefix = "/repos/" + source["repository"] + "/actions"
         artifacts = []
         for page in range(1, 11):
             data = github.json(prefix + f"/runs/{run['id']}/artifacts?per_page=100&page={page}")
@@ -441,11 +596,7 @@ class Updater:
                      "sha": run["head_sha"], "run_id": run["id"], "run_attempt": run["run_attempt"],
                      "created_at": str(run.get("created_at", "")),
                      "url": f"https://github.com/{source['repository']}/actions/runs/{run['id']}"}
-        with self.lock:
-            self.selected = selected
-            self.state.update(phase="available", candidate=candidate)
-        log_event("update.check", status="candidate", run_id=run["id"],
-                  run_number=run["run_number"], run_attempt=run["run_attempt"])
+        return selected, candidate
 
     def _candidate(self, candidate_id: str) -> None:
         if not self.state["candidate"] or candidate_id != self.state["candidate"]["id"]:
@@ -455,35 +606,41 @@ class Updater:
         with self.lock:
             self._admit()
             self._candidate(candidate_id)
-            self.prepared = None
-            self.state.update(downloaded_bytes=0, total_bytes=None)
-            log_event("update.download", status="started", run_id=self.selected.get("run_id"))
-            return self._start("downloading", self._download)
+            self._admit_operation()
+            selected, candidate = self.selected, self.state["candidate"]
+            return self._start("downloading", lambda: self._download_candidate(selected, candidate))
 
-    def _download(self) -> None:
-        selected = self.selected.copy()
+    def _download(self, selected: dict) -> None:
         base = staging_base(self.install)
         stage = base / uuid.uuid4().hex
-        stage.mkdir(parents=True, exist_ok=False)
-        # The new stage is inside the window; pruning here keeps the bounded
-        # staging safe against an armed handoff because _admit blocks further
-        # attempts until it clears.
-        prune_stage_directories(base)
-        archive = stage / "artifact.zip.part"
-
-        def progress(size, total):
-            with self.lock:
-                self.state.update(downloaded_bytes=size, total_bytes=total)
-        digest = GitHub().download(f"/repos/{selected['repository']}/actions/artifacts/{selected['artifact_id']}/zip", archive, progress)
-        if digest != selected["digest"]:
-            raise UpdateError("Artifact SHA-256 verification failed.")
-        verified = stage / "artifact.zip"
-        os.replace(archive, verified)
-        installer, prepared = unpack_verified(verified, stage, selected)
-        # The verified archive has no consumer after extraction; keep the
-        # bounded window to installers and logs.
-        verified.unlink(missing_ok=True)
         with self.lock:
+            self._stage = stage
+            protected = self._protected_locked()
+        try:
+            stage.mkdir(parents=True, exist_ok=False)
+            # Pruning is safe against an armed handoff because _admit blocks
+            # further attempts until it clears.
+            prune_stage_directories(base, protected=protected)
+            archive = stage / "artifact.zip.part"
+
+            def progress(size, total):
+                with self.lock:
+                    self.state.update(downloaded_bytes=size, total_bytes=total)
+            digest = GitHub().download(f"/repos/{selected['repository']}/actions/artifacts/{selected['artifact_id']}/zip", archive, progress)
+            if digest != selected["digest"]:
+                raise UpdateError("Artifact SHA-256 verification failed.")
+            verified = stage / "artifact.zip"
+            os.replace(archive, verified)
+            installer, prepared = unpack_verified(verified, stage, selected)
+            # The verified archive has no consumer after extraction.
+            verified.unlink(missing_ok=True)
+        except BaseException:
+            shutil.rmtree(stage, ignore_errors=True)
+            with self.lock:
+                self._stage = None
+            raise
+        with self.lock:
+            self._stage = None
             self.prepared = (installer, prepared)
             self.state["candidate"]["version"] = prepared["version"]
             self.state["phase"] = "ready"
@@ -496,6 +653,11 @@ class Updater:
             self._candidate(candidate_id)
             if self.state["phase"] != "ready" or self.prepared is None or self.runtime is None:
                 raise AppError("Download and verify the update before installing.", status_code=409)
+            if not self.prepared[0].is_file():
+                # Security software or a cleanup may remove a long-held installer.
+                self.prepared = self.selected = None
+                self.state.update(phase="idle", candidate=None, downloaded_bytes=0, total_bytes=None)
+                raise AppError("The downloaded installer is missing; check for updates again.", status_code=409)
             # A finished attempt must not be mistaken for the one about to start.
             self.runtime.reset()
             self.handoff.set()

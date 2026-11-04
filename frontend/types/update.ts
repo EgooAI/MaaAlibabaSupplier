@@ -1,5 +1,6 @@
 export interface UpdateState {
   supported: boolean;
+  auto: boolean;
   reason: string | null;
   phase: "idle" | "checking" | "available" | "downloading" | "ready" | "installing" | "error";
   current: { version: string; sha: string | null; run_id?: number | null };

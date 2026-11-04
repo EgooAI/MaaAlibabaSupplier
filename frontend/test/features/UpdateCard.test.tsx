@@ -8,7 +8,7 @@ import type { UpdateState } from "@/types/update";
 
 const mocks = vi.hoisted(() => ({
   auth: { phase: "authenticated", generation: 1 },
-  backend: { getAppUpdate: vi.fn(), checkAppUpdate: vi.fn(), downloadAppUpdate: vi.fn(), installAppUpdate: vi.fn() },
+  backend: { getAppUpdate: vi.fn(), checkAppUpdate: vi.fn(), installAppUpdate: vi.fn() },
 }));
 vi.mock("@/services/client", () => ({ backend: mocks.backend }));
 vi.mock("@/features/auth/AuthProvider", () => ({ useAuth: () => mocks.auth }));
@@ -31,7 +31,7 @@ vi.mock("antd", () => {
 const candidate = { id: "run/42:attempt/2", version: "v2", sha: "abcdef0123456789", run_id: 42, run_attempt: 2, created_at: "2026-09-18T10:00:00Z", url: "https://github.com/example/app/actions/runs/42" };
 function update(overrides: Partial<UpdateState> = {}): UpdateState {
   return {
-    supported: true, reason: null, phase: "idle", current: { version: "v1", sha: "1234567" },
+    supported: true, auto: true, reason: null, phase: "idle", current: { version: "v1", sha: "1234567" },
     source: { repository: "example/app", branch: "main", workflow: "build.yml", artifact: "windows-app" },
     candidate: null, downloaded_bytes: 0, total_bytes: null, error: null, last_result: null, ...overrides,
   };
@@ -60,7 +60,6 @@ beforeEach(() => {
   mocks.auth = { phase: "authenticated", generation: 1 };
   mocks.backend.getAppUpdate.mockResolvedValue(update());
   mocks.backend.checkAppUpdate.mockResolvedValue(update({ phase: "checking" }));
-  mocks.backend.downloadAppUpdate.mockResolvedValue(update({ phase: "downloading", candidate }));
   mocks.backend.installAppUpdate.mockResolvedValue({ accepted: true });
   container = document.createElement("div");
   document.body.append(container);
@@ -73,14 +72,21 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-describe("manual application update", () => {
-  it("reads local status once across Strict Mode replay and never checks remotely on mount or a timer", async () => {
+describe("application update", () => {
+  it("reads local status once across Strict Mode replay, then every 30 seconds, and never checks remotely itself", async () => {
     await act(async () => root.render(<StrictMode><UpdateCard /></StrictMode>));
-    await advance(60_000);
+    await advance(29_000);
     expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(1);
+    await advance(1_000);
+    expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(2);
     expect(mocks.backend.checkAppUpdate).not.toHaveBeenCalled();
-    expect(mocks.backend.downloadAppUpdate).not.toHaveBeenCalled();
     for (const text of ["v1", "1234567", "example/app", "main", "build.yml", "windows-app"]) expect(container.textContent).toContain(text);
+  });
+
+  it.each([[true, "每 5 分钟"], [false, "后台自动检查已关闭"]])("describes background checking when auto is %s", async (auto, text) => {
+    mocks.backend.getAppUpdate.mockResolvedValue(update({ auto }));
+    await render();
+    expect(container.textContent).toContain(text);
   });
 
   it("allows retrying a failed initial local read without triggering a remote check", async () => {
@@ -100,6 +106,7 @@ describe("manual application update", () => {
     ["null", null],
     ["missing current.version", { ...update(), current: { sha: null } }],
     ["nonnumeric progress", { ...update(), downloaded_bytes: "1024" }],
+    ["missing auto", { ...update(), auto: undefined }],
   ])("recovers from an initial malformed snapshot: %s", async (_, value) => {
     mocks.backend.getAppUpdate.mockResolvedValueOnce(value);
     await render();
@@ -115,16 +122,16 @@ describe("manual application update", () => {
     expect(mocks.backend.checkAppUpdate).not.toHaveBeenCalled();
   });
 
-  it.each(["check", "download", "poll"] as const)("preserves the last valid snapshot after malformed %s data", async (action) => {
-    const valid = update({ phase: action === "poll" ? "downloading" : "available", candidate });
+  it.each(["check", "poll"] as const)("preserves the last valid snapshot after malformed %s data", async (action) => {
+    const valid = update({ phase: action === "poll" ? "downloading" : "ready", candidate });
     mocks.backend.getAppUpdate.mockResolvedValueOnce(valid);
     await render();
     if (action === "poll") {
       mocks.backend.getAppUpdate.mockResolvedValueOnce({ ...valid, source: null });
       await advance();
     } else {
-      mocks.backend[action === "check" ? "checkAppUpdate" : "downloadAppUpdate"].mockResolvedValueOnce({ ...valid, candidate: { ...candidate, run_id: "42" } });
-      await click(action === "check" ? "检查更新" : "下载更新");
+      mocks.backend.checkAppUpdate.mockResolvedValueOnce({ ...valid, candidate: { ...candidate, run_id: "42" } });
+      await click("检查更新");
     }
     expect(container.textContent).toContain("更新状态响应无效");
     expect(container.textContent).toContain("v1");
@@ -139,7 +146,7 @@ describe("manual application update", () => {
     expect(button("安装并立即重启").disabled).toBe(false);
   });
 
-  it("polls only active checking/download phases, with no overlapping slow reads", async () => {
+  it("polls every 1.5 seconds while checking or downloading, with no overlapping slow reads", async () => {
     await render();
     await click("检查更新");
     const read = deferred<UpdateState>();
@@ -147,28 +154,33 @@ describe("manual application update", () => {
     await advance();
     await advance(30_000);
     expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(2);
-    await act(async () => read.resolve(update({ phase: "available", candidate })));
-    await advance(30_000);
-    expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(2);
-    await click("下载更新");
-    expect(mocks.backend.downloadAppUpdate).toHaveBeenCalledExactlyOnceWith(candidate.id);
-    mocks.backend.getAppUpdate.mockResolvedValueOnce(update({ phase: "downloading", candidate, downloaded_bytes: 1048576, total_bytes: 4194304 }));
-    await advance();
+    await act(async () => read.resolve(update({ phase: "downloading", candidate, downloaded_bytes: 1048576, total_bytes: 4194304 })));
     expect(container.querySelector("progress")?.value).toBe(25);
     expect(container.textContent).toContain("1.0 MiB / 4.0 MiB");
     mocks.backend.getAppUpdate.mockResolvedValueOnce(update({ phase: "ready", candidate }));
     await advance();
-    await advance(30_000);
+    expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(3);
+    expect(button("安装并立即重启").disabled).toBe(false);
+    await advance(29_000);
+    expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(3);
+    await advance(1_000);
     expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(4);
     expect(mocks.backend.checkAppUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["available", "ready", "error", "installing"] as const)("does not poll an initial %s state", async (phase) => {
-    mocks.backend.getAppUpdate.mockResolvedValue(update({ phase, candidate }));
+  it("keeps reading a ready state locally without a remote check", async () => {
+    mocks.backend.getAppUpdate.mockResolvedValue(update({ phase: "ready", candidate }));
+    await render();
+    await advance(30_000);
+    expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(2);
+    expect(mocks.backend.checkAppUpdate).not.toHaveBeenCalled();
+  });
+
+  it("does not poll once the backend reports installing", async () => {
+    mocks.backend.getAppUpdate.mockResolvedValue(update({ phase: "installing", candidate }));
     await render();
     await advance(60_000);
     expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(1);
-    expect(mocks.backend.checkAppUpdate).not.toHaveBeenCalled();
   });
 
   it("requires confirmation for the exact candidate and sends nothing on cancel", async () => {
@@ -194,18 +206,13 @@ describe("manual application update", () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("deduplicates rapid check, download, and install clicks before a render", async () => {
+  it("deduplicates rapid check and install clicks before a render", async () => {
     await render();
     const check = deferred<UpdateState>();
     mocks.backend.checkAppUpdate.mockReturnValueOnce(check.promise);
     await act(async () => { const target = button("检查更新"); target.click(); target.click(); });
     expect(mocks.backend.checkAppUpdate).toHaveBeenCalledTimes(1);
-    await act(async () => check.resolve(update({ phase: "available", candidate })));
-    const download = deferred<UpdateState>();
-    mocks.backend.downloadAppUpdate.mockReturnValueOnce(download.promise);
-    await act(async () => { const target = button("下载更新"); target.click(); target.click(); });
-    expect(mocks.backend.downloadAppUpdate).toHaveBeenCalledTimes(1);
-    await act(async () => download.resolve(update({ phase: "ready", candidate })));
+    await act(async () => check.resolve(update({ phase: "ready", candidate })));
     const install = deferred<{ accepted: true }>();
     mocks.backend.installAppUpdate.mockReturnValueOnce(install.promise);
     await click("安装并立即重启");
@@ -273,30 +280,25 @@ describe("manual application update", () => {
     expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it("preserves the candidate on a download failure and lets the user retry", async () => {
-    mocks.backend.getAppUpdate.mockResolvedValue(update({ phase: "available", candidate }));
-    mocks.backend.downloadAppUpdate.mockRejectedValueOnce(new Error("download offline"));
+  it.each(["available", "downloading", "error"] as const)("offers no manual download control in the %s phase", async (phase) => {
+    mocks.backend.getAppUpdate.mockResolvedValue(update({ phase, candidate }));
     await render();
-    await click("下载更新");
-    expect(container.textContent).toContain("download offline");
-    expect(container.textContent).toContain(candidate.sha);
-    await click("重试下载");
-    expect(mocks.backend.downloadAppUpdate).toHaveBeenNthCalledWith(2, candidate.id);
-    expect(container.textContent).toContain("总大小未知");
+    const labels = [...container.querySelectorAll("button")].map((node) => node.textContent);
+    expect(labels.some((text) => text?.includes("下载"))).toBe(false);
   });
 
-  it("honors backend error state and stops polling until an explicit retry", async () => {
+  it("shows a backend error state, hides installation, and recovers through local polling", async () => {
     mocks.backend.getAppUpdate.mockResolvedValueOnce(update({ phase: "downloading", candidate }))
       .mockResolvedValueOnce(update({ phase: "error", candidate, error: "artifact expired", last_result: { status: "failed", message: "previous failure", version: "v0" } }));
     await render();
     await advance();
-    await advance(60_000);
-    expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(2);
     expect(container.textContent).toContain("artifact expired");
     expect(container.textContent).toContain("previous failure");
     expect(container.textContent).not.toContain("安装并立即重启");
-    await click("重试下载");
-    expect(mocks.backend.downloadAppUpdate).toHaveBeenCalledExactlyOnceWith(candidate.id);
+    mocks.backend.getAppUpdate.mockResolvedValueOnce(update({ phase: "ready", candidate }));
+    await advance(30_000);
+    expect(button("安装并立即重启").disabled).toBe(false);
+    expect(mocks.backend.checkAppUpdate).not.toHaveBeenCalled();
   });
 
   it("keeps the last state after a failed poll and resumes only through local status refresh", async () => {
@@ -308,10 +310,10 @@ describe("manual application update", () => {
     expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(2);
     expect(container.textContent).toContain(candidate.sha);
     expect(container.textContent).toContain("status offline");
-    mocks.backend.getAppUpdate.mockResolvedValueOnce(update({ phase: "available", candidate: { ...candidate, id: "new-id", version: "v3" } }));
+    mocks.backend.getAppUpdate.mockResolvedValueOnce(update({ phase: "ready", candidate: { ...candidate, id: "new-id", version: "v3" } }));
     await click("刷新本地状态");
-    await click("下载更新");
-    expect(mocks.backend.downloadAppUpdate).toHaveBeenCalledExactlyOnceWith("new-id");
+    expect(container.textContent).toContain("v3");
+    expect(container.textContent).not.toContain("status offline");
     expect(mocks.backend.checkAppUpdate).not.toHaveBeenCalled();
   });
 
@@ -329,7 +331,7 @@ describe("manual application update", () => {
     await act(async () => old.resolve(update({ phase: "downloading", candidate })));
     expect(container.textContent).toContain("new-session");
     expect(container.textContent).not.toContain(candidate.sha);
-    await advance(60_000);
+    await advance(29_000);
     expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(2);
   });
 

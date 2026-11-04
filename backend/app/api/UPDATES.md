@@ -1,9 +1,18 @@
-# Manual Application Updates
+# Application Updates
 
-Settings provides **Check for updates**, **Download**, and **Install and restart**.
-There are no scheduled GitHub checks. Opening Settings reads only local updater
-state. The UI polls local status while a user-requested check or download runs;
-after installation handoff it offers a manual reconnect button.
+The backend checks GitHub every 5 minutes and downloads and verifies a newer build
+on its own. Installation always needs a manual **Install and restart** confirmation.
+Settings also provides **Check for updates**, which runs the same check and
+download immediately. Opening Settings reads only local updater state. The UI
+reads that state every 30 seconds, every 1.5 seconds while a check or download
+runs, and after installation handoff it offers a manual reconnect button.
+
+The scheduler lives in the backend process, so it runs without a browser tab. It
+starts only in a supported installation, waits 60 seconds after startup for the
+first check, and then repeats every 5 minutes. After a failed cycle the wait
+doubles, up to 6 hours, and returns to 5 minutes after a success. A cycle never
+starts while another check, download or installation is active. Set
+`MAA_UPDATE_AUTO=0` to disable the scheduler; manual checks still work.
 
 ## Configuration
 
@@ -14,6 +23,7 @@ MAA_UPDATE_REPOSITORY=EgooAI/MaaAlibabaSupplier
 MAA_UPDATE_BRANCH=main
 MAA_UPDATE_WORKFLOW=install.yml
 MAA_UPDATE_ARTIFACT=MaaAlibabaSupplier-Setup
+# MAA_UPDATE_AUTO=0
 # MAA_UPDATE_GITHUB_TOKEN=
 ```
 
@@ -63,8 +73,8 @@ Windows Job Object. Its MaaFW, agent, Yak, and later descendants inherit
 containment. The job allows breakaway children, and each confirmed installation
 starts one single-use helper outside containment; the helper never outlives its
 attempt and is never a member of the job it terminates. No helper runs between
-updates, and the updater never checks GitHub on a timer. If Windows containment
-or the external shell is unavailable, updating fails closed.
+updates; the 5-minute check is a backend thread and does not start a helper. If
+Windows containment or the external shell is unavailable, updating fails closed.
 
 Use the same logged-in Windows desktop user as the application. This updater
 does not add a Windows service, request elevation, or bypass GUI confirmation.
@@ -76,9 +86,9 @@ envelopes. No seller epoch or idle-task gate is required.
 
 | Endpoint | Request | Behavior |
 | --- | --- | --- |
-| `GET /api/app/update` | None | Local build, source, progress, candidate and previous result |
-| `POST /api/app/update/check` | `{}` | Starts one asynchronous GitHub check |
-| `POST /api/app/update/download` | `{"candidate_id":"..."}` | Starts download and local verification |
+| `GET /api/app/update` | None | Local build, source, `auto` flag, progress, candidate and previous result |
+| `POST /api/app/update/check` | `{}` | Starts one asynchronous GitHub check, then downloads a newer build |
+| `POST /api/app/update/download` | `{"candidate_id":"..."}` | Starts download and local verification of the current candidate; the UI no longer uses it |
 | `POST /api/app/update/install` | `{"candidate_id":"...","confirm":true}` | Starts the single-use helper for an already verified candidate |
 
 Candidates have opaque server-generated IDs. The browser cannot submit an
@@ -92,6 +102,14 @@ It rejects unsafe entries, empty installers, unexpected filenames, and extra fil
 The updater computes the extracted installer's SHA-256 locally. No helper is
 started and no file lock is held between download and install; a 100% download is
 a ready candidate.
+
+A build whose installer is already downloading or ready is not downloaded again,
+whether the check was scheduled or manual. A newer build replaces the ready one
+only after it is verified; if that download fails, the earlier verified installer
+stays installable. Before writing, the download requires free disk space of twice
+the artifact size plus 512 MiB, because the archive and the extracted installer
+coexist until unpacking ends. Installation re-checks that the installer file
+still exists and returns 409 when security software or a cleanup removed it.
 
 Confirmation starts one single-use helper for that attempt and blocks new API
 writes. The helper validates the application identity, the installer location and
@@ -174,7 +192,12 @@ Staging and results live outside the installation:
 
 The backend exposes the last terminal result when it next runs; an interrupted
 `installing` record is ignored rather than shown as active. Staging is bounded:
-each download prunes uuid stage directories beyond the four most recent. An
+at most one stage holds a downloaded installer. Startup and the end of every
+check or download delete installers and archives in every other stage, except
+while an installation is in progress. A failed download deletes its own stage.
+A ready candidate is not persisted, so a restart discards it and the next check
+downloads it again. Logs remain, and each download prunes uuid stage directories
+beyond the four most recent, not counting the one in use. An
 attempt that could not prepare staging or start its helper deletes its own stage
 directory; failures after the helper started keep their stage for local
 inspection, and later downloads absorb them into the same window. The helper

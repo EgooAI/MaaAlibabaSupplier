@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CloudDownloadOutlined, InfoCircleOutlined, ReloadOutlined, SyncOutlined } from "@ant-design/icons";
+import { InfoCircleOutlined, ReloadOutlined, SyncOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Descriptions, Progress, Space, Spin, Tag, Tooltip, Typography } from "antd";
 import { ActionConfirmModal } from "@/components/ActionConfirmModal";
 import { useAuth } from "@/features/auth/AuthProvider";
@@ -45,7 +45,6 @@ function UpdateControls() {
   const [confirmation, setConfirmation] = useState<UpdateState["candidate"]>(null);
   const candidate = state?.candidate;
   const disabled = !state?.supported || pending !== null || activePhase || restarting;
-  const canDownload = candidate && (state.phase === "available" || state.phase === "error");
   const progress = state?.total_bytes && state.total_bytes > 0
     ? Math.min(100, Math.max(0, Math.round(state.downloaded_bytes / state.total_bytes * 100))) : null;
   const repository = state?.source.repository ?? "";
@@ -53,7 +52,9 @@ function UpdateControls() {
 
   return <Card title="程序更新" extra={<Tag color={restarting ? "processing" : state?.phase === "ready" ? "success" : "default"}>{restarting ? "等待重新连接" : state ? phaseLabels[state.phase] : error ? "状态不可用" : "读取状态"}</Tag>}>
     <Space orientation="vertical" size="middle" className="w-full">
-      <Typography.Text type="secondary">手动检查指定 GitHub Actions 来源并下载构建产物。页面不会自动检查新版本；安装后将立即重启程序。</Typography.Text>
+      <Typography.Text type="secondary">{state?.auto === false
+        ? "后台自动检查已关闭，请手动检查更新；发现新版本后会自动下载。安装需要手动确认，安装后将立即重启程序。"
+        : "程序每 5 分钟在后台检查指定 GitHub Actions 来源，发现新版本后自动下载并校验。安装需要手动确认，安装后将立即重启程序。"}</Typography.Text>
       {!state && pending ? <Spin size="small" aria-label="读取更新状态" /> : null}
       {state ? <>
         <Descriptions size="small" column={{ xs: 1, sm: 2, lg: 3 }} styles={{ content: { overflowWrap: "anywhere", minWidth: 0 } }} items={[
@@ -89,7 +90,6 @@ function UpdateControls() {
       /> : null}
       {restarting ? <Button icon={<ReloadOutlined />} onClick={() => window.location.reload()}>手动刷新并重新连接</Button> : <Space wrap>
         <Button icon={<SyncOutlined />} disabled={disabled} loading={pending === "check" || state?.phase === "checking"} onClick={() => void run("check")}>检查更新</Button>
-        {canDownload ? <Button type="primary" icon={<CloudDownloadOutlined />} disabled={disabled} loading={pending === "download"} onClick={() => void run("download", candidate.id)}>{state.phase === "error" || error ? "重试下载" : "下载更新"}</Button> : null}
         {state?.phase === "ready" && candidate ? <Button danger type="primary" disabled={disabled || Boolean(error)} loading={pending === "install"} onClick={() => setConfirmation(candidate)}>安装并立即重启</Button> : null}
         {error || state?.phase === "error" ? <Button disabled={pending !== null} onClick={() => void run("status")}>刷新本地状态</Button> : null}
       </Space>}

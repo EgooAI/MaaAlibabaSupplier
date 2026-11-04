@@ -15,6 +15,7 @@ function isCount(value: unknown): value is number {
 export function parseUpdateState(value: unknown): UpdateState {
   if (!isRecord(value)
     || typeof value.supported !== "boolean"
+    || typeof value.auto !== "boolean"
     || !isNullableString(value.reason)
     || typeof value.phase !== "string"
     || !["idle", "checking", "available", "downloading", "ready", "installing", "error"].includes(value.phase)

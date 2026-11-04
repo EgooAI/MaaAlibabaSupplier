@@ -47,6 +47,7 @@ def manager(monkeypatch, tmp_path):
     install = tmp_path / "install"
     install.mkdir()
     (install / "build-info.json").write_text(json.dumps(build()), encoding="utf-8")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     manager = updates.Updater(install)
     manager.state.update(supported=True, reason=None)
     manager.runtime = Mock(result=Mock(return_value=None), failed=Mock(return_value=False))
@@ -56,11 +57,40 @@ def manager(monkeypatch, tmp_path):
 
 
 def remote(monkeypatch, runs=None, artifacts=None):
+    """Fakes GitHub; `github.runs` and `github.artifacts` may be reassigned between cycles."""
     github = Mock()
-    github.json.side_effect = [{"workflow_runs": runs if runs is not None else [run()]},
-                              {"artifacts": artifacts if artifacts is not None else [artifact()], "total_count": 1}]
+    github.runs = runs if runs is not None else [run()]
+    github.artifacts = artifacts if artifacts is not None else [artifact()]
+
+    def fetch(path):
+        if "/artifacts" in path:
+            return {"artifacts": github.artifacts, "total_count": len(github.artifacts)}
+        return {"workflow_runs": github.runs}
+
+    github.json.side_effect = fetch
     monkeypatch.setattr(updates, "GitHub", lambda: github)
     return github
+
+
+def serve(monkeypatch, tmp_path, *, runs=None, mismatch=False):
+    """Fakes GitHub with a downloadable installer archive; `mismatch` corrupts the reported digest."""
+    source = archive(tmp_path)
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    github = remote(monkeypatch, runs=runs, artifacts=[artifact(digest="sha256:" + digest)])
+
+    def download(path, target, progress):
+        data = source.read_bytes()
+        target.write_bytes(data)
+        progress(len(data), len(data))
+        return "0" * 64 if mismatch else digest
+
+    github.download.side_effect = download
+    return github
+
+
+def stage_dirs(manager):
+    base = updates.staging_base(manager.install)
+    return {entry for entry in base.iterdir() if updates._STAGE_NAME.fullmatch(entry.name)}
 
 
 def archive(tmp_path, *, name="MaaAlibabaSupplier-v1.2.3-Setup.exe", installer_data=b"installer test payload"):
@@ -82,7 +112,10 @@ def test_observation_is_offline_and_development_unsupported(monkeypatch, tmp_pat
     network = Mock(side_effect=AssertionError("No observation network"))
     monkeypatch.setattr(updates, "GitHub", network)
     manager = updates.Updater(tmp_path)
+    scheduler = Mock()
+    monkeypatch.setattr(manager, "_start_scheduler", scheduler)
     manager.register_runtime()
+    scheduler.assert_not_called()
     state = manager.snapshot()
     assert state["supported"] is False and state["reason"]
     assert state["phase"] == "idle" and state["current"] == {"version": "development", "sha": None, "run_id": None}
@@ -98,15 +131,17 @@ def test_local_build_metadata_is_validated(change):
     assert not updates.valid_build(build(**change))
 
 
-def test_check_selects_newest_trusted_run_and_opaque_candidate(manager, monkeypatch):
-    github = remote(monkeypatch, runs=[run(run_number=14, id=22), run()])
+def test_check_selects_newest_trusted_run_and_downloads_it(manager, monkeypatch, tmp_path):
+    github = serve(monkeypatch, tmp_path, runs=[run(run_number=14, id=22), run()])
     state = manager.check()
     assert state["phase"] == "checking"
     wait_operation(manager)
-    candidate = manager.snapshot()["candidate"]
+    snapshot = manager.snapshot()
+    candidate = snapshot["candidate"]
+    assert snapshot["phase"] == "ready"
     assert candidate["run_id"] == 22 and len(candidate["id"]) == 32
     assert candidate["url"] == "https://github.com/EgooAI/MaaAlibabaSupplier/actions/runs/22"
-    assert "/runs/22/artifacts?" in github.json.call_args.args[0]
+    assert any("/runs/22/artifacts?" in call.args[0] for call in github.json.call_args_list)
     assert manager.selected["artifact_id"] == 99
     assert "digest" not in candidate
 
@@ -119,25 +154,27 @@ def test_check_selects_newest_trusted_run_and_opaque_candidate(manager, monkeypa
 ])
 def test_check_excludes_untrusted_runs(manager, monkeypatch, change):
     github = remote(monkeypatch, runs=[run(**change)])
-    manager._check()
+    manager._cycle(announce=True)
     assert manager.snapshot()["phase"] == "idle"
     assert manager.snapshot()["candidate"] is None
     assert github.json.call_count == 1
+    github.download.assert_not_called()
 
 
 @pytest.mark.parametrize("change", [{"run_number": 11}, {"run_number": 12}])
 def test_check_does_not_reinstall_same_or_older_build(manager, monkeypatch, change):
     github = remote(monkeypatch, runs=[run(**change)])
-    manager._check()
+    manager._cycle(announce=True)
     assert manager.snapshot()["phase"] == "idle"
     assert github.json.call_count == 1
+    github.download.assert_not_called()
 
 
 @pytest.mark.parametrize("change", [{"run_number": 13}, {"id": 20, "run_number": 12, "run_attempt": 2}])
-def test_newer_run_or_attempt_with_same_sha_is_available(manager, monkeypatch, change):
-    remote(monkeypatch, runs=[run(head_sha="a" * 40, **change)])
-    manager._check()
-    assert manager.snapshot()["phase"] == "available"
+def test_newer_run_or_attempt_with_same_sha_is_downloaded(manager, monkeypatch, tmp_path, change):
+    serve(monkeypatch, tmp_path, runs=[run(head_sha="a" * 40, **change)])
+    manager._cycle(announce=True)
+    assert manager.snapshot()["phase"] == "ready"
     assert manager.state["candidate"]["sha"] == manager.build["sha"]
 
 
@@ -155,13 +192,13 @@ def test_missing_ambiguous_or_unverifiable_artifact_never_stops_app(manager, mon
 def test_single_async_operation_and_immediate_snapshot(manager, monkeypatch):
     entered, release = threading.Event(), threading.Event()
 
-    def check():
+    def check(announce):
         entered.set()
         assert release.wait(3)
         with manager.lock:
             manager.state["phase"] = "idle"
 
-    monkeypatch.setattr(manager, "_check", check)
+    monkeypatch.setattr(manager, "_cycle", check)
     try:
         assert manager.check()["phase"] == "checking"
         assert entered.wait(1)
@@ -177,7 +214,6 @@ def test_single_async_operation_and_immediate_snapshot(manager, monkeypatch):
 def test_verified_download_uses_github_identity_and_filename_version(manager, monkeypatch, tmp_path):
     source = archive(tmp_path, name="MaaAlibabaSupplier-v9.8.7-Setup.exe")
     github = remote(monkeypatch, artifacts=[artifact(digest="sha256:" + hashlib.sha256(source.read_bytes()).hexdigest())])
-    manager._check()
 
     def download(path, target, progress):
         data = source.read_bytes()
@@ -186,8 +222,7 @@ def test_verified_download_uses_github_identity_and_filename_version(manager, mo
         return hashlib.sha256(data).hexdigest()
 
     github.download.side_effect = download
-    state = manager.download(manager.state["candidate"]["id"])
-    assert state["phase"] == "downloading"
+    manager.check()
     wait_operation(manager)
     state = manager.snapshot()
     assert state["phase"] == "ready" and state["candidate"]["version"] == "v9.8.7"
@@ -206,7 +241,6 @@ def test_bad_zip_digest_blocks_extraction(manager, monkeypatch, tmp_path):
     source = archive(tmp_path)
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     github = remote(monkeypatch, artifacts=[artifact(digest="sha256:" + digest)])
-    manager._check()
     archive(tmp_path, installer_data=b"replaced installer")
 
     def download(path, target, progress):
@@ -217,11 +251,12 @@ def test_bad_zip_digest_blocks_extraction(manager, monkeypatch, tmp_path):
     github.download.side_effect = download
     unpack = Mock(side_effect=AssertionError("Must not extract"))
     monkeypatch.setattr(updates, "unpack_verified", unpack)
-    manager.download(manager.state["candidate"]["id"])
+    manager.check()
     wait_operation(manager)
     assert manager.snapshot()["phase"] == "error"
     unpack.assert_not_called()
     assert manager.prepared is None
+    assert stage_dirs(manager) == set()
     manager.runtime.start.assert_not_called()
 
 
@@ -347,8 +382,10 @@ def test_stream_bounds_and_incomplete_response(tmp_path, monkeypatch):
 
 
 def make_ready(manager):
+    installer = manager.install / "verified.exe"
+    installer.write_bytes(b"installer")
     manager.state.update(phase="ready", candidate={"id": "opaque", "version": "v1.2.3"})
-    manager.prepared = (Path("verified.exe"), build())
+    manager.prepared = (installer, build())
 
 
 def test_install_auth_gate_no_account_lock_and_arms_after_response(manager, monkeypatch):
@@ -513,8 +550,6 @@ def test_update_lifecycle_events_cover_check_download_and_handoff(manager, monke
     source = archive(tmp_path)
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     github = remote(monkeypatch, artifacts=[artifact(digest="sha256:" + digest)])
-    manager._check()
-    assert ("update.check", {"status": "candidate", "run_id": 21, "run_number": 13, "run_attempt": 1}) in events
 
     def download(path, target, progress):
         data = source.read_bytes()
@@ -523,9 +558,9 @@ def test_update_lifecycle_events_cover_check_download_and_handoff(manager, monke
         return digest
 
     github.download.side_effect = download
-    state = manager.download(manager.state["candidate"]["id"])
-    assert state["phase"] == "downloading"
+    manager.check()
     wait_operation(manager)
+    assert ("update.check", {"status": "candidate", "run_id": 21, "run_number": 13, "run_attempt": 1}) in events
     assert ("update.download", {"status": "started", "run_id": 21}) in events
     ready = [fields for event, fields in events if event == "update.download" and fields["status"] == "ready"]
     assert ready == [{"status": "ready", "run_id": 21, "count": source.stat().st_size}]
@@ -540,7 +575,7 @@ def test_current_build_check_is_recorded_without_a_candidate(manager, monkeypatc
     events = []
     monkeypatch.setattr(updates, "log_event", lambda event, **fields: events.append((event, fields)))
     remote(monkeypatch, runs=[run(run_number=12, id=20)])
-    manager._check()
+    manager._cycle(announce=True)
     assert events == [("update.check", {"status": "current", "run_id": 20})]
 
 
@@ -654,23 +689,13 @@ def test_download_prunes_old_stages_around_the_new_one(manager, monkeypatch, tmp
     base = updates.staging_base(manager.install)
     base.mkdir(parents=True)
     stages = make_stages(base, 6)
-    source = archive(tmp_path)
-    digest = hashlib.sha256(source.read_bytes()).hexdigest()
-    github = remote(monkeypatch, artifacts=[artifact(digest="sha256:" + digest)])
-
-    def download(path, target, progress):
-        data = source.read_bytes()
-        target.write_bytes(data)
-        progress(len(data), len(data))
-        return digest
-
-    github.download.side_effect = download
-    manager._check()
-    manager.download(manager.state["candidate"]["id"])
+    serve(monkeypatch, tmp_path)
+    manager.check()
     wait_operation(manager)
     assert manager.snapshot()["phase"] == "ready"
     stage_names = {entry.name for entry in base.iterdir() if updates._STAGE_NAME.fullmatch(entry.name)}
-    assert stage_names == {stage.name for stage in stages[3:]} | {manager.prepared[0].parent.name}
+    # The new stage is protected and does not count toward the retained four.
+    assert stage_names == {stage.name for stage in stages[2:]} | {manager.prepared[0].parent.name}
 
 
 def test_local_packaging_null_identity_is_supported_metadata():
@@ -862,17 +887,8 @@ def test_stale_response_callbacks_cannot_arm_or_cancel_new_handoff(manager):
 
 @pytest.mark.parametrize("fail", [False, True])
 def test_download_verifies_without_starting_a_broker(manager, monkeypatch, tmp_path, fail):
-    source = archive(tmp_path)
-    digest = hashlib.sha256(source.read_bytes()).hexdigest()
-    github = remote(monkeypatch, artifacts=[artifact(digest="sha256:" + digest)])
-    manager._check()
-
-    def download(path, target, progress):
-        target.write_bytes(source.read_bytes())
-        return digest if not fail else "0" * 64
-
-    github.download.side_effect = download
-    manager.download(manager.state["candidate"]["id"])
+    serve(monkeypatch, tmp_path, mismatch=fail)
+    manager.check()
     wait_operation(manager)
     assert manager.state["phase"] == ("error" if fail else "ready")
     assert manager.prepared is None if fail else manager.prepared is not None
@@ -893,3 +909,150 @@ def test_failed_broker_start_keeps_candidate_ready_for_retry(manager):
     manager.install_update("opaque")
     assert manager.handoff.is_set()
     assert manager.runtime.start.call_count == 2
+
+
+def test_same_build_is_not_downloaded_again_once_ready(manager, monkeypatch, tmp_path):
+    github = serve(monkeypatch, tmp_path)
+    manager.check()
+    wait_operation(manager)
+    installer = manager.prepared[0]
+    assert github.download.call_count == 1
+
+    assert manager._scheduled_cycle() is True
+    manager.check()
+    wait_operation(manager)
+
+    assert github.download.call_count == 1
+    assert manager.prepared[0] == installer and installer.is_file()
+    assert manager.snapshot()["phase"] == "ready"
+
+
+def test_newer_build_replaces_the_installer_and_deletes_the_old_one(manager, monkeypatch, tmp_path):
+    github = serve(monkeypatch, tmp_path)
+    manager.check()
+    wait_operation(manager)
+    old = manager.prepared[0]
+
+    github.runs = [run(id=22, run_number=14)]
+    assert manager._scheduled_cycle() is True
+
+    new = manager.prepared[0]
+    assert new != old and new.is_file() and not old.exists()
+    assert manager.snapshot()["candidate"]["run_id"] == 22 and manager.snapshot()["phase"] == "ready"
+    assert list(updates.staging_base(manager.install).rglob("MaaAlibabaSupplier-v*-Setup.exe")) == [new]
+
+
+def test_failed_replacement_keeps_the_verified_installer_installable(manager, monkeypatch, tmp_path):
+    github = serve(monkeypatch, tmp_path)
+    manager.check()
+    wait_operation(manager)
+    installer = manager.prepared[0]
+    candidate = manager.snapshot()["candidate"]["id"]
+
+    github.runs = [run(id=22, run_number=14)]
+    github.download.side_effect = updates.UpdateError("offline")
+    assert manager._scheduled_cycle() is False
+
+    state = manager.snapshot()
+    assert state["phase"] == "ready" and state["candidate"]["id"] == candidate and state["error"] == "offline"
+    assert installer.is_file() and stage_dirs(manager) == {installer.parent}
+    manager.install_update(candidate)
+    manager.runtime.start.assert_called_once_with(*manager.prepared)
+
+
+@pytest.mark.parametrize("active", ["checking", "downloading", "installing", "busy", "handoff", "unsupported"])
+def test_scheduled_cycle_never_overlaps_another_operation(manager, monkeypatch, active):
+    github = remote(monkeypatch)
+    if active == "busy":
+        manager._busy = True
+    elif active == "handoff":
+        manager.handoff.set()
+    elif active == "unsupported":
+        manager.state["supported"] = False
+    else:
+        manager.state["phase"] = active
+    assert manager._scheduled_cycle() is True
+    github.json.assert_not_called()
+
+
+def test_scheduled_cycle_leaves_the_state_alone_when_current_or_offline(manager, monkeypatch):
+    github = remote(monkeypatch, runs=[run(run_number=12, id=20)])
+    before = manager.snapshot()
+    assert manager._scheduled_cycle() is True
+    assert manager.snapshot() == before
+
+    github.json.side_effect = updates.UpdateError("offline")
+    assert manager._scheduled_cycle() is False
+    assert manager.snapshot() == before
+    assert manager._busy is False
+
+
+def test_schedule_waits_five_minutes_and_backs_off_after_failures(manager, monkeypatch):
+    waits = []
+
+    class Stop:
+        def wait(self, timeout):
+            waits.append(timeout)
+            return len(waits) == 4
+
+    results = iter([False, False, True])
+    manager._stop = Stop()
+    monkeypatch.setattr(manager, "_scheduled_cycle", lambda: next(results))
+    manager._schedule()
+    assert updates.AUTO_CHECK_INTERVAL == 300
+    assert waits == [updates.AUTO_FIRST_DELAY, 600, 1200, 300]
+
+
+def test_purge_removes_unreferenced_installers_but_keeps_logs_and_protected_stage(tmp_path):
+    base = tmp_path / "staging"
+    base.mkdir()
+
+    def populate(stage):
+        for name in ("MaaAlibabaSupplier-v1.2.3-Setup.exe", "artifact.zip", "artifact.zip.part", "installer.log"):
+            (stage / name).write_bytes(b"x")
+
+    old, live = make_stages(base, 2, populate)
+    (base / "last-result.json").write_text("{}", encoding="utf-8")
+    assert updates.purge_stale_artifacts(base, {live.resolve()}) == 3
+    assert {entry.name for entry in old.iterdir()} == {"installer.log"}
+    assert len(list(live.iterdir())) == 4
+    assert (base / "last-result.json").is_file()
+
+
+def test_reconcile_deletes_stale_installers_unless_installing_or_downloading(manager):
+    base = updates.staging_base(manager.install)
+    base.mkdir(parents=True)
+    (stale,) = make_stages(base, 1, lambda stage: (stage / "MaaAlibabaSupplier-v1.2.3-Setup.exe").write_bytes(b"x"))
+    leftover = stale / "MaaAlibabaSupplier-v1.2.3-Setup.exe"
+
+    manager.state["phase"] = "installing"
+    assert manager.reconcile_staging() == 0 and leftover.is_file()
+
+    manager.state["phase"] = "idle"
+    manager._stage = stale
+    assert manager.reconcile_staging() == 0 and leftover.is_file()
+
+    manager._stage = None
+    assert manager.reconcile_staging() == 1 and not leftover.exists()
+
+
+def test_install_rejects_a_vanished_installer_and_asks_for_a_new_check(manager):
+    make_ready(manager)
+    manager.prepared[0].unlink()
+    with pytest.raises(AppError) as exc:
+        manager.install_update("opaque")
+    assert exc.value.status_code == 409
+    assert manager.state["phase"] == "idle" and manager.prepared is None
+    manager.runtime.start.assert_not_called()
+
+
+def test_download_fails_before_writing_when_the_disk_is_short(tmp_path, monkeypatch):
+    github = updates.GitHub()
+    github._opener = Mock()
+    github._opener.open.return_value = Response(b"payload", {"Content-Length": "7"})
+    monkeypatch.setattr(updates.shutil, "disk_usage", lambda path: Mock(free=updates.DISK_MARGIN))
+    progress = Mock()
+    with pytest.raises(updates.UpdateError, match="disk space"):
+        github.download("/download", tmp_path / "archive", progress)
+    assert (tmp_path / "archive").stat().st_size == 0
+    progress.assert_not_called()

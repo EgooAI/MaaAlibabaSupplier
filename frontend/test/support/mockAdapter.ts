@@ -232,7 +232,7 @@ export const mockBackend: OperationsBackend = {
 
   shutdownApp: () => delay({ accepted: true }),
   getAppUpdate: () => delay({
-    supported: false, reason: "Mock environment does not support application updates", phase: "idle",
+    supported: false, auto: false, reason: "Mock environment does not support application updates", phase: "idle",
     current: { version: "mock", sha: null },
     source: { repository: "", branch: "", workflow: "", artifact: "" },
     candidate: null, downloaded_bytes: 0, total_bytes: null, error: null, last_result: null,

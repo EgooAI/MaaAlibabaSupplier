@@ -6,7 +6,10 @@ import { ApiError } from "@/services/httpAdapter";
 import { parseInstallAcceptance, parseUpdateState } from "@/services/updateProtocol";
 import type { UpdateState } from "@/types/update";
 
-type Action = "status" | "check" | "download" | "install";
+type Action = "status" | "check" | "install";
+
+const ACTIVE_POLL_MS = 1500;
+const IDLE_POLL_MS = 30000;
 
 export function useAppUpdate() {
   const [state, setState] = useState<UpdateState | null>(null);
@@ -21,7 +24,6 @@ export function useAppUpdate() {
     const scope = lifetime.current;
     if (!scope.active || scope.busy || restarting) return;
     if (action !== "status" && (!state?.supported || activePhase)) return;
-    if (action === "download" && (!candidateId || candidateId !== state?.candidate?.id || !["available", "error"].includes(state.phase))) return;
     if (action === "install" && (!candidateId || candidateId !== state?.candidate?.id || state.phase !== "ready" || error)) return;
     scope.busy = true;
     const request = ++scope.request;
@@ -35,9 +37,7 @@ export function useAppUpdate() {
         parseInstallAcceptance(receipt);
         setInstallResult("accepted");
       } else {
-        const value = action === "status" ? await backend.getAppUpdate()
-          : action === "check" ? await backend.checkAppUpdate()
-            : await backend.downloadAppUpdate(candidateId!);
+        const value = action === "status" ? await backend.getAppUpdate() : await backend.checkAppUpdate();
         if (current()) setState(parseUpdateState(value));
       }
     } catch (cause) {
@@ -73,9 +73,10 @@ export function useAppUpdate() {
   }, []);
 
   useEffect(() => {
-    if (!state?.supported || !activePhase || pending || error || restarting) return;
+    if (!state?.supported || pending || error || restarting) return;
     // Schedule only after the previous request settles, so slow reads cannot overlap.
-    const timer = window.setTimeout(readStatus, 1500);
+    // The backend checks and downloads on its own; this only reads its local state.
+    const timer = window.setTimeout(readStatus, activePhase ? ACTIVE_POLL_MS : IDLE_POLL_MS);
     return () => window.clearTimeout(timer);
   }, [state, activePhase, pending, error, restarting]);
 
