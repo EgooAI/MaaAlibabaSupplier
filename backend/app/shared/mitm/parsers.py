@@ -8,7 +8,7 @@ import re
 
 from loguru import logger
 
-from .pool import ProductCard, SelfInfo, UserInfo
+from .pool import InquiryCard, InquiryProduct, ProductCard, SelfInfo, UserInfo
 
 
 def _try_decode_base64(body: bytes) -> bytes:
@@ -258,6 +258,49 @@ def parse_fetch_card(body: bytes) -> ProductCard | None:
         product_url=product_url,
         expired=bool(card_data.get("expiredTitle")),
     )
+
+
+INQUIRY_TAG = "询盘"
+
+
+def parse_inquiry_card(body: bytes) -> InquiryCard | None:
+    """Extract the inquiry body from a fetchcard response (summary tag "询盘")."""
+    data = _parse_json(body)
+    if not data or not _is_success_ret(data):
+        return None
+
+    for item in (data.get("data") or {}).get("fbCardList") or []:
+        if not isinstance(item, dict) or (item.get("summary") or {}).get("tag") != INQUIRY_TAG:
+            continue
+        card_data = item.get("data") or {}
+        inner = card_data.get("data") if isinstance(card_data.get("data"), dict) else card_data
+        inquiry_id = str(inner.get("inquiryID") or "").strip()
+        if not inquiry_id:
+            continue
+        products = []
+        for product in inner.get("products") or []:
+            if not isinstance(product, dict):
+                continue
+            action_params = (product.get("detailAction") or {}).get("actionParams") or {}
+            products.append(InquiryProduct(
+                product_name=product.get("productName") or "",
+                product_id=str(product.get("productId") or ""),
+                product_unit_price=product.get("productUnitPrice") or "",
+                product_moq=str(product.get("productMOQ") or "").strip(),
+                product_unit=product.get("productUnit") or "",
+                product_image=product.get("productImage") or "",
+                discount_price=product.get("discountPrice") or "",
+                product_url=action_params.get("url") or "",
+            ))
+        return InquiryCard(
+            inquiry_id=inquiry_id,
+            inquiry_content=inner.get("inquiryContent") or inner.get("content") or "",
+            products=products,
+            product_image=inner.get("productImage") or "",
+            is_seller=bool(inner.get("isSeller")),
+            attachment_count=str(inner.get("attachmentCount") or "0"),
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------

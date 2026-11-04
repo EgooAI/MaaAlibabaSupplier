@@ -9,6 +9,7 @@ from backend.app.shared.backend.account_context import get_account_context
 from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
 from backend.app.shared.crm.sync import CRMAdapter
 from backend.app.shared.mitm.pool import (
+    get_inquiry_card_pool,
     get_product_card_pool,
     get_user_info_pool,
 )
@@ -32,6 +33,7 @@ def self_info() -> dict:
 def reset_cache() -> dict:
     get_user_info_pool().clear()
     get_product_card_pool().clear()
+    get_inquiry_card_pool().clear()
     return ok(None)
 
 

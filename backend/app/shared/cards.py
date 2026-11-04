@@ -9,12 +9,13 @@ MITM fetchcard pool to replace the bare product id with title, price and image.
 from __future__ import annotations
 
 import base64
+import html
 import json
 from dataclasses import dataclass
 from typing import Any
 
 from backend.app.shared.crm.views import CrmMessage
-from backend.app.shared.mitm.pool import ProductCard, get_product_card_pool
+from backend.app.shared.mitm.pool import InquiryCard, ProductCard, get_inquiry_card_pool, get_product_card_pool
 
 PRODUCT_CARD_TYPES = frozenset({3, 2000, 2028, 2098})
 INQUIRY_CARD_TYPE = 6
@@ -178,7 +179,37 @@ def card_view(message: CrmMessage) -> dict | None:
         return None
     if card.card_type in PRODUCT_CARD_TYPES:
         return _product_view(card)
+    if card.card_type == INQUIRY_CARD_TYPE:
+        inquiry = get_inquiry_card_pool().get(message.biz_id)
+        if inquiry is not None:
+            return _inquiry_view(card, inquiry, message.mid)
     return _other_view(card, message.mid)
+
+
+def _inquiry_view(card: Card, inquiry: InquiryCard, mid: str) -> dict:
+    type_name = _type_name(card.card_type)
+    content = html.unescape(inquiry.inquiry_content).replace("\r\n", "\n").strip()
+    details = []
+    for index, product in enumerate(inquiry.products, start=1):
+        price = product.discount_price or product.product_unit_price
+        quantity = product.product_moq.strip()
+        unit = product.product_unit.strip() if quantity.replace(".", "", 1).isdigit() else ""
+        moq = f"MOQ {quantity} {unit}".strip() if quantity else ""
+        value = " · ".join(part for part in (product.product_name, price, moq) if part)
+        if value:
+            details.append({"label": "商品" if len(inquiry.products) == 1 else f"商品 {index}", "value": value})
+    if inquiry.attachment_count not in ("", "0"):
+        details.append({"label": "附件", "value": f"{inquiry.attachment_count} 个"})
+    first_product = inquiry.products[0].product_name if inquiry.products else ""
+    return {
+        "id": f"{card.card_type}:{mid}",
+        "title": type_name,
+        "type": "inquiry",
+        "summary": content or first_product or "买家询盘/反馈，请在客户端查看",
+        "tags": [type_name],
+        "coverTone": _COVER_TONES["inquiry"],
+        "details": details,
+    }
 
 
 def _product_view(card: Card) -> dict:

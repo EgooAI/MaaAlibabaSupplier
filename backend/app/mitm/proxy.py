@@ -22,9 +22,10 @@ from backend.app.shared.mitm.parsers import (
     parse_fetch_card,
     parse_get_user_info_by_params,
     parse_im_id_get,
+    parse_inquiry_card,
     parse_query_customer_info,
 )
-from backend.app.shared.mitm.pool import UserInfo, get_product_card_pool, get_user_info_pool
+from backend.app.shared.mitm.pool import UserInfo, get_inquiry_card_pool, get_product_card_pool, get_user_info_pool
 from backend.app.shared.crm import sync_self_info, sync_user_infos
 from backend.app.shared.utils.app_config import get_configured_self_ali_id
 from backend.app.shared.utils.log_context import log_event
@@ -201,10 +202,13 @@ class TrafficRouter:
 
     @staticmethod
     def _handle_fetch_card(event: _TrafficEvent) -> None:
-        card = parse_fetch_card(event.response_body) if event.response_body else None
-        if card is not None:
-            get_product_card_pool().put(card)
-        log_event("mitm.fetch_card", body_bytes=len(event.response_body), count=1 if card else 0)
+        product = parse_fetch_card(event.response_body) if event.response_body else None
+        inquiry = parse_inquiry_card(event.response_body) if event.response_body and product is None else None
+        if product is not None:
+            get_product_card_pool().put(product)
+        if inquiry is not None:
+            get_inquiry_card_pool().put(inquiry)
+        log_event("mitm.fetch_card", body_bytes=len(event.response_body), count=1 if product or inquiry else 0)
 
 
 class TrafficHandler(BaseHTTPRequestHandler):

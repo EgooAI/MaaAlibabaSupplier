@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.app.shared.crm.identities import canonical_ali_id
-from backend.app.shared.crm.views import coerce_epoch
+from backend.app.shared.crm.views import CARD_CONTENT_TYPE, coerce_epoch
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,7 @@ class MessageRow:
     content: bytes | None = None
     is_system: bool = False
     is_auto_reply: bool = False
+    biz_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,14 @@ def _is_auto_reply(extension: str | None) -> bool:
     if "autoReply" in basic:
         return basic["autoReply"] is True
     return bool(extension and _AUTO_REPLY_RE.search(extension))
+
+
+def _biz_id(extension: str | None, user_content_type: int | None) -> str:
+    """Business id that links a card message to its fetchcard body (inquiry cards)."""
+    if user_content_type != CARD_CONTENT_TYPE:
+        return ""
+    value = _basic_message_info(extension).get("bizId")
+    return str(value).strip() if isinstance(value, (str, int)) and not isinstance(value, bool) else ""
 
 
 def open_readonly(db_path: Path) -> sqlite3.Connection:
@@ -130,6 +139,7 @@ def build_conversations(conn: sqlite3.Connection, self_ali_id: str) -> list[Cont
                 content=row["content"],
                 is_system=_is_system_message(row["extension"]),
                 is_auto_reply=_is_auto_reply(row["extension"]),
+                biz_id=_biz_id(row["extension"], row["user_content_type"]),
             ))
 
     for messages in groups.values():

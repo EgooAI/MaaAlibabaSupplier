@@ -673,6 +673,8 @@ def _message_content(row: MessageRow) -> dict[str, Any]:
     }
     if row.user_content_type not in (0, 10010):
         content["source_content_label"] = row.content_label
+    if row.biz_id:
+        content["biz_id"] = row.biz_id
     return content
 
 
@@ -703,6 +705,7 @@ def _crm_message_from_sdk(message: Any) -> CrmMessage:
         content=_content_bytes(content),
         is_system=bool(content.get("is_system")),
         is_auto_reply=bool(content.get("is_auto_reply")),
+        biz_id=str(content.get("biz_id") or ""),
     )
 
 

@@ -10,7 +10,13 @@ from backend.app.shared.cards import (
     product_ids,
 )
 from backend.app.shared.crm.views import CrmMessage
-from backend.app.shared.mitm.pool import ProductCard, get_product_card_pool
+from backend.app.shared.mitm.pool import (
+    InquiryCard,
+    InquiryProduct,
+    ProductCard,
+    get_inquiry_card_pool,
+    get_product_card_pool,
+)
 
 
 def _blob(payload: dict) -> bytes:
@@ -18,7 +24,7 @@ def _blob(payload: dict) -> bytes:
     return b"\x82\x01e\x03\x85\x01\xcd'\x1a\x02\xda\x00" + raw + b"\x03\xa0\x04\xa0\x05\xa0"
 
 
-def _message(content: bytes | None, *, mid: str = "m1", label: str = "") -> CrmMessage:
+def _message(content: bytes | None, *, mid: str = "m1", label: str = "", biz_id: str = "") -> CrmMessage:
     return CrmMessage(
         table_name="msg_table",
         cid="10001-20002",
@@ -28,6 +34,7 @@ def _message(content: bytes | None, *, mid: str = "m1", label: str = "") -> CrmM
         user_content_type=10010,
         content_label=label,
         content=content,
+        biz_id=biz_id,
     )
 
 
@@ -195,6 +202,44 @@ def test_inquiry_request_card_shows_quantity_and_total():
 
 def test_inquiry_card_has_no_displayable_content():
     view = card_view(_message(_blob(PAYLOADS[6])))
+    assert view["summary"] == "买家询盘/反馈，请在客户端查看"
+    assert view["details"] == []
+
+
+def test_inquiry_card_shows_pooled_body_by_biz_id():
+    get_inquiry_card_pool().put(InquiryCard(
+        inquiry_id="100000024052527",
+        inquiry_content="Bonjour,je souhaiterais coop&eacute;rer.Couleur:noix;\r\nQuantit&eacute;:1.0;",
+        products=[InquiryProduct(
+            product_name="Egg Roll Table", product_unit_price="US$39-59", product_moq="2 ", product_unit="piece",
+        )],
+        attachment_count="2",
+    ))
+    view = card_view(_message(_blob(PAYLOADS[6]), mid="m6", biz_id="100000024052527"))
+    assert view["id"] == "6:m6"
+    assert view["type"] == "inquiry"
+    assert view["summary"] == "Bonjour,je souhaiterais coopérer.Couleur:noix;\nQuantité:1.0;"
+    assert view["details"] == [
+        {"label": "商品", "value": "Egg Roll Table · US$39-59 · MOQ 2 piece"},
+        {"label": "附件", "value": "2 个"},
+    ]
+    text = json.dumps(view, ensure_ascii=False)
+    for secret in ("sign", "encryFeedbackId", "encryTradeId", "chatToken"):
+        assert secret not in text
+
+
+def test_inquiry_moq_does_not_repeat_a_unit_the_source_already_includes():
+    get_inquiry_card_pool().put(InquiryCard(inquiry_id="7", inquiry_content="hi", products=[InquiryProduct(
+        product_name="Yoga Ball", product_unit_price="US$0.75", product_moq="20 Pieces", product_unit="Piece/s",
+    )]))
+    view = card_view(_message(_blob(PAYLOADS[6]), biz_id="7"))
+    assert view["details"] == [{"label": "商品", "value": "Yoga Ball · US$0.75 · MOQ 20 Pieces"}]
+
+
+@pytest.mark.parametrize("biz_id", ["", "999"])
+def test_inquiry_card_without_a_pooled_body_keeps_the_placeholder(biz_id):
+    get_inquiry_card_pool().put(InquiryCard(inquiry_id="100", inquiry_content="other inquiry"))
+    view = card_view(_message(_blob(PAYLOADS[6]), biz_id=biz_id))
     assert view["summary"] == "买家询盘/反馈，请在客户端查看"
     assert view["details"] == []
 

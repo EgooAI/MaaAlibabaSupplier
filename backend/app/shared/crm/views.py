@@ -19,6 +19,7 @@ class CrmMessage:
     content: bytes | None = None
     is_system: bool = False
     is_auto_reply: bool = False
+    biz_id: str = ""
 
 
 @dataclass(frozen=True)

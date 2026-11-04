@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
@@ -95,6 +96,24 @@ def test_snapshot_delta_late_arrival_new_table_and_retained_history(snapshot):
     assert len(conversations_for(reopened, "seller")[0].messages) == 4
     assert read_sync_state("seller", directory, target) == third
     assert third["last_success"] >= first["last_success"] > 0
+
+
+def test_card_biz_id_reaches_crm_message_and_backfills_rows_synced_without_it(snapshot):
+    source, target, _, apply = snapshot
+    extension = json.dumps({"basicMessageInfo": json.dumps({"bizId": 100000024052527})})
+    card = ("seller-buyer", "1", "buyer@icbu", 1756720000, 10010, "", "{}", b"card")
+    text = ("seller-buyer", "2", "buyer@icbu", 1756720001, 0, "hi", extension, b"hi")
+    add_source(source, [card, text])
+    assert apply(1)["inserted"] == 2
+    with closing(sqlite3.connect(source)) as conn:
+        conn.execute("UPDATE msg_table SET extension=? WHERE mid='1'", (extension,))
+        conn.commit()
+
+    assert apply(2)["updated"] == 1
+
+    messages = {m.mid: m for m in conversations_for(sync.CRMAdapter(target), "seller")[0].messages}
+    assert messages["1"].biz_id == "100000024052527"
+    assert messages["2"].biz_id == ""
 
 
 @pytest.mark.parametrize("kind", [1, 10001, 99999, None])

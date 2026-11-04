@@ -127,6 +127,30 @@ class ProductCard(BaseModel):
     expired: bool = False
 
 
+class InquiryProduct(BaseModel):
+    """A single product referenced in an inquiry card."""
+
+    product_name: str = ""
+    product_id: str = ""
+    product_unit_price: str = ""
+    product_moq: str = ""
+    product_unit: str = ""
+    product_image: str = ""
+    discount_price: str = ""
+    product_url: str = ""
+
+
+class InquiryCard(BaseModel):
+    """Inquiry card body, keyed by the inquiry id that the chat message carries as ``bizId``."""
+
+    inquiry_id: str = ""
+    inquiry_content: str = ""
+    products: list[InquiryProduct] = Field(default_factory=list)
+    product_image: str = ""
+    is_seller: bool = False
+    attachment_count: str = ""
+
+
 # ---------------------------------------------------------------------------
 # Merge helper
 # ---------------------------------------------------------------------------
@@ -402,6 +426,37 @@ def get_product_card_pool() -> ProductCardPool:
     return ProductCardPool()
 
 
+# ---------------------------------------------------------------------------
+# InquiryCardPool
+# ---------------------------------------------------------------------------
+
+
+class InquiryCardPool(_DictPool[InquiryCard]):
+    _instance: InquiryCardPool | None = None
+    _instance_lock = threading.Lock()
+
+    def __new__(cls) -> InquiryCardPool:
+        with cls._instance_lock:
+            if cls._instance is None:
+                instance = super().__new__(cls)
+                instance._init_pool("inquiry_card", "inquiry_id", InquiryCard)
+                cls._instance = instance
+        return cls._instance
+
+    def _get_key(self, item: InquiryCard) -> str:
+        return item.inquiry_id
+
+    def get(self, inquiry_id: str) -> InquiryCard | None:
+        if not inquiry_id:
+            return None
+        with self._lock:
+            return self._data.get(inquiry_id)
+
+
+def get_inquiry_card_pool() -> InquiryCardPool:
+    return InquiryCardPool()
+
+
 def observe_pools() -> dict:
     """Read-only counts for status; never initializes a pool or opens its database."""
     counts = {}
@@ -409,4 +464,6 @@ def observe_pools() -> dict:
         counts["user_info"] = UserInfoPool._instance.count()
     if ProductCardPool._instance is not None:
         counts["product_cards"] = ProductCardPool._instance.count()
+    if InquiryCardPool._instance is not None:
+        counts["inquiry_cards"] = InquiryCardPool._instance.count()
     return counts
