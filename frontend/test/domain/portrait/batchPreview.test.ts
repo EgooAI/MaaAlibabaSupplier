@@ -31,8 +31,6 @@ function conversation(id: string, cid: number | null, options: { stage?: Portrai
     unreadCount: 0,
     replyState: "none",
     pendingSince: null,
-    dueAt: null,
-    isOverdue: false,
     historyPending: false,
     uncertain: false,
   };

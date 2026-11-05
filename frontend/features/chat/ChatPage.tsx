@@ -5,7 +5,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { Alert, Button, Card, Empty, Popover, Spin, Tooltip } from "antd";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { inboxQueryFromUrl, inboxQueryToUrl } from "@/domain/chat/inboxModel";
-import { statusLabel } from "@/domain/chat/chatModel";
+import { statusLabel, waitingLabel } from "@/domain/chat/chatModel";
 import { ConversationFilters, ConversationPaging } from "./conversation/ConversationFilters";
 import { InboxBadges } from "./conversation/InboxBadges";
 import { CardDetailDrawer } from "@/components/CardDetailDrawer";
@@ -125,7 +125,7 @@ function ChatWorkspace() {
             </div>
           }>
             <Button type="text" size="small" aria-label="查看会话状态" className="!text-xs">
-              <span className={active.isOverdue ? "text-red-600" : active.replyState === "needs_reply" || active.uncertain ? "text-amber-700" : "text-slate-500"}>{active.isOverdue ? "超时" : active.uncertain ? "待核实" : statusLabel(active.replyState)}</span>
+              <span className={active.replyState === "needs_reply" || active.uncertain ? "text-amber-700" : "text-slate-500"}>{active.uncertain ? "待核实" : waitingLabel(active) ?? statusLabel(active.replyState)}</span>
               {active.unreadCount > 0 ? <span className="h-1.5 w-1.5 rounded-full bg-blue-500" aria-label={`本工作台未读 ${active.unreadCount}`} /> : null}
             </Button>
           </Popover> : null}

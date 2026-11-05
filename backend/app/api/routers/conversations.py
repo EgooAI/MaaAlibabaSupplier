@@ -88,7 +88,6 @@ class InboxFilters(BaseModel):
     tag: str | None = None
     reply_state: Literal["needs_reply", "waiting_customer", "history_pending", "none", "unknown"] | None = None
     unread: bool | None = None
-    overdue: bool | None = None
     portrait_stage: list[str] | None = None
     portrait_completeness: Literal["all", "maintained", "unmaintained"] = "all"
     business_tag: list[str] | None = None
@@ -130,10 +129,6 @@ class InboxListQuery(InboxFilters):
     offset: int = Field(default=0, ge=0)
     limit: int = Field(default=50, ge=1, le=100)
     pagination_revision: str | None = Field(default=None, max_length=128)
-
-
-class InboxSettingsInput(BaseModel):
-    timeout_seconds: int = Field(ge=3600, le=604800, strict=True)
 
 
 def _inbox_store() -> tuple[InboxStore, Any]:
@@ -532,21 +527,7 @@ def list_conversations(
 @router.get("/api/inbox/overview")
 def inbox_overview(filters: Annotated[InboxFilters, Query()]) -> dict:
     projection = _inbox_projection(filters)
-    return ok({field: projection[field] for field in ("counts", "inbox_revision", "timeout_seconds", "updated_at")})
-
-
-@router.get("/api/inbox/settings")
-def inbox_settings() -> dict:
-    store, context = _inbox_store()
-    metadata = store.metadata(context.self_ali_id, context.data_dir)
-    return ok({field: metadata[field] for field in ("timeout_seconds", "inbox_revision")})
-
-
-@router.put("/api/inbox/settings")
-def update_inbox_settings(body: InboxSettingsInput) -> dict:
-    store, context = _inbox_store()
-    metadata = store.set_timeout(body.timeout_seconds, seller=context.self_ali_id, data_dir=context.data_dir)
-    return ok({field: metadata[field] for field in ("timeout_seconds", "inbox_revision")})
+    return ok({field: projection[field] for field in ("counts", "inbox_revision", "updated_at")})
 
 
 @router.get("/api/conversations/revision")

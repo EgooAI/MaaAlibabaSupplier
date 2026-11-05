@@ -3,7 +3,7 @@ import { inboxQueryFromUrl, inboxQueryToSearchParams, inboxQueryToUrl, replyStat
 import type { ConversationQuery } from "@/types/inbox";
 
 describe("inbox query url", () => {
-  it("parses applied filters from the url and drops unknown values", () => {
+  it("parses applied filters from the url and drops unknown values and the retired overdue filter", () => {
     const params = new URLSearchParams();
     params.set("q", "lamp");
     params.set("search_scope", "messages");
@@ -27,7 +27,6 @@ describe("inbox query url", () => {
       tag: "金牌",
       reply_state: "needs_reply",
       unread: true,
-      overdue: false,
       portrait_stage: ["won", "following_up"],
       business_tag: ["t1"],
       lost_reason: "price",
@@ -57,7 +56,6 @@ describe("inbox query url", () => {
       tag: "金牌",
       reply_state: "waiting_customer",
       unread: false,
-      overdue: true,
       portrait_stage: ["won", "lost"],
       business_tag: ["t1", "t2"],
       lost_reason: "price",

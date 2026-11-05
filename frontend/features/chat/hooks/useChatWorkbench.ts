@@ -133,7 +133,7 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
       const detail = await backend.getConversation(id);
       if (detailRequestRef.current !== requestId || activeIdRef.current !== id) return;
       commitConversation(detail);
-      acknowledge(true, detail.isOverdue ? null : detail.dueAt);
+      acknowledge(true);
       void absorbTranslations(id, detail.messages);
     } catch {
       acknowledge(false);
@@ -175,7 +175,7 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
       const current = activeConversationRef.current;
       const merged: ConversationDetail = current && current.id === detail.id ? mergeConversationDetail(current, detail) : detail;
       commitConversation(merged);
-      acknowledge(true, detail.isOverdue ? null : detail.dueAt);
+      acknowledge(true);
       void absorbTranslations(id, merged.messages);
     } catch {
       acknowledge(false);

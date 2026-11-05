@@ -14,7 +14,7 @@ export function ConversationFilters({ query, onChange, tagOptions = [], onApplie
   const [applied, setApplied] = useState(query);
   const [open, setOpen] = useState(false);
   const filterCount = [
-    applied.country, applied.tag, applied.reply_state, applied.unread, applied.overdue,
+    applied.country, applied.tag, applied.reply_state, applied.unread,
     applied.portrait_stage?.length, applied.lost_reason, applied.business_tag?.length,
     applied.portrait_completeness && applied.portrait_completeness !== "all",
     applied.search_scope && applied.search_scope !== "all",
@@ -77,7 +77,6 @@ export function ConversationFilters({ query, onChange, tagOptions = [], onApplie
     />
     <Space wrap>
       <Checkbox checked={draft.unread === true} onChange={(event) => setDraft({ ...draft, unread: event.target.checked ? true : undefined })}>本工作台未读</Checkbox>
-      <Checkbox checked={draft.overdue === true} onChange={(event) => setDraft({ ...draft, overdue: event.target.checked ? true : undefined })}>超时</Checkbox>
     </Space>
     <div className="flex justify-between border-t border-slate-100 pt-3">
       <Button onClick={() => apply({ search_scope: "all" })}>重置</Button>

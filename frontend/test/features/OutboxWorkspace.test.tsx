@@ -43,7 +43,7 @@ const awaiting = (overrides: Partial<OutboxTask> = {}) => outboxTask({ status: "
 function Harness({ sid = "42", draft = "submitted text" }: { sid?: string; draft?: string }) {
   const account = useAccount();
   if (!account.snapshot || (account.blocked && !account.suspended)) return null;
-  const conversation = adaptConversationDetail({ sid: Number(sid), name: "Buyer", participants: [], messages: [], latest: { content: "", updated_at: null }, unread_count: 0, reply_state: "waiting_customer", pending_since: null, due_at: null, is_overdue: false, history_pending: false, uncertain: false, read_snapshot: "outbox-snapshot" });
+  const conversation = adaptConversationDetail({ sid: Number(sid), name: "Buyer", participants: [], messages: [], latest: { content: "", updated_at: null }, unread_count: 0, reply_state: "waiting_customer", pending_since: null, history_pending: false, uncertain: false, read_snapshot: "outbox-snapshot" });
   conversation.customer.name = "Recipient Name";
   conversation.customer.loginId = "buyer-login";
   return <OutboxWorkspace key={`${account.generation}:${sid}`} conversation={conversation} value={draft} onChange={() => {}} onOpenSuggestions={() => {}} onOpenIntentAnalysis={() => {}} onOpenStageAnalysis={() => {}} />;
@@ -146,7 +146,7 @@ describe("outbox workbench", () => {
 
   it("keeps the active screenshot confirmation mounted when a filtered list observes a newer inbox revision", async () => {
     vi.useFakeTimers();
-    const original = adaptConversationDetail({ sid: 42, name: "Buyer", participants: [], messages: [], latest: { content: "", updated_at: null }, unread_count: 3, reply_state: "needs_reply", pending_since: 100, due_at: 86500, is_overdue: true, history_pending: false, uncertain: false, read_snapshot: "original-token" });
+    const original = adaptConversationDetail({ sid: 42, name: "Buyer", participants: [], messages: [], latest: { content: "", updated_at: null }, unread_count: 3, reply_state: "needs_reply", pending_since: 100, history_pending: false, uncertain: false, read_snapshot: "original-token" });
     const firstPage = { items: [original], total: 1, offset: 0, limit: 50, inbox_revision: 1, pagination_revision: "page-1" };
     mocks.backend.listConversations.mockResolvedValue(firstPage);
     mocks.backend.getConversation.mockResolvedValue(original);

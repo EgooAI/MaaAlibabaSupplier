@@ -7,8 +7,6 @@ export interface InboxStateDto {
   unread_count: number;
   reply_state: ReplyState;
   pending_since: number | null;
-  due_at: number | null;
-  is_overdue: boolean;
   history_pending: boolean;
   uncertain: boolean;
 }
@@ -20,7 +18,6 @@ export interface ConversationQuery {
   tag?: string;
   reply_state?: ReplyState;
   unread?: boolean;
-  overdue?: boolean;
   portrait_stage?: PortraitStage[];
   portrait_completeness?: "all" | "maintained" | "unmaintained";
   business_tag?: string[];
@@ -46,12 +43,8 @@ export interface ReadReceipt {
   inbox_revision: number;
 }
 
-export interface InboxSettings {
-  timeout_seconds: number;
+export interface InboxOverview {
+  counts: Record<"total" | "unread" | "needs_reply" | "history_pending" | "waiting_customer", number>;
   inbox_revision: number;
-}
-
-export interface InboxOverview extends InboxSettings {
-  counts: Record<"total" | "unread" | "needs_reply" | "overdue" | "history_pending" | "waiting_customer", number>;
   updated_at: number;
 }

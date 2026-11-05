@@ -18,10 +18,11 @@ Only human messages observed in local IM count as replies, not outbox/GUI events
 or platform delivery acknowledgements. A reply must be strictly later than the
 buyer's in source time order (first_seen_at when source time is invalid). Ties
 cannot clear pending work; fallback ordering is explicitly uncertain.
-An entirely historical unanswered segment is history_pending with no deadline;
-once it contains new buyers, its clock starts at the first NEW unanswered buyer.
+An entirely historical unanswered segment is history_pending with no
+pending_since; once it contains new buyers, pending_since is the first NEW
+unanswered buyer.
 Invalid source times, including times over 300 seconds beyond the fixed
-first_seen_at, use first_seen_at for the clock and set uncertain=True.
+first_seen_at, use first_seen_at for pending_since and set uncertain=True.
 
 API integration: explicitly initialize old archives before listing; call
 snapshot(sid, ...) BEFORE loading detail messages, then pass its opaque token to
@@ -59,8 +60,6 @@ from backend.app.shared.crm.sync_store import canonical_source_dir, sync_state
 from backend.app.shared.crm.views import coerce_epoch
 
 
-DEFAULT_REPLY_TIMEOUT_S = 86400
-
 _TOKEN_KEY = secrets.token_bytes(32)
 _SCHEMA = MetaData()
 inbox_scope = Table(
@@ -70,7 +69,6 @@ inbox_scope = Table(
     Column("baseline_complete", Integer, nullable=False),
     Column("last_seq", Integer, nullable=False),
     Column("inbox_revision", Integer, nullable=False),
-    Column("timeout_seconds", Integer, nullable=False, server_default=str(DEFAULT_REPLY_TIMEOUT_S)),
 )
 inbox_message = Table(
     "app_inbox_message", _SCHEMA,
@@ -239,7 +237,6 @@ def write_inbox(
         values = {
             **key, "baseline_complete": 1, "last_seq": seq,
             "inbox_revision": (previous["inbox_revision"] if previous else 0) + 1,
-            "timeout_seconds": previous["timeout_seconds"] if previous else DEFAULT_REPLY_TIMEOUT_S,
         }
         statement = insert(inbox_scope).values(**values)
         session.execute(statement.on_conflict_do_update(
@@ -297,33 +294,29 @@ class InboxStore:
                 "SELECT * FROM app_inbox_scope WHERE seller=:seller AND data_dir=:data_dir", key,
             ).fetchone()
         return {**dict(row), "baseline_complete": bool(row["baseline_complete"])} if row else {
-            **key, "baseline_complete": False, "last_seq": 0,
-            "inbox_revision": 0, "timeout_seconds": DEFAULT_REPLY_TIMEOUT_S,
+            **key, "baseline_complete": False, "last_seq": 0, "inbox_revision": 0,
         }
 
     def metadata(self, seller: str, data_dir: str | Path) -> dict:
         key = _scope(seller, data_dir)
         if not self.database_path.is_file():
-            return {**key, "baseline_complete": False, "last_seq": 0, "inbox_revision": 0, "timeout_seconds": DEFAULT_REPLY_TIMEOUT_S}
+            return {**key, "baseline_complete": False, "last_seq": 0, "inbox_revision": 0}
         with self._connection() as conn:
             return self._metadata(conn, key)
 
     def states(
-        self, seller: str, data_dir: str | Path, sids: Iterable[int] | None = None, now: float | None = None,
+        self, seller: str, data_dir: str | Path, sids: Iterable[int] | None = None,
     ) -> dict[int, dict]:
         key = _scope(seller, data_dir)
         if not self.database_path.is_file():
             return {}
         with self._connection() as conn:
-            return self._states(conn, key, sids, now)
+            return self._states(conn, key, sids)
 
-    def _states(self, conn: sqlite3.Connection, key: dict, sids: Iterable[int] | None, now: float | None) -> dict:
+    def _states(self, conn: sqlite3.Connection, key: dict, sids: Iterable[int] | None) -> dict:
         metadata = self._metadata(conn, key)
         if not metadata["baseline_complete"]:
             return {}
-        now = time.time() if now is None else float(now)
-        if not math.isfinite(now):
-            raise ValueError("now must be finite epoch seconds")
         grouped = defaultdict(list)
         # JSON binds a large requested SID set without SQLite's variable limit.
         parameters = {**key, "sids": json.dumps(list(sids)) if sids is not None else None}
@@ -357,11 +350,9 @@ class InboxStore:
                 reply_state = "unknown"
                 uncertain = True
             pending_since = min(map(effective_time, new_pending)) if new_pending else None
-            due_at = pending_since + metadata["timeout_seconds"] if pending_since is not None else None
             result[sid] = {
                 "unread_count": sum(not m["is_history"] and m["ingest_seq"] > read_seq for m in buyers),
-                "reply_state": reply_state, "pending_since": pending_since, "due_at": due_at,
-                "is_overdue": reply_state == "needs_reply" and due_at is not None and now >= due_at,
+                "reply_state": reply_state, "pending_since": pending_since,
                 "history_pending": history_pending, "read_seq": read_seq,
                 "snapshot_seq": max(m["ingest_seq"] for m in messages), "uncertain": uncertain,
             }
@@ -407,7 +398,7 @@ class InboxStore:
         except (ValueError, TypeError, UnicodeError) as exc:
             raise ValueError("Invalid or expired inbox read snapshot") from exc
         with self._connection(write=True) as conn:
-            current = self._states(conn, key, [sid], None).get(sid)
+            current = self._states(conn, key, [sid]).get(sid)
             if current is None or seq > current["snapshot_seq"]:
                 raise ValueError("Read snapshot is outside the current inbox ledger")
             if seq > current["read_seq"]:
@@ -419,16 +410,4 @@ class InboxStore:
                 """, parameters)
                 conn.execute("""UPDATE app_inbox_scope SET inbox_revision=inbox_revision+1
                     WHERE seller=:seller AND data_dir=:data_dir""", key)
-            return self._states(conn, key, [sid], None)[sid]
-
-    def set_timeout(self, value: int, *, seller: str, data_dir: str | Path) -> dict:
-        if type(value) is not int or not 0 < value <= 2147483647:
-            raise ValueError("timeout_seconds must be a positive 32-bit integer")
-        key = _scope(seller, data_dir)
-        with self._connection(write=True) as conn:
-            metadata = self._metadata(conn, key)
-            if not metadata["baseline_complete"]:
-                raise ValueError("Initialize the inbox scope before setting its timeout")
-            conn.execute("""UPDATE app_inbox_scope SET timeout_seconds=:value, inbox_revision=inbox_revision+1
-                WHERE seller=:seller AND data_dir=:data_dir AND timeout_seconds != :value""", {**key, "value": value})
-            return self._metadata(conn, key)
+            return self._states(conn, key, [sid])[sid]

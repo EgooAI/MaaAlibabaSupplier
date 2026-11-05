@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildConversationExport, dateGroup, dialogueCountGroup, dialogueCountOf, groupConversations, isTranslatableMessage, mergeConversationDetail, mergeMessageTextTranslations, sortConversations } from "@/domain/chat/chatModel";
+import { buildConversationExport, dateGroup, dialogueCountGroup, dialogueCountOf, groupConversations, isTranslatableMessage, mergeConversationDetail, mergeMessageTextTranslations, sortConversations, waitingLabel } from "@/domain/chat/chatModel";
 import type { ChatMessage, Conversation, ConversationDetail } from "@/types/chatCanonical";
 
 const summary = (id: string, updatedAt: string, replyState: Conversation["replyState"] = "waiting_customer"): Conversation => ({
@@ -29,7 +29,7 @@ const summary = (id: string, updatedAt: string, replyState: Conversation["replyS
   updatedAt,
   unreadCount: 0,
   replyState,
-  pendingSince: null, dueAt: null, isOverdue: false, historyPending: false, uncertain: false,
+  pendingSince: null, historyPending: false, uncertain: false,
 });
 
 const messages: ChatMessage[] = [
@@ -49,6 +49,29 @@ const detail: ConversationDetail = {
     summary: "客户处于高意向阶段。",
   },
 };
+
+describe("waitingLabel", () => {
+  const now = 1_000_000;
+  it.each([
+    [30, "已等待不足 1 分钟"],
+    [-500, "已等待不足 1 分钟"],
+    [60, "已等待 1 分钟"],
+    [59 * 60 + 59, "已等待 59 分钟"],
+    [60 * 60, "已等待 1 小时"],
+    [23 * 3600 + 3599, "已等待 23 小时"],
+    [24 * 3600, "已等待 1 天"],
+    [3 * 24 * 3600 + 7200, "已等待 3 天"],
+  ])("formats %i seconds of waiting", (elapsed, expected) => {
+    expect(waitingLabel({ replyState: "needs_reply", pendingSince: now - elapsed }, now)).toBe(expected);
+  });
+
+  it("shows nothing unless a reply is owed and its start is known", () => {
+    expect(waitingLabel({ replyState: "needs_reply", pendingSince: null }, now)).toBeNull();
+    for (const replyState of ["waiting_customer", "history_pending", "none", "unknown"] as const) {
+      expect(waitingLabel({ replyState, pendingSince: now - 7200 }, now)).toBeNull();
+    }
+  });
+});
 
 describe("conversation domain model", () => {
   it("sorts and groups canonical conversations", () => {

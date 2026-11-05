@@ -25,10 +25,10 @@ vi.mock("@/services/client", () => ({ backend: mocks.backend }));
 const aggregate: ConversationAggregateDto = {
   sid: 42, name: "Buyer", participants: [], messages: [],
   latest: { content: "latest", updated_at: "2026-09-08 10:00" },
-  unread_count: 0, reply_state: "waiting_customer", pending_since: null, due_at: null, is_overdue: false, history_pending: false, uncertain: false, read_snapshot: "snapshot-42",
+  unread_count: 0, reply_state: "waiting_customer", pending_since: null, history_pending: false, uncertain: false, read_snapshot: "snapshot-42",
 };
 const pageOf = (): ConversationPage => ({ items: [adaptConversationSummary(aggregate)], total: 1, offset: 0, limit: 50, inbox_revision: 1, pagination_revision: "page-1" });
-const revisionOf = { ready: true, revision: connectionSnapshot.source.revision, inbox_revision: 1, next_due_at: null };
+const revisionOf = { ready: true, revision: connectionSnapshot.source.revision, inbox_revision: 1 };
 
 let root: Root;
 let container: HTMLDivElement;

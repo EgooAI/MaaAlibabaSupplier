@@ -80,8 +80,6 @@ export interface Conversation {
   unreadCount: number;
   replyState: ReplyState;
   pendingSince: number | null;
-  dueAt: number | null;
-  isOverdue: boolean;
   historyPending: boolean;
   uncertain: boolean;
   dialogueCount?: number;

@@ -21,7 +21,7 @@ const aggregate: ConversationAggregateDto = {
   messages: [],
   latest: { content: "latest", updated_at: "2026-09-08 10:00" },
   unread_count: 0,
-  reply_state: "waiting_customer", pending_since: null, due_at: null, is_overdue: false, history_pending: false, uncertain: false, read_snapshot: "snapshot-42",
+  reply_state: "waiting_customer", pending_since: null, history_pending: false, uncertain: false, read_snapshot: "snapshot-42",
 };
 
 afterEach(() => {
@@ -133,7 +133,7 @@ describe("http adapter contract", () => {
     const data = { items: [aggregate], total: 123, offset: 50, limit: 50, inbox_revision: 7, pagination_revision: "opaque-next" };
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data })));
     globalThis.fetch = fetchMock;
-    const query: ConversationQuery = { q: "客户%_ &?", search_scope: "messages", country: "ES", tag: "A&B", unread: false, overdue: true, portrait_stage: ["won", "lost"], portrait_completeness: "maintained", offset: 50, limit: 50, pagination_revision: "opaque/+=" };
+    const query: ConversationQuery = { q: "客户%_ &?", search_scope: "messages", country: "ES", tag: "A&B", unread: false, portrait_stage: ["won", "lost"], portrait_completeness: "maintained", offset: 50, limit: 50, pagination_revision: "opaque/+=" };
     const result = await httpBackend.listConversations(query);
     const [path, init] = fetchMock.mock.calls[0];
     const params = new URL(path, "http://localhost").searchParams;
@@ -148,8 +148,6 @@ describe("http adapter contract", () => {
   it.each([
     () => httpBackend.listConversations({ q: "%_" }),
     () => httpBackend.getInboxOverview(),
-    () => httpBackend.getInboxSettings(),
-    () => httpBackend.saveInboxSettings(3600),
     () => httpBackend.markConversationRead("42", "opaque-token"),
   ])("rejects late inbox responses across epochs, including paths with queries", async (call) => {
     let respond!: (response: Response) => void;
@@ -162,14 +160,12 @@ describe("http adapter contract", () => {
     await expect(pending).rejects.toThrow("账号状态已变化");
   });
 
-  it("posts only the captured read token and writes timeout_seconds under the current epoch", async () => {
+  it("posts only the captured read token under the current epoch", async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ code: 0, msg: "ok", data: {} }))));
     globalThis.fetch = fetchMock;
     await httpBackend.markConversationRead("sid/42", "opaque/+==");
-    await httpBackend.saveInboxSettings(604800);
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init.method, JSON.parse(init.body)])).toEqual([
       ["/api/conversations/sid%2F42/read", "POST", { read_snapshot: "opaque/+==" }],
-      ["/api/inbox/settings", "PUT", { timeout_seconds: 604800 }],
     ]);
   });
 

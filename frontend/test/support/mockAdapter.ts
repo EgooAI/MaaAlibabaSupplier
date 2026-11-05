@@ -21,7 +21,6 @@ import type { OperationsBackend } from "@/services/interfaces";
 import { connectionSnapshot } from "@/mock/connectionData";
 import { ApiError, ExperimentRunConflict } from "@/services/httpAdapter";
 import { isRunFinished } from "@/types/experiment";
-import type { InboxSettings } from "@/types/inbox";
 import type {
   LostReason,
   PortraitBatchResult,
@@ -91,7 +90,7 @@ const TRANSLATION_JOB_DELAY_MS = 400;
 let connectionStore = structuredClone(connectionSnapshot);
 const outboxStore = new Map<string, { scope: string; task: OutboxTask }>();
 const outboxScope = () => JSON.stringify([connectionStore.account.data_dir, connectionStore.account.self_ali_id]);
-const inboxSettings = new Map<string, InboxSettings>();
+const inboxSettings = new Map<string, { inbox_revision: number }>();
 const portraitTags = new Map<string, PortraitTag>();
 const portraits = new Map<number, MockPortrait>();
 const portraitOperations: MockPortraitOperation[] = [];
@@ -144,7 +143,7 @@ function enrichConversation(item: ConversationAggregateDto): ConversationAggrega
 }
 function mockInboxSettings() {
   let value = inboxSettings.get(outboxScope());
-  if (!value) { value = { timeout_seconds: 86400, inbox_revision: 1 }; inboxSettings.set(outboxScope(), value); }
+  if (!value) { value = { inbox_revision: 1 }; inboxSettings.set(outboxScope(), value); }
   return value;
 }
 
@@ -291,7 +290,6 @@ export const mockBackend: OperationsBackend = {
         && (!query.country || customer.country === query.country) && (!query.tag || customer.tags.includes(query.tag))
         && (!query.reply_state || item.reply_state === query.reply_state)
         && (query.unread === undefined || (item.unread_count > 0) === query.unread)
-        && (query.overdue === undefined || item.is_overdue === query.overdue)
         && (!query.portrait_stage?.length || query.portrait_stage.includes(customer.businessStage))
         && (query.portrait_completeness === undefined || query.portrait_completeness === "all"
           || (query.portrait_completeness === "maintained") === (customer.cid !== null && customer.businessVersion > 0))
@@ -303,21 +301,12 @@ export const mockBackend: OperationsBackend = {
     return delay({ items: items.slice(offset, offset + limit).map(adaptConversationSummary), total: items.length, offset, limit, inbox_revision: settings.inbox_revision, pagination_revision: token, portrait_revision: portraitRevision, tag_revision: tagRevision });
   },
 
-  getInboxSettings: () => delay({ ...mockInboxSettings() }),
-  saveInboxSettings: async (timeout_seconds) => {
-    if (timeout_seconds < 3600 || timeout_seconds > 604800) throw new Error("超时范围无效");
-    const settings = mockInboxSettings();
-    settings.timeout_seconds = timeout_seconds;
-    ++settings.inbox_revision;
-    return delay({ ...settings });
-  },
   getInboxOverview: () => delay({
     ...mockInboxSettings(), updated_at: Date.now() / 1000,
     counts: {
       total: conversationStore.length,
       unread: conversationStore.filter((item) => item.unread_count > 0).length,
       needs_reply: conversationStore.filter((item) => item.reply_state === "needs_reply").length,
-      overdue: conversationStore.filter((item) => item.is_overdue).length,
       history_pending: conversationStore.filter((item) => item.history_pending).length,
       waiting_customer: conversationStore.filter((item) => item.reply_state === "waiting_customer").length,
     },
@@ -326,11 +315,11 @@ export const mockBackend: OperationsBackend = {
     const conversation = conversationStore.find((item) => String(item.sid) === id);
     if (!conversation || token !== conversation.read_snapshot) throw new Error("已读快照无效");
     conversation.unread_count = 0;
-    const { unread_count, reply_state, pending_since, due_at, is_overdue, history_pending, uncertain } = conversation;
-    return delay({ state: { unread_count, reply_state, pending_since, due_at, is_overdue, history_pending, uncertain, read_seq: 1, snapshot_seq: 1 }, inbox_revision: ++mockInboxSettings().inbox_revision });
+    const { unread_count, reply_state, pending_since, history_pending, uncertain } = conversation;
+    return delay({ state: { unread_count, reply_state, pending_since, history_pending, uncertain, read_seq: 1, snapshot_seq: 1 }, inbox_revision: ++mockInboxSettings().inbox_revision });
   },
 
-  getConversationRevision: () => delay({ ...structuredClone(connectionStore.source), ready: connectionStore.capabilities.read_chat, inbox_revision: mockInboxSettings().inbox_revision, portrait_revision: portraitRevision, tag_revision: tagRevision, next_due_at: null }),
+  getConversationRevision: () => delay({ ...structuredClone(connectionStore.source), ready: connectionStore.capabilities.read_chat, inbox_revision: mockInboxSettings().inbox_revision, portrait_revision: portraitRevision, tag_revision: tagRevision }),
 
   getConversation: async (id) => delay(buildConversationDetail(id)),
 

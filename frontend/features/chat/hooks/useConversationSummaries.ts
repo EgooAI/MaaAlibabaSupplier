@@ -22,7 +22,6 @@ export function useConversationSummaries(initialQuery: ConversationQuery = {}) {
   const seenPortrait = useRef<number | undefined>(undefined);
   const seenTags = useRef<number | undefined>(undefined);
   const [observedTagRevision, setObservedTagRevision] = useState(0);
-  const nextDue = useRef<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [polledRevision, setPolledRevision] = useState(0);
   const [recovery, setRecovery] = useState(0);
@@ -37,7 +36,6 @@ export function useConversationSummaries(initialQuery: ConversationQuery = {}) {
   const sharedRevision = `${Math.max(snapshot?.source.revision ?? 0, polledRevision)}:${readRefreshSequence}:${recovery}`;
   const listRevision = `${sharedRevision}:${listVersion}`;
   const detailRevision = `${sharedRevision}:${detailVersion}`;
-  const deadlineFiltered = query.overdue !== undefined;
   const absorbTagRevision = useCallback((value: number | undefined) => {
     if (typeof value !== "number") return;
     if (seenTags.current === undefined || value > seenTags.current) {
@@ -45,16 +43,13 @@ export function useConversationSummaries(initialQuery: ConversationQuery = {}) {
       setObservedTagRevision(value);
     }
   }, []);
-  const observeInbox = useCallback((inboxRevision: number, refreshDeadlineFilter = false) => {
+  const observeInbox = useCallback((inboxRevision: number) => {
     const changed = seenInbox.current === undefined || inboxRevision > seenInbox.current;
-    const crossedDue = nextDue.current !== null && nextDue.current <= Date.now() / 1000;
     if (changed) seenInbox.current = inboxRevision;
-    if (crossedDue) nextDue.current = null;
     // Observation schedules detail reads; only beginRead acknowledges their success.
     // A list response must not retrigger the list that just observed this version.
-    const refresh = changed || crossedDue || refreshDeadlineFilter;
-    if (refresh) setDetailVersion((value) => value + 1);
-    return refresh;
+    if (changed) setDetailVersion((value) => value + 1);
+    return changed;
   }, []);
   const changeQuery = useCallback((next: ConversationQuery) => {
     ++listRequest.current;
@@ -82,14 +77,10 @@ export function useConversationSummaries(initialQuery: ConversationQuery = {}) {
     const state: ReadState = { pending: true, success: false, failureVersion: failureVersion.current };
     reads.current[kind] = state;
     setRefreshPending(true);
-    return (success: boolean, detailDueAt?: number | null) => {
+    return (success: boolean) => {
       if (reads.current[kind] !== state) return;
       state.pending = false;
       state.success = success;
-      // The retained detail may have a deadline outside the current list page.
-      if (success && kind === "detail" && detailDueAt != null) {
-        nextDue.current = Math.min(nextDue.current ?? Infinity, detailDueAt);
-      }
       if (!success) markReloadNeeded();
       const required = Object.values(reads.current);
       const pending = required.some((read) => read.pending);
@@ -116,8 +107,6 @@ export function useConversationSummaries(initialQuery: ConversationQuery = {}) {
           seenPortrait.current = next.portrait_revision;
         }
         absorbTagRevision(next.tag_revision);
-        const due = next.items.flatMap((item) => item.dueAt !== null && !item.isOverdue ? [item.dueAt] : []);
-        if (due.length) nextDue.current = Math.min(nextDue.current ?? Infinity, ...due);
         acknowledge(true);
       }
     } catch (error) {
@@ -149,7 +138,6 @@ export function useConversationSummaries(initialQuery: ConversationQuery = {}) {
         const next = await backend.getConversationRevision();
         if (!cancelled && next.ready) {
           setPolledRevision(next.revision);
-          const reading = Object.values(reads.current).some((read) => read.pending);
           // Missing revision fields mean "no signal"; only a strictly newer
           // observed revision triggers reads, so the first poll after load
           // does not duplicate the list the initial read already produced.
@@ -160,12 +148,8 @@ export function useConversationSummaries(initialQuery: ConversationQuery = {}) {
           absorbTagRevision(next.tag_revision);
           if (typeof next.portrait_revision === "number") seenPortrait.current = next.portrait_revision;
           if (portraitChanged || tagsChanged) setDetailVersion((value) => value + 1);
-          // An empty overdue page cannot supply its own upcoming deadline.
-          if (observeInbox(next.inbox_revision, deadlineFiltered && !reading) || portraitChanged || tagsChanged) {
+          if (observeInbox(next.inbox_revision) || portraitChanged || tagsChanged) {
             setListVersion((value) => value + 1);
-          }
-          if (next.inbox_revision === seenInbox.current) {
-            nextDue.current = next.next_due_at !== null && next.next_due_at > Date.now() / 1000 ? next.next_due_at : null;
           }
           if (needsRecovery.current && !recoveryQueued.current && !Object.values(reads.current).some((read) => read.pending)) {
             recoveryQueued.current = true;
@@ -187,7 +171,7 @@ export function useConversationSummaries(initialQuery: ConversationQuery = {}) {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [backend, blocked, snapshot?.account.self_ali_id, markReloadNeeded, deadlineFiltered, observeInbox, absorbTagRevision]);
+  }, [backend, blocked, snapshot?.account.self_ali_id, markReloadNeeded, observeInbox, absorbTagRevision]);
 
   useEffect(() => {
     // Commits, explicit refreshes and recovery each trigger data reads.

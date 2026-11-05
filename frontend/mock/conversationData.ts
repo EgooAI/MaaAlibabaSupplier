@@ -65,7 +65,7 @@ export const conversationAggregates: ConversationAggregateDto[] = [
     },
     latest: { updated_at: "2026-09-07 10:21", content: "客户浏览了 3 个太阳能灯 SKU，并下载认证附件。" },
     unread_count: 1,
-    reply_state: "needs_reply", pending_since: 1788750000, due_at: 1788836400, is_overdue: true, history_pending: false, uncertain: false, read_snapshot: "mock-snapshot-42",
+    reply_state: "needs_reply", pending_since: 1788750000, history_pending: false, uncertain: false, read_snapshot: "mock-snapshot-42",
     analysis: {
       intent: "客户浏览了 3 个太阳能灯 SKU，并下载认证附件。",
       stage: "interested",
@@ -105,7 +105,7 @@ export const conversationAggregates: ConversationAggregateDto[] = [
     },
     latest: { updated_at: "2026-09-07 09:48", content: "系统推荐卡片" },
     unread_count: 0,
-    reply_state: "history_pending", pending_since: null, due_at: null, is_overdue: false, history_pending: true, uncertain: false, read_snapshot: "mock-snapshot-43",
+    reply_state: "history_pending", pending_since: null, history_pending: true, uncertain: false, read_snapshot: "mock-snapshot-43",
     analysis: {
       intent: "客户关注冷链传感器 500 套阶梯价与 24 个月质保。",
       stage: "negotiating",
@@ -145,7 +145,7 @@ export const conversationAggregates: ConversationAggregateDto[] = [
     },
     latest: { updated_at: "2026-09-06 22:11", content: "系统推荐卡片" },
     unread_count: 1,
-    reply_state: "waiting_customer", pending_since: null, due_at: null, is_overdue: false, history_pending: false, uncertain: false, read_snapshot: "mock-snapshot-44",
+    reply_state: "waiting_customer", pending_since: null, history_pending: false, uncertain: false, read_snapshot: "mock-snapshot-44",
     analysis: {
       intent: "客户需要最新目录和样品条款。",
       stage: "new",
@@ -184,7 +184,7 @@ export const conversationAggregates: ConversationAggregateDto[] = [
     },
     latest: { updated_at: "2026-09-05 17:02", content: "上一轮询价后客户表示预算需要内部确认。" },
     unread_count: 0,
-    reply_state: "waiting_customer", pending_since: null, due_at: null, is_overdue: false, history_pending: false, uncertain: false,
+    reply_state: "waiting_customer", pending_since: null, history_pending: false, uncertain: false,
     read_snapshot: "mock-snapshot-45",
     messages: [
       { message: { external_mid: "msg-101", sid: 45, sender: 101, read: true, content: "Budget approved: 300 units. Please confirm the price for that volume.", type: "text" }, created_at: "2026-09-05 16:40", role: "buyer" },

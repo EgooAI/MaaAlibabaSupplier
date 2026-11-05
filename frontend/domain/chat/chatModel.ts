@@ -50,6 +50,16 @@ export function statusLabel(status: Conversation["replyState"] | (string & {})) 
   } as Record<string, string>)[status] ?? String(status);
 }
 
+/** 待回复会话的已等待时长，如“已等待 3 小时”；非待回复或起点未知时返回 null。 */
+export function waitingLabel(conversation: Pick<Conversation, "replyState" | "pendingSince">, nowSeconds = Date.now() / 1000) {
+  if (conversation.replyState !== "needs_reply" || conversation.pendingSince === null) return null;
+  const minutes = Math.max(0, Math.floor((nowSeconds - conversation.pendingSince) / 60));
+  if (minutes < 1) return "已等待不足 1 分钟";
+  if (minutes < 60) return `已等待 ${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `已等待 ${hours} 小时` : `已等待 ${Math.floor(hours / 24)} 天`;
+}
+
 export function stageLabel(stage: ConversationDetail["customer"]["stage"] | (string & {})) {
   return ({
     unknown: "未知阶段",

@@ -49,7 +49,7 @@ const tag = (tagId: string, name: string, overrides: Partial<PortraitTag> = {}):
 const conversation = (id: string, cid: number | null, version = 0): ConversationDetail => {
   const base = adaptConversationDetail({
     sid: Number(id), name: `buyer-${id}`, participants: [], messages: [], latest: { content: "hello", updated_at: "2026-09-17 10:00" },
-    unread_count: 0, reply_state: "none", pending_since: null, due_at: null, is_overdue: false, history_pending: false, uncertain: false,
+    unread_count: 0, reply_state: "none", pending_since: null, history_pending: false, uncertain: false,
   });
   return { ...base, customer: { ...base.customer, cid, businessVersion: version, portraitEditable: cid !== null } };
 };
@@ -58,7 +58,7 @@ const page = (items: ConversationDetail[]): ConversationPage => ({
   items, total: items.length, offset: 0, limit: 50, inbox_revision: 1,
   portrait_revision: 0, tag_revision: 0, pagination_revision: "page-1",
 });
-const revision = { ...connectionSnapshot.source, ready: true, inbox_revision: 1, portrait_revision: 0, tag_revision: 0, next_due_at: null };
+const revision = { ...connectionSnapshot.source, ready: true, inbox_revision: 1, portrait_revision: 0, tag_revision: 0 };
 
 let root: Root;
 let container: HTMLDivElement;

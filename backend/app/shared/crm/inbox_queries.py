@@ -27,8 +27,7 @@ from backend.app.shared.mitm.pool import UserInfo
 
 
 STATE_FIELDS = (
-    "unread_count", "reply_state", "pending_since", "due_at", "is_overdue",
-    "history_pending", "uncertain",
+    "unread_count", "reply_state", "pending_since", "history_pending", "uncertain",
 )
 
 
@@ -67,19 +66,12 @@ def has_archive_messages(store: InboxStore, seller: str) -> bool:
 
 
 def observe_inbox(store: InboxStore, seller: str, data_dir: str) -> dict:
-    """Pure observation, including the next deadline; never initialize a scope."""
+    """Pure observation of the inbox revision; never initialize a scope."""
     if not seller or not store.database_path.is_file():
-        return {"inbox_revision": 0, "next_due_at": None}
+        return {"inbox_revision": 0}
     key = {"seller": seller, "data_dir": canonical_source_dir(data_dir)}
-    now = time.time()
     with store._connection() as conn:
-        metadata = store._metadata(conn, key)
-        states = store._states(conn, key, None, now)
-        return {
-            "inbox_revision": metadata["inbox_revision"],
-            "next_due_at": min((s["due_at"] for s in states.values()
-                                if s["reply_state"] == "needs_reply" and s["due_at"] > now), default=None),
-        }
+        return {"inbox_revision": store._metadata(conn, key)["inbox_revision"]}
 
 
 def query_inbox(store: InboxStore, seller: str, data_dir: str, build_view, filters: dict) -> dict:
@@ -185,7 +177,7 @@ def query_inbox(store: InboxStore, seller: str, data_dir: str, build_view, filte
         portraits = load_portrait_bundle(conn, key["seller"], key["data_dir"], portrait_cids)
         portrait_revisions = load_portrait_revisions(conn, key["seller"], key["data_dir"])
         hash_row(portrait_revisions)
-        states = store._states(conn, key, latest, now)
+        states = store._states(conn, key, latest)
         required_tags = set(filters.get("business_tag") or [])
         portrait_stages = set(filters.get("portrait_stage") or [])
         completeness = filters.get("portrait_completeness", "all")
@@ -214,8 +206,6 @@ def query_inbox(store: InboxStore, seller: str, data_dir: str, build_view, filte
                 continue
             if filters.get("unread") is not None and bool(state["unread_count"]) != filters["unread"]:
                 continue
-            if filters.get("overdue") is not None and state["is_overdue"] != filters["overdue"]:
-                continue
             portrait_stage = portrait["stage"] if portrait else "unknown"
             if portrait_stages and portrait_stage not in portrait_stages:
                 continue
@@ -234,13 +224,13 @@ def query_inbox(store: InboxStore, seller: str, data_dir: str, build_view, filte
             selected.append(digest)
         selected_states = [states[d.sid] for d in selected]
         counts = {"total": len(selected), **{
-            name: sum(bool(s["unread_count"]) if name == "unread" else s["is_overdue"] if name == "overdue"
-                      else s["reply_state"] == name for s in selected_states)
-            for name in ("unread", "needs_reply", "overdue", "history_pending", "waiting_customer")
+            name: sum(bool(s["unread_count"]) if name == "unread" else s["reply_state"] == name
+                      for s in selected_states)
+            for name in ("unread", "needs_reply", "history_pending", "waiting_customer")
         }}
         return {
             "digests": selected, "preloaded": preloaded, "views": views, "states": states,
             "total": len(selected), "counts": counts, "updated_at": now,
-            "inbox_revision": metadata["inbox_revision"], "timeout_seconds": metadata["timeout_seconds"],
+            "inbox_revision": metadata["inbox_revision"],
             "pagination_revision": fingerprint.hexdigest(), **portrait_revisions,
         }

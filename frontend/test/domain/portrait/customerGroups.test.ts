@@ -31,8 +31,6 @@ function conversation(id: string, cid: number | null, options: { unread?: number
     unreadCount: options.unread ?? 0,
     replyState: options.reply ?? "none",
     pendingSince: null,
-    dueAt: null,
-    isOverdue: false,
     historyPending: false,
     uncertain: false,
   };

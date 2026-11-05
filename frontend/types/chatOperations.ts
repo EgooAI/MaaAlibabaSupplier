@@ -78,7 +78,6 @@ export interface ExportConversationsResult {
 
 export interface ConversationRevision extends SourceSyncStatus {
   inbox_revision: number;
-  next_due_at: number | null;
   // Absent on older backends; missing fields are treated as "no signal".
   portrait_revision?: number;
   tag_revision?: number;

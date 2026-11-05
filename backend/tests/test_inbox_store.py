@@ -56,8 +56,8 @@ def inbox(tmp_path, monkeypatch):
     return store, scope, apply, adapter
 
 
-def only(store, scope, **kwargs):
-    states = store.states(**scope, **kwargs)
+def only(store, scope):
+    states = store.states(**scope)
     assert len(states) == 1
     return next(iter(states.items()))
 
@@ -65,17 +65,15 @@ def only(store, scope, **kwargs):
 def test_initial_snapshot_history_pending_and_later_old_records_are_unread(inbox):
     store, scope, apply, _ = inbox
     apply(conv(row(1)))
-    sid, state = only(store, scope, now=T + 10000000)
+    sid, state = only(store, scope)
     assert state == {
         "unread_count": 0, "reply_state": "history_pending", "history_pending": True,
-        "pending_since": None, "due_at": None, "is_overdue": False,
-        "read_seq": 0, "snapshot_seq": 1, "uncertain": False,
+        "pending_since": None, "read_seq": 0, "snapshot_seq": 1, "uncertain": False,
     }
-    baseline = store.metadata(**scope)
-    assert baseline["baseline_complete"] is True and baseline["timeout_seconds"] == 86400
+    assert store.metadata(**scope)["baseline_complete"] is True
     apply(conv(row(1), row(2, at=T - 100)))
     apply(conv(row(3, sender="newbuyer", at=T - 1000), contact="newbuyer"))
-    states = store.states(**scope, now=T)
+    states = store.states(**scope)
     assert states[sid]["unread_count"] == 1
     assert states[sid]["pending_since"] == T - 100
     assert states[sid]["reply_state"] == "needs_reply"
@@ -166,10 +164,10 @@ def test_upgrade_baselines_all_archived_sessions_and_retained_messages(
     # The source has lost an entire conversation and part of the other one.
     current = () if empty_source else (conv(row(1)),)
     apply(*current)
-    states = store.states(**scope, now=T + 10000000)
+    states = store.states(**scope)
     assert len(states) == 2
     assert all(state["reply_state"] == "history_pending" for state in states.values())
-    assert all(state["unread_count"] == 0 and not state["is_overdue"] for state in states.values())
+    assert all(state["unread_count"] == 0 and state["pending_since"] is None for state in states.values())
     assert store.metadata(**scope)["last_seq"] == 3
     with Session(adapter.engine) as session:
         ledger = session.execute(inbox_store.inbox_message.select()).mappings().all()
@@ -184,7 +182,7 @@ def test_upgrade_baselines_all_archived_sessions_and_retained_messages(
     apply(*archived)
     assert store.metadata(**scope) == metadata
     assert tables(store.database_path)["app_inbox_message"] == before
-    assert store.states(**scope, now=T + 10000000) == states
+    assert store.states(**scope) == states
 
 
 @pytest.mark.parametrize("initialize_first", [False, True])
@@ -220,10 +218,10 @@ def test_new_directory_never_adopts_other_directory_archive(inbox, monkeypatch, 
                 inbox_store.inbox_scope.c.data_dir == canonical_source_dir(b["data_dir"]),
             )).first() is None
     apply(conv(row(3, sender="b-only"), contact="b-only"), data_dir=b["data_dir"])
-    _, state = only(store, b, now=T + 10000000)
+    _, state = only(store, b)
     assert state["unread_count"] == 0 and state["reply_state"] == "history_pending"
-    assert state["history_pending"] and not state["is_overdue"]
-    assert state["pending_since"] is None and state["due_at"] is None
+    assert state["history_pending"]
+    assert state["pending_since"] is None
     assert store.metadata(**b)["baseline_complete"]
     with Session(adapter.engine) as session:
         messages = session.execute(inbox_store.inbox_message.select().where(
@@ -232,9 +230,9 @@ def test_new_directory_never_adopts_other_directory_archive(inbox, monkeypatch, 
     assert [message["external_mid"] for message in messages] == [message_external_id("seller", "msg_table", "3")]
     assert messages[0]["is_history"]
     apply(conv(row(3, sender="b-only"), row(4, sender="b-only", at=T + 1), contact="b-only"), data_dir=b["data_dir"])
-    _, state = only(store, b, now=T + 2)
+    _, state = only(store, b)
     assert state["unread_count"] == 1 and state["reply_state"] == "needs_reply"
-    assert state["pending_since"] == T + 1 and state["due_at"] == T + 1 + 86400
+    assert state["pending_since"] == T + 1
 
 
 @pytest.mark.parametrize("empty_first_sync", [False, True])
@@ -400,7 +398,7 @@ def test_instance_profile_sender_counts_as_seller_and_contact(inbox):
     )
     apply(conv(buyer))
     apply(conv(buyer, seller))
-    _, state = only(store, scope, now=T + 100)
+    _, state = only(store, scope)
     assert state["reply_state"] == "waiting_customer"
     assert state["unread_count"] == 0
 
@@ -435,8 +433,8 @@ def test_source_order_ties_late_buyers_and_strict_later_human_reply(inbox):
     store, scope, apply, _ = inbox
     apply(conv(row(1, at=T - 10000000)))
     apply(conv(row(2, at=T), row(3, at=T + 1), row(4, sender="seller", at=T)))
-    sid, state = only(store, scope, now=T + 86400)
-    assert state["pending_since"] == T and state["is_overdue"]
+    sid, state = only(store, scope)
+    assert state["pending_since"] == T
     assert state["uncertain"] and state["unread_count"] == 2
     apply(conv(row(5, sender="seller", at=T + 1)))
     assert only(store, scope)[1]["reply_state"] == "needs_reply"
@@ -444,7 +442,7 @@ def test_source_order_ties_late_buyers_and_strict_later_human_reply(inbox):
     apply(conv(row(6, sender="seller", at=T + 2)))
     state = store.states(**scope)[sid]
     assert state["reply_state"] == "waiting_customer"
-    assert state["pending_since"] is None and not state["is_overdue"]
+    assert state["pending_since"] is None
     assert state["unread_count"] == 2
     apply(conv(row(7, at=T - 10)))
     state = only(store, scope)[1]
@@ -479,8 +477,7 @@ def test_only_system_auto_or_unknown_messages_and_empty_snapshot(inbox):
           conv(row(3, sender=None), contact="second"))
     states = list(store.states(**scope).values())
     assert {state["reply_state"] for state in states} == {"none", "unknown"}
-    assert all(state["unread_count"] == 0 and not state["is_overdue"] for state in states)
-    assert all(state["due_at"] is None for state in states)
+    assert all(state["unread_count"] == 0 and state["pending_since"] is None for state in states)
 
 
 def test_concurrent_sync_and_read_watermarks_are_monotonic(inbox):
@@ -511,9 +508,9 @@ def test_invalid_time_uses_first_seen_with_uncertainty(inbox, monkeypatch, inval
     apply()
     monkeypatch.setattr(inbox_store.time, "time", lambda: T)
     apply(conv(row(1, at=invalid)))
-    state = only(store, scope, now=T + 86400)[1]
-    assert state["pending_since"] == T and state["due_at"] == T + 86400
-    assert state["reply_state"] == "needs_reply" and state["uncertain"] and state["is_overdue"]
+    state = only(store, scope)[1]
+    assert state["pending_since"] == T
+    assert state["reply_state"] == "needs_reply" and state["uncertain"]
     apply(conv(row(2, sender="seller", at=T + 1)))
     assert only(store, scope)[1]["reply_state"] == "waiting_customer"
     assert only(store, scope)[1]["uncertain"]
@@ -526,11 +523,8 @@ def test_future_time_boundary_and_repeat_sync_use_fixed_first_seen(inbox, monkey
     apply()
     apply(conv(row(1, at=source_at)))
     invalid = source_at > T + 300
-    state = only(store, scope, now=T + 86400)[1]
-    expected_time = T if invalid else source_at
-    assert state["pending_since"] == expected_time
-    assert state["due_at"] == expected_time + 86400
-    assert state["is_overdue"] is invalid
+    state = only(store, scope)[1]
+    assert state["pending_since"] == (T if invalid else source_at)
     assert state["uncertain"] is invalid
     assert state["unread_count"] == 1
     before = tables(store.database_path)["app_inbox_message"]
@@ -540,7 +534,7 @@ def test_future_time_boundary_and_repeat_sync_use_fixed_first_seen(inbox, monkey
         apply(conv(row(1, at=source_at)))
         assert tables(store.database_path)["app_inbox_message"] == before
         assert store.metadata(**scope) == metadata
-        assert only(store, scope, now=T + 86400)[1] == state
+        assert only(store, scope)[1] == state
 
 
 def test_future_outbound_does_not_hide_new_buyer_and_corrections_use_original_first_seen(inbox, monkeypatch):
@@ -567,37 +561,17 @@ def test_future_outbound_does_not_hide_new_buyer_and_corrections_use_original_fi
     assert store.metadata(**scope)["inbox_revision"] == metadata["inbox_revision"] + 1
 
 
-def test_future_archive_history_has_no_unread_or_timeout(inbox, monkeypatch):
+def test_future_archive_history_has_no_unread_or_pending_since(inbox, monkeypatch):
     store, scope, apply, _ = inbox
     monkeypatch.setattr(inbox_store.time, "time", lambda: T)
     with monkeypatch.context() as patch:
         patch.setattr(sync, "write_inbox", lambda *args: None)
         apply(conv(row(1, at=4070908800)))
     store.initialize(**scope)
-    state = only(store, scope, now=T + 86400)[1]
+    state = only(store, scope)[1]
     assert state["reply_state"] == "history_pending" and state["uncertain"]
-    assert state["unread_count"] == 0 and not state["is_overdue"]
-    assert state["pending_since"] is None and state["due_at"] is None
-
-
-def test_timeout_is_derived_from_clock_and_scoped_config(inbox):
-    store, scope, apply, _ = inbox
-    apply(conv(row(1, at=T - 10000000)))
-    apply(conv(row(2, at=T)))
-    state = only(store, scope, now=T + 86399)[1]
-    assert not state["is_overdue"] and state["due_at"] == T + 86400
-    revision = store.metadata(**scope)["inbox_revision"]
-    assert only(store, scope, now=T + 86400)[1]["is_overdue"]
-    assert store.metadata(**scope)["inbox_revision"] == revision
-    metadata = store.set_timeout(60, **scope)
-    assert metadata["inbox_revision"] == revision + 1
-    assert store.set_timeout(60, **scope) == metadata
-    assert only(store, scope, now=T + 60)[1]["is_overdue"]
-    assert not only(store, scope, now=T + 59)[1]["is_overdue"]
-    for invalid in (0, -1, True, 1.2, "60", None, 2**31):
-        with pytest.raises(ValueError):
-            store.set_timeout(invalid, **scope)
-    assert store.metadata(**scope) == metadata
+    assert state["unread_count"] == 0
+    assert state["pending_since"] is None
 
 
 def test_seller_and_source_directory_isolation_with_same_external_message_id(inbox):
@@ -619,9 +593,6 @@ def test_seller_and_source_directory_isolation_with_same_external_message_id(inb
     store.mark_read(sid, store.snapshot(sid, **a), **a)
     assert only(store, a)[1]["unread_count"] == 0
     assert only(store, b)[1]["unread_count"] == 1
-    store.set_timeout(300, **a)
-    assert store.metadata(**b)["timeout_seconds"] == 86400
-    assert store.metadata(**other_seller)["timeout_seconds"] == 86400
     alias = {**a, "data_dir": a["data_dir"] + "/../client/."}
     assert store.states(**alias) == store.states(**a)
     assert store.metadata(**alias)["data_dir"] == canonical_source_dir(a["data_dir"])

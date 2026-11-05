@@ -42,7 +42,7 @@ class AccountRoute(APIRoute):
     def __init__(self, path, endpoint, **kwargs):
         if is_account_path(path) and not getattr(endpoint, "_account_scoped", False):
             original = endpoint
-            reject_busy = ("PUT" in (kwargs.get("methods") or ()) and path == "/api/inbox/settings") or ("POST" in (kwargs.get("methods") or ()) and path in {
+            reject_busy = ("POST" in (kwargs.get("methods") or ()) and path in {
                 "/api/conversations/{conversation_id}/messages",
                 "/api/outbox/{task_id}/confirm",
                 "/api/outbox/{task_id}/retry",

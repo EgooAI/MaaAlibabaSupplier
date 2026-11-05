@@ -17,7 +17,7 @@ import type { ConversationPage } from "@/types/inbox";
 import { authenticatedSession } from "@/test/support/authFixture";
 
 const pageOf = (items = [adaptConversationSummary(aggregate)]): ConversationPage => ({ items, total: items.length, offset: 0, limit: 50, inbox_revision: 1, pagination_revision: "page-1" });
-const revisionOf = (revision: number) => ({ ready: true, revision, inbox_revision: 1, next_due_at: null });
+const revisionOf = (revision: number) => ({ ready: true, revision, inbox_revision: 1 });
 
 const mocks = vi.hoisted(() => ({
   message: { warning: vi.fn(), error: vi.fn(), success: vi.fn(), info: vi.fn() },
@@ -39,7 +39,7 @@ const connectionSnapshot: ConnectionSnapshot = { ...baseSnapshot, client: { conn
 const aggregate: ConversationAggregateDto = {
   sid: 42, name: "Buyer", participants: [], messages: [],
   latest: { content: "latest", updated_at: "2026-09-08 10:00" },
-  unread_count: 0, reply_state: "waiting_customer", pending_since: null, due_at: null, is_overdue: false, history_pending: false, uncertain: false, read_snapshot: "snapshot-42",
+  unread_count: 0, reply_state: "waiting_customer", pending_since: null, history_pending: false, uncertain: false, read_snapshot: "snapshot-42",
 };
 let root: Root;
 let container: HTMLDivElement;

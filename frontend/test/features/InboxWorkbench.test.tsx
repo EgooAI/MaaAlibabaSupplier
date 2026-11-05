@@ -31,12 +31,12 @@ vi.mock("antd", () => ({
 const detail = (id = "42", changes: Partial<ConversationDetail> = {}): ConversationDetail => ({
   ...adaptConversationDetail({
     sid: Number(id), name: "buyer", participants: [], messages: [], latest: { content: "hello", updated_at: "2026-09-17 10:00" },
-    unread_count: 3, reply_state: "needs_reply", pending_since: 100, due_at: 86500, is_overdue: true, history_pending: false, uncertain: false, read_snapshot: "displayed-token",
+    unread_count: 3, reply_state: "needs_reply", pending_since: 100, history_pending: false, uncertain: false, read_snapshot: "displayed-token",
   }),
   ...changes,
 });
 const page = (items = [detail()], offset = 0, total = items.length, token = "page-1"): ConversationPage => ({ items, total, offset, limit: 50, inbox_revision: 1, pagination_revision: token });
-const revision = { ...connectionSnapshot.source, ready: true, inbox_revision: 1, next_due_at: null };
+const revision = { ...connectionSnapshot.source, ready: true, inbox_revision: 1 };
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -127,23 +127,24 @@ describe("inbox workspace", () => {
     expect(chat.activeConversation?.readSnapshot).toBe("later-token");
     const pendingDetail = deferred<ConversationDetail>();
     mocks.backend.getConversation.mockReturnValueOnce(pendingDetail.promise);
-    await act(async () => receipt.resolve({ state: { unread_count: 2, reply_state: "needs_reply", pending_since: 100, due_at: 86500, is_overdue: true, history_pending: false, uncertain: false, read_seq: 3, snapshot_seq: 3 }, inbox_revision: 2 }));
-    expect(chat.activeConversation).toMatchObject({ unreadCount: 2, replyState: "needs_reply", pendingSince: 100, isOverdue: true });
+    await act(async () => receipt.resolve({ state: { unread_count: 2, reply_state: "needs_reply", pending_since: 100, history_pending: false, uncertain: false, read_seq: 3, snapshot_seq: 3 }, inbox_revision: 2 }));
+    expect(chat.activeConversation).toMatchObject({ unreadCount: 2, replyState: "needs_reply", pendingSince: 100 });
     expect(container.textContent).toContain("本工作台未读 2");
     expect(container.textContent).toContain("待回复");
+    expect(container.textContent).toContain("已等待");
     expect(container.querySelector("textarea")).toBe(textarea);
     expect(chat.draft).toBe("keep reply");
     await act(async () => pendingDetail.resolve(detail("42", { unreadCount: 2, readSnapshot: "later-token" })));
   });
 
-  it("keeps historical baseline unread at zero and separates history from timed pending", async () => {
-    const historical = detail("42", { unreadCount: 0, replyState: "history_pending", historyPending: true, pendingSince: null, dueAt: null, isOverdue: false });
+  it("keeps historical baseline unread at zero and shows no waiting time for history", async () => {
+    const historical = detail("42", { unreadCount: 0, replyState: "history_pending", historyPending: true, pendingSince: null });
     mocks.backend.listConversations.mockResolvedValue(page([historical]));
     mocks.backend.getConversation.mockResolvedValue(historical);
     await mount();
     expect(container.textContent).toContain("本工作台未读 0");
     expect(container.textContent).toContain("历史待确认");
-    expect(container.textContent).not.toContain("超时");
+    expect(container.textContent).not.toContain("已等待");
     expect(mocks.backend.markConversationRead).not.toHaveBeenCalled();
   });
 
@@ -263,16 +264,14 @@ describe("inbox workspace", () => {
     expect(mocks.backend.markConversationRead).not.toHaveBeenCalled();
   });
 
-  it("revalidates a retained deadline on a list read before polling without implicitly acknowledging its snapshot", async () => {
-    const dueAt = Date.now() / 1000 + 5;
-    const original = detail("42", { dueAt, isOverdue: false });
+  it("revalidates the retained detail on a list read that observes a newer inbox revision without implicitly acknowledging its snapshot", async () => {
+    const original = detail("42");
     mocks.backend.listConversations.mockResolvedValueOnce(page([original]));
     mocks.backend.getConversation.mockResolvedValueOnce(original);
     await mount();
-    await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
     const nextDetail = deferred<ConversationDetail>();
     mocks.backend.getConversation.mockReturnValueOnce(nextDetail.promise);
-    mocks.backend.listConversations.mockResolvedValue(page([detail("99", { dueAt: null, isOverdue: false })]));
+    mocks.backend.listConversations.mockResolvedValue({ ...page([detail("99")]), inbox_revision: 2 });
     await act(async () => chat.changeQuery({ tag: "other customer" }));
     expect(mocks.backend.getConversationRevision).not.toHaveBeenCalled();
     expect(mocks.backend.getConversation).toHaveBeenCalledTimes(2);
@@ -282,16 +281,16 @@ describe("inbox workspace", () => {
     mocks.backend.markConversationRead.mockReturnValueOnce(receipt.promise);
     await act(async () => container.querySelector("button")!.click());
     expect(mocks.backend.markConversationRead).toHaveBeenCalledExactlyOnceWith("42", "displayed-token");
-    const refreshed = detail("42", { dueAt, isOverdue: true, readSnapshot: "new-deadline-token", unreadCount: 4 });
+    const refreshed = detail("42", { readSnapshot: "new-revision-token", unreadCount: 4 });
     mocks.backend.getConversation.mockResolvedValue(refreshed);
     await act(async () => nextDetail.resolve(refreshed));
-    expect(chat.activeConversation).toMatchObject({ id: "42", isOverdue: true, unreadCount: 4, readSnapshot: "new-deadline-token" });
+    expect(chat.activeConversation).toMatchObject({ id: "42", unreadCount: 4, readSnapshot: "new-revision-token" });
     await act(async () => { await vi.advanceTimersByTimeAsync(14_000); });
     expect(mocks.backend.listConversations).toHaveBeenCalledTimes(2);
     expect(mocks.backend.getConversation).toHaveBeenCalledTimes(2);
     mocks.backend.getConversation.mockResolvedValue({ ...refreshed, unreadCount: 1 });
-    await act(async () => receipt.resolve({ state: { unread_count: 1, reply_state: "needs_reply", pending_since: 100, due_at: dueAt, is_overdue: true, history_pending: false, uncertain: false, read_seq: 3, snapshot_seq: 3 }, inbox_revision: 1 }));
-    expect(chat.activeConversation).toMatchObject({ unreadCount: 1, replyState: "needs_reply", pendingSince: 100, isOverdue: true });
+    await act(async () => receipt.resolve({ state: { unread_count: 1, reply_state: "needs_reply", pending_since: 100, history_pending: false, uncertain: false, read_seq: 3, snapshot_seq: 3 }, inbox_revision: 1 }));
+    expect(chat.activeConversation).toMatchObject({ unreadCount: 1, replyState: "needs_reply", pendingSince: 100 });
     expect(mocks.backend.markConversationRead).toHaveBeenCalledExactlyOnceWith("42", "displayed-token");
   });
 
@@ -312,25 +311,6 @@ describe("inbox workspace", () => {
     expect(mocks.backend.listConversations).toHaveBeenCalledTimes(listCalls);
     expect(mocks.backend.getConversation).toHaveBeenCalledTimes(detailCalls);
     expect(chat.activeConversation?.id).toBe("42");
-  });
-
-  it("keeps the retained detail's deadline after a list read consumes an earlier conversation deadline", async () => {
-    const now = Date.now() / 1000;
-    const active = detail("42", { dueAt: now + 8, isOverdue: false });
-    const earlier = detail("43", { dueAt: now + 5, isOverdue: false });
-    mocks.backend.listConversations.mockResolvedValueOnce(page([active, earlier]));
-    mocks.backend.getConversation.mockResolvedValue(active);
-    await mount();
-    await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
-    mocks.backend.listConversations.mockResolvedValue(page([detail("99", { dueAt: null, isOverdue: false })]));
-    await act(async () => chat.changeQuery({ country: "ES" }));
-    expect(mocks.backend.getConversation).toHaveBeenCalledTimes(2);
-    expect(chat.activeConversation).toMatchObject({ id: "42", dueAt: now + 8, isOverdue: false });
-    mocks.backend.getConversation.mockResolvedValue({ ...active, isOverdue: true, readSnapshot: "after-deadline" });
-    await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
-    expect(chat.activeConversation).toMatchObject({ id: "42", isOverdue: true, readSnapshot: "after-deadline" });
-    expect(mocks.backend.getConversation).toHaveBeenCalledTimes(3);
-    expect(mocks.backend.markConversationRead).not.toHaveBeenCalled();
   });
 
   it("retries a failed detail revalidation at the inbox revision already observed by the list", async () => {
@@ -354,31 +334,10 @@ describe("inbox workspace", () => {
     expect(mocks.backend.getConversation).toHaveBeenCalledTimes(detailCalls);
   });
 
-  it("crosses a deadline without a new message or inbox revision", async () => {
-    const dueAt = Date.now() / 1000 + 15;
-    mocks.backend.listConversations.mockResolvedValue(page([detail("42", { dueAt, isOverdue: false })]));
-    mocks.backend.getConversation.mockResolvedValue(detail("42", { dueAt, isOverdue: false }));
-    mocks.backend.getConversationRevision.mockResolvedValue({ ...revision, next_due_at: dueAt });
-    await mount();
-    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
-    const calls = mocks.backend.listConversations.mock.calls.length;
-    mocks.backend.listConversations.mockResolvedValue(page([detail("42", { dueAt, isOverdue: true })]));
-    mocks.backend.getConversation.mockResolvedValue(detail("42", { dueAt, isOverdue: true }));
-    mocks.backend.getConversationRevision.mockResolvedValue(revision);
-    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
-    expect(mocks.backend.listConversations).toHaveBeenCalledTimes(calls + 1);
-    expect(chat.activeConversation?.isOverdue).toBe(true);
-  });
-
-  it("refreshes an initially empty overdue filter and keeps failed or suspended reads from replacing the workspace", async () => {
+  it("keeps failed or suspended reads from replacing the workspace", async () => {
     await mount();
     const textarea = container.querySelector("textarea");
     await act(async () => chat.setDraft("saved draft"));
-    mocks.backend.listConversations.mockResolvedValueOnce(page([]));
-    await act(async () => chat.changeQuery({ overdue: true }));
-    expect(chat.conversations).toEqual([]);
-    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
-    expect(chat.conversations).toHaveLength(1);
     mocks.backend.markConversationRead.mockRejectedValueOnce(new Error("offline"));
     await act(async () => chat.markRead());
     expect(chat.activeConversation?.unreadCount).toBe(3);
@@ -404,24 +363,10 @@ describe("inbox workspace", () => {
     const reads = account.readRefreshSequence;
     await act(async () => {
       oldPage.resolve(page());
-      read.resolve({ state: { unread_count: 0, reply_state: "none", pending_since: null, due_at: null, is_overdue: false, history_pending: false, uncertain: false, read_seq: 3, snapshot_seq: 3 }, inbox_revision: 99 });
+      read.resolve({ state: { unread_count: 0, reply_state: "none", pending_since: null, history_pending: false, uncertain: false, read_seq: 3, snapshot_seq: 3 }, inbox_revision: 99 });
     });
     expect(chat.activeConversation?.id).toBe("99");
     expect(chat.conversations.map((item) => item.id)).toEqual(["99"]);
     expect(account.readRefreshSequence).toBe(reads);
-  });
-
-  it("coalesces deadline-filtered reads while a previous page read is still pending", async () => {
-    await mount();
-    await act(async () => chat.changeQuery({ overdue: true }));
-    const slowPage = deferred<ConversationPage>();
-    mocks.backend.listConversations.mockReturnValueOnce(slowPage.promise);
-    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
-    const calls = mocks.backend.listConversations.mock.calls.length;
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-    expect(mocks.backend.listConversations).toHaveBeenCalledTimes(calls);
-    await act(async () => slowPage.resolve(page([detail("99")])));
-    expect(chat.conversations.map((item) => item.id)).toEqual(["99"]);
-    expect(chat.activeConversation?.id).toBe("42");
   });
 });

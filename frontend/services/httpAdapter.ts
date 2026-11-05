@@ -219,8 +219,6 @@ export const httpBackend: OperationsBackend = {
   },
   markConversationRead: (id, readSnapshot) => requestJson(`/api/conversations/${encodeURIComponent(id)}/read`, { method: "POST", body: JSON.stringify({ read_snapshot: readSnapshot }) }),
   getInboxOverview: () => requestJson("/api/inbox/overview", { cache: "no-store" }),
-  getInboxSettings: () => requestJson("/api/inbox/settings", { cache: "no-store" }),
-  saveInboxSettings: (timeoutSeconds) => requestJson("/api/inbox/settings", { method: "PUT", body: JSON.stringify({ timeout_seconds: timeoutSeconds }) }),
   getConversationRevision: () => requestJson<ConversationRevision>("/api/conversations/revision"),
   getConversation: async (id) => {
     const aggregate = await requestJson<ConversationAggregateDto>(`/api/conversations/${encodeURIComponent(id)}`);

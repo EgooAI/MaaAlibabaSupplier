@@ -10,8 +10,6 @@ export function adaptInboxState(state: InboxStateDto) {
     unreadCount: state.unread_count,
     replyState: state.reply_state,
     pendingSince: state.pending_since,
-    dueAt: state.due_at,
-    isOverdue: state.is_overdue,
     historyPending: state.history_pending,
     uncertain: state.uncertain,
   };

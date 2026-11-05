@@ -32,7 +32,6 @@ Supported query parameters:
 | tag | Exact platform quality/growth tag, case sensitive |
 | reply_state | `needs_reply`, `waiting_customer`, `history_pending`, `none`, `unknown` |
 | unread | Optional boolean, matches conversations with unread_count > 0 |
-| overdue | Optional boolean |
 | portrait_stage | Repeatable business stage; matches any supplied stage (OR). Values: `unknown`, `new_inquiry`, `following_up`, `negotiating`, `won`, `dormant`, `lost` |
 | portrait_completeness | `all` (default), `maintained` (cid resolved and business_version > 0), `unmaintained` (never maintained or cid unresolved) |
 | business_tag | Repeatable business tag id; all supplied tags must match |
@@ -47,9 +46,9 @@ Platform tags (`tag`) and business tags (`business_tag`) are independent sources
 Missing or changed pagination_revision on a later page returns 409: discard
 loaded pages and request offset=0. Reuse the same filters with the token.
 Tokens exclude offset/limit and wall-clock seconds; they include scoped message
-projections, resolved profiles, inbox metadata/states and overdue flags. A
-deadline crossing can invalidate pagination without changing inbox_revision.
-New arrivals, visible historical edits, profile edits, reads and timeout changes
+projections, resolved profiles and inbox metadata/states. Nothing in them
+depends on the current time, so pagination only changes with the data.
+New arrivals, visible historical edits, profile edits and reads
 invalidate affected dataset tokens. Order is latest timestamp descending, then
 numeric SID descending. Total is measured before pagination.
 
@@ -63,9 +62,8 @@ and returns:
 
 ```ts
 {
-  counts: {total, unread, needs_reply, overdue, history_pending, waiting_customer},
+  counts: {total, unread, needs_reply, history_pending, waiting_customer},
   inbox_revision: number,
-  timeout_seconds: number,
   updated_at: number // Unix seconds, observation time
 }
 ```
@@ -99,8 +97,6 @@ List items and detail aggregates expose these flat fields:
   unread_count: number,
   reply_state: "needs_reply" | "waiting_customer" | "history_pending" | "none" | "unknown",
   pending_since: number | null,
-  due_at: number | null,
-  is_overdue: boolean,
   history_pending: boolean,
   uncertain: boolean
 }
@@ -108,12 +104,15 @@ List items and detail aggregates expose these flat fields:
 
 The previous fake status/priority fields are removed. Unread is workspace state,
 independent of platform read receipts. Baseline history starts with zero unread;
-historical unanswered conversations are history_pending and have no deadline.
+historical unanswered conversations are history_pending and have no
+`pending_since`. For `needs_reply`, `pending_since` is the Unix time of the
+first new unanswered buyer message; clients derive the waiting duration from it.
+There is no reply-timeout threshold, overdue flag or deadline.
 
 `GET /api/conversations/{sid}` additionally returns `read_snapshot: string`.
 GET never marks read. POST `/api/conversations/{sid}/read` with
 `{read_snapshot}` explicitly marks through that boundary and returns
-`{state: InboxState, inbox_revision: number}`. This InboxState includes the seven
+`{state: InboxState, inbox_revision: number}`. This InboxState includes the five
 fields above plus the store's numeric `read_seq` and `snapshot_seq`. Those
 sequences are informational; only the opaque read_snapshot authorizes a read.
 
@@ -126,23 +125,16 @@ detail messages, so concurrent new arrivals can appear in detail while remaining
 unread after the POST. Detail messages and state are separate reads; they do not
 promise a single transaction. Only the read boundary is guaranteed safe.
 
-## Settings and Polling
-
-GET `/api/inbox/settings` returns `{timeout_seconds, inbox_revision}`.
-PUT with `{timeout_seconds}` returns the same shape. The value must be an integer
-3600..604800 inclusive, default 86400, stored per seller/source directory.
-PUT returns 409 immediately when the account is busy.
+## Polling
 
 GET `/api/conversations/revision` retains existing fields and adds
-`inbox_revision: number`, `portrait_revision: number`, `tag_revision: number` and
-`next_due_at: number | null` (earliest future pending deadline in Unix seconds).
+`inbox_revision: number`, `portrait_revision: number` and `tag_revision: number`.
 `portrait_revision` tracks committed customer portrait edits in the current
 workspace; `tag_revision` tracks shared tag definition changes. This endpoint is
 observation only: it does not create tables, initialize a baseline, migrate SDK
 data, read/decrypt the IM source or schedule sync. Polling revision is not a
-snapshot shared with later requests. Reload list/overview when a known deadline
-crosses or any observed revision increases, or periodically (for example once a
-minute); inbox_revision alone cannot signal a time threshold crossing.
+snapshot shared with later requests. Reload list/overview when any observed
+revision increases.
 
 The first list/detail/overview/settings access may initialize an existing selected
 archive once through InboxStore.initialize. This adds application-owned inbox
