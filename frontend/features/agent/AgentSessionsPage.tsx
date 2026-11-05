@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDownOutlined, ArrowLeftOutlined, PlusOutlined } from "@ant-design/icons";
+import { ArrowDownOutlined, ArrowLeftOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Empty, Form, Modal, Select, Space } from "antd";
 import { useState } from "react";
 import { ActionConfirmModal } from "@/components/ActionConfirmModal";
@@ -78,9 +78,9 @@ export function AgentSessionsPage() {
       title={workbench.activeSession ? `${agentNames.get(workbench.activeSession.agentId) ?? workbench.activeSession.agentId} · ${workbench.activeSession.title}` : "会话详情"}
       extra={
         <Space>
-          {isMobile ? <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => setMobileView("list")}>返回列表</Button> : null}
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)} disabled={workbench.busy}>新建会话</Button>
-          <Button loading={workbench.reconciling} disabled={workbench.busy} onClick={() => void workbench.reconcileHistory()}>刷新历史</Button>
+          {isMobile ? <Button type="text" aria-label="返回列表" icon={<ArrowLeftOutlined />} onClick={() => setMobileView("list")} /> : null}
+          <Button type="primary" aria-label="新建会话" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)} disabled={workbench.busy}><span className="hidden sm:inline">新建会话</span></Button>
+          <Button aria-label="刷新历史" icon={<ReloadOutlined />} loading={workbench.reconciling} disabled={workbench.busy} onClick={() => void workbench.reconcileHistory()}><span className="hidden sm:inline">刷新历史</span></Button>
         </Space>
       }
       className="flex h-full min-h-0 w-full flex-col"

@@ -148,17 +148,17 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Layout className="min-h-0 min-w-0">
         <Header className="sticky top-0 z-10 flex h-16 shrink-0 items-center justify-between gap-2 border-b border-slate-100 !px-4 shadow-sm sm:!px-6">
           {isSmallScreen ? <Button type="text" aria-label="打开导航" icon={<MenuUnfoldOutlined />} onClick={() => setCollapsed(false)} /> : null}
-          <Typography.Title level={4} className="!mb-0 truncate">
+          <Typography.Title level={4} className="!mb-0 min-w-0 flex-1 truncate">
             {pageTitles[selectedKey] ?? "阿里国际站运营助手"}
           </Typography.Title>
           <div className="flex min-w-0 items-center gap-2">
-            {!blocked && snapshot?.capabilities.read_chat ? <AccountProfile key={`${snapshot.account.epoch}:${generation}`} /> : <Typography.Text type="secondary">{snapshot?.account.self_ali_id || "尚未选择账号"}</Typography.Text>}
+            {!blocked && snapshot?.capabilities.read_chat ? <AccountProfile key={`${snapshot.account.epoch}:${generation}`} /> : <Typography.Text type="secondary" className="inline-block max-w-24 truncate align-middle sm:max-w-48">{snapshot?.account.self_ali_id || "尚未选择账号"}</Typography.Text>}
             <Tooltip title={temporary ? "临时登录，刷新后需重新登录" : "本机注销"}>
               <Button icon={<LogoutOutlined />} aria-label={temporary ? "退出临时登录" : "本机注销"} onClick={() => void logout()}><span className="hidden sm:inline">{temporary ? "退出临时登录" : "本机注销"}</span></Button>
             </Tooltip>
           </div>
         </Header>
-        <Content className={isCustomerChat ? "min-h-0 overflow-hidden p-2 sm:p-4" : "min-h-0 overflow-y-auto p-6"}>
+        <Content className={isCustomerChat ? "min-h-0 overflow-hidden p-2 sm:p-4" : "min-h-0 overflow-y-auto p-3 sm:p-6"}>
           <div className={`mx-auto max-w-[1480px] ${isCustomerChat ? "h-full min-h-0" : ""}`}>{children}</div>
         </Content>
       </Layout>
@@ -172,7 +172,7 @@ function AccountProfile() {
   return <>
     <Button type="text" className="flex items-center gap-2" aria-label="打开个人信息" onClick={() => setProfileOpen(true)}>
       <Avatar size="small" src={avatarSource || undefined} icon={<UserOutlined />} onError={() => { setAvatarSource(""); return true; }} />
-      <span className="max-w-40 truncate">{selfInfo ? getDisplayName(selfInfo) : "个人信息"}</span>
+      <span className="hidden max-w-40 truncate sm:inline">{selfInfo ? getDisplayName(selfInfo) : "个人信息"}</span>
     </Button>
     <ProfileDrawer
         selfInfo={selfInfo}

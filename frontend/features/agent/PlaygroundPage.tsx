@@ -63,7 +63,7 @@ function PlaygroundWorkspace() {
           )}
         />
       ) : (
-        <Empty description="还没有模拟会话：在聊天页任意消息上点击「从此开始模拟」。" />
+        <Empty description="还没有模拟会话。在聊天页的任意消息上点击“从此开始模拟”即可创建。" />
       )}
     </Card>
   );
@@ -76,8 +76,8 @@ function PlaygroundWorkspace() {
           title={playground.activeSession?.title ?? "模拟会话"}
           extra={
             <Space>
-              {isMobile ? <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => setMobileView("list")}>返回</Button> : null}
-              <Button icon={<ReloadOutlined />} disabled={!playground.activeSession || playground.running} onClick={() => void playground.regenerate()}>重新生成</Button>
+              {isMobile ? <Button type="text" aria-label="返回列表" icon={<ArrowLeftOutlined />} onClick={() => setMobileView("list")} /> : null}
+              <Button aria-label="重新生成" icon={<ReloadOutlined />} disabled={!playground.activeSession || playground.running} onClick={() => void playground.regenerate()}><span className="hidden sm:inline">重新生成</span></Button>
             </Space>
           }
           className="flex min-h-0 flex-col"
@@ -90,8 +90,8 @@ function PlaygroundWorkspace() {
               {playground.activeSession.source ? (
                 <div className="rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-500" aria-label="冻结的历史">
                   <div className="mb-1">
-                    冻结的输入来自「{playground.activeSession.source.conversationTitle}」
-                    第 {(playground.activeSession.source.messageIndex ?? 0) + 1} 条消息；
+                    冻结的输入来自“{playground.activeSession.source.conversationTitle}”
+                    第 {(playground.activeSession.source.messageIndex ?? 0) + 1} 条消息，
                     共 {playground.activeSession.source.frozenChars ?? 0} 字，本轮及以后保持不变。
                   </div>
                   <details>

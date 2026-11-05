@@ -219,7 +219,7 @@ function AgentEditDrawerBody({ agent, category, systemAgents, tools, llmLevels, 
             <Input.TextArea rows={2} placeholder="一句话说明这个 Agent 负责什么。" />
           </Form.Item>
           {category === "regular" ? (
-            <Form.Item name="capabilities" label="能力" className="md:col-span-2" extra="只列出后端已注册的工具；新增工具需先在运行时装好实现。">
+            <Form.Item name="capabilities" label="能力" className="md:col-span-2" extra="只列出后端已注册的工具。新增工具需先在运行时装好实现。">
               <Select mode="multiple" options={toolOptions} placeholder="选择该 Agent 可调用的工具" />
             </Form.Item>
           ) : null}
@@ -228,7 +228,7 @@ function AgentEditDrawerBody({ agent, category, systemAgents, tools, llmLevels, 
             label="必须调用工具"
             valuePropName="checked"
             className="md:col-span-2"
-            extra="开启后，模型必须至少调用一次工具；达到调用上限时会强制收尾，并保留已发生的调用记录。"
+            extra="开启后，模型必须至少调用一次工具。达到调用上限时会强制收尾，并保留已发生的调用记录。"
           >
             <Switch disabled={(draft.capabilities ?? []).length === 0 && !draft.requiresTool} />
           </Form.Item>
@@ -238,7 +238,7 @@ function AgentEditDrawerBody({ agent, category, systemAgents, tools, llmLevels, 
               type="warning"
               showIcon
               message={`以下工具未注册，该 Agent 无法运行：${staleTools.join("、")}`}
-              description="请从「能力」中移除它们后再保存或试运行。"
+              description="请从“能力”中移除它们后再保存或试运行。"
             />
           ) : null}
         </div>
@@ -250,7 +250,7 @@ function AgentEditDrawerBody({ agent, category, systemAgents, tools, llmLevels, 
             <Button onClick={onCancel}>取消</Button>
             <Button type="primary" htmlType="submit" loading={saving}>保存</Button>
           </Space>
-          <Typography.Text type="secondary" className="text-xs">Ctrl/Cmd + S 保存；有未保存修改时关闭会二次确认。</Typography.Text>
+          <Typography.Text type="secondary" className="text-xs">Ctrl/Cmd + S 保存。有未保存修改时关闭会二次确认。</Typography.Text>
         </div>
       </Form>
 

@@ -16,9 +16,9 @@ export function BatchFloatingBar({ selectedCount, selectedCustomerCount, busy, a
   if (!selectedCount) return null;
   const actionClass = (active: boolean) => `rounded-md px-2.5 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${active ? "bg-slate-700 font-medium text-white" : "text-slate-200 hover:bg-slate-700"}`;
   return (
-    <div className={`fixed bottom-5 left-1/2 z-40 -translate-x-1/2 ${shifted ? "xl:left-[calc((100%_-_396px)/2)]" : ""}`}>
-      <div className="flex items-center gap-1 rounded-xl bg-slate-900 py-1.5 pl-4 pr-2 shadow-xl">
-        <span className="mr-2 border-r border-slate-700 pr-3 text-xs text-slate-300">
+    <div className={`fixed bottom-3 left-1/2 z-40 w-max max-w-[calc(100vw-1rem)] -translate-x-1/2 sm:bottom-5 ${shifted ? "xl:left-[calc((100%_-_396px)/2)]" : ""}`}>
+      <div className="flex flex-wrap items-center gap-1 rounded-xl bg-slate-900 py-1.5 pl-4 pr-2 shadow-xl">
+        <span className="mr-2 w-full text-xs text-slate-300 sm:w-auto sm:border-r sm:border-slate-700 sm:pr-3">
           已选 <b className="text-blue-300">{selectedCount}</b> 个会话 · <b className="text-blue-300">{selectedCustomerCount}</b> 位客户
         </span>
         <button type="button" className={actionClass(activeAction === "stage")} disabled={busy} onClick={() => onOpenPanel("stage")}>设置阶段</button>

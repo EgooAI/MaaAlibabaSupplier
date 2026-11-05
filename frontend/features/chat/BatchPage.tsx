@@ -124,7 +124,7 @@ function BatchWorkspace() {
         onOpenPanel={workbench.openPanel}
         onClear={workbench.clearSelection}
       />
-      {workbench.selectedCount ? <div className="h-16" aria-hidden /> : null}
+      {workbench.selectedCount ? <div className="h-28 sm:h-16" aria-hidden /> : null}
     </Space>
   );
 }

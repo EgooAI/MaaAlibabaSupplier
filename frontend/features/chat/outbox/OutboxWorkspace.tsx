@@ -43,9 +43,9 @@ export function OutboxWorkspace({ conversation, takePendingIntent, ...composer }
     </div>
     <Drawer title="发送记录" open={tasksOpen} onClose={() => setTasksOpen(false)} size={480} zIndex={900} extra={<Button size="small" disabled={blocked} onClick={() => void outbox.refresh(true)}>刷新任务</Button>}>
     <section aria-label="会话发送任务">
-      <Typography.Paragraph type="secondary">任务和草稿会保留。相同内容会恢复已有任务；再次发送相同内容，请选择“新建发送”。</Typography.Paragraph>
+      <Typography.Paragraph type="secondary">任务和草稿会保留。相同内容会恢复已有任务。再次发送相同内容，请选择“新建发送”。</Typography.Paragraph>
       {outbox.error && <Alert type="warning" title={outbox.error} />}
-      {outbox.storageError && <Alert type="error" title="浏览器提交记录不可读或不可写，已禁止新提交。请恢复存储后刷新任务；草稿仍保留。" />}
+      {outbox.storageError && <Alert type="error" title="浏览器提交记录不可读或不可写，已禁止新提交。请恢复存储后刷新任务，草稿仍保留。" />}
       {blocked && <Alert type="warning" title="账号状态暂不可用，已保留任务记录，暂停操作。" />}
       {!outbox.tasks.length && !missing.length && <Typography.Text type="secondary">暂无发送任务</Typography.Text>}
       {missing.map((intent) => <div key={intent.key} className="my-2 border-t border-slate-200 pt-2">

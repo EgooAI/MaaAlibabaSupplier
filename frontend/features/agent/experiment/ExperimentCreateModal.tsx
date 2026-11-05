@@ -184,7 +184,7 @@ function ExperimentCreateBody({
       return;
     }
     if (rows.some((row) => row.kind === "revision" && row.revisionId === undefined)) {
-      setError("请为「历史版本」选择具体版本");
+      setError("请为“历史版本”选择具体版本");
       return;
     }
     setSubmitting(true);
@@ -211,7 +211,7 @@ function ExperimentCreateBody({
   return (
     <div className="flex flex-col gap-3">
       <Typography.Paragraph type="secondary" className="!mb-0">
-        一个实验会用同一起点运行多个版本；第一个变体是基线。每次运行后可以逐条对比它们的回复。
+        一个实验会用同一起点运行多个版本，第一个变体是基线。每次运行后可以逐条对比它们的回复。
       </Typography.Paragraph>
 
       {source ? <SourceSummary source={source} title={conversationTitle} /> : null}
@@ -240,14 +240,14 @@ function ExperimentCreateBody({
         </label>
         <label className="flex flex-col gap-1 text-sm">
           <span>实验名称</span>
-          <Input value={name} placeholder="留空则使用「Agent 名 对比实验」" onChange={(event) => setName(event.target.value)} />
+          <Input value={name} placeholder="留空则使用“Agent 名 对比实验”" onChange={(event) => setName(event.target.value)} />
         </label>
       </div>
 
       <div className="flex flex-col gap-2" data-testid="variant-rows">
         <div className="flex items-center justify-between">
           <Typography.Text strong>对比的版本</Typography.Text>
-          <Typography.Text type="secondary" className="text-xs">第 1 行是基线；最多 {MAX_VARIANTS} 个。</Typography.Text>
+          <Typography.Text type="secondary" className="text-xs">第 1 行是基线，最多 {MAX_VARIANTS} 个。</Typography.Text>
         </div>
         {rows.map((row, index) => (
           <div
@@ -349,7 +349,7 @@ function resolveSource(source: CreateExperimentSourceInput | undefined, text: st
 
 function SourceSummary({ source, title }: { source: CreateExperimentSourceInput; title?: string }) {
   if (source.kind === "conversation") {
-    const heading = title ? `从对话「${title}」` : `从对话 #${source.conversationId ?? "?"}`;
+    const heading = title ? `从对话“${title}”` : `从对话 #${source.conversationId ?? "?"}`;
     return (
       <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
         <Space size={4} wrap>

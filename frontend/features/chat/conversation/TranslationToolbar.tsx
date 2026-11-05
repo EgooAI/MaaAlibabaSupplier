@@ -17,7 +17,7 @@ export type TranslationToolbarProps = {
 export function TranslationToolbar({ visible, onToggleVisible, translatedCount, untranslatedCount, pendingCount, canTranslate, onTranslateMissing, onRetranslateAll }: TranslationToolbarProps) {
   const busy = pendingCount > 0;
   return (
-    <div className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-100 bg-white/70 px-3 py-1.5 sm:px-4">
+    <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-white/70 px-3 py-1.5 sm:px-4">
       <Space size={4}>
         <Tooltip title={visible ? "隐藏译文" : "显示译文"}>
           <Button

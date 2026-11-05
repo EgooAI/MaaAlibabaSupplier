@@ -10,7 +10,7 @@ export function SplitSessionLayout({ list, detail, mobileView = "list" }: { list
   const isMobile = screens.xl === false;
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] min-h-[480px] flex-col">
+    <div className="flex h-[calc(100dvh-5.5rem)] min-h-[480px] sm:h-[calc(100dvh-7rem)] flex-col">
       <Row gutter={[16, 16]} className="min-h-0 flex-1">
         {isMobile ? (
           <Col xs={24} className="flex h-full min-h-0">

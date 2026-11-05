@@ -27,7 +27,7 @@ export function SessionMessages({ session, onForkFromTurn }: SessionMessagesProp
         <Alert
           type="info"
           showIcon
-          message={`模拟会话：历史来自「${session.source?.conversationTitle || "真实会话"}」${
+          message={`模拟会话：历史来自“${session.source?.conversationTitle || "真实会话"}”${
             typeof session.source?.messageIndex === "number" ? `的第 ${session.source.messageIndex + 1} 条消息` : ""
           }。后续回复不会发送给客户。`}
         />

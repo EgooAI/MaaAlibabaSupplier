@@ -93,7 +93,7 @@ export function StepComposer({
               ? mode === "buyer"
                 ? "输入买家消息，所有变体都会收到同一条..."
                 : "可留空：让每个变体直接对当前上下文行动。"
-              : `这一步已经写好：「${steps.find((step) => step.index === action.stepIndex)?.text ?? ""}」`
+              : `这一步已经写好：“${steps.find((step) => step.index === action.stepIndex)?.text ?? ""}”`
           }
           aria-label="下一步的买家输入"
           onChange={(event) => setDraft(event.target.value)}
@@ -127,7 +127,7 @@ export function StepComposer({
           )}
           <Typography.Text type="secondary" className="text-xs">
             {running
-              ? "运行在下个回合边界停止；已完成的变体保留结果。"
+              ? "运行在下个回合边界停止。已完成的变体保留结果。"
               : "Ctrl/⌘ + Enter 运行，Esc 取消。"}
           </Typography.Text>
         </Space>

@@ -159,9 +159,9 @@ function ExperimentWorkspace() {
               <div className="rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-500" aria-label="冻结的输入">
                 <div className="mb-1">
                   {source.kind === "conversation"
-                    ? `冻结的输入来自「${source.conversationTitle || "真实会话"}」第 ${(source.messageIndex ?? 0) + 1} 条消息`
+                    ? `冻结的输入来自“${source.conversationTitle || "真实会话"}”第 ${(source.messageIndex ?? 0) + 1} 条消息`
                     : source.kind === "session"
-                      ? `冻结的输入来自会话「${source.conversationTitle || source.sessionId || "模拟会话"}」`
+                      ? `冻结的输入来自会话“${source.conversationTitle || source.sessionId || "模拟会话"}”`
                       : "冻结的输入是一段粘贴文本"}
                   ，共 {source.frozenChars ?? experiment.frozenPrefix.length} 字，本轮及以后保持不变。
                 </div>

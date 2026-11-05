@@ -1,6 +1,6 @@
 "use client";
 
-import { Segmented, Space, Tag, Typography } from "antd";
+import { Grid, Segmented, Space, Tag, Typography } from "antd";
 import { useMemo, useState } from "react";
 import { buildPromptDiff, type PromptDiffRow, type PromptDiffSegment } from "@/domain/agent/promptDiff";
 
@@ -46,10 +46,12 @@ function UnifiedRow({ row }: { row: PromptDiffRow }) {
   );
 }
 
-/** Read-only prompt diff: side-by-side by default, unified for narrow screens. */
+/** Read-only prompt diff: side-by-side by default, unified by default on narrow screens. */
 export function PromptDiffView({ before, after, maxHeight = 380 }: { before: string; after: string; maxHeight?: number }) {
   const diff = useMemo(() => buildPromptDiff(before, after), [before, after]);
-  const [mode, setMode] = useState<"side" | "unified">("side");
+  const narrow = Grid.useBreakpoint().md === false;
+  const [chosen, setChosen] = useState<"side" | "unified">();
+  const mode = chosen ?? (narrow ? "unified" : "side");
   const identical = diff.rows.every((row) => row.kind === "context");
 
   return (
@@ -62,7 +64,7 @@ export function PromptDiffView({ before, after, maxHeight = 380 }: { before: str
         <Segmented
           size="small"
           value={mode}
-          onChange={(value) => setMode(value as "side" | "unified")}
+          onChange={(value) => setChosen(value as "side" | "unified")}
           options={[{ label: "左右对照", value: "side" }, { label: "统一视图", value: "unified" }]}
         />
       </div>
