@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { conversationTimeLabel } from "@/domain/chat/chatModel";
+import { TimeText } from "@/components/TimeText";
 import { InboxBadges } from "../conversation/InboxBadges";
 import type { Conversation } from "@/types/chatCanonical";
 
@@ -13,7 +13,7 @@ export function SessionRows({ conversations }: { conversations: Conversation[] }
         <div key={conversation.id} className="flex items-center gap-3 border-b border-slate-100 px-3 py-1.5 text-xs last:border-b-0">
           <span className="shrink-0 font-mono text-slate-500">会话 #{conversation.id}</span>
           <InboxBadges conversation={conversation} />
-          <span className="shrink-0 text-slate-400">{conversationTimeLabel(conversation.updatedAt)}</span>
+          <span className="shrink-0 text-slate-400"><TimeText value={conversation.updatedAt} /></span>
           <span className="min-w-0 flex-1 truncate text-slate-500" title={conversation.latestMessage}>{conversation.latestMessage || "—"}</span>
           <Link
             className="shrink-0 text-blue-500 hover:underline"

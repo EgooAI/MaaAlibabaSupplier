@@ -4,10 +4,12 @@ import { CopyOutlined, ForkOutlined, InfoCircleOutlined, LoadingOutlined, Reload
 import { Avatar, Button, Tooltip } from "antd";
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { BusinessCardView } from "@/components/BusinessCardView";
+import { TimeText } from "@/components/TimeText";
 import { MessageImage } from "./MessageImage";
 import { MessageActionSheet, type MessageAction } from "./MessageActionSheet";
 import { avatarColorOf, avatarInitialOf } from "@/domain/chat/avatarModel";
 import { isTranslatableMessage } from "@/domain/chat/chatModel";
+import { formatFullDateTime } from "@/domain/time";
 import { renderContentHtml } from "@/domain/render/markdown";
 import type { ChatMessage } from "@/types/chatCanonical";
 
@@ -135,7 +137,7 @@ export function MessageTimeline({
               </div>
               <div className="group/message min-w-0 [@media(hover:none)]:select-none [@media(hover:none)]:[-webkit-touch-callout:none]">
                 <div className={`mb-1.5 flex items-center gap-1.5 text-[11px] text-slate-400 ${isSelfSide ? "justify-end" : ""}`}>
-                  <span>{message.createdAt}</span>
+                  <TimeText value={message.createdAt} />
                 </div>
                 <div className={`group relative rounded-2xl px-3 py-2.5 text-sm leading-relaxed [overflow-wrap:anywhere] sm:px-4 ${message.role === "seller" ? "rounded-tr-sm bg-blue-50" : isSystem ? "bg-slate-100 text-slate-600" : "rounded-tl-sm border border-slate-100 bg-white"}`}>
                   {/* Desktop only: hovering the message reveals a button group beside the bubble. Touch devices use the long-press sheet. */}
@@ -207,6 +209,7 @@ export function MessageTimeline({
     </div>
     <MessageActionSheet
       open={Boolean(sheet?.open && actions.length)}
+      detail={sheetMessage ? formatFullDateTime(sheetMessage.createdAt) : undefined}
       actions={actions}
       onClose={() => setSheet((current) => current && { ...current, open: false })}
       onClosed={() => setSheet(undefined)}

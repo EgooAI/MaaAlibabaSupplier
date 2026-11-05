@@ -4,6 +4,7 @@ import { Button, Descriptions, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { BaseDrawer } from "@/components/BaseDrawer";
+import { TimeText } from "@/components/TimeText";
 import { useAccountBackend } from "@/features/account/AccountProvider";
 import { TagManagerModal } from "@/features/chat/portrait/TagManagerModal";
 import { customerLabelOf, type CustomerGroup } from "@/domain/portrait/customerGroups";
@@ -128,7 +129,7 @@ function CustomerDetail({ group, operations, portraitTags, onManageTags }: {
           {
             key: "version", label: "版本/更新",
             children: customer.businessVersion
-              ? `v${customer.businessVersion}${customer.lostAt ? ` · ${formatDateTime(customer.lostAt)}` : ""}`
+              ? <span>v{customer.businessVersion}{customer.lostAt ? <> · <TimeText value={customer.lostAt} /></> : null}</span>
               : "未维护",
           },
         ]} />

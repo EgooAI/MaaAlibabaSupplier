@@ -1,5 +1,5 @@
 import type { BusinessCard } from "@/types/cards";
-import { formatDateTime } from "@/domain/time";
+import { formatFullDateTime } from "@/domain/time";
 import { stringField } from "@/domain/guards";
 import type { ConversationAnalysis, ConversationDetail, Conversation, ChatMessage, CustomerProfile } from "@/types/chatCanonical";
 import type { ConversationAggregateDto, ConversationAnalysisDto, ConversationMessageDto, CustomerViewDto } from "@/types/chatTransport";
@@ -27,7 +27,7 @@ export function adaptConversationSummary(aggregate: ConversationAggregateDto): C
     id: String(aggregate.sid),
     customer,
     latestMessage: aggregate.latest?.content ?? "",
-    updatedAt: formatDateTime(aggregate.latest?.updated_at ?? null),
+    updatedAt: formatFullDateTime(aggregate.latest?.updated_at ?? null),
     ...adaptInboxState(aggregate),
     dialogueCount: aggregate.dialogue_count ?? undefined,
   };
@@ -126,7 +126,7 @@ function adaptMessage(item: ConversationMessageDto, cards: BusinessCard[]): Chat
     id: message.external_mid,
     role: item.role ?? "unknown",
     content: displayContent(message.content, card),
-    createdAt: formatDateTime(item.created_at),
+    createdAt: formatFullDateTime(item.created_at),
     sid: message.sid,
     externalMid: message.external_mid,
     senderAid: message.sender,

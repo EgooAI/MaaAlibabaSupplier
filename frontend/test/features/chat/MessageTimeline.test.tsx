@@ -164,6 +164,7 @@ describe("message timeline", () => {
 
       await act(async () => { press(container.querySelector('[data-message-id="b"] [data-message-text]')!); vi.advanceTimersByTime(500); });
       expect(sheetButtons()).toEqual(["翻译", "从此开始模拟", "复制"]);
+      expect(document.body.querySelector(".ant-drawer")?.textContent).toContain("2026-09-18 10:00:00");
 
       const choose = (label: string) => [...document.body.querySelectorAll(".ant-drawer button")].find((button) => button.textContent === label) as HTMLButtonElement;
       await act(async () => choose("复制").click());

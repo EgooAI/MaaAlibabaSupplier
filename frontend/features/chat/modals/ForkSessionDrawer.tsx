@@ -4,6 +4,7 @@ import { Alert, App, Button, Drawer, Form, Select, Space, Tag, Tooltip, Typograp
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { backend } from "@/services/client";
+import { TimeText } from "@/components/TimeText";
 import { ExperimentCreateModal } from "@/features/agent/experiment/ExperimentCreateModal";
 import type { AgentConfig, AgentPresetRevision, AgentTestSession } from "@/types/agent";
 import type { ConversationDetail } from "@/types/chatCanonical";
@@ -129,7 +130,7 @@ export function ForkSessionDrawer({
             <div className="mb-3 rounded border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
               <Space size={4} className="mb-1">
                 <Tag>消息 #{messageIndex! + 1}</Tag>
-                <span>{preview.createdAt}</span>
+                <TimeText value={preview.createdAt} />
               </Space>
               <div className="line-clamp-4 whitespace-pre-wrap break-words">{preview.content}</div>
             </div>

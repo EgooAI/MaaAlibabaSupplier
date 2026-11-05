@@ -5,6 +5,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import type { OutboxTask } from "@/types/chatOperations";
 import type { OperationsBackend } from "@/services/interfaces";
 import { AccountChangedError } from "@/services/accountSession";
+import { formatFullDateTime } from "@/domain/time";
 import { frameFresh, SCREENSHOT_TTL_MS } from "./outboxModel";
 
 export function ScreenshotConfirmation({ task, seller, recipient, canOperate, backend, onTask, onClose }: {
@@ -100,7 +101,7 @@ export function ScreenshotConfirmation({ task, seller, recipient, canOperate, ba
     {error && <Alert type="warning" title={error} />}
     {!frame && !error && <Typography.Text>正在读取任务和截图…</Typography.Text>}
     {frame && <>
-      <Typography.Paragraph type="secondary">截图时间：{new Date(frame.task.screenshot_at! * 1000).toLocaleString()} · 有效期 {SCREENSHOT_TTL_MS / 1000} 秒</Typography.Paragraph>
+      <Typography.Paragraph type="secondary">截图时间：{formatFullDateTime(frame.task.screenshot_at!)} · 有效期 {SCREENSHOT_TTL_MS / 1000} 秒</Typography.Paragraph>
       <Button size="small" onClick={() => setFullSize((value) => !value)}>{fullSize ? "适应宽度" : "查看原尺寸"}</Button>
       <div className="mt-2 max-h-[60vh] overflow-auto">
         {/* Authenticated PNG bytes must never be passed through an image proxy or cache. */}

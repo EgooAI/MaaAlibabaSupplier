@@ -7,10 +7,9 @@ import { useMemo, useState } from "react";
 import type { Key } from "react";
 import { AppTable } from "@/components/AppTable";
 import { avatarColorOf, avatarInitialOf } from "@/domain/chat/avatarModel";
-import { conversationTimeLabel } from "@/domain/chat/chatModel";
+import { TimeText } from "@/components/TimeText";
 import { customerLabelOf, groupCustomers } from "@/domain/portrait/customerGroups";
 import { lostReasonLabel, portraitStageColor, portraitStageLabel, portraitTagLabel } from "@/domain/portrait/portraitModel";
-import { formatDateTime } from "@/domain/time";
 import { SessionRows } from "./SessionRows";
 import type { CustomerGroup } from "@/domain/portrait/customerGroups";
 import type { Conversation } from "@/types/chatCanonical";
@@ -141,7 +140,7 @@ export function BatchCustomerGrid({ conversations, selectedIds, loading = false,
       render: (_, group) => (
         <div className="min-w-0">
           <div className="truncate text-xs text-slate-500" title={group.representative.latestMessage}>{group.representative.latestMessage || "—"}</div>
-          <div className="text-[11px] text-slate-400">{conversationTimeLabel(group.representative.updatedAt)}</div>
+          <div className="text-[11px] text-slate-400"><TimeText value={group.representative.updatedAt} /></div>
         </div>
       ),
     },
@@ -276,7 +275,7 @@ function VersionCell({ group }: { group: CustomerGroup }) {
   return (
     <div className="text-xs">
       v{customer.businessVersion}
-      {customer.lostAt ? <span className="text-[11px] text-slate-400"> · {formatDateTime(customer.lostAt)}</span> : null}
+      {customer.lostAt ? <span className="text-[11px] text-slate-400"> · <TimeText value={customer.lostAt} /></span> : null}
     </div>
   );
 }

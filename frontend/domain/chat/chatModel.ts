@@ -1,5 +1,5 @@
 import type { ChatMessage, Conversation, ConversationDetail } from "@/types/chatCanonical";
-import { formatMonthDay } from "@/domain/time";
+import { formatDateTime } from "@/domain/time";
 
 export type ConversationGroupMode = "time" | "status" | "count";
 
@@ -61,10 +61,6 @@ export function stageLabel(stage: ConversationDetail["customer"]["stage"] | (str
   } as Record<string, string>)[stage] ?? String(stage);
 }
 
-export function conversationTimeLabel(value: string) {
-  return formatMonthDay(value);
-}
-
 /** 可翻译消息：非卡片、非图片/视频、不携带卡片、内容非空（文本气泡）。 */
 export function isTranslatableMessage(message: ChatMessage) {
   return message.role !== "card" && !message.card && message.type !== "image" && message.type !== "video" && message.content.trim().length > 0;
@@ -122,7 +118,7 @@ export function buildConversationExport(details: ConversationDetail[]) {
       ].join("\n");
       const messages = conversation.messages
         .map((message) => {
-          const body = `**[${message.createdAt}] ${message.role}**\n\n${message.content}`;
+          const body = `**[${formatDateTime(message.createdAt)}] ${message.role}**\n\n${message.content}`;
           return message.translatedContent ? `${body}\n\n译文：${message.translatedContent}` : body;
         })
         .join("\n\n");

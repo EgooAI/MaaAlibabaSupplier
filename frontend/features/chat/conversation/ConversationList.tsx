@@ -3,7 +3,8 @@
 import { Avatar, Button, Checkbox, Empty, Radio, Space, Tag, Typography } from "antd";
 import { useMemo } from "react";
 import { avatarColorOf, avatarInitialOf } from "@/domain/chat/avatarModel";
-import { conversationTimeLabel, dialogueCountOf, groupConversations } from "@/domain/chat/chatModel";
+import { dialogueCountOf, groupConversations } from "@/domain/chat/chatModel";
+import { TimeText } from "@/components/TimeText";
 import { portraitStageColor, portraitStageLabel } from "@/domain/portrait/portraitModel";
 import { InboxBadges } from "./InboxBadges";
 import { EMPTY_TEXT } from "@/components/empty";
@@ -86,7 +87,7 @@ export function ConversationList({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                          <Typography.Text strong ellipsis>{item.customer.name}</Typography.Text>
-                         <span className="shrink-0 text-[11px] text-slate-400">{groupMode === "count" ? `${dialogueCountOf(item)} 条` : conversationTimeLabel(item.updatedAt)}</span>
+                         <span className="shrink-0 text-[11px] text-slate-400">{groupMode === "count" ? `${dialogueCountOf(item)} 条` : <TimeText value={item.updatedAt} />}</span>
                       </div>
                       {item.latestMessage ? <div className="mt-1 truncate text-xs text-slate-500">{item.latestMessage}</div> : null}
                       <div className="mt-1.5 flex flex-wrap items-center gap-1">

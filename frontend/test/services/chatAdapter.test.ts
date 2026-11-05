@@ -91,7 +91,7 @@ describe("chat adapter", () => {
         d90: expect.objectContaining({ productViews: 12 }),
       }),
       latestMessage: "聚合最新内容",
-      updatedAt: "2026-09-08 11:00",
+      updatedAt: "2026-09-08 11:00:00",
       unreadCount: 1,
       replyState: "needs_reply", pendingSince: 100, dueAt: 86500, isOverdue: true, historyPending: false, uncertain: false,
     });
@@ -101,7 +101,7 @@ describe("chat adapter", () => {
     const detail = adaptConversationDetail(aggregate, { cards: [card] });
 
     expect(detail.messages).toMatchObject([
-      { id: "message-1", role: "buyer", externalMid: "message-1", senderAid: 101, read: false, content: "需要报价", createdAt: "2026-09-08 10:10", rawContent: { text: "需要报价" } },
+      { id: "message-1", role: "buyer", externalMid: "message-1", senderAid: 101, read: false, content: "需要报价", createdAt: "2026-09-08 10:10:00", rawContent: { text: "需要报价" } },
       { id: "message-card", role: "card", content: "系统推荐卡片", card },
       { role: "seller", content: "sure" },
       { role: "system", content: "sys" },
