@@ -27,6 +27,11 @@ export interface TranslationQueryResult {
   translations: Record<string, string | null>;
 }
 
+/** 商家中文草稿按买家语言译出的结果，只返回文本，不进入翻译缓存或发送队列。 */
+export interface ComposeTranslationResult {
+  translation: string;
+}
+
 export interface SendMessageInput {
   conversationId: string;
   content: string;

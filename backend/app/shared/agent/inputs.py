@@ -81,6 +81,15 @@ def build_translation_input(
     return "\n".join(parts)
 
 
+def build_compose_translation_input(*, transcript: str, text: str) -> str:
+    """Build the input for translating a merchant draft with the conversation as context."""
+    parts = []
+    if transcript.strip():
+        parts.append(f"## 对话记录\n\n{transcript}")
+    parts.append(f"## 待翻译草稿\n\n{text}")
+    return "\n\n".join(parts)
+
+
 def build_reply_suggestion_input(transcript: str) -> str:
     return f"## 对话记录\n\n{transcript}"
 

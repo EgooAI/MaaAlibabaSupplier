@@ -14,13 +14,14 @@ import pytest
 
 from backend.app.api.routers import conversations
 from backend.app.shared.agent.suggestions import ReplySuggestion, ReplySuggestionResult
+from backend.app.shared.agent.system_agents import CHAT_COMPOSE_TRANSLATION_AGENT_APID
 from backend.app.shared.backend import account_context
 from backend.app.shared.backend.im_chat_db import ContactConv, MessageRow
 from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
 from backend.app.shared.crm import inbox_queries, sync
 from backend.app.shared.crm.identities import message_external_id
 from backend.app.shared.crm.inbox_store import InboxStore
-from backend.app.shared.crm.sdk import AccountMapping
+from backend.app.shared.crm.sdk import AccountMapping, TranslateManager
 from backend.app.shared.mitm.pool import SelfInfo, UserInfo
 from backend.tests.test_connection_api import client, sdk
 from sqlmodel import Session
@@ -481,6 +482,29 @@ def test_shared_sid_messages_follow_directory_membership(client, archive, tmp_pa
         assert client.post(f"/api/conversations/{sid}/read", json={"read_snapshot": detail_a["read_snapshot"]}).status_code == 409
     # Filtering is only a view: both SDK rows still exist under the same SID.
     assert {m.external_mid for m in adapter.messages.list_message()} == set(mids.values())
+
+
+def test_compose_translation_uses_conversation_context_and_leaves_no_trace(client, archive, monkeypatch):
+    _, apply = archive
+    apply(("buyer", [row("m1", text="BUYER_CONTEXT_LINE")]))
+    sid = data(client)["items"][0]["sid"]
+    agent = Mock(return_value="  Shipping takes 3 days.\n")
+    monkeypatch.setattr(conversations, "run_chat_tool_agent", agent)
+    monkeypatch.setattr(InboxStore, "mark_read", Mock(side_effect=AssertionError("translation must not mark read")))
+
+    response = client.post(f"/api/conversations/{sid}/compose-translation", json={"text": " 三天内发货 "})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == {"translation": "Shipping takes 3 days."}
+    apid, prompt = agent.call_args.args
+    assert apid == CHAT_COMPOSE_TRANSLATION_AGENT_APID
+    assert "BUYER_CONTEXT_LINE" in prompt and "三天内发货" in prompt
+    assert TranslateManager().list_translate() == []
+
+    assert client.post(f"/api/conversations/{sid}/compose-translation", json={"text": "  "}).status_code == 422
+    assert client.post("/api/conversations/999999/compose-translation", json={"text": "你好"}).status_code == 404
+    agent.return_value = "   "
+    assert client.post(f"/api/conversations/{sid}/compose-translation", json={"text": "你好"}).status_code == 502
 
 
 def test_ai_and_export_use_the_visible_ledger_without_marking_read(client, archive, tmp_path, monkeypatch):

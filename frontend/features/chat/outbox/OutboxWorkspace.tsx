@@ -12,7 +12,7 @@ import { useOutbox } from "./useOutbox";
 import { ScreenshotConfirmation } from "./ScreenshotConfirmation";
 import type { PendingIntent } from "./intentStorage";
 
-export function OutboxWorkspace({ conversation, takePendingIntent, ...composer }: Omit<ChatComposerProps, "onSend" | "loading"> & { conversation: ConversationDetail; takePendingIntent?: (content: string) => string | undefined }) {
+export function OutboxWorkspace({ conversation, takePendingIntent, ...composer }: Omit<ChatComposerProps, "onSend" | "loading" | "conversationId"> & { conversation: ConversationDetail; takePendingIntent?: (content: string) => string | undefined }) {
   const { snapshot, blocked } = useAccount();
   const outbox = useOutbox(conversation.id);
   const [submission, setSubmission] = useState<{ content: string; action?: "send" | "test"; newIntent?: boolean; intent?: PendingIntent; intentId?: string }>();
@@ -69,7 +69,7 @@ export function OutboxWorkspace({ conversation, takePendingIntent, ...composer }
       </article>)}
     </section>
     </Drawer>
-    <ChatComposer {...composer} loading={outbox.busy} onSend={() => {
+    <ChatComposer {...composer} conversationId={conversation.id} loading={outbox.busy} onSend={() => {
       const content = composer.value.trim();
       // A submission only accepts the intent while the text still matches it.
       setSubmission({ content, intentId: takePendingIntent?.(content) });

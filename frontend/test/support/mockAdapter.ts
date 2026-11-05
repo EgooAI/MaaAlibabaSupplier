@@ -356,6 +356,13 @@ export const mockBackend: OperationsBackend = {
     return delay(detail.analysis);
   },
 
+  composeTranslation: async (conversationId, text) => {
+    requireSystemAgent(SYSTEM_AGENT_APIDS.composeTranslation);
+    buildConversationDetail(conversationId);
+    if (!text.trim()) throw new Error("请输入需要翻译的内容");
+    return delay({ translation: `[EN] ${text.trim()}` });
+  },
+
   sendMessage: async ({ conversationId, content, action, idempotency_key }) => {
     requireMockClient();
     const conversation = buildConversationDetail(conversationId);

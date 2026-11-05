@@ -17,6 +17,7 @@ import { CustomerInfo } from "./conversation/CustomerInfo";
 import { MessageTimeline } from "./conversation/MessageTimeline";
 import { TranslationToolbar } from "./conversation/TranslationToolbar";
 import { useChatWorkbench } from "./hooks/useChatWorkbench";
+import { useLocalTime } from "./hooks/useLocalTime";
 import { DataDirBanner } from "@/features/settings/DataDirBanner";
 import { AssistantSuggestionModal } from "./modals/AssistantSuggestionModal";
 import { ForkSessionDrawer } from "./modals/ForkSessionDrawer";
@@ -54,6 +55,7 @@ function ChatWorkspace() {
     changeQuery(inboxQueryFromUrl(new URLSearchParams(params)));
   }, [params, changeQuery]);
   const active = workbench.activeConversation;
+  const localTime = useLocalTime(active?.customer.country);
   const [customerInfoOpen, setCustomerInfoOpen] = useState(false);
   const [forkIndex, setForkIndex] = useState<number>();
   const [analysisFocus, setAnalysisFocus] = useState<AnalysisFocus>("intent");
@@ -111,7 +113,7 @@ function ChatWorkspace() {
         {isMobile ? <Button type="text" aria-label="返回列表" icon={<ArrowLeftOutlined />} onClick={() => setMobileView("list")} /> : null}
         <div className="min-w-0">
           <div className="truncate">{active?.customer.name || "消息时间线"}</div>
-          {active && (active.customer.company || active.customer.country) ? <div className="truncate text-xs font-normal text-slate-500">{[active.customer.company, active.customer.country].filter(Boolean).join(" · ")}</div> : null}
+          {active && (localTime || active.customer.company || active.customer.country) ? <div className="truncate text-xs font-normal text-slate-500">{[localTime, active.customer.company, active.customer.country].filter(Boolean).join(" · ")}</div> : null}
         </div>
       </div>}
       extra={

@@ -20,11 +20,15 @@ from backend.app.shared.backend.account_context import AccountContext, get_accou
 from backend.app.shared.backend.image_fetch import ImageFetchError, ImageUnavailable, fetch_image
 from backend.app.shared.backend.outbox_service import get_outbox_service
 from backend.app.shared.backend.gui_session import capture_gui_session, run_guarded
-from backend.app.shared.agent.inputs import build_analysis_input
+from backend.app.shared.agent.inputs import build_analysis_input, build_compose_translation_input
 from backend.app.shared.agent.reply_tool import ReplyScope
 from backend.app.shared.agent.runner import AgentRunError, run_chat_tool_agent
 from backend.app.shared.agent.suggestions import NoReplyIntentError, generate_reply_suggestions
-from backend.app.shared.agent.system_agents import CHAT_CUSTOMER_STAGE_AGENT_APID, CHAT_REPLY_SUGGESTION_AGENT_APID
+from backend.app.shared.agent.system_agents import (
+    CHAT_COMPOSE_TRANSLATION_AGENT_APID,
+    CHAT_CUSTOMER_STAGE_AGENT_APID,
+    CHAT_REPLY_SUGGESTION_AGENT_APID,
+)
 from backend.app.shared.crm.intent_store import IntentStore, STATUS_REQUESTED
 from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.backend.maafw_runner import goto_contact
@@ -70,6 +74,11 @@ images = APIRouter(route_class=OutboxObservationRoute)
 
 _STAGE_TASK = "分析客户当前所处成交阶段，并给出下一步推进建议。"
 _SCORE_RE = re.compile(r"(\d+(?:\.\d+)?)")
+COMPOSE_TRANSLATION_MAX_CHARS = 4000
+
+
+class ComposeTranslationInput(BaseModel):
+    text: str = Field(max_length=COMPOSE_TRANSLATION_MAX_CHARS)
 
 
 class InboxFilters(BaseModel):
@@ -713,6 +722,39 @@ def suggestions(conversation_id: int) -> dict:
         "reasoning": result.reasoning,
         "restricted": result.restricted,
     })
+
+
+@router.post("/api/conversations/{conversation_id}/compose-translation")
+def compose_translation(conversation_id: int, body: ComposeTranslationInput) -> dict:
+    """Translate a merchant draft into the buyer's language, using the conversation as context.
+
+    The result is only returned: it never touches the translation cache, the
+    outbox or the draft store, so sending stays behind the usual confirmation.
+    """
+    text = body.text.strip()
+    if not text:
+        raise AppError("请输入需要翻译的内容", status_code=422)
+    store, context = _inbox_store()
+    conv = _scoped_conversation(store, context, conversation_id, CRMAdapter())
+    if conv is None:
+        raise AppError("会话不存在", status_code=404)
+    try:
+        transcript = transcript_markdown(conv.messages, resolver=CrmResolver(context.self_ali_id), options=AGENT_OPTIONS)
+        raw = run_chat_tool_agent(
+            CHAT_COMPOSE_TRANSLATION_AGENT_APID,
+            build_compose_translation_input(transcript=transcript, text=text),
+        )
+    except AgentRunError as exc:
+        raise AppError(exc.message, status_code=exc.status_code)
+    except AppError:
+        raise
+    except Exception:
+        logger.exception("request failed")
+        return api_error("服务器内部错误", status_code=500)
+    translation = (raw or "").strip()
+    if not translation:
+        raise AppError("翻译结果为空", status_code=502)
+    return ok({"translation": translation})
 
 
 @router.get("/api/conversations/{conversation_id}/analysis")

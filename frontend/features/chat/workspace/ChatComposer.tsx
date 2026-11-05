@@ -1,13 +1,16 @@
 "use client";
 
 import { MessageComposer } from "@/components/MessageComposer";
-import { BulbOutlined } from "@ant-design/icons";
+import { BulbOutlined, TranslationOutlined } from "@ant-design/icons";
 import { Button } from "antd";
+import { useState } from "react";
 import { useAccount } from "@/features/account/AccountProvider";
+import { ComposeTranslator } from "./ComposeTranslator";
 
 type ChatToolKey = "suggestions" | "intent-analysis" | "stage-analysis";
 
 export type ChatComposerProps = {
+  conversationId: string;
   value: string;
   onChange: (value: string) => void;
   onOpenSuggestions: () => void;
@@ -18,6 +21,7 @@ export type ChatComposerProps = {
 };
 
 export function ChatComposer({
+  conversationId,
   value,
   onChange,
   onOpenSuggestions,
@@ -29,6 +33,7 @@ export function ChatComposer({
   const { snapshot, blocked } = useAccount();
   const canOperate = !blocked && Boolean(snapshot?.capabilities.operate_client);
   const canUseAi = !blocked && Boolean(snapshot?.capabilities.use_ai);
+  const [translateOpen, setTranslateOpen] = useState(false);
   const tools: Array<{ key: ChatToolKey; label: string }> = [
     { key: "intent-analysis", label: "客户意图分析" },
     { key: "stage-analysis", label: "客户所处阶段分析" },
@@ -46,7 +51,10 @@ export function ChatComposer({
     <>
       <MessageComposer
         compact
-        footer={<Button type="text" size="small" icon={<BulbOutlined />} disabled={!canUseAi} onClick={onOpenSuggestions}>AI 建议</Button>}
+        footer={<>
+          <Button type="text" size="small" icon={<BulbOutlined />} disabled={!canUseAi} onClick={onOpenSuggestions}>AI 建议</Button>
+          <Button type="text" size="small" aria-label="发信翻译" aria-pressed={translateOpen} icon={<TranslationOutlined />} disabled={!canUseAi} onClick={() => setTranslateOpen((open) => !open)}>翻译</Button>
+        </>}
         value={value}
         onChange={onChange}
         tools={tools.map((tool) => ({ ...tool, disabled: !canUseAi }))}
@@ -56,6 +64,7 @@ export function ChatComposer({
         loading={loading}
         onSend={onSend}
       />
+      {translateOpen ? <ComposeTranslator conversationId={conversationId} draft={value} onDraftChange={onChange} /> : null}
     </>
   );
 }

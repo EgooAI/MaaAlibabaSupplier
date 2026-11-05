@@ -1,7 +1,7 @@
 import type { AgentConsoleState, AgentPresetRevision, AgentTestInput, AgentTestResult, AgentTestSession, AgentToolDefinition, DbAgentPreset, DocumentLlmConfig, ForkAgentSessionInput, SystemAgentDefinition } from "@/types/agent";
 import type { AssistantSuggestionResult, ConversationAnalysis, ConversationDetail } from "@/types/chatCanonical";
 import type { ConversationPage, ConversationQuery, InboxOverview, InboxSettings, ReadReceipt } from "@/types/inbox";
-import type { ExportConversationsInput, ExportConversationsResult, OutboxTask, RequestTranslationsInput, RequestTranslationsResult, TranslationQueryInput, TranslationQueryResult, TranslationJobSnapshot, SendMessageInput, SendMessageResult, ConversationRevision } from "@/types/chatOperations";
+import type { ComposeTranslationResult, ExportConversationsInput, ExportConversationsResult, OutboxTask, RequestTranslationsInput, RequestTranslationsResult, TranslationQueryInput, TranslationQueryResult, TranslationJobSnapshot, SendMessageInput, SendMessageResult, ConversationRevision } from "@/types/chatOperations";
 import type { PortraitBatchInput, PortraitBatchResult, PortraitExportInput, PortraitExportResult, PortraitOperationEntry, PortraitTag } from "@/types/portrait";
 import type { SelfInfo } from "@/types/home";
 import type { AccountEpoch, ConnectionSnapshot } from "@/types/connection";
@@ -35,6 +35,7 @@ export interface OperationsBackend {
   getConversation(id: string): Promise<ConversationDetail>;
   getAssistantSuggestions(conversationId: string): Promise<AssistantSuggestionResult>;
   analyzeConversation(conversationId: string): Promise<ConversationAnalysis>;
+  composeTranslation(conversationId: string, text: string): Promise<ComposeTranslationResult>;
   sendMessage(input: SendMessageInput): Promise<SendMessageResult>;
   listOutbox(conversationId: string): Promise<OutboxTask[]>;
   getOutbox(id: string): Promise<OutboxTask>;

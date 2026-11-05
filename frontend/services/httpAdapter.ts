@@ -173,7 +173,7 @@ function prepareAccountRequest(path: string, init?: RequestInit) {
   const ticket = captureAccount();
   const { capabilities, client } = accountSession.get().snapshot!;
   const operates = /\/goto-contact$/.test(path) || (/\/conversations\/[^/]+\/messages$/.test(path) && init?.method === "POST") || /\/outbox\/[^/]+\/(confirm|retry)$/.test(path);
-  const usesAi = /\/(suggestions|analysis)$/.test(path) || (path === "/api/messages/translations" && init?.method === "POST");
+  const usesAi = /\/(suggestions|analysis|compose-translation)$/.test(path) || (path === "/api/messages/translations" && init?.method === "POST");
   if (operates && !capabilities.operate_client) throw new Error("请先选择卖家账号，并等待客户端窗口自动接入");
   if (path === "/api/status/node-test" && !client.connected) throw new Error("请先等待客户端窗口自动接入，再运行只读界面检查");
   if (usesAi && !capabilities.use_ai) throw new Error("AI 暂不可用，请检查账号数据和模型配置");
@@ -228,6 +228,7 @@ export const httpBackend: OperationsBackend = {
   },
   getAssistantSuggestions: (conversationId) => requestAi(`/api/conversations/${encodeURIComponent(conversationId)}/suggestions`),
   analyzeConversation: (conversationId) => requestAi(`/api/conversations/${encodeURIComponent(conversationId)}/analysis`),
+  composeTranslation: (conversationId, text) => requestAi(`/api/conversations/${encodeURIComponent(conversationId)}/compose-translation`, { method: "POST", body: JSON.stringify({ text }) }),
   sendMessage: async ({ conversationId, ...input }) => {
     if (!input.idempotency_key?.trim()) throw new Error("提交消息必须提供已持久化的幂等键");
     return requestJson(`/api/conversations/${encodeURIComponent(conversationId)}/messages`, { method: "POST", body: JSON.stringify(input) });

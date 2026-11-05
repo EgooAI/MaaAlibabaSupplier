@@ -265,6 +265,19 @@ describe("http adapter contract", () => {
     ]);
   });
 
+  it("posts compose translations to the conversation and gates them on use_ai", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: { translation: "Hello" } })));
+    globalThis.fetch = fetchMock;
+    await expect(httpBackend.composeTranslation("42", "你好")).resolves.toEqual({ translation: "Hello" });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect([url, init.method, JSON.parse(init.body)]).toEqual(["/api/conversations/42/compose-translation", "POST", { text: "你好" }]);
+
+    accountSession.accept({ ...structuredClone(connectionSnapshot), client: { ...connectionSnapshot.client, connected: true }, capabilities: { read_chat: true, use_ai: false, operate_client: true } });
+    globalThis.fetch = vi.fn();
+    await expect(httpBackend.composeTranslation("42", "你好")).rejects.toThrow("AI 暂不可用");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("gates translation submissions on the use_ai capability but not cache queries", async () => {
     accountSession.accept({ ...structuredClone(connectionSnapshot), client: { ...connectionSnapshot.client, connected: true }, capabilities: { read_chat: true, use_ai: false, operate_client: true } });
     globalThis.fetch = vi.fn();
