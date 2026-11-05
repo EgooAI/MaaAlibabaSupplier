@@ -65,7 +65,7 @@ describe("message timeline", () => {
       onTranslate,
       onOpenCard: vi.fn(),
     });
-    const translateButtons = [...container.querySelectorAll("button")].filter(button => button.textContent === "翻译");
+    const translateButtons = container.querySelectorAll<HTMLButtonElement>('button[aria-label="翻译本条消息"]');
     expect(translateButtons).toHaveLength(1);
     await act(async () => translateButtons[0].click());
     expect(onTranslate).toHaveBeenCalledExactlyOnceWith(target);
@@ -97,7 +97,7 @@ describe("message timeline", () => {
       expect(loadImage.mock.calls).toEqual([["42", "pic"], ["42", "gone"]]);
       expect(container.querySelector("img")?.getAttribute("src")).toBe("blob:chat-image");
       expect(container.textContent).toContain("图片已失效");
-      expect([...container.querySelectorAll("button")].some(button => button.textContent === "翻译")).toBe(false);
+      expect(container.querySelector('button[aria-label="翻译本条消息"]')).toBeNull();
     } finally {
       Object.assign(URL, { createObjectURL: original.create, revokeObjectURL: original.revoke });
     }
@@ -137,12 +137,68 @@ describe("message timeline", () => {
       onOpenCard: vi.fn(),
     });
     expect(container.querySelector('[role="status"]')?.textContent).toContain("翻译中");
-    for (const label of ["翻译", "翻译失败，点击重试"]) {
-      const action = [...container.querySelectorAll("button")].find(button => button.textContent === label)!;
+    const failedRetry = [...container.querySelectorAll("button")].find(button => button.textContent === "翻译失败，点击重试")!;
+    for (const action of [container.querySelector<HTMLButtonElement>('button[aria-label="翻译本条消息"]')!, failedRetry]) {
       expect(action.disabled).toBe(true);
       await act(async () => action.click());
     }
     expect(onTranslate).not.toHaveBeenCalled();
+  });
+
+  describe("long-press actions", () => {
+    const press = (target: Element, init: PointerEventInit = {}) =>
+      target.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch", clientX: 5, clientY: 5, ...init }));
+    const sheetButtons = () => [...document.body.querySelectorAll(".ant-drawer button")].map((button) => button.textContent);
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      Object.defineProperty(navigator, "clipboard", { value: { writeText: vi.fn().mockResolvedValue(undefined) }, configurable: true });
+    });
+    afterEach(() => vi.useRealTimers());
+
+    it("opens the message actions after a touch hold and runs the chosen one", async () => {
+      const onTranslate = vi.fn();
+      const onForkFromMessage = vi.fn();
+      const target = message({ id: "b", content: "buyer text" });
+      await render({ messages: [message({ id: "a", content: "first" }), target], onTranslate, onForkFromMessage, onOpenCard: vi.fn() });
+
+      await act(async () => { press(container.querySelector('[data-message-id="b"] [data-message-text]')!); vi.advanceTimersByTime(500); });
+      expect(sheetButtons()).toEqual(["翻译", "从此开始模拟", "复制"]);
+
+      const choose = (label: string) => [...document.body.querySelectorAll(".ant-drawer button")].find((button) => button.textContent === label) as HTMLButtonElement;
+      await act(async () => choose("复制").click());
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith("buyer text");
+      await act(async () => { press(container.querySelector('[data-message-id="b"] [data-message-text]')!); vi.advanceTimersByTime(500); });
+      await act(async () => choose("从此开始模拟").click());
+      expect(onForkFromMessage).toHaveBeenCalledExactlyOnceWith(1);
+      expect(onTranslate).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["a mouse press", { pointerType: "mouse" }, 500],
+      ["a release before the hold time", {}, 300],
+    ])("does not open the actions for %s", async (_name, init, wait) => {
+      await render({ messages: [message({ id: "a" })], onTranslate: vi.fn(), onForkFromMessage: vi.fn(), onOpenCard: vi.fn() });
+      const body = container.querySelector("[data-message-text]")!;
+      await act(async () => {
+        press(body, init);
+        vi.advanceTimersByTime(wait);
+        body.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+        vi.advanceTimersByTime(500);
+      });
+      expect(sheetButtons()).toEqual([]);
+    });
+
+    it("cancels the hold when the finger moves, as when scrolling", async () => {
+      await render({ messages: [message({ id: "a" })], onForkFromMessage: vi.fn(), onOpenCard: vi.fn() });
+      const body = container.querySelector("[data-message-text]")!;
+      await act(async () => {
+        press(body);
+        body.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 5, clientY: 60 }));
+        vi.advanceTimersByTime(600);
+      });
+      expect(sheetButtons()).toEqual([]);
+    });
   });
 
   it("renders the translation block for any party and hides it via showTranslations", async () => {
