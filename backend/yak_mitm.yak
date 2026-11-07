@@ -42,6 +42,7 @@ postToPython = fn(payload) {
         http.header("Authorization", "Bearer " + INTERNAL_TOKEN),
         http.body(payload),
         http.noredirect(),
+        http.save(false),
     )
     if err != nil {
         println("[!] Forwarding to Python failed (transport error)")
