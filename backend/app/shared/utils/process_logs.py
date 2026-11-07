@@ -197,7 +197,9 @@ class ProcessLogDrain:
         self.dropped_records = 0
         self.error_type: str | None = None
         self.finished = threading.Event()
-        self.thread = threading.Thread(target=self._run, daemon=True, name=f"{source}-logs")
+        from backend.app.background import get_background_runtime
+
+        self.thread = get_background_runtime().worker(f"{source}-logs", lambda stop: self._run())
 
     def start(self) -> ProcessLogDrain:
         self.thread.start()

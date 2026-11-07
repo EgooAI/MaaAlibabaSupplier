@@ -1,10 +1,12 @@
 """Experiments: creation from the three starting points, runs, and promotion."""
 
-import time
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Event
 
 import pytest
 
 from backend.tests.test_connection_api import client, sdk  # noqa: F401 - fixtures
+from backend.app.background import Worker, get_background_runtime
 from backend.app.api.routers import agent as agent_router
 from backend.app.shared.agent.experiment_runs import runs
 from backend.app.shared.agent.runner import ChatAgentTurn
@@ -38,13 +40,15 @@ def _create(client, **body):
     return client.post("/api/agent/experiments", json=payload)
 
 
-def _captured_run(monkeypatch, *, text="回答", wait=None):
+def _captured_run(monkeypatch, *, text="回答", wait=None, entered=None):
     calls: list[dict] = []
 
     def fake_run(apid, user_input, **kwargs):
         calls.append({"apid": apid, "user_input": user_input, **kwargs})
+        if entered is not None:
+            entered.set()
         if wait is not None:
-            wait.wait(5)
+            assert wait.wait(5)
         preset = kwargs.get("preset_override")
         return ChatAgentTurn(
             text=f"{text}:{(preset.prompt if preset else '')}", apid=apid,
@@ -56,16 +60,12 @@ def _captured_run(monkeypatch, *, text="回答", wait=None):
 
 
 def _wait_for_run(client, run_id: str, *, expected: str = "completed") -> dict:
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        response = client.get(f"/api/agent/runs/{run_id}")
-        assert response.status_code == 200, response.text
-        state = response.json()["data"]
-        if state["status"] != "running":
-            assert state["status"] == expected, state
-            return state
-        time.sleep(0.02)
-    raise AssertionError("run did not finish")
+    assert runs.get(run_id).worker.join(10), "run did not finish"
+    response = client.get(f"/api/agent/runs/{run_id}")
+    assert response.status_code == 200, response.text
+    state = response.json()["data"]
+    assert state["status"] == expected, state
+    return state
 
 
 def test_create_from_text_keeps_the_starting_point_and_variants(client):
@@ -172,17 +172,16 @@ def test_run_replays_one_step_against_each_pinned_version(client, monkeypatch):
 
 
 def test_run_conflict_returns_the_active_run_id_and_cancel_reaches_the_token(client, monkeypatch):
-    from threading import Event
-
     experiment = _create(client).json()["data"]
     client.post(f"/api/agent/experiments/{experiment['id']}/steps",
                 json={"mode": "buyer", "text": "第一句"})
-    release = Event()
-    _captured_run(monkeypatch, wait=release)
+    entered, release = Event(), Event()
+    _captured_run(monkeypatch, wait=release, entered=entered)
     try:
         first = client.post(f"/api/agent/experiments/{experiment['id']}/runs", json={"stepIndex": 0})
         assert first.status_code == 200, first.text
         run_id = first.json()["data"]["runId"]
+        assert entered.wait(3)
         second = client.post(f"/api/agent/experiments/{experiment['id']}/runs", json={"stepIndex": 0})
         assert second.status_code == 409
         assert second.json()["data"]["runId"] == run_id
@@ -192,45 +191,119 @@ def test_run_conflict_returns_the_active_run_id_and_cancel_reaches_the_token(cli
         assert runs.get(run_id).token.cancelled
     finally:
         release.set()
-    # A variant already in flight finishes before the run observes the cancel,
-    # so either outcome is correct here; the run must still reach a terminal state.
-    state = _wait_for_run(client, run_id)
-    assert state["status"] in ("cancelled", "completed")
+    _wait_for_run(client, run_id, expected="cancelled")
+    detail = client.get(f"/api/agent/experiments/{experiment['id']}").json()["data"]
+    assert detail["variants"][0]["messages"] == []
+    assert detail["progress"] == {}
 
 
-def test_a_cancelled_token_marks_every_variant_cancelled(client, monkeypatch):
-    import agent_pipeline.experiment_runner as sdk_runner
-
-    experiment = _create(client).json()["data"]
+def test_cancel_before_execution_never_calls_the_agent(client, monkeypatch):
+    experiment = _create(client, variants=[{"label": "A"}, {"label": "B"}]).json()["data"]
     client.post(f"/api/agent/experiments/{experiment['id']}/steps",
                 json={"mode": "buyer", "text": "第一句"})
 
-    def cancelled_run(*, steps, variant_ids, execute, cancel_token=None, max_parallel=4):
-        # Same contract as the SDK runner: a cancelled token stops before the
-        # step and reports every unfinished variant as cancelled. The states are
-        # written through the registry the caller polls, as the real runner's
-        # execute callback would.
-        state = runs.active_for(int(experiment["id"]))
-        deadline = time.monotonic() + 10
-        while not cancel_token.cancelled:
-            assert time.monotonic() < deadline, "cancel never reached the run"
-            time.sleep(0.01)
-        for variant_id in variant_ids:
-            state.update(variant_id, status="cancelled")
-        return sdk_runner.ExperimentRun(cancelled=True, steps=[
-            sdk_runner.StepRun(step=steps[0], variants=[
-                sdk_runner.VariantRun(variant_id=variant_id, status="cancelled")
-                for variant_id in variant_ids
-            ])
-        ])
+    runtime = get_background_runtime()
+    worker = runtime.worker
+    entered, release = Event(), Event()
+    calls = _captured_run(monkeypatch)
 
-    monkeypatch.setattr(sdk_runner, "run_experiment", cancelled_run)
-    started = client.post(f"/api/agent/experiments/{experiment['id']}/runs", json={"stepIndex": 0})
-    run_id = started.json()["data"]["runId"]
-    assert client.delete(f"/api/agent/runs/{run_id}").status_code == 200
+    def delayed_worker(name, run, **kwargs):
+        def delayed(stop):
+            entered.set()
+            assert release.wait(3)
+            run(stop)
+        return worker(name, delayed, **kwargs)
+
+    monkeypatch.setattr(runtime, "worker", delayed_worker)
+    try:
+        started = client.post(f"/api/agent/experiments/{experiment['id']}/runs", json={"stepIndex": 0})
+        run_id = started.json()["data"]["runId"]
+        assert entered.wait(3)
+        assert client.delete(f"/api/agent/runs/{run_id}").status_code == 200
+    finally:
+        release.set()
     state = _wait_for_run(client, run_id, expected="cancelled")
-    assert state["status"] == "cancelled"
-    assert [variant["status"] for variant in state["variants"]] == ["cancelled"]
+    assert [variant["status"] for variant in state["variants"]] == ["cancelled", "cancelled"]
+    assert calls == []
+
+
+def test_worker_start_failure_releases_run_conflict_for_retry(client, monkeypatch):
+    experiment = _create(client).json()["data"]
+    client.post(f"/api/agent/experiments/{experiment['id']}/steps",
+                json={"mode": "buyer", "text": "第一句"})
+    path = f"/api/agent/experiments/{experiment['id']}/runs"
+    rejected = []
+
+    def reject(worker):
+        rejected.append(worker.name.removeprefix("experiment-run-"))
+        raise RuntimeError("runtime is closing")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Worker, "start", reject)
+        response = client.post(path, json={"stepIndex": 0})
+    assert response.status_code == 503
+    state = runs.get(rejected[0]).snapshot()
+    assert state["status"] == "failed" and state["finishedAt"] is not None
+    assert state["variants"][0]["status"] == "failed"
+    _captured_run(monkeypatch)
+    retry = client.post(path, json={"stepIndex": 0})
+    assert retry.status_code == 200, retry.text
+    _wait_for_run(client, retry.json()["data"]["runId"])
+
+
+def test_shutdown_cancels_all_runs_and_waits_for_variant_calls(client, monkeypatch):
+    entered = Barrier(3)
+    release = Event()
+    runtime = get_background_runtime()
+    worker = runtime.worker
+    cancelled = []
+
+    def observed_worker(name, run, *, on_stop=None):
+        observed = Event()
+        cancelled.append(observed)
+
+        def stop():
+            on_stop()
+            observed.set()
+
+        return worker(name, run, on_stop=stop)
+
+    def blocked(apid, user_input, **kwargs):
+        entered.wait(timeout=3)
+        assert release.wait(3)
+        return ChatAgentTurn(text="late answer", apid=apid, agent_name="实验 Agent", mode="simulated")
+
+    monkeypatch.setattr(agent_router, "run_chat_agent", blocked)
+    monkeypatch.setattr(runtime, "worker", observed_worker)
+    experiments, states = [], []
+    try:
+        for _ in range(2):
+            experiment = _create(client).json()["data"]
+            experiments.append(experiment)
+            client.post(f"/api/agent/experiments/{experiment['id']}/steps",
+                        json={"mode": "buyer", "text": "第一句"})
+            response = client.post(f"/api/agent/experiments/{experiment['id']}/runs", json={"stepIndex": 0})
+            state = runs.get(response.json()["data"]["runId"])
+            states.append(state)
+        entered.wait(timeout=3)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            closing = pool.submit(runtime.shutdown, timeout=3)
+            try:
+                assert all(event.wait(3) for event in cancelled)
+                assert not closing.done()
+                assert all(state.active and state.worker.is_alive() for state in states)
+            finally:
+                release.set()
+            closing.result(timeout=3)
+    finally:
+        release.set()
+        for state in states:
+            assert state.worker.join(3)
+    for experiment, state in zip(experiments, states):
+        _wait_for_run(client, state.run_id, expected="cancelled")
+        detail = client.get(f"/api/agent/experiments/{experiment['id']}").json()["data"]
+        assert detail["variants"][0]["messages"] == []
+        assert detail["progress"] == {}
 
 
 def test_rejected_step_marks_the_variant_failed_with_its_reason(client, monkeypatch):
@@ -347,7 +420,9 @@ def test_a_step_cannot_be_replayed_into_the_same_transcript(client, monkeypatch)
 
     replay = client.post(base, json={"stepIndex": 0})
     assert replay.status_code == 409, replay.text
-    assert client.post(base, json={"stepIndex": 1}).status_code == 200
+    second = client.post(base, json={"stepIndex": 1})
+    assert second.status_code == 200
+    _wait_for_run(client, second.json()["data"]["runId"])
     # An explicit replay is allowed and truncates to the checkpoint, so the
     # transcript does not accumulate the same buyer message twice.
     forced = client.post(base, json={"stepIndex": 0, "force": True})

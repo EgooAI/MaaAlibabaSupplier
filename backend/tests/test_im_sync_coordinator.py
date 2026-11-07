@@ -11,6 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from backend.app.background import BackgroundRuntime
 from backend.app.shared.backend import im_db_middleware as module
 from backend.app.shared.backend import sync_coordinator as service_module
 from backend.app.shared.backend.account_context import AccountContext, account_lock, get_account_context
@@ -841,6 +842,63 @@ def test_stop_discards_inflight_startup_result_and_service_can_restart(mw, submi
         for call in submissions:
             call[3].set_result(committed(call[4]))
         service.stop()
+
+
+def test_stop_timeout_retains_worker_and_allows_cleanup_retry(mw, monkeypatch):
+    entered, release = Event(), Event()
+
+    def blocked_tick(**kwargs):
+        entered.set()
+        assert release.wait(5)
+
+    monkeypatch.setattr(mw, "sync_tick", blocked_tick)
+    service = service_module.SyncService(mw)
+    service.start()
+    try:
+        assert entered.wait(5)
+        with pytest.raises(TimeoutError):
+            service.stop(timeout=0)
+        state = service.observation()
+        assert state["alive"] and state["stopping"] and state["phase"] != "stopped"
+        with pytest.raises(RuntimeError, match="stopping"):
+            service.start()
+    finally:
+        release.set()
+        service.stop(timeout=5)
+    state = service.observation()
+    assert not state["alive"] and state["phase"] == "stopped"
+
+
+def test_runtime_shutdown_cleans_independent_service_and_drains_crm(mw, submissions, monkeypatch):
+    runtime = BackgroundRuntime()
+    monkeypatch.setattr(service_module, "get_background_runtime", lambda: runtime)
+    source = encrypted_db(mw._data_dir)
+    save_key("10001", KEY, "manual")
+    mw.retry_connection()
+    source.touch()
+    mw._last_refresh_start = 0
+    mw.sync_tick()
+    pending = mw._sync_future
+    cancelled = Event()
+    pending.add_done_callback(lambda _: cancelled.set())
+    service = service_module.SyncService(mw)
+    service.start()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        shutdown = pool.submit(runtime.shutdown)
+        try:
+            assert cancelled.wait(5)
+            assert pending.cancelled() and not shutdown.done()
+            assert mw._coordinator.pinned_paths() == {submissions[0][0]}
+        finally:
+            for call in submissions:
+                if not call[3].done():
+                    call[3].set_result(committed(call[4]))
+        shutdown.result(timeout=5)
+    assert not service.observation()["alive"]
+    assert service.observation()["phase"] == "stopped"
+    assert not mw._coordinator.pinned_paths()
+    assert mw.key_validation_status() == "unverified"
 
 
 def test_startup_queue_and_status_observation_do_not_validate(mw, monkeypatch):

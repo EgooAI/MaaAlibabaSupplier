@@ -11,10 +11,11 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from threading import Event, RLock, Thread
+from threading import Event, RLock
 
 from loguru import logger
 
+from backend.app.background import get_background_runtime
 from backend.app.api.envelope import AppError
 from backend.app.shared.backend import gui_session, maafw_runner
 from backend.app.shared.backend.account_context import AccountContext, get_account_context
@@ -76,9 +77,12 @@ def run_targets(
     resolved: Callable[[str], bool],
     sleep: Callable[[float], None] = time.sleep,
     dwell: float = SWEEP_DWELL_S,
+    stop: Event | None = None,
 ) -> list[SweepOutcome]:
     outcomes: list[SweepOutcome] = []
     for target in targets:
+        if stop is not None and stop.is_set():
+            break
         ok, _ = navigate(target.contact_ali_id)
         if not ok:
             outcomes.append(SweepOutcome(target, False, ()))
@@ -106,7 +110,7 @@ class CardSweepService:
         self._stop = Event()
         self._wake = Event()
         self._lifecycle_lock = RLock()
-        self._thread: Thread | None = None
+        self._thread = None
         self._observation_lock = RLock()
         self._observation = {
             "started_at": None, "heartbeat_at": None, "last_progress_at": None, "last_sweep_at": None,
@@ -136,46 +140,44 @@ class CardSweepService:
 
     def start(self) -> CardSweepService:
         with self._lifecycle_lock:
-            if self._thread is not None and not self._stop.is_set():
+            if self._thread is not None:
+                if self._stop.is_set():
+                    raise RuntimeError("Card sweep service is stopping")
                 return self
-            self._stop.clear()
+            runtime = get_background_runtime()
+            name = f"card-sweep-{id(self):x}"
+            self._thread = runtime.schedule(name, self._run_once, delay=None, wake=self._wake)
+            self._stop = self._thread.stop_event
+            runtime.on_shutdown(name, self.stop, priority=40)
             self._observe("idle", started_at=self._clock(), last_error=None)
-            self._thread = Thread(target=self._run, name="card-sweep", daemon=True)
             self._thread.start()
         return self
 
     def trigger(self) -> None:
         """Queue one manual sweep on the idle service thread."""
-        self._wake.set()
+        worker = self._thread
+        if worker is None:
+            self._wake.set()
+        else:
+            worker.trigger()
 
     def stop(self, timeout: float = 5.0) -> None:
         with self._lifecycle_lock:
-            thread = self._thread
-            if thread is None:
+            if self._thread is None:
                 return
-            self._stop.set()
-            self._wake.set()
-        thread.join(timeout)
-        with self._lifecycle_lock:
+            self._thread.stop(timeout)
             self._thread = None
-        self._observe("stopped")
-
-    def _run(self) -> None:
-        try:
-            while not self._stop.is_set():
-                self._wake.wait()
-                self._wake.clear()
-                if self._stop.is_set():
-                    break
-                try:
-                    self._sweep_once()
-                except Exception:
-                    logger.exception("Card sweep iteration failed")
-                    self._observe("idle", last_error="sweep_failed")
-                with self._observation_lock:
-                    self._observation["completed_iterations"] += 1
-        finally:
+            self._wake.clear()
             self._observe("stopped")
+
+    def _run_once(self) -> None:
+        try:
+            self._sweep_once()
+        except Exception:
+            logger.exception("Card sweep iteration failed")
+            self._observe("idle", last_error="sweep_failed")
+        with self._observation_lock:
+            self._observation["completed_iterations"] += 1
 
     def _sweep_once(self) -> None:
         context = get_account_context()
@@ -212,7 +214,8 @@ class CardSweepService:
                 return result
             return False, "GUI guard returned no result"
 
-        outcomes = run_targets(targets, navigate=navigate, resolved=self._resolved, sleep=self._sleep)
+        outcomes = run_targets(targets, navigate=navigate, resolved=self._resolved, sleep=self._sleep,
+                               stop=self._stop)
         for outcome in outcomes:
             log_event(
                 "card.sweep_target", sid=outcome.target.sid, key_kind="ali_id",

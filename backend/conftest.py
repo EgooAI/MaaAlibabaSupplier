@@ -4,7 +4,6 @@ import os
 import socket
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -70,6 +69,9 @@ def pytest_configure(config):
 
 
 def _cleanup_runtime():
+    background = sys.modules.get("backend.app.background")
+    if background is not None:
+        background.shutdown_background()
     sweep = sys.modules.get("backend.app.shared.backend.card_sweep_service")
     if sweep is not None:
         sweep.stop_card_sweep_service()
@@ -92,7 +94,11 @@ def _cleanup_runtime():
     sync = sys.modules.get("backend.app.shared.crm.sync")
     if sync is not None:
         sync._SYNC_EXECUTOR.shutdown(wait=True)
-        sync._SYNC_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="crm-sync")
+
+    if background is not None:
+        background._runtime = background.BackgroundRuntime()
+        if sync is not None:
+            sync._SYNC_EXECUTOR = background.get_background_runtime().pool("crm-sync", max_workers=1)
 
     middleware = sys.modules.get("backend.app.shared.backend.im_db_middleware")
     if middleware is not None:
@@ -138,9 +144,11 @@ def isolated_backend(request):
             _set_test_paths(patch, Path(temporary))
             from backend.app.api import auth, main
             from backend.app import updater
+            from backend.app.shared.backend import account_context
 
             patch.setattr(main, "LOGIN_LIMITER", auth.LoginLimiter())
             patch.setattr(updater, "_instance", None)
+            patch.setattr(account_context, "_context", None)
             if host_test:
                 _restore_agent_registries()
             else:

@@ -23,6 +23,7 @@ import backend.app.agent.nodes.auxi.send_message
 from backend.app.shared.utils.env import load_workdir_env
 from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.utils.logging import configure_logging
+from backend.app.background import get_background_runtime, shutdown_background
 
 
 def main() -> None:
@@ -36,6 +37,7 @@ def main() -> None:
     socket_id = sys.argv[-1]
     shutdown_requested = threading.Event()
     shutdown_lock = threading.Lock()
+    runtime = get_background_runtime()
 
     def _shutdown_agent_server() -> None:
         with shutdown_lock:
@@ -52,27 +54,25 @@ def main() -> None:
         if shutdown_requested.is_set():
             raise KeyboardInterrupt
         log_event("agent.signal", signal=signum)
-        threading.Thread(target=_shutdown_agent_server, daemon=True, name="shutdown").start()
+        runtime.worker("agent-shutdown", lambda stop: _shutdown_agent_server()).start()
 
     signal.signal(signal.SIGINT, _request_shutdown)
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, _request_shutdown)
 
-    join_thread: threading.Thread | None = None
+    runtime.on_shutdown("agent-server", _shutdown_agent_server)
     try:
         AgentServer.start_up(socket_id)
-        join_thread = threading.Thread(target=AgentServer.join, name="maa-agent-server-join")
-        join_thread.start()
+        join_thread = runtime.worker("maa-agent-server-join", lambda stop: AgentServer.join()).start()
         while join_thread.is_alive():
             join_thread.join(timeout=0.2)
     except KeyboardInterrupt:
         logger.info("[agent] interrupted; shutting down...")
     finally:
-        _shutdown_agent_server()
-        if join_thread is not None and join_thread.is_alive():
-            join_thread.join(timeout=5.0)
-            if join_thread.is_alive():
-                logger.warning("[agent] AgentServer.join() still blocking after shutdown; forcing exit")
+        try:
+            shutdown_background()
+        except ExceptionGroup:
+            logger.exception("Agent background shutdown did not complete")
 
 
 if __name__ == "__main__":

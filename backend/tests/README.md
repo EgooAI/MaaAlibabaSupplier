@@ -60,6 +60,15 @@ Do not start `backend.app.main` for these tests. Use the FastAPI application wit
 New external access paths must have explicit test replacements; the fixture is
 not an operating-system sandbox.
 
+## Background Lifecycle Coverage
+
+`test_background.py` uses controlled events and timer wakeups to verify timer/trigger
+coalescing, readiness deferral and recovery, cancellation, bounded joins including
+Future callbacks, account-context isolation, and cleanup after partial startup.
+`test_agent_lifecycle.py` mocks the native Agent server and verifies signal shutdown
+and startup-failure cleanup. Sync, card-sweep, updater and experiment suites exercise
+their domain-specific shutdown and persistence behavior through the same runtime.
+
 ## GUI Regression Coverage
 
 - `test_gui_tasks.py` checks acceptance snapshots, response preparation failures,

@@ -1,9 +1,9 @@
 import json
-import time
 from threading import Event
 
 import pytest
 
+from backend.app.background import BackgroundRuntime
 from backend.app.api.envelope import AppError
 from backend.app.shared.backend import card_sweep_service as service_module
 from backend.app.shared.backend.account_context import AccountContext
@@ -123,15 +123,87 @@ def test_start_stays_idle_until_a_manual_trigger(monkeypatch):
         done.set()
 
     monkeypatch.setattr(service, "_sweep_once", fake_sweep)
+    for iteration in range(2):
+        done.clear()
+        service.start()
+        try:
+            assert not done.wait(0.2)
+            service.trigger()
+            assert done.wait(2.0)
+        finally:
+            service.stop()
+        assert len(calls) == iteration + 1
+
+
+def test_stop_timeout_retains_worker_and_allows_cleanup_retry(monkeypatch):
+    service = CardSweepService()
+    entered, release = Event(), Event()
+
+    def blocked_sweep():
+        entered.set()
+        assert release.wait(5)
+
+    monkeypatch.setattr(service, "_sweep_once", blocked_sweep)
     service.start()
+    service.trigger()
     try:
-        assert not done.wait(0.2)
-        service.trigger()
-        assert done.wait(2.0)
-        time.sleep(0.1)
-        assert len(calls) == 1
+        assert entered.wait(5)
+        with pytest.raises(TimeoutError):
+            service.stop(timeout=0)
+        state = service.observation()
+        assert state["alive"] and state["stopping"] and state["phase"] != "stopped"
+        with pytest.raises(RuntimeError, match="stopping"):
+            service.start()
+        with pytest.raises(RuntimeError, match="stopping"):
+            service.trigger()
     finally:
+        release.set()
         service.stop()
+    state = service.observation()
+    assert not state["alive"] and state["phase"] == "stopped"
+
+
+def test_runtime_shutdown_cleans_independent_service(monkeypatch):
+    runtime = BackgroundRuntime()
+    monkeypatch.setattr(service_module, "get_background_runtime", lambda: runtime)
+    service = CardSweepService().start()
+
+    runtime.shutdown()
+
+    state = service.observation()
+    assert not state["alive"] and state["stopping"] and state["phase"] == "stopped"
+
+
+@pytest.mark.parametrize("stop_during", ["navigation", "dwell"])
+def test_sweep_stop_does_not_navigate_next_target(monkeypatch, stop_during):
+    service = CardSweepService()
+    context = AccountContext("10001", "D:/data", "e")
+    targets = [SweepTarget(1, "20002", ("111",)), SweepTarget(2, "30003", ("222",))]
+    calls = []
+
+    def navigate(contact):
+        calls.append(contact)
+        if stop_during == "navigation":
+            service._stop.set()
+        return True, ""
+
+    def dwell(seconds):
+        service._stop.set()
+
+    monkeypatch.setattr(service_module, "get_account_context", lambda: context)
+    monkeypatch.setattr(service_module, "outbox_busy", lambda context: False)
+    monkeypatch.setattr(service_module, "get_product_card_pool", lambda: object())
+    monkeypatch.setattr(service_module, "select_targets", lambda *args: targets)
+    monkeypatch.setattr(service_module.gui_session, "capture_gui_session", lambda epoch: object())
+    monkeypatch.setattr(service_module.gui_session, "run_guarded", lambda token, fn: fn())
+    monkeypatch.setattr(service_module.maafw_runner, "goto_contact", navigate)
+    monkeypatch.setattr(service, "_resolved", lambda product_id: False)
+    monkeypatch.setattr(service, "_sleep", dwell)
+
+    service._sweep_once()
+
+    assert calls == ["20002"]
+    assert service.observation()["visited"] == 1
 
 
 def test_sweep_once_skips_while_outbox_is_busy(monkeypatch):

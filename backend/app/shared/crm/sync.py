@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 import time
 from contextlib import nullcontext
-from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import Future
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
+from backend.app.background import get_background_runtime
 from sqlalchemy import text
 from sqlmodel import Session, select
 
@@ -54,7 +54,7 @@ MAPPING_ALI_ID = "ali_id"
 MAPPING_LOGIN_ID = "login_id"
 MAPPING_ENCRYPT_ACCOUNT_ID = "encrypt_account_id"
 
-_SYNC_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="crm-sync")
+_SYNC_EXECUTOR = get_background_runtime().pool("crm-sync", max_workers=1)
 
 
 class IdentityConflictError(ValueError):

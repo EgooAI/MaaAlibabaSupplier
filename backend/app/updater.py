@@ -18,9 +18,11 @@ import urllib.request
 import uuid
 import zipfile
 from collections.abc import Collection
+from concurrent.futures import Future
 from pathlib import Path
 
 from backend.app.api.envelope import AppError
+from backend.app.background import Worker, get_background_runtime
 from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.utils.settings import resolve_repo_root
 
@@ -313,7 +315,10 @@ class Updater:
         self.prepared = None
         self._busy = False
         self._stage = None
-        self._stop = threading.Event()
+        self._background = get_background_runtime()
+        self._workers: list[Worker] = []
+        self._stopping = False
+        self._schedule_delay = AUTO_FIRST_DELAY
         source = {"repository": os.environ.get("MAA_UPDATE_REPOSITORY", "EgooAI/MaaAlibabaSupplier"),
                   "branch": os.environ.get("MAA_UPDATE_BRANCH", "main"),
                   "workflow": os.environ.get("MAA_UPDATE_WORKFLOW", "install.yml"),
@@ -405,9 +410,11 @@ class Updater:
         self.state.update(phase="ready" if self.prepared is not None else "error", error=message)
         log_event("update.handoff", status="cancelled", reason=reason)
 
-    def writes_blocked(self) -> bool:
+    def writes_blocked(self, operation_id: str | None = None) -> bool:
         """Reconcile from the write gate and watchdog, independently of GET."""
         with self.lock:
+            if operation_id is not None and self._handoff_id != operation_id:
+                return False
             if self.handoff.is_set():
                 if self.runtime.failed():
                     self._cancel_install_locked("The updater helper stopped; the application was not stopped.",
@@ -418,6 +425,8 @@ class Updater:
             return self.handoff.is_set()
 
     def _admit(self) -> None:
+        if self._stopping:
+            raise AppError("The updater is stopping.", status_code=503)
         if not self.state["supported"]:
             raise AppError(self.state["reason"], status_code=409)
         if self.state["phase"] in {"checking", "downloading", "installing"} or self.handoff.is_set():
@@ -456,12 +465,40 @@ class Updater:
         self.state.update(phase=phase, error=None)
         response = copy.deepcopy(self.state)
         try:
-            threading.Thread(target=self._run_guarded, args=(phase, operation), daemon=True, name="manual-updater").start()
+            self._start_worker_locked(self._background.worker(
+                "manual-updater", lambda stop: self._run_guarded(phase, operation),
+            ))
         except Exception:
             self._busy = False
             self.state.update(phase="error", error="Could not start the update operation.")
             raise AppError(self.state["error"], status_code=503) from None
         return response
+
+    def _start_worker_locked(self, worker: Worker) -> None:
+        """Starts and tracks work while serialized with shutdown admission."""
+        if self._stopping:
+            raise RuntimeError("The updater is stopping")
+        self._background.on_shutdown(f"updater-{id(self)}", self.stop, priority=50)
+        worker.start()
+        self._workers = [active for active in self._workers if active.is_alive()]
+        self._workers.append(worker)
+
+    def stop(self, timeout: float | None = 5.0) -> None:
+        """Stops timers and handoff monitoring, then drains accepted operations."""
+        with self.lock:
+            self._stopping = True
+            self._handoff_finished.set()
+            workers = tuple(self._workers)
+        for worker in workers:
+            worker.request_stop()
+        deadline = None if timeout is None else time.monotonic() + timeout
+        for worker in workers:
+            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+            if not worker.join(remaining):
+                raise TimeoutError(f"Updater worker {worker.name} has not stopped")
+        with self.lock:
+            if self.handoff.is_set() and not self._armed:
+                self._cancel_install_locked("Update handoff was cancelled during shutdown.", "shutdown")
 
     def check(self) -> dict:
         with self.lock:
@@ -474,22 +511,24 @@ class Updater:
         Returns whether it succeeded or was skipped because it could not run now.
         """
         with self.lock:
-            if (not self.state["supported"] or self.state["phase"] not in {"idle", "ready", "error"}
+            if (self._stopping or not self.state["supported"] or self.state["phase"] not in {"idle", "ready", "error"}
                     or self.handoff.is_set() or self._busy):
                 return True
             self._busy = True
         return self._run_guarded("auto", lambda: self._cycle(announce=False))
 
-    def _schedule(self) -> None:
-        delay = AUTO_FIRST_DELAY
-        while not self._stop.wait(delay):
-            if self._scheduled_cycle():
-                delay = AUTO_CHECK_INTERVAL
-            else:
-                delay = min(max(delay, AUTO_CHECK_INTERVAL) * 2, AUTO_BACKOFF_MAX)
+    def _schedule(self) -> float:
+        if self._scheduled_cycle():
+            self._schedule_delay = AUTO_CHECK_INTERVAL
+        else:
+            self._schedule_delay = min(max(self._schedule_delay, AUTO_CHECK_INTERVAL) * 2, AUTO_BACKOFF_MAX)
+        return self._schedule_delay
 
     def _start_scheduler(self) -> None:
-        threading.Thread(target=self._schedule, daemon=True, name="auto-updater").start()
+        with self.lock:
+            self._start_worker_locked(self._background.schedule(
+                "auto-updater", self._schedule, interval=AUTO_CHECK_INTERVAL, delay=AUTO_FIRST_DELAY,
+            ))
 
     @staticmethod
     def _message(exc: Exception) -> str:
@@ -672,33 +711,39 @@ class Updater:
             self._armed = False
             self.state.update(phase="installing", error=None)
             installer, prepared = self.prepared
-        # No state/account/GUI lock is held while this attempt's single-use
-        # broker starts. Failure restores the ready candidate for an immediate
-        # retry: nothing was stopped and the installer file is untouched.
-        try:
-            self.runtime.start(installer, prepared)
-            with self.lock:
-                self._handoff_deadline = time.monotonic() + 15.0
-            log_event("update.handoff", status="accepted", version=prepared.get("version"))
+            accepted = Future()
 
-            def reconcile():
-                while not finished.wait(0.1):
-                    # A previous response callback cannot affect a newer lease.
+            def handoff(stop):
+                # The request waits for acceptance, but shutdown owns the whole
+                # handshake and can drain it before releasing application resources.
+                try:
+                    self.runtime.start(installer, prepared)
                     with self.lock:
-                        if self._handoff_id != operation_id:
-                            return
-                    self.writes_blocked()
+                        if self._stopping or self._handoff_id != operation_id:
+                            raise UpdateError("The update handoff was stopped.")
+                        self._handoff_deadline = time.monotonic() + 15.0
+                    log_event("update.handoff", status="accepted", version=prepared.get("version"))
+                except BaseException as exc:
+                    accepted.set_exception(exc)
+                    return
+                accepted.set_result(None)
+                while not stop.wait(0.1) and not finished.is_set():
+                    if not self.writes_blocked(operation_id):
+                        return
 
-            threading.Thread(target=reconcile, daemon=True, name="update-handoff").start()
+        try:
+            with self.lock:
+                self._start_worker_locked(self._background.worker("update-handoff", handoff))
+            accepted.result()
         except Exception as exc:
             with self.lock:
                 if self._handoff_id == operation_id:
+                    try:
+                        self.runtime.cancel()
+                    except OSError:
+                        pass
                     self._clear_handoff_locked()
                     self.state.update(phase="ready", error=None)
-            try:
-                self.runtime.cancel()
-            except OSError:
-                pass
             message = (str(exc) if isinstance(exc, UpdateError)
                        else "Update handoff failed; the application was not stopped.")
             log_event("update.handoff", status="rejected", reason="start_failed",
@@ -714,7 +759,7 @@ class Updater:
 
     def arm(self, operation_id: str) -> None:
         with self.lock:
-            if self._handoff_id != operation_id or self._armed:
+            if self._stopping or self._handoff_id != operation_id or self._armed:
                 return
             try:
                 if time.monotonic() >= self._handoff_deadline:
@@ -744,7 +789,7 @@ def register_update_runtime() -> None:
 
 
 def stop_update_scheduler() -> None:
-    """Stops the background checks without creating an updater outside a supported run."""
+    """Stops updater work without creating an updater outside a supported run."""
     instance = _instance
     if instance is not None:
-        instance._stop.set()
+        instance.stop()

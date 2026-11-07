@@ -12,7 +12,6 @@ registry; the request returns immediately, and the UI polls the run.
 
 from __future__ import annotations
 
-import threading
 import time
 from typing import Any
 
@@ -21,6 +20,7 @@ from fastapi.responses import JSONResponse
 from loguru import logger
 from pydantic import BaseModel, Field, ValidationError
 
+from backend.app.background import get_background_runtime
 from backend.app.api.account_scope import AccountRoute
 from backend.app.api.envelope import AppError, api_error, ok
 from backend.app.api.routers.agent import (
@@ -536,12 +536,17 @@ def start_run_endpoint(experiment_id: str, body: RunInput) -> dict:
             },
         )
     runs.bind_owner(state.run_id, account)
-    threading.Thread(
-        target=_execute_run,
-        args=(experiment.id, body.stepIndex, state, account),
-        name=f"experiment-run-{state.run_id}",
-        daemon=True,
-    ).start()
+    try:
+        state.worker = get_background_runtime().worker(
+            f"experiment-run-{state.run_id}",
+            lambda stop: _execute_run(experiment.id, body.stepIndex, state, account),
+            on_stop=state.token.cancel,
+        )
+        state.worker.start()
+    except Exception:
+        _fail_all(state, "无法启动实验运行")
+        state.finish()
+        raise AppError("无法启动实验运行", status_code=503) from None
     log_event(
         "agent.experiment_run_started", experiment_id=experiment.id,
         run_id=state.run_id, step_index=body.stepIndex, variant_count=len(variants),
@@ -563,6 +568,7 @@ def _execute_run(
     from agent_pipeline.experiment_runner import ExperimentStep as RunStep, run_experiment
 
     try:
+        state.token.raise_if_cancelled()
         experiment = ExperimentManager().get_experiment(experiment_id)
         if experiment is None:
             _fail_all(state, "实验不存在")
@@ -624,6 +630,8 @@ def _execute_run(
             cancel_token=state.token,
             max_parallel=RUN_MAX_PARALLEL,
         )
+    except RunCancelledError:
+        pass
     except AppError as exc:
         _fail_all(state, exc.message)
     except Exception:
@@ -631,9 +639,6 @@ def _execute_run(
         _fail_all(state, "实验运行失败")
     finally:
         # Anything still queued never started: the run was cancelled or abandoned.
-        for variant_id, variant in list(state.variants.items()):
-            if variant.status not in (STATUS_COMPLETED, STATUS_FAILED, STATUS_CANCELLED):
-                state.update(variant_id, status=STATUS_CANCELLED)
         state.finish()
         log_event(
             "agent.experiment_run_finished", run_id=state.run_id,
@@ -675,6 +680,8 @@ def _run_variant(
         prior_replies=(),
         cancel_token=cancel_token,
     )
+    if cancel_token is not None:
+        cancel_token.raise_if_cancelled()
     messages.append(_turn_message(turn))
     manager.edit_chat_history(hist.id, ChatHistory(
         name=hist.name,

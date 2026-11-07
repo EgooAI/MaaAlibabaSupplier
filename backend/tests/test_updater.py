@@ -53,7 +53,7 @@ def manager(monkeypatch, tmp_path):
     manager.runtime = Mock(result=Mock(return_value=None), failed=Mock(return_value=False))
     monkeypatch.setattr(updates, "_instance", manager)
     yield manager
-    manager._handoff_finished.set()
+    manager.stop(timeout=None)
 
 
 def remote(monkeypatch, runs=None, artifacts=None):
@@ -101,10 +101,9 @@ def archive(tmp_path, *, name="MaaAlibabaSupplier-v1.2.3-Setup.exe", installer_d
 
 
 def wait_operation(manager):
-    # Synchronize with a worker completion without relying on a fixed sleep.
-    for thread in threading.enumerate():
-        if thread.name == "manual-updater":
-            thread.join(3)
+    for worker in manager._workers:
+        if worker.name == "manual-updater":
+            assert worker.join(3)
     assert manager.snapshot()["phase"] not in {"checking", "downloading"}
 
 
@@ -998,19 +997,94 @@ def test_guarded_operation_releases_busy_when_interrupted(manager):
     assert manager._busy is False
 
 
-def test_schedule_waits_five_minutes_and_backs_off_after_failures(manager, monkeypatch):
-    waits = []
-
-    class Stop:
-        def wait(self, timeout):
-            waits.append(timeout)
-            return len(waits) == 4
-
-    results = iter([False, False, True])
-    manager._stop = Stop()
+def test_schedule_preserves_initial_delay_backoff_cap_and_recovery(manager, monkeypatch):
+    schedule = Mock(wraps=manager._background.schedule)
+    monkeypatch.setattr(manager._background, "schedule", schedule)
+    results = iter([False, False, True] + [False] * 10)
     monkeypatch.setattr(manager, "_scheduled_cycle", lambda: next(results))
-    manager._schedule()
-    assert waits == [updates.AUTO_FIRST_DELAY, 600, 1200, 300]
+    manager._start_scheduler()
+    assert schedule.call_args.kwargs == {"interval": 300, "delay": 60}
+    action = schedule.call_args.args[1]
+    assert [action() for _ in range(3)] == [600, 1200, 300]
+    assert [action() for _ in range(10)][-1] == updates.AUTO_BACKOFF_MAX
+
+
+@pytest.mark.parametrize("automatic", [False, True])
+def test_shutdown_drains_inflight_checks_and_rejects_new_work(manager, monkeypatch, tmp_path, automatic):
+    entered, release = threading.Event(), threading.Event()
+    written = tmp_path / "operation-finished"
+
+    def cycle(announce):
+        entered.set()
+        assert release.wait(3)
+        written.write_text("finished", encoding="utf-8")
+        with manager.lock:
+            manager.state["phase"] = "idle"
+
+    monkeypatch.setattr(manager, "_cycle", cycle)
+    if automatic:
+        manager._start_scheduler()
+        manager._workers[-1].trigger()
+    else:
+        manager.check()
+    try:
+        assert entered.wait(3)
+        with pytest.raises(TimeoutError):
+            manager.stop(timeout=0)
+        assert not written.exists()
+        with pytest.raises(AppError) as exc:
+            manager.check()
+        assert exc.value.status_code == 503
+    finally:
+        release.set()
+        manager.stop(timeout=3)
+    assert written.read_text(encoding="utf-8") == "finished"
+    assert not manager._busy
+    assert all(not worker.is_alive() for worker in manager._workers)
+
+
+@pytest.mark.parametrize("armed", [False, True])
+def test_shutdown_joins_watchdog_and_only_cancels_uncommitted_handoff(manager, armed):
+    make_ready(manager)
+    operation = manager.install_update("opaque")
+    if armed:
+        manager.arm(operation)
+    updates.stop_update_scheduler()
+    assert all(not worker.is_alive() for worker in manager._workers)
+    assert manager._handoff_finished.is_set()
+    assert manager.runtime.cancel.call_count == (0 if armed else 1)
+    manager.arm(operation)
+    assert manager.runtime.arm.call_count == (1 if armed else 0)
+    with pytest.raises(AppError) as exc:
+        manager.install_update("opaque")
+    assert exc.value.status_code == 503
+
+
+def test_shutdown_waits_for_helper_acceptance_and_prevents_late_handoff(manager):
+    make_ready(manager)
+    entered, release = threading.Event(), threading.Event()
+
+    def prepare(*args):
+        entered.set()
+        assert release.wait(3)
+
+    manager.runtime.start.side_effect = prepare
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        installing = pool.submit(manager.install_update, "opaque")
+        try:
+            assert entered.wait(3)
+            with pytest.raises(TimeoutError):
+                manager.stop(timeout=0)
+        finally:
+            release.set()
+        with pytest.raises(AppError) as exc:
+            installing.result(timeout=3)
+        assert exc.value.status_code == 503
+    manager.stop(timeout=3)
+    manager.runtime.cancel.assert_called_once()
+    manager.runtime.arm.assert_not_called()
+    assert not manager.handoff.is_set()
+    assert all(not worker.is_alive() for worker in manager._workers)
 
 
 def test_purge_removes_unreferenced_installers_but_keeps_logs_and_protected_stage(tmp_path):

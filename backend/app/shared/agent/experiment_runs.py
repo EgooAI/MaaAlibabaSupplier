@@ -2,9 +2,7 @@
 
 A run fans out over the variants of one step. The registry keeps enough state
 for the UI to poll, and it enforces one active run per (experiment, step) so a
-double click cannot bill the same step twice. Runs do not survive a restart:
-`reconcile_interrupted` reports those as interrupted instead of pretending they
-are still working.
+double click cannot bill the same step twice. Runs do not survive a restart.
 """
 
 from __future__ import annotations
@@ -21,6 +19,8 @@ from agent_pipeline.experiment_runner import (
     STATUS_COMPLETED,
     STATUS_FAILED,
 )
+
+from backend.app.background import Worker
 
 STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
@@ -47,6 +47,7 @@ class RunState:
     started_at: float = field(default_factory=time.time)
     finished_at: Optional[float] = None
     token: CancellationToken = field(default_factory=CancellationToken)
+    worker: Optional[Worker] = field(default=None, repr=False)
     _lock: Lock = field(default_factory=Lock, repr=False)
 
     @property
@@ -63,6 +64,9 @@ class RunState:
 
     def finish(self) -> None:
         with self._lock:
+            for state in self.variants.values():
+                if state.status not in TERMINAL_STATUSES:
+                    state.status = STATUS_CANCELLED
             if any(state.status == STATUS_CANCELLED for state in self.variants.values()):
                 self.status = STATUS_CANCELLED
             elif any(state.status == STATUS_FAILED for state in self.variants.values()):

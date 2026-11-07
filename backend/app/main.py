@@ -5,11 +5,11 @@ import shutil
 import socket
 import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
 
 from loguru import logger
+from backend.app.background import get_background_runtime, shutdown_background
 
 from backend.app.shared.utils.env import get_env_int, get_env_str
 from backend.app.shared.utils.settings import (
@@ -38,9 +38,9 @@ from backend.app.shared.utils.logging import configure_logging
 from backend.app.shared.utils.process_logs import (
     attach_process_log, colorless_child_env, finish_process_log, report_startup_failure,
 )
-from backend.app.shared.backend.card_sweep_service import start_card_sweep_service, stop_card_sweep_service
-from backend.app.shared.backend.sync_coordinator import start_sync_service, stop_sync_service
-from backend.app.shared.backend.outbox_service import start_outbox_service, stop_outbox_service
+from backend.app.shared.backend.card_sweep_service import start_card_sweep_service
+from backend.app.shared.backend.sync_coordinator import start_sync_service
+from backend.app.shared.backend.outbox_service import start_outbox_service
 from backend.app.updater import register_update_runtime
 
 
@@ -63,15 +63,16 @@ def _register_agent_runtime() -> None:
 def _start_mitm_receiver(*, host: str, port: int, internal_token: str) -> ReusableThreadingHTTPServer:
     server = create_receiver(host, port, internal_token=internal_token)
 
-    def _run() -> None:
+    def _run(stop) -> None:
         try:
             server.serve_forever()
         finally:
             server.server_close()
 
-    thread = threading.Thread(target=_run, daemon=True, name="mitm-receiver")
+    thread = get_background_runtime().worker("mitm-receiver", _run, on_stop=server.shutdown)
     try:
         thread.start()
+        get_background_runtime().on_shutdown("mitm-receiver", thread.stop, priority=-30)
     except BaseException:
         server.server_close()
         raise
@@ -130,6 +131,11 @@ def _start_yak_mitm(
             creationflags=CREATE_NO_WINDOW,
             env=child_env,
         )
+        try:
+            get_background_runtime().on_shutdown(f"yak:{id(proc)}", lambda: _stop_yak(proc), priority=-20)
+        except BaseException:
+            _stop_yak(proc)
+            raise
         attach_process_log(proc, log_path, source="yak")
     except FileNotFoundError:
         logger.error("Yak executable not found; proxy was not created")
@@ -149,12 +155,32 @@ def _start_yak_mitm(
     return proc
 
 
+def _stop_yak(process) -> None:
+    try:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5.0)
+            log_event("process.stopped", component="yak")
+    finally:
+        finish_process_log(process)
+
+
 def main() -> None:
     try:
         _main()
     except Exception as exc:
         report_startup_failure(exc)
         raise
+    finally:
+        try:
+            shutdown_background()
+        except ExceptionGroup as errors:
+            for error in errors.exceptions:
+                logger.opt(exception=error).error("Background shutdown failed")
 
 
 def _main() -> None:
@@ -176,13 +202,13 @@ def _main() -> None:
     ensure_default_llm_levels_seeded()
     _register_agent_runtime()
     maafw = MaaFWProcess(backend_root)
-    yak_proc: subprocess.Popen | None = None
-    receiver = None
+    runtime = get_background_runtime()
+    runtime.on_shutdown("maafw-process", maafw.stop, priority=-10)
 
     try:
-        receiver = _start_mitm_receiver(host=receiver_host, port=receiver_port, internal_token=internal_token)
+        _start_mitm_receiver(host=receiver_host, port=receiver_port, internal_token=internal_token)
         maafw.start()
-        yak_proc = _start_yak_mitm(
+        _start_yak_mitm(
             backend_root, host=receiver_host, port=receiver_port, internal_token=internal_token,
         )
         start_sync_service()
@@ -192,52 +218,6 @@ def _main() -> None:
     except MaaFWProcessError:
         logger.exception("Failed to start MaaFW")
         raise
-    finally:
-        try:
-            stop_card_sweep_service()
-        except Exception:
-            logger.exception("Card sweep shutdown failed")
-        try:
-            stop_outbox_service()
-        except Exception:
-            logger.exception("Outbox shutdown failed")
-        finally:
-            try:
-                from backend.app.task_queue import shutdown_task_queue
-
-                shutdown_task_queue(timeout=5.0)
-            except Exception:
-                logger.exception("GUI task queue shutdown failed")
-            finally:
-                try:
-                    stop_sync_service()
-                except Exception:
-                    logger.exception("IM sync shutdown failed")
-                finally:
-                    try:
-                        maafw.stop()
-                    except Exception:
-                        logger.exception("MaaFW shutdown failed")
-                    finally:
-                        try:
-                            if yak_proc and yak_proc.poll() is None:
-                                yak_proc.terminate()
-                                try:
-                                    yak_proc.wait(timeout=5.0)
-                                except subprocess.TimeoutExpired:
-                                    yak_proc.kill()
-                                    yak_proc.wait(timeout=5.0)
-                                log_event("process.stopped", component="yak")
-                        except Exception:
-                            logger.exception("Yak MITM shutdown failed")
-                        finally:
-                            if yak_proc is not None:
-                                finish_process_log(yak_proc)
-                            if receiver is not None:
-                                try:
-                                    receiver.shutdown()
-                                except Exception:
-                                    logger.exception("MITM receiver shutdown failed")
 
 
 if __name__ == "__main__":

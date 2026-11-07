@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from threading import Condition, Event, RLock, Thread
+from threading import Condition, Event, RLock
 from uuid import UUID, uuid4
 from types import MappingProxyType
 from collections.abc import Mapping
 
 from loguru import logger
+from backend.app.background import Worker, get_background_runtime
 
 from backend.app.api.envelope import AppError
 from backend.app.shared.backend import gui_session, maafw_runner as runner
@@ -58,7 +59,8 @@ class OutboxService:
         self._pending_terminal_writes: dict[str, dict] = {}
         self._stopping = Event()
         self._started = False
-        self._thread: Thread | None = None
+        self._thread: Worker | None = None
+        self._verification_failures = 0
         self._reconcile_lock = RLock()
         self._screenshot_dir = resolve_backend_root() / "data" / "outbox"
         self._observation_lock = RLock()
@@ -100,10 +102,15 @@ class OutboxService:
             if not self._started:
                 self.store.initialize()
                 self.store.recover()
-                self._started = True
+                self._accepting()
                 self._observe_verifier("waiting", started_at=time.time())
-                self._thread = Thread(target=self._verify_loop, name="outbox-verifier", daemon=True)
+                runtime = get_background_runtime()
+                self._thread = runtime.schedule(
+                    "outbox-verifier", self._verify_once, interval=RECONCILE_INTERVAL, delay=RECONCILE_INTERVAL,
+                )
+                runtime.on_shutdown(f"outbox:{id(self)}", self.stop, priority=30)
                 self._thread.start()
+                self._started = True
         return self
 
     def _accepting(self) -> None:
@@ -472,34 +479,32 @@ class OutboxService:
                 self._observe_verifier("reading_source", last_progress_at=time.time())
             return observed
 
-    def _verify_loop(self) -> None:
-        failures = 0
+    def _verify_once(self) -> None:
+        if self._stopping.is_set():
+            return
+        self._observe_verifier("reconciling")
         try:
-            while not self._stopping.wait(RECONCILE_INTERVAL):
-                self._observe_verifier("reconciling")
-                try:
-                    self.reconcile_once()
-                except Exception as exc:
-                    failures += 1
-                    self._observe_verifier("waiting", last_error=type(exc).__name__)
-                    # A persistent local-source failure must not log every 2 seconds.
-                    if failure_report_due(failures):
-                        logger.exception("Outbox local-source reconciliation failed")
-                else:
-                    if failures:
-                        log_event("outbox.reconcile_recovered", count=failures)
-                    failures = 0
-                    with self._observation_lock:
-                        self._observation["completed_iterations"] += 1
-                    self._observe_verifier("waiting", last_progress_at=time.time(), last_error=None)
-        finally:
-            self._observe_verifier("stopped")
+            self.reconcile_once()
+        except Exception as exc:
+            self._verification_failures += 1
+            self._observe_verifier("waiting", last_error=type(exc).__name__)
+            if failure_report_due(self._verification_failures):
+                logger.exception("Outbox local-source reconciliation failed")
+        else:
+            if self._verification_failures:
+                log_event("outbox.reconcile_recovered", count=self._verification_failures)
+            self._verification_failures = 0
+            with self._observation_lock:
+                self._observation["completed_iterations"] += 1
+            self._observe_verifier("waiting", last_progress_at=time.time(), last_error=None)
 
     def stop(self, timeout: float = 5.0) -> None:
         deadline = time.monotonic() + timeout
         self._stopping.set()
         try:
             with self._condition:
+                if self._thread is not None:
+                    self._thread.request_stop()
                 for task_id, binding in tuple(self._attempts.items()):
                     if task_id in self._active:
                         continue
@@ -531,6 +536,8 @@ class OutboxService:
                 self._thread.join(max(0, deadline - time.monotonic()))
                 if self._thread.is_alive():
                     logger.warning("Outbox verifier has not stopped within {} seconds", timeout)
+                else:
+                    self._observe_verifier("stopped")
             if self._active:
                 logger.warning("Outbox GUI attempt still running after shutdown timeout")
 

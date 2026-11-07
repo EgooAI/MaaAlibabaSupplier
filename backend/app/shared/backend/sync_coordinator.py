@@ -4,7 +4,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Empty, SimpleQueue
-from threading import Event, RLock, Thread
+from threading import Event, RLock
 import time
 from types import MappingProxyType
 from collections.abc import Mapping
@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from loguru import logger
 
+from backend.app.background import get_background_runtime
 from backend.app.shared.backend.account_context import AccountContext
 from backend.app.shared.crm.sync_store import canonical_source_dir
 from backend.app.shared.utils.log_context import (
@@ -226,6 +227,8 @@ class SyncService:
         self._stop = Event()
         self._lifecycle_lock = RLock()
         self._thread = None
+        self._shutdown_complete = True
+        self._failures = 0
         self._clock = clock
         self._observation_lock = RLock()
         self._observation = {
@@ -258,56 +261,61 @@ class SyncService:
 
     def start(self):
         with self._lifecycle_lock:
-            if self._thread is not None and not self._stop.is_set():
+            if not self._shutdown_complete:
+                if self._stop.is_set():
+                    raise RuntimeError("IM sync service is stopping")
                 return
-            self._stop.clear()
+            runtime = get_background_runtime()
+            name = f"im-source-check-{id(self):x}"
+            self._thread = runtime.schedule(
+                name, self._run_once, interval=self.interval,
+                wake=self.middleware._coordinator.wake,
+            )
+            self._stop = self._thread.stop_event
+            self._shutdown_complete = False
+            self._failures = 0
+            runtime.on_shutdown(name, self.stop, priority=10)
             self._observe("starting", started_at=self._clock(), last_error=None)
             self.middleware.prepare_startup_validation()
-            self._thread = Thread(target=self._run, name="im-source-check", daemon=True)
             self._thread.start()
 
     def tick(self):
         self.middleware.sync_tick(stop=self._stop)
 
-    def _run(self):
-        failures = 0
+    def _run_once(self):
+        self._observe("checking_source")
         try:
-            while not self._stop.is_set():
-                self.middleware._coordinator.wake.clear()
-                self._observe("checking_source")
-                try:
-                    self.tick()
-                except Exception as exc:
-                    failures += 1
-                    self._observe("waiting", last_error=type(exc).__name__)
-                    # A persistent failure must not produce one stack per tick.
-                    if failure_report_due(failures):
-                        logger.exception("IM sync service tick failed")
-                else:
-                    if failures:
-                        log_event("sync.tick_recovered", count=failures)
-                    failures = 0
-                    with self._observation_lock:
-                        self._observation["completed_iterations"] += 1
-                    self._observe("waiting", last_progress_at=self._clock(), last_error=None)
-                self.middleware._coordinator.wake.wait(self.interval)
-        finally:
-            self._observe("stopped")
+            self.tick()
+        except Exception as exc:
+            self._failures += 1
+            self._observe("waiting", last_error=type(exc).__name__)
+            # A persistent failure must not produce one stack per tick.
+            if failure_report_due(self._failures):
+                logger.exception("IM sync service tick failed")
+        else:
+            if self._failures:
+                log_event("sync.tick_recovered", count=self._failures)
+            self._failures = 0
+            with self._observation_lock:
+                self._observation["completed_iterations"] += 1
+            self._observe("waiting", last_progress_at=self._clock(), last_error=None)
 
-    def stop(self):
+    def stop(self, timeout=None):
         with self._lifecycle_lock:
-            if self._thread is None or self._stop.is_set():
+            if self._shutdown_complete:
                 return
-            self._stop.set()
+            self._thread.request_stop()
             with self.middleware._lock:
                 self.middleware._cancel_startup_validation()
                 self.middleware._publish_source_status()
-            self.middleware._coordinator.wake.set()
-            self._thread.join()
+            if not self._thread.join(timeout):
+                raise TimeoutError("IM sync service did not stop")
+            self._observe("stopped")
             self.middleware._coordinator.shutdown()
             with self.middleware._lock:
                 self.middleware._reset_runtime_state()
                 self.middleware._select_sync_context()
+            self._shutdown_complete = True
 
 
 _service: SyncService | None = None

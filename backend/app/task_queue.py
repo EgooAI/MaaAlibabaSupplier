@@ -11,6 +11,7 @@ from types import MappingProxyType
 from collections.abc import Mapping
 
 from loguru import logger
+from backend.app.background import get_background_runtime
 from backend.app.shared.utils.log_context import bind_log_context, capture_log_context, log_event
 
 TASK_QUEUE_MAXSIZE = 500
@@ -82,11 +83,11 @@ class TaskQueue:
                 instance._closing = False
                 instance._current_started: float | None = None
                 instance._last_completed: float | None = None
-                instance._worker = threading.Thread(
-                    target=instance._work,
-                    daemon=True,
-                    name=f"{name}-task-queue",
+                runtime = get_background_runtime()
+                instance._worker = runtime.worker(
+                    f"{name}-task-queue", lambda stop: instance._work(), on_stop=instance._close,
                 )
+                runtime.on_shutdown(f"queue:{name}", instance.shutdown, priority=20)
                 instance._worker.start()
                 cls._instances[name] = instance
             return instance
@@ -111,7 +112,7 @@ class TaskQueue:
     def enqueue(self, fn: Callable[[], tuple[bool, str]], *, description: str) -> TaskSnapshot:
         now = time.time()
         with self._condition:
-            if self._closing:
+            if self._closing or self._worker.runtime.closing:
                 raise RuntimeError("任务队列正在关闭")
             self._evict_locked(now)
             if len(self._queue) >= TASK_QUEUE_MAXSIZE:
@@ -148,14 +149,15 @@ class TaskQueue:
 
     def shutdown(self, timeout: float = 5.0) -> None:
         """Drain accepted work before releasing the instance and worker."""
+        self._worker.stop(timeout)
+        with type(self)._instance_lock:
+            if type(self)._instances.get(self._name) is self:
+                type(self)._instances.pop(self._name)
+
+    def _close(self) -> None:
         with self._condition:
             self._closing = True
             self._condition.notify_all()
-        self._worker.join(timeout)
-        if self._worker.is_alive():
-            raise TimeoutError("任务队列尚未停止")
-        with type(self)._instance_lock:
-            type(self)._instances.pop(self._name, None)
 
     def _evict_locked(self, now: float) -> None:
         expired = [

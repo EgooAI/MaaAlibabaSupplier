@@ -85,18 +85,6 @@ def test_sync_observation_survives_blocked_iteration_and_gui_lifecycle_locks(mw,
 
 
 def test_verifier_observes_blocked_scan_without_gui_locks_or_resend(env, monkeypatch):
-    wake = Event()
-    original_wait = env.service._stopping.wait
-    first = [True]
-
-    def wait(timeout):
-        if first[0]:
-            first[0] = False
-            assert wake.wait(5)
-            return env.service._stopping.is_set()
-        return original_wait(timeout)
-
-    monkeypatch.setattr(env.service._stopping, "wait", wait)
     # The normal send flow creates a real temporary outbox record to reconcile.
     task = prepared(env)
     confirm(env, task)
@@ -128,7 +116,7 @@ def test_verifier_observes_blocked_scan_without_gui_locks_or_resend(env, monkeyp
             assert unlock.wait(5)
 
     try:
-        wake.set()
+        env.service._thread.trigger()
         assert entered.wait(5)
         env.now += 45
         with ThreadPoolExecutor(max_workers=2) as pool:

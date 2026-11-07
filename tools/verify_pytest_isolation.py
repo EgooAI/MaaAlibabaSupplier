@@ -41,8 +41,10 @@ def test_isolation_fixture(request):
     assert Path(os.environ["MAA_AUTH_DB_PATH"]).is_relative_to(settings.BACKEND_ROOT)
     from backend.app.api import auth, main
     from backend.app import updater
+    from backend.app.shared.backend import account_context
     assert isinstance(main.LOGIN_LIMITER, auth.LoginLimiter)
     assert updater._instance is None
+    assert account_context._context is None
     from backend.app.shared.utils import env, im_db_decryptor
     from maa.toolkit import Toolkit
     import socket
@@ -100,6 +102,8 @@ def main():
                 "backend/app/updater.py": "_instance = object()\n",
                 "backend/app/crm_sdk/__init__.py": "",
                 "backend/app/shared/__init__.py": "",
+                "backend/app/shared/backend/__init__.py": "",
+                "backend/app/shared/backend/account_context.py": "_context = object()\n",
                 "backend/app/shared/utils/__init__.py": "",
                 "backend/app/shared/utils/settings.py": "REPO_ROOT = None\nBACKEND_ROOT = None\n",
                 "backend/app/shared/utils/env.py": "def load_dotenv(*args, **kwargs):\n    raise AssertionError('dotenv accessed')\ndef load_workdir_env(*args, **kwargs):\n    raise AssertionError('dotenv accessed')\n",

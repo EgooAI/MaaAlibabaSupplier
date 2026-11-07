@@ -14,18 +14,38 @@
 - `agent` — Maa Custom Recognition/Action 入口。
 - `api` — FastAPI：`main.py:create_app()` + `server.py:run()`；`routers/` 按功能分模块（conversations / messages / settings / status / outbox / agent / self / auth / app）。Web UI 见仓库根 `frontend/`（Next.js，`pnpm dev`，将 `/api/*` 反代到本服务）。
 - `mitm` — Yak MITM receiver（`proxy.py`）。
+- `background.py` — 后台运行时：统一 Worker、定时/触发调度、Future 线程池与退出清理。支持执行前准入函数，供未来空闲策略接入。接入方式与生命周期约定见 [后台任务](BACKGROUND.md)。
 
 ## 启动流程
 
 后端唯一启动方式：仓库根运行 `python -m backend.app.main`。启动时依次：
 
 1. 加载 `.env`（`load_workdir_env()`，从 cwd 向上查找，兜底仓库根）；
-2. 验证必填的固定密钥摘要 `MAA_AUTH_SECRET_SHA256` 和 MITM 回环地址，生成本次启动的内部凭据，再配置日志（`configure_logging()`）；
+2. 验证必填的固定密钥摘要 `MAA_AUTH_SECRET_SHA256` 和 MITM 回环地址，生成本次启动的内部凭据，再配置日志（`configure_logging()`）并注册更新器运行环境（`register_update_runtime()`）。受支持的安装版在启动业务子进程前建立 Windows Job Object，并按配置启用自动更新检查；
 3. 播种系统 Agent（`ensure_system_agents_seeded()`：指纹匹配，只补缺失行或仍等于内置默认的记录，用户编辑不被启动覆盖）与默认 LLM 层级（`ensure_default_llm_levels_seeded()`，仅补缺失的 Level 0 空行）并注册 LLM/工具/输出归一化（幂等，仅启动时一次）；
 4. 绑定并启动 MITM Python receiver 线程（`MITM_RECEIVER_HOST/PORT`，默认 `127.0.0.1:8085`，仅允许回环地址），绑定失败时不启动 GUI；
 5. 启动 MaaFW 子进程：可执行文件固定为 `backend/assets/MaaPiCli.exe`（由 `tools/install_3_maafw.py` 安装），同目录的 `MaaUtils.dll` 用于定位项目，其他运行库通过子进程 PATH 从 `backend/deps/bin` 加载。框架和 Python 绑定固定为 5.14.3，MaaPiCli 使用该版本主包自带的程序；
 6. 启动 Yak MITM 代理（脚本 `backend/yak_mitm.yak`，默认 `127.0.0.1:8084`）。Yak 发现顺序：`YAK_EXECUTABLE` → PATH 上的 `yak` → `backend/.portable/yak/yak.exe`（`tools/install_4_yak.py` 的产物）；
-7. 启动 IM 同步协调服务，再启动 HTTP API（主线程阻塞，uvicorn，`MAA_API_HOST/PORT` 默认 `127.0.0.1:8000`，供 `frontend/` Next.js 反代 `/api/*`）。退出时停止同步服务并等待已提交的 CRM 工作完成。
+7. 启动 IM 同步、Outbox 核查和手动卡片扫描服务，再启动 HTTP API（主线程阻塞，uvicorn，`MAA_API_HOST/PORT` 默认 `127.0.0.1:8000`，供 `frontend/` Next.js 反代 `/api/*`）。后台工作统一登记到运行时，退出或启动失败时按依赖顺序清理，等待已提交的 CRM 工作完成。
+
+## 后台任务设计原则
+
+应用侧后台执行统一使用 `background.py` 的 `BackgroundRuntime`。新增后台工作应复用下列入口，业务模块不自行创建未受管的线程、线程池或定时循环。
+
+| 入口 | 适用场景 |
+| --- | --- |
+| `runtime.worker(name, run, on_stop=...)` | 单次异步操作、阻塞服务，通过 `run(stop_event)` 或已有取消协议协作停止 |
+| `runtime.schedule(name, action, interval=..., delay=..., ready=...)` | 定时检查与事件触发，返回的 Worker 通过 `trigger()` 接收触发 |
+| `runtime.pool(name, max_workers=...)` | 逐条排队并返回 Future 的工作，默认单 worker，按业务需要设置并发度 |
+
+1. **统一生命周期。** Worker 启动、pool 首次提交时登记，业务清理通过 `on_shutdown()` 注册。主程序和独立 Maa Agent 入口在正常退出或启动失败时调用 `shutdown_background()`，关闭新工作准入，按依赖顺序清理，再停止并等待剩余工作。单个清理失败不跳过其他清理。停止超时保留运行中的 handle，不能把停止请求当作已经结束。
+2. **保持机制精简。** 复用 Worker、schedule 和 pool，服务只实现一次业务操作及必要的状态管理。已有 `TaskQueue` 在受管 Worker 上提供 FIFO、容量限制和任务快照，GUI 与翻译继续使用各自的队列。
+3. **保持业务低耦合。** 运行时不依赖账号、GUI、数据库或 FastAPI。业务模块负责状态机、重试策略、幂等和持久化。SDK 保持独立，其内部执行器不反向依赖宿主运行时。前端轮询由页面生命周期管理，只负责观察状态。
+4. **同时支持定时与触发。** `interval` 表示每次执行结束后的等待时间，`delay` 控制首次等待。仅触发任务使用 `delay=None` 并省略 `interval`。同一 schedule 不重叠执行，重复触发合并，执行期间最多保留一次补跑。需要逐条执行的请求使用 pool 或 `TaskQueue`。业务可以返回下一轮等待时间，实现退避。
+5. **通过准入接口适配空闲策略。** `ready` 接收快速、无副作用的判定函数，执行前返回 False 或抛出异常时保留待办并重试。未来的空闲判断系统通过该函数接入，也可在状态变化后调用 `trigger()` 提前检查。准入判断不替代业务校验，也不中断已开始的操作；当前尚未实现空闲判断系统。
+6. **明确上下文与完成边界。** 长期 Worker 使用干净的 Context，账号相关任务须显式捕获并校验原账号，避免继承创建者的身份。Pool 为每次提交复制 Context，任务及 worker 内的完成回调使用该上下文，等待覆盖完成回调。数据提交、GUI 操作完成与平台送达仍由业务分别确认，重启不自动重放 GUI 或模型任务。
+
+当前同步检查、Outbox 核查和自动更新使用定时 schedule，产品卡补全使用仅触发的 schedule。CRM 写入使用单 worker pool，实验运行、更新握手、receiver、子进程日志采集和 Maa Agent 等待使用受管 Worker。接口示例、关闭顺序与模块职责见 [后台任务接入说明](BACKGROUND.md)。
 
 ## MITM 模块设计
 
@@ -96,9 +116,9 @@ APP -> 127.0.0.1:8084 Yak/Yakit MITM -> 127.0.0.1:8085 Python receiver -> parser
 - 实验是宿主概念，由 SDK 原语拼成：SDK 的 `agent_experiment` 表只存 `agent_id`、名称与不透明 JSON 内容，变体是普通 `chat_history` 行（`experiment_id` 外键列，可空）。业务含义（冻结前缀、步骤、批注、进度）全部在 `experiment_content.py` 的文档里，SDK 不解释。
 - 一个实验 = 一个冻结起点 + 最多 4 个变体 + 一组步骤。变体各自钉死一个版本（当前配置、历史 revision 或编辑器草稿），创建后不可变；换版本等于加变体。步骤是统一输入，所有变体在同一步上并行执行，因此对比的是同一输入下的回答差异。
 - 起点有三种：`conversation`（复用 `/api/agent/fork` 的 Markdown 投影）、`session`（继承已有模拟会话的冻结前缀与回合）、`text`（商家粘贴的外部提示词或场景）。`freezing.py` 是投影的唯一入口，两种入口不会漂移。
-- 运行是异步的：`POST /api/agent/experiments/{id}/runs` 立即返回 run 快照，前端每 800ms 轮询 `GET /api/agent/runs/{id}`；同一步已有运行中的任务返回 409 并带 `runId`，前端改为观察该 run。`DELETE /api/agent/runs/{id}` 只置协作式取消标记，运行在下一个**回合边界**停止，已完成的变体保留结果。
+- 运行由受管 Worker 异步执行：`POST /api/agent/experiments/{id}/runs` 立即返回 run 快照，前端每 800ms 轮询 `GET /api/agent/runs/{id}`；同一步已有运行中的任务返回 409 并带 `runId`，前端改为观察该 run。`DELETE /api/agent/runs/{id}` 设置协作式取消标记，运行在后续回合边界检查，回合结果落库前也会检查，已完成的变体保留结果。程序正常退出时由运行时请求取消并等待，启动 Worker 失败会终结本次 run。
 - 运营语义：重跑某步时先截断回该步的检查点（`progress[step].before`），买家消息只追加一次；未完成的变体可以单独补跑，不必重跑已完成的变体。运行中的变体失败不影响同一步的其他变体；任一变体失败后整次运行停止，避免后续步骤在不同输入上比较。
-- 账号归属写在实验内容的 `source.owner` 里（SDK 表没有 scope 列），读取与运行都按当前卖家 + 数据目录校验；后台线程在启动时捕获账号，切换账号后旧运行全部标记失败，不会把结果写进新工作区。
+- 账号归属写在实验内容的 `source.owner` 里（SDK 表没有 scope 列），读取与运行都按当前卖家 + 数据目录校验。提交时捕获账号，运行及各变体开始时检查卖家与目录，发现变化则拒绝对应工作；已开始的变体绑定原账号上下文，不会把结果写进新工作区。
 - 「保存为当前版本」把胜出的变体写回该 Agent 的 preset 并追加一条 revision，实验本身不改变任何运行中的 Agent。
 
 
@@ -130,7 +150,7 @@ APP -> 127.0.0.1:8084 Yak/Yakit MITM -> 127.0.0.1:8085 Python receiver -> parser
 UI/业务以 `app.shared.crm` 为稳定入口：
 
 - 读：`CRMAdapter.get_self_info()` / `get_user_info()` / `get_conversation_detail()`；会话列表与收件箱由 `inbox_queries` 在一致读事务中直接查询 SDK 表，路由只做投影；
-- 翻译：`get_translation()` / `translation_cached()` / `get_translations()`；批量提交经 `translation_jobs.py` 异步执行（专用 worker 队列、按 50 条分片、按 epoch 取消，不持账号锁）。规则与对话上下文在 `build_translation_input`，LLM I/O 使用 ≤5 字符短哈希标记，落库仍按 32 位 md5 主键写入 `Translate`。
+- 翻译：`get_translation()` / `translation_cached()` / `get_translations()`；批量提交经 `translation_jobs.py` 在专用受管队列中异步执行，每 50 条分片，LLM 调用期间不持账号锁。任务开始前检查 epoch，账号已切换则取消，已开始的任务没有逐分片取消检查。规则与对话上下文在 `build_translation_input`，LLM I/O 使用 ≤5 字符短哈希标记，落库仍按 32 位 md5 主键写入 `Translate`。
 
 `get_self_info(self_ali_id=None)` 按显式身份或当前手选身份读取 CRM（首次 IM 同步即写入 self 行），无回退到其他卖家。卡片池与输入草稿仍属 UI/业务缓存，不并入 CRM core。重同步勿阻塞 MITM 或 IM 解密锁，宜后台队列。
 
