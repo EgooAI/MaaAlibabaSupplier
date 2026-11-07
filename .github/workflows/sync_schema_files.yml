@@ -2,7 +2,7 @@ name: Sync JSON Schema Files from MaaFramework
 
 on:
   schedule:
-    - cron: '0 0 * * SUN'  # UTC 0:00, only on Sunday
+    - cron: '0 22 * * SUN'  # UTC 22:00, only on Sunday
 
   workflow_dispatch:
 
@@ -41,11 +41,11 @@ jobs:
           # 确保目标目录存在
           mkdir -p backend/deps/tools
 
-          # 下载四个JSON schema文件
-          curl -s -o backend/deps/tools/interface.schema.json https://raw.githubusercontent.com/MaaXYZ/MaaFramework/main/tools/interface.schema.json || echo "Failed to download interface.schema.json"
-          curl -s -o backend/deps/tools/interface_config.schema.json https://raw.githubusercontent.com/MaaXYZ/MaaFramework/main/tools/interface_config.schema.json || echo "Failed to download interface_config.schema.json"
-          curl -s -o backend/deps/tools/interface_import.schema.json https://raw.githubusercontent.com/MaaXYZ/MaaFramework/main/tools/interface_import.schema.json || echo "Failed to download interface_import.schema.json"
-          curl -s -o backend/deps/tools/pipeline.schema.json https://raw.githubusercontent.com/MaaXYZ/MaaFramework/main/tools/pipeline.schema.json || echo "Failed to download pipeline.schema.json"
+          MAAFW_VERSION=$(python -c "from tools._common import MAAFW_VERSION; print(MAAFW_VERSION)")
+          # 下载固定版本的四个 JSON schema 文件
+          for schema in interface interface_config interface_import pipeline; do
+            curl -fsSL -o "backend/deps/tools/${schema}.schema.json" "https://raw.githubusercontent.com/MaaXYZ/MaaFramework/${MAAFW_VERSION}/tools/${schema}.schema.json"
+          done
 
           # 检查文件是否成功下载
           echo "Checking downloaded files:"
