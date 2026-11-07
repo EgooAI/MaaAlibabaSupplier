@@ -235,6 +235,7 @@ class OutboxStore:
             return empty
         scope = _scope(seller, data_dir)
         with self._connection(timeout=0.1) as conn:
+            # Read counts and the recent list from one snapshot.
             conn.execute("BEGIN")
             if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_outbox'").fetchone():
                 return empty

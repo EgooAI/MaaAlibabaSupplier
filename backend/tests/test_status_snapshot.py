@@ -70,12 +70,15 @@ class StatusSnapshotTestCase(unittest.TestCase):
             self.assertTrue(entered.wait(2))
             with mock.patch.object(status_router, "get_task_queue", return_value=queue):
                 submitted = self.client.post("/api/status/test-tasks", json={"type": "test"}).json()["data"]
-            observed = self.client.get("/api/status").json()["data"]["background"]
-            tasks = observed["queueTasks"]
+            observed = self.client.get("/api/status").json()["data"]
+            tasks = observed["background"]["queueTasks"]
             self.assertEqual([task["id"] for task in tasks], [submitted["id"]])
             self.assertEqual(tasks[0]["queue"], "maafw")
             self.assertEqual(tasks[0]["status"], "queued")
             self.assertIsNone(tasks[0]["resultSuccess"])
+            self.assertEqual([task["id"] for task in observed["tasks"]], [submitted["id"]])
+            self.assertEqual(observed["tasks"][0]["status"], "queued")
+            self.assertNotIn("queue", observed["tasks"][0])
         finally:
             release.set()
             queue.shutdown()
@@ -99,7 +102,11 @@ class StatusSnapshotTestCase(unittest.TestCase):
         ), mock.patch.object(
             status_router.IMDBMiddleware, "__new__", side_effect=AssertionError("must not initialize middleware")
         ):
-            snapshot = self.client.get("/api/status").json()["data"]
+            with mock.patch.object(
+                status_router, "_observed_tasks",
+                side_effect=AssertionError("system status must reuse background queue tasks"),
+            ):
+                snapshot = self.client.get("/api/status").json()["data"]
             self.assertEqual(snapshot["tasks"], [])
             self.assertEqual(self.client.get("/api/status/tasks").json()["data"], [])
             self.assertEqual(status_router.TaskQueue._instances, {})

@@ -209,7 +209,7 @@ class CardSweepService:
             log_event("card.sweep_skipped", reason="gui_unavailable")
             self._observe("idle", last_error=str(exc), targets=len(targets), visited=0, enriched=0, failed=0)
             return
-        self._observe("sweeping", context=context.to_dict(), last_error=None,
+        self._observe("sweeping", last_error=None,
                       targets=len(targets), visited=0, enriched=0, failed=0)
 
         def navigate(contact_ali_id: str) -> tuple[bool, str]:

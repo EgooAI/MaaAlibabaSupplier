@@ -1,7 +1,7 @@
 import { formatDateTime } from "@/domain/time";
 import type { SourceSyncStatus } from "@/types/connection";
 import type {
-  BackgroundExperimentRun, BackgroundStatus, BackgroundUpdateStatus, RuntimeResource,
+  BackgroundExperimentRun, BackgroundUpdateStatus, RuntimeResource,
   RuntimeState, SystemStatusSnapshot, TaskItem, WorkerObservation,
 } from "@/types/status";
 
@@ -55,12 +55,6 @@ export function runtimeRows(resources: RuntimeResource[]) {
     current: latest.has(resource),
     instanceLabel: isRuntimeActive(resource) ? "活动实例" : latest.has(resource) ? "最近结束实例" : "历史实例",
   }));
-}
-
-export function backgroundReadError(background: BackgroundStatus | undefined, ...sources: string[]): string | undefined {
-  return Object.entries(background?.errors ?? {})
-    .filter(([key]) => sources.some((source) => key === source || key.startsWith(`${source}.`) || key.startsWith(`${source}:`)))
-    .map(([, message]) => message).join(" · ") || undefined;
 }
 
 function summarize(statuses: WorkStatus[], empty = "暂无近期任务"): WorkStatus {
@@ -147,15 +141,14 @@ export interface ServiceSummary {
 
 export function serviceSummaries(snapshot: SystemStatusSnapshot): ServiceSummary[] {
   const background = snapshot.background;
-  const resources = backgroundReadError(background, "runtime") ? [] : latestResources(background?.runtime.resources ?? []);
+  const resources = latestResources(background?.runtime.resources ?? []);
   const matching = (...names: string[]) => resources.filter((resource) => names.some((name) => resource.name === name || resource.name.startsWith(`${name}-`)));
+  const runtimeSummary = (items: RuntimeResource[]) => background ? runtimeStatus(items) : workStatus("unknown");
   const source = snapshot.source;
-  const sourceError = backgroundReadError(background, "source");
   const queueSummary = (queue: "maafw" | "translation", title: string): ServiceSummary => {
-    const error = backgroundReadError(background, "queueTasks", "queueCounts", `queues.${queue}`, `queues:${queue}`);
-    const tasks = background?.queueTasks.filter((task) => task.queue === queue);
+    const tasks = background?.queueTasks.filter((task) => task.queue === queue) ?? [];
     const fullCounts = background?.queueCounts?.[queue];
-    const counts: Record<string, number> | undefined = fullCounts ?? (tasks ? {
+    const counts: Record<string, number> | undefined = fullCounts ?? (background ? {
       pending: tasks.filter((task) => task.status === "queued").length,
       running: tasks.filter((task) => task.status === "running").length,
       succeeded: tasks.filter((task) => task.status === "succeeded").length,
@@ -165,10 +158,10 @@ export function serviceSummaries(snapshot: SystemStatusSnapshot): ServiceSummary
       .filter((status) => counts[status === "queued" ? "pending" : status] > 0)
       .map((status) => taskStatus({ status })) : [];
     return {
-      id: queue, title, category: "业务任务", resources: matching(`${queue}-task-queue`), error,
-      status: !counts || error ? workStatus("unknown", error ? "读取失败" : undefined) : summarize(statuses),
-      details: counts && !error ? [
-        fullCounts ? "当前账号代次保留期内全量计数" : `仅列表样本 ${tasks?.length ?? 0} 项，全量计数未提供`,
+      id: queue, title, category: "业务任务", resources: matching(`${queue}-task-queue`),
+      status: counts ? summarize(statuses) : workStatus("unknown"),
+      details: counts ? [
+        fullCounts ? "当前账号代次保留期内全量计数" : `仅列表样本 ${tasks.length} 项，全量计数未提供`,
         `排队 ${counts.pending ?? 0} · 执行 ${counts.running ?? 0} · 完成 ${counts.succeeded ?? 0} · 失败 ${counts.failed ?? 0}`,
       ] : ["业务任务数据未提供"],
     };
@@ -176,41 +169,39 @@ export function serviceSummaries(snapshot: SystemStatusSnapshot): ServiceSummary
   const crm = matching("crm-sync");
   const card = snapshot.workers?.["card-sweep"];
   const hasSweep = card?.targets != null;
-  const cardError = backgroundReadError(background, "workers", "card-sweep");
   const runs = background?.experiments;
-  const experimentError = backgroundReadError(background, "experiments");
-  const outboxError = backgroundReadError(background, "outbox");
-  const outboxCounts = background && !outboxError ? background.outbox.counts : undefined;
+  const outboxError = background?.errors.outbox;
+  const outboxCounts = outboxError ? undefined : background?.outbox.counts;
   const update = background?.update;
-  const updateError = backgroundReadError(background, "update");
+  const updateError = background?.errors.update;
   const basic = matching("mitm-receiver", "yak-logs", "maafw_cli-logs");
   return [
     {
       id: "sync", title: "聊天同步", category: "数据处理", resources: matching("im-source-check"),
-      status: sourceError ? workStatus("unknown", "读取失败") : sourceStatus(source), error: sourceError || source?.last_error || undefined,
-      details: source && !sourceError ? [`已提交版本 ${source.revision} · 源版本 ${source.source_revision} · 已应用源版本 ${source.applied_source_revision}`, `最近 CRM 提交：${observationTime(source.last_success)}`] : ["同步状态未提供"],
+      status: sourceStatus(source), error: source?.last_error || undefined,
+      details: source ? [`已提交版本 ${source.revision} · 源版本 ${source.source_revision} · 已应用源版本 ${source.applied_source_revision}`, `最近 CRM 提交：${observationTime(source.last_success)}`] : ["同步状态未提供"],
     },
     {
-      id: "crm", title: "CRM 写入", category: "数据处理", resources: [], status: background ? runtimeStatus(crm) : workStatus("unknown"),
+      id: "crm", title: "CRM 写入", category: "数据处理", resources: [], status: runtimeSummary(crm),
       details: crm.length ? [`进程内执行 ${crm.reduce((sum, item) => sum + item.active, 0)} · 排队 ${crm.reduce((sum, item) => sum + item.pending, 0)}`, "写入执行状态不替代当前工作区的 CRM 提交版本。"] : ["尚无写入执行器记录"],
-      error: backgroundReadError(background, "runtime") || crm.find((resource) => resource.last_error)?.last_error || undefined,
+      error: crm.find((resource) => resource.last_error)?.last_error || undefined,
     },
     queueSummary("maafw", "GUI 队列"),
     queueSummary("translation", "翻译队列"),
     {
       id: "outbox", title: "Outbox 与核查", category: "业务任务", resources: matching("outbox-verifier"), error: outboxError,
-      status: !outboxCounts ? workStatus("unknown", outboxError ? "读取失败" : undefined) : outboxSummary(outboxCounts),
+      status: outboxCounts ? outboxSummary(outboxCounts) : workStatus("unknown", outboxError ? "读取失败" : undefined),
       details: outboxCounts ? [`排队 ${(outboxCounts.queued ?? 0) + (outboxCounts.queued_send ?? 0)} · 执行 ${(outboxCounts.navigating ?? 0) + (outboxCounts.running ?? 0)} · 待确认 ${outboxCounts.awaiting_confirmation ?? 0}`, `核查中 ${outboxCounts.verifying ?? 0} · 结果未知 ${outboxCounts.unknown ?? 0} · 失败 ${outboxCounts.failed ?? 0}`, "本地匹配消息不表示平台送达。"] : ["Outbox 业务数据未提供"],
     },
     {
-      id: "cards", title: "卡片清扫服务", category: "数据处理", resources: matching("card-sweep"), error: cardError || card?.last_error || undefined,
-      status: cardError ? workStatus("unknown", "读取失败") : cardStatus(card),
-      details: card && !cardError ? [`目标会话 ${card.targets ?? "未提供"} · 已访问 ${card.visited ?? "未提供"}`, `已富化 ${card.enriched ?? "未提供"} · 未富化 ${card.failed ?? "未提供"}`, ...(hasSweep ? [`最近一轮：${observationTime(card.last_sweep_at)}`] : [])] : ["卡片补全进度未提供"],
+      id: "cards", title: "卡片清扫服务", category: "数据处理", resources: matching("card-sweep"), error: card?.last_error || undefined,
+      status: cardStatus(card),
+      details: card ? [`目标会话 ${card.targets ?? "未提供"} · 已访问 ${card.visited ?? "未提供"}`, `已富化 ${card.enriched ?? "未提供"} · 未富化 ${card.failed ?? "未提供"}`, ...(hasSweep ? [`最近一轮：${observationTime(card.last_sweep_at)}`] : [])] : ["卡片补全进度未提供"],
     },
     {
-      id: "experiments", title: "Agent 实验", category: "业务任务", resources: [], error: experimentError,
-      status: !runs || experimentError ? workStatus("unknown", experimentError ? "读取失败" : undefined) : summarize(runs.map(experimentStatus)),
-      details: runs && !experimentError ? [`当前工作区近期运行 ${runs.length} 项 · 失败 ${runs.filter((run) => run.status === "failed").length}`, "取消请求需等待当前调用结束，以运行快照为准。"] : ["实验运行数据未提供"],
+      id: "experiments", title: "Agent 实验", category: "业务任务", resources: [],
+      status: runs ? summarize(runs.map(experimentStatus)) : workStatus("unknown"),
+      details: runs ? [`当前工作区近期运行 ${runs.length} 项 · 失败 ${runs.filter((run) => run.status === "failed").length}`, "取消请求需等待当前调用结束，以运行快照为准。"] : ["实验运行数据未提供"],
     },
     {
       id: "update", title: "程序更新", category: "运行维护", resources: matching("auto-updater", "manual-updater", "update-handoff"),
@@ -218,8 +209,8 @@ export function serviceSummaries(snapshot: SystemStatusSnapshot): ServiceSummary
       details: update && !updateError ? [update.reason || `自动检查${update.auto ? "已启用" : "未启用"}`, ...(update.phase === "downloading" ? [`已下载 ${update.downloaded_bytes.toLocaleString()} B / ${update.total_bytes == null ? "总量未知" : `${update.total_bytes.toLocaleString()} B`}`] : [])] : ["更新状态未提供"],
     },
     {
-      id: "services", title: "基础服务", category: "运行维护", resources: basic, status: background ? runtimeStatus(basic) : workStatus("unknown"),
-      details: ["MITM 接收、Yak 与 MaaFW 日志采集。连接证据见“连接与诊断”。"], error: backgroundReadError(background, "runtime"),
+      id: "services", title: "基础服务", category: "运行维护", resources: basic, status: runtimeSummary(basic),
+      details: ["MITM 接收、Yak 与 MaaFW 日志采集。连接证据见“连接与诊断”。"],
     },
   ];
 }

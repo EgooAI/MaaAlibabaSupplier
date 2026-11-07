@@ -19,7 +19,9 @@ from backend.app.shared.backend.gui_session import get_client_status
 from backend.app.shared.backend import status as status_mod
 from backend.app.shared.backend.maafw_runner import run_node
 from backend.app.shared.mitm.pool import observe_pools
-from backend.app.task_queue import DEFAULT_QUEUE_NAME, TaskQueue, get_task_queue, observe_task_queues
+from backend.app.task_queue import (
+    DEFAULT_QUEUE_NAME, TRANSLATION_QUEUE_NAME, TaskQueue, get_task_queue, observe_task_queues,
+)
 from backend.app.background import get_background_runtime
 from backend.app.shared.agent.experiment_runs import runs
 from backend.app.shared.crm.outbox_store import OutboxStore
@@ -84,7 +86,8 @@ def _background_snapshot(context) -> dict:
     runtime["resources"] = [resource for resource in runtime["resources"]
                             if not resource["name"].startswith("experiment-run-")]
     with TaskQueue._instance_lock:
-        queues = {name: TaskQueue._instances.get(name) for name in ("maafw", "translation")}
+        queues = {name: TaskQueue._instances.get(name)
+                  for name in (DEFAULT_QUEUE_NAME, TRANSLATION_QUEUE_NAME)}
     observations = {name: queue.observation_for_epoch(context.epoch, exclude_prefixes=("Outbox ",))
                     if queue is not None else {"counts": {}, "tasks": []} for name, queue in queues.items()}
     tasks = [{**_snapshot_to_task_item(task), "queue": name}
@@ -180,7 +183,6 @@ def _build_system_snapshot() -> dict:
     receiver = asdict(status_mod.check_mitm_receiver())
     data_dir = status_mod.check_data_dir_status()
     data_dir_observed_at = time.time()
-    snaps = _observed_tasks(context.epoch)
     node = _last_node_result
     client = get_client_status() if node else None
     node_current = bool(node and node.get("context") == context.to_dict()
@@ -200,6 +202,11 @@ def _build_system_snapshot() -> dict:
     background = _background_snapshot(context)
     if get_account_context() != context:
         raise AppError("读取系统状态期间账号已切换，请刷新后重试。", status_code=409)
+    # Reuse the maafw queue snapshot above for the legacy task list.
+    tasks = [
+        {key: value for key, value in task.items() if key != "queue"}
+        for task in background["queueTasks"] if task["queue"] == DEFAULT_QUEUE_NAME
+    ]
     # Each health label is limited to its evidence; diagnostics are historical.
     return {
         "updatedAt": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S"),
@@ -263,7 +270,7 @@ def _build_system_snapshot() -> dict:
                 "evidence": "directory_check",
             },
         ],
-        "tasks": [_snapshot_to_task_item(s) for s in snaps],
+        "tasks": tasks,
     }
 
 

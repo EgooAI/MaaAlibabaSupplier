@@ -104,6 +104,31 @@ it("serializes slow observations and preserves the last snapshot with a visible 
   expect(status.lastFailure).toBeUndefined();
 });
 
+it("does not treat an in-flight poll as confirmation of a completed action", async () => {
+  await act(async () => root.render(<StatusHarness />));
+  expect(mocks.backend.getSystemStatus).toHaveBeenCalledTimes(1);
+
+  const poll = deferred<SystemStatusSnapshot>();
+  mocks.backend.getSystemStatus.mockReturnValueOnce(poll.promise);
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(mocks.backend.getSystemStatus).toHaveBeenCalledTimes(2);
+
+  mocks.backend.createTestTask.mockResolvedValue(undefined);
+  const postAction = deferred<SystemStatusSnapshot>();
+  mocks.backend.getSystemStatus.mockReturnValueOnce(postAction.promise);
+  await act(async () => button("createTestTask").click());
+  expect(mocks.message.success).not.toHaveBeenCalled();
+
+  await act(async () => poll.resolve({ ...snapshot, updatedAt: "stale poll" }));
+  expect(status.snapshot?.updatedAt).toBe("stale poll");
+  expect(mocks.backend.getSystemStatus).toHaveBeenCalledTimes(3);
+  expect(mocks.message.success).not.toHaveBeenCalled();
+
+  await act(async () => postAction.resolve({ ...snapshot, updatedAt: "after action" }));
+  expect(status.snapshot?.updatedAt).toBe("after action");
+  expect(mocks.message.success).toHaveBeenCalledExactlyOnceWith("测试任务已创建");
+});
+
 it.each(["resolve", "reject"])("starts a new account read immediately and ignores an old read's %s", async (outcome) => {
   await act(async () => root.render(<StatusHarness />));
   mocks.backend.getSystemStatus.mockRejectedValueOnce(new Error("old failure"));

@@ -13,6 +13,7 @@ interface WorkbenchScope {
   generation: number;
   isCurrent: () => boolean;
   refresh: () => Promise<boolean>;
+  refreshAfterAction: () => Promise<boolean>;
   creatingTask: boolean;
   testingNode: boolean;
   sweepingCards: boolean;
@@ -39,6 +40,8 @@ export function useStatusWorkbench() {
       const epoch = account.snapshot?.account.epoch;
       // Each account owns its pending read and action locks, even while old work settles.
       let inFlight: Promise<boolean> | null = null;
+      let readCount = 0;
+      let inFlightRead = 0;
       const scope: WorkbenchScope = {
         generation: account.generation,
         isCurrent: () => !cancelled && lifecycle.current === scope && accountSession.get().generation === scope.generation,
@@ -69,12 +72,23 @@ export function useStatusWorkbench() {
             }
           })();
           inFlight = pending;
+          inFlightRead = ++readCount;
           void pending.then(() => {
             if (!scope.isCurrent()) return;
             inFlight = null;
             if (!document.hidden) timer = setTimeout(() => { void scope.refresh(); }, POLL_INTERVAL_MS);
           });
           return pending;
+        },
+        async refreshAfterAction() {
+          if (!scope.isCurrent() || document.hidden) return false;
+          // A read that started before the action settled cannot confirm the action took effect.
+          const startedReads = readCount;
+          while (inFlight && inFlightRead <= startedReads) {
+            await inFlight;
+            if (!scope.isCurrent()) return false;
+          }
+          return scope.refresh();
         },
       };
       lifecycle.current = scope;
@@ -96,6 +110,7 @@ export function useStatusWorkbench() {
     };
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("focus", onVisibility);
+    // Deferring the first read avoids a duplicate request when StrictMode replays effects.
     queueMicrotask(() => { if (!cancelled && !lifecycle.current) startAccount(); });
     return () => {
       cancelled = true;
@@ -115,7 +130,7 @@ export function useStatusWorkbench() {
     try {
       await backend.createTestTask({ type: "前端连通性测试", target: "Console" });
       if (!scope.isCurrent()) return;
-      const synced = await scope.refresh();
+      const synced = await scope.refreshAfterAction();
       if (!scope.isCurrent()) return;
       if (synced) message.success("测试任务已创建");
       else message.warning("测试任务已创建，状态未同步");
@@ -155,7 +170,7 @@ export function useStatusWorkbench() {
     try {
       await backend.sweepCards();
       if (!scope.isCurrent()) return;
-      const synced = await scope.refresh();
+      const synced = await scope.refreshAfterAction();
       if (!scope.isCurrent()) return;
       if (synced) message.info("卡片扫描已触发，进度见「卡片清扫服务」（每 2 秒自动更新）。历史卡片可能无法富化。");
       else message.warning("卡片扫描已触发，状态未同步");

@@ -3,7 +3,7 @@
 import { Alert, Card, Col, Collapse, Row, Space, Tag, Typography } from "antd";
 import { AppTable } from "@/components/AppTable";
 import {
-  backgroundReadError, observationTime, runtimeRows, runtimeStatus, serviceSummaries, workStatus,
+  observationTime, runtimeRows, runtimeStatus, serviceSummaries,
   type ServiceSummary, type WorkStatus,
 } from "@/domain/status/backgroundModel";
 import type { SystemStatusSnapshot } from "@/types/status";
@@ -74,8 +74,6 @@ function WorkerObservations({ snapshot }: { snapshot: SystemStatusSnapshot }) {
 export function WorkerStatus({ snapshot }: { snapshot: SystemStatusSnapshot }) {
   const background = snapshot.background;
   const summaries = serviceSummaries(snapshot);
-  const runtimeError = backgroundReadError(background, "runtime");
-  const poolsError = backgroundReadError(background, "pools");
   return (
     <Space orientation="vertical" size="large" className="w-full">
       {!background ? <Alert type="info" showIcon title="当前快照未提供统一后台数据" description="仍可查看已有同步、诊断与工作循环观察。业务队列、实验、Outbox 和运行时状态尚未提供。" /> : null}
@@ -93,14 +91,14 @@ export function WorkerStatus({ snapshot }: { snapshot: SystemStatusSnapshot }) {
       <Collapse items={[
         {
           key: "runtime", label: "基础执行器详情与已结束历史",
-          children: !background || runtimeError ? <Typography.Text type="secondary">{runtimeError ? `运行时读取失败：${runtimeError}` : "未提供运行时快照"}</Typography.Text> : (
+          children: !background ? <Typography.Text type="secondary">未提供运行时快照</Typography.Text> : (
             <Space orientation="vertical" className="w-full">
               <Typography.Text type="secondary">观察于 {observationTime(background.runtime.observed_at)}。计数为执行器生命周期累计，不代表业务提交或平台送达。</Typography.Text>
               <AppTable
                 rowKey="key" size="small" dataSource={runtimeRows(background.runtime.resources)} scroll={{ x: 1200 }}
                 columns={[
                   { title: "执行器 / 类型", width: 240, render: (_, resource) => <><div>{resource.name}</div><Typography.Text type="secondary">{resource.kind} · {resource.instanceLabel}</Typography.Text></> },
-                  { title: "状态", width: 130, render: (_, resource) => <WorkStateTag status={{ ...workStatus(resource.state), color: resource.state === "completed" ? "default" : workStatus(resource.state).color }} /> },
+                  { title: "状态", width: 130, render: (_, resource) => <WorkStateTag status={runtimeStatus([resource])} /> },
                   { title: "执行 / 排队", width: 120, render: (_, resource) => `${resource.active} / ${resource.pending}` },
                   { title: "累计完成 / 异常", width: 140, render: (_, resource) => `${resource.completed} / ${resource.failed}` },
                   { title: "实例启动", width: 170, render: (_, resource) => observationTime(resource.started_at) },
@@ -115,7 +113,7 @@ export function WorkerStatus({ snapshot }: { snapshot: SystemStatusSnapshot }) {
         { key: "workers", label: "工作循环与队列观察", children: <WorkerObservations snapshot={snapshot} /> },
         {
           key: "pools", label: "缓存池计数",
-          children: poolsError ? <Typography.Text type="warning">缓存池读取失败：{poolsError}</Typography.Text> : snapshot.pools ? <Space wrap>{Object.entries(snapshot.pools).map(([name, count]) => <Tag key={name}>{poolNames[name] ?? name}：{count}</Tag>)}{!Object.keys(snapshot.pools).length ? <Typography.Text type="secondary">暂无缓存池记录</Typography.Text> : null}</Space> : <Typography.Text type="secondary">缓存池数据未提供</Typography.Text>,
+          children: snapshot.pools ? <Space wrap>{Object.entries(snapshot.pools).map(([name, count]) => <Tag key={name}>{poolNames[name] ?? name}：{count}</Tag>)}{!Object.keys(snapshot.pools).length ? <Typography.Text type="secondary">暂无缓存池记录</Typography.Text> : null}</Space> : <Typography.Text type="secondary">缓存池数据未提供</Typography.Text>,
         },
       ]} />
     </Space>

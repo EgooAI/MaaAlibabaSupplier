@@ -162,7 +162,7 @@ export interface BackgroundStatus {
   experiments: BackgroundExperimentRun[];
   outbox: { counts: Record<string, number>; recent: BackgroundOutboxItem[] };
   update: BackgroundUpdateStatus | null;
-  errors: Record<string, string>;
+  errors: Partial<Record<"outbox" | "update", string>>;
 }
 
 export interface SystemStatusSnapshot {

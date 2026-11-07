@@ -79,12 +79,15 @@ class _Observation:
                 "stopped" if self.data["state"] == "stopping" else "completed"
             )
             self.data.update(active=0, next_run_at=None)
+            # Pool pending is decremented as workers dequeue, so a nonzero value
+            # after an abnormal exit still reports undrained work.
             if self.data["kind"] != "pool":
                 self.data["pending"] = 0
 
 
 class Worker:
-    def __init__(self, runtime, name, run, *, on_stop=None, wake=None, managed=True, daemon=True):
+    def __init__(self, runtime, name, run, *, on_stop=None, wake=None,
+                 managed=True, daemon=True, kind="worker"):
         self.runtime = runtime
         self.name = name
         self.stop_event = Event()
@@ -95,7 +98,7 @@ class Worker:
         self._daemon = daemon
         self._lock = RLock()
         self._thread: Thread | None = None
-        self._observation = _Observation(runtime, name, "worker")
+        self._observation = _Observation(runtime, name, kind)
 
     def start(self):
         with self._lock:
@@ -206,8 +209,8 @@ class ManagedPool:
                 # when the application's bounded shutdown wait expires.
                 self._live_workers += 1
                 try:
-                    worker = Worker(self.runtime, f"{self.name}-{len(self._workers)}", self._work,
-                                    managed=False, daemon=False).start()
+                    worker = Worker(self.runtime, f"{self.name}-{len(self._workers)}",
+                                    lambda stop: self._work(), managed=False, daemon=False).start()
                 except BaseException as exc:
                     self._live_workers -= 1
                     self._observation.fail(type(exc).__name__)
@@ -224,7 +227,7 @@ class ManagedPool:
             self._queue.put((future, copy_context(), fn, args, kwargs))
             return future
 
-    def _work(self, stop):
+    def _work(self):
         observation = self._observation
         try:
             while (item := self._queue.get()) is not None:
@@ -400,8 +403,7 @@ class BackgroundRuntime:
                 next_delay = interval if override is None else override
                 blocked = False
 
-        worker = Worker(self, name, run, wake=wake)
-        worker._observation.data["kind"] = "schedule"
+        worker = Worker(self, name, run, wake=wake, kind="schedule")
         return worker
 
     def on_shutdown(self, name: str, callback: Callable[[], None], *, priority=0):
