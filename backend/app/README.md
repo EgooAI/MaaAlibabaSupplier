@@ -23,7 +23,7 @@
 2. 验证必填的固定密钥摘要 `MAA_AUTH_SECRET_SHA256` 和 MITM 回环地址，生成本次启动的内部凭据，再配置日志（`configure_logging()`）；
 3. 播种系统 Agent（`ensure_system_agents_seeded()`：指纹匹配，只补缺失行或仍等于内置默认的记录，用户编辑不被启动覆盖）与默认 LLM 层级（`ensure_default_llm_levels_seeded()`，仅补缺失的 Level 0 空行）并注册 LLM/工具/输出归一化（幂等，仅启动时一次）；
 4. 绑定并启动 MITM Python receiver 线程（`MITM_RECEIVER_HOST/PORT`，默认 `127.0.0.1:8085`，仅允许回环地址），绑定失败时不启动 GUI；
-5. 启动 MaaFW 子进程：可执行文件固定为 `backend/deps/bin/MaaPiCli.exe`（由 `tools/install_3_maafw.py` 安装），workdir 固定为 `backend/assets`（约定目录，无环境变量）；
+5. 启动 MaaFW 子进程：可执行文件固定为 `backend/assets/MaaPiCli.exe`（由 `tools/install_3_maafw.py` 安装），同目录的 `MaaUtils.dll` 用于定位项目，其他运行库通过子进程 PATH 从 `backend/deps/bin` 加载。框架和 Python 绑定固定为 5.14.3，MaaPiCli 使用该版本主包自带的程序；
 6. 启动 Yak MITM 代理（脚本 `backend/yak_mitm.yak`，默认 `127.0.0.1:8084`）。Yak 发现顺序：`YAK_EXECUTABLE` → PATH 上的 `yak` → `backend/.portable/yak/yak.exe`（`tools/install_4_yak.py` 的产物）；
 7. 启动 IM 同步协调服务，再启动 HTTP API（主线程阻塞，uvicorn，`MAA_API_HOST/PORT` 默认 `127.0.0.1:8000`，供 `frontend/` Next.js 反代 `/api/*`）。退出时停止同步服务并等待已提交的 CRM 工作完成。
 

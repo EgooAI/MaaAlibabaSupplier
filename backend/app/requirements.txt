@@ -1,5 +1,5 @@
 # Core libs
-maafw==5.10.5
+maafw==5.14.3
 openai==2.41.0
 fastapi>=0.115,<1
 uvicorn>=0.30,<1

@@ -145,6 +145,9 @@ def install_resource(version: str, bundled_python_exec_relpath: str | None) -> N
         assets_dir / "interface.json",
         payload_backend / "assets",
     )
+    # MaaPiCli resolves its project directory through MaaUtils.dll.
+    for name in ("MaaPiCli.exe", "MaaUtils.dll"):
+        shutil.copy2(working_dir / "deps" / "bin" / name, payload_backend / "assets" / name)
 
     with open(payload_backend / "assets" / "interface.json", "r", encoding="utf-8") as f:
         interface = jsonc.load(f)

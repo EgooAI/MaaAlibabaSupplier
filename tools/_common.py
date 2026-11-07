@@ -36,7 +36,7 @@ PORTABLE_DIR = REPO_ROOT / ".portable"
 # Version policy: minor-only pins, no overrides.
 PYTHON_MINOR = "3.12"
 NODE_MAJOR = "22"
-MAAFW_VERSION = "v5.10.0"
+MAAFW_VERSION = "v5.14.3"
 YAK_VERSION = "1.4.*"
 
 PBS_REPO = "astral-sh/python-build-standalone"

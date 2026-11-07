@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -23,8 +24,8 @@ class MaaFWProcess:
         from backend.app.shared.utils.settings import resolve_backend_root
 
         self.backend_root = backend_root or resolve_backend_root()
-        self.executable = self.backend_root / "deps" / "bin" / "MaaPiCli.exe"
         self.workdir = self.backend_root / "assets"
+        self.executable = self.workdir / "MaaPiCli.exe"
         self.process: subprocess.Popen | None = None
 
     def start(self) -> None:
@@ -39,6 +40,8 @@ class MaaFWProcess:
             raise MaaFWProcessError(f"MaaFW workdir not found at {self.workdir}.")
 
         command = [str(self.executable)]
+        env = colorless_child_env()
+        env["PATH"] = str(self.backend_root / "deps" / "bin") + os.pathsep + env.get("PATH", "")
         log_path = self.backend_root / "data" / "logs" / "maafw_cli.log"
         try:
             self.process = subprocess.Popen(
@@ -49,7 +52,7 @@ class MaaFWProcess:
                 stderr=subprocess.STDOUT,
                 bufsize=0,
                 creationflags=CREATE_NO_WINDOW,
-                env=colorless_child_env(),
+                env=env,
             )
             attach_process_log(self.process, log_path, source="maafw_cli")
         except OSError as exc:

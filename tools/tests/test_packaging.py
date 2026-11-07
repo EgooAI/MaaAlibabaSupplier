@@ -62,6 +62,7 @@ class PackagingTests(unittest.TestCase):
             "backend/__init__.py": "",
             "backend/app/main.py": "# fake backend",
             "backend/deps/bin/MaaPiCli.exe": "fake runtime",
+            "backend/deps/bin/MaaUtils.dll": "fake path library",
             "backend/deps/share/MaaAgentBinary/agent.py": "# fake agent",
             "backend/assets/interface.json": '{"agent": {"child_exec": "python"}}',
             "backend/assets/MaaCommonAssets/OCR/ppocr_v5/zh_cn/model.txt": "fake OCR",
@@ -81,6 +82,8 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(json.loads((self.payload / "build-info.json").read_text()), self.expected)
         interface = json.loads((self.payload / "backend/assets/interface.json").read_text())
         self.assertEqual(interface["version"], self.version)
+        self.assertEqual((self.payload / "backend/assets/MaaPiCli.exe").read_text(), "fake runtime")
+        self.assertEqual((self.payload / "backend/assets/MaaUtils.dll").read_text(), "fake path library")
         self.assertTrue((self.payload / "frontend/out/index.html").is_file())
 
 class InstallerPolicyTests(unittest.TestCase):

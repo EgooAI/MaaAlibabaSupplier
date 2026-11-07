@@ -201,10 +201,9 @@ def test_emergency_failure_contains_type_and_frames_but_no_values(monkeypatch, t
 
 @pytest.mark.parametrize("immediate", [True, False])
 def test_cli_process_start_is_recorded_once_without_readiness_claim(monkeypatch, tmp_path, immediate):
-    executable = tmp_path / "deps" / "bin" / "MaaPiCli.exe"
+    executable = tmp_path / "assets" / "MaaPiCli.exe"
     executable.parent.mkdir(parents=True)
     executable.touch()
-    (tmp_path / "assets").mkdir()
     exited = threading.Event()
     process = SimpleNamespace(pid=123, stdout=io.BytesIO(record("completed")))
     process.poll = lambda: 7 if immediate or exited.is_set() else None
@@ -235,6 +234,8 @@ def test_cli_process_start_is_recorded_once_without_readiness_claim(monkeypatch,
         assert popen.call_args.kwargs["stdout"] == maafw_process.subprocess.PIPE
         assert popen.call_args.kwargs["bufsize"] == 0
         child = popen.call_args.kwargs["env"]
+        assert popen.call_args.args[0] == [str(executable)]
+        assert child["PATH"].split(os.pathsep)[0] == str(tmp_path / "deps" / "bin")
         assert child["NO_COLOR"] == "1" and child["TERM"] == "dumb"
         assert child["CLICOLOR"] == "0" and child["CLICOLOR_FORCE"] == "0"
         assert process_logs.finish_process_log(process)
