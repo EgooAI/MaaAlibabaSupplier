@@ -39,9 +39,13 @@
 
 ## 参考资料
 
+- [AlibabaSupplier 阿里卖家官方安装包下载](https://alisupplier.alibaba.com/content_page/#/sellerapp)
+
 - [MaaFramework 相关文档](https://maafw.com/docs/1.1-QuickStarted)
 
 - 常见问题：使用 MaaDebugger 或 MaaPicli 时弹窗报错，应用程序错误：`应用程序无法正常启动`，一般是电脑缺少某些运行库，请安装一下 [vc_redist](https://aka.ms/vs/17/release/vc_redist.x64.exe)。
+
+- 常用辅助工具：使用内网穿透可使得前端网页可被外部访问：[frp](https://github.com/fatedier/frp)
 
 ## 许可证
 
