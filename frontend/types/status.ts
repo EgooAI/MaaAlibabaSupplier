@@ -1,5 +1,6 @@
 import type { ID } from "@/types/common";
 import type { SourceSyncStatus } from "./connection";
+import type { RunSnapshot } from "./experiment";
 
 export type HealthStatus = "healthy" | "warning" | "offline" | "uncertain";
 export type TaskStatus = "queued" | "running" | "succeeded" | "failed";
@@ -93,10 +94,10 @@ export interface WorkerObservation {
   last_error: string | null;
   progress_unit: string;
   last_sweep_at?: number | null;
-  targets?: number;
-  visited?: number;
-  enriched?: number;
-  failed?: number;
+  targets?: number | null;
+  visited?: number | null;
+  enriched?: number | null;
+  failed?: number | null;
 }
 
 export interface QueueObservation {
@@ -109,7 +110,63 @@ export interface QueueObservation {
   observed_at: number;
 }
 
+export type RuntimeState = "starting" | "waiting" | "running" | "blocked" | "stopping" | "stopped" | "failed" | "completed";
+
+/** Describes process execution only, without asserting business success. */
+export interface RuntimeResource {
+  name: string;
+  kind: "worker" | "schedule" | "pool";
+  state: RuntimeState;
+  active: number;
+  pending: number;
+  completed: number;
+  failed: number;
+  started_at: number | null;
+  last_started_at: number | null;
+  last_completed_at: number | null;
+  next_run_at: number | null;
+  last_error: string | null;
+}
+
+export interface BackgroundQueueTask extends TaskItem {
+  queue: "maafw" | "translation";
+}
+
+export interface BackgroundOutboxItem {
+  id: string;
+  status: string;
+  action: "send" | "test";
+  conversationId: number;
+  createdAt: number;
+  updatedAt: number;
+  mayHaveSent: boolean;
+}
+
+export interface BackgroundUpdateStatus {
+  supported: boolean;
+  reason: string | null;
+  phase: string;
+  auto: boolean;
+  downloaded_bytes: number;
+  total_bytes: number | null;
+  error: string | null;
+}
+
+export type BackgroundExperimentRun = RunSnapshot & { cancelRequested?: boolean };
+
+export interface BackgroundStatus {
+  runtime: { closing: boolean; observed_at: number; resources: RuntimeResource[] };
+  queueTasks: BackgroundQueueTask[];
+  /** Counts all retained tasks in the current epoch, before list truncation. */
+  queueCounts?: Record<"maafw" | "translation", Record<string, number>>;
+  experiments: BackgroundExperimentRun[];
+  outbox: { counts: Record<string, number>; recent: BackgroundOutboxItem[] };
+  update: BackgroundUpdateStatus | null;
+  errors: Record<string, string>;
+}
+
 export interface SystemStatusSnapshot {
+  background?: BackgroundStatus;
   queues?: Record<string, QueueObservation>;
   workers?: Record<string, WorkerObservation | null>;
   pools?: Record<string, number>;

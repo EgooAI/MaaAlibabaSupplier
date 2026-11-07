@@ -1,30 +1,31 @@
 "use client";
 
-import { ExperimentOutlined, InfoCircleOutlined, ScanOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, Col, Empty, Row, Space, Tooltip, Typography } from "antd";
-import { AppTable } from "@/components/AppTable";
+import { ExperimentOutlined, InfoCircleOutlined, ReloadOutlined, ScanOutlined } from "@ant-design/icons";
+import { Alert, Button, Card, Col, Collapse, Empty, Row, Space, Tabs, Tooltip, Typography } from "antd";
 import { EMPTY_TEXT } from "@/components/empty";
 import { StatusTag } from "@/components/StatusTag";
 import { formatDateTime } from "@/domain/time";
 import type { SourceSyncStatus } from "@/types/connection";
-import type { HealthModule, TaskItem } from "@/types/status";
+import type { HealthModule } from "@/types/status";
 import { useStatusWorkbench } from "./hooks/useStatusWorkbench";
 import { useAccount } from "@/features/account/AccountProvider";
 import { DataDirBanner } from "@/features/settings/DataDirBanner";
 import { SyncStatus } from "@/features/account/SyncStatus";
 import { WorkerStatus } from "./WorkerStatus";
+import { BackgroundTasks } from "./BackgroundTasks";
 
 export function StatusPage() {
   const account = useAccount();
   const canDiagnose = !account.blocked && Boolean(account.snapshot?.client.connected);
-  const { snapshot, loading, lastFailure, creatingTask, testingNode, sweepingCards, createTestTask, runNodeTest, sweepCards } = useStatusWorkbench();
+  const { snapshot, loading, refreshing, refresh, lastFailure, creatingTask, testingNode, sweepingCards, createTestTask, runNodeTest, sweepCards } = useStatusWorkbench();
   const failure = lastFailure ? <Alert type="warning" showIcon title={`状态观察失败（${new Date(lastFailure.at).toLocaleTimeString()}）`} description={`${lastFailure.message}。${snapshot ? `当前显示上次成功快照（${snapshot.updatedAt}），可能已过期。` : "尚无可用快照。"}`} /> : null;
+  const refreshButton = <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => void refresh()}>刷新状态</Button>;
 
   if (!snapshot) {
     return (
       <Space orientation="vertical" size="large" className="w-full">
         {failure}
-        <Card loading={loading}>
+        <Card title="系统状态" extra={refreshButton} loading={loading}>
           {!loading ? <Empty description={EMPTY_TEXT.status} /> : null}
         </Card>
       </Space>
@@ -34,10 +35,21 @@ export function StatusPage() {
   return (
     <Space orientation="vertical" size="large" className="w-full">
       {failure}
-      <ChatSyncCard observedSource={snapshot.source} />
-      {snapshot.workers ? <WorkerStatus workers={snapshot.workers} queues={snapshot.queues} pools={snapshot.pools} /> : null}
-
-      <Card title="模块状态" extra={<Tooltip title="页面每 2 秒自动刷新一次状态"><Typography.Text type="secondary" className="cursor-help">更新于 {snapshot.updatedAt}</Typography.Text></Tooltip>} loading={loading}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Space orientation="vertical" size={0}>
+          <Typography.Title level={4} className="m-0">系统状态</Typography.Title>
+          <Tooltip title="页面可见时，每轮观察完成后约 2 秒自动刷新"><Typography.Text type="secondary">快照更新于 {snapshot.updatedAt}{lastFailure ? " · 可能已过期" : ""}</Typography.Text></Tooltip>
+        </Space>
+        {refreshButton}
+      </div>
+      <Tabs items={[
+        { key: "background", label: "后台任务", children: <Space orientation="vertical" size="large" className="w-full">
+          <WorkerStatus snapshot={snapshot} />
+          <Collapse items={[{ key: "sync", label: "聊天同步详情与手动刷新", children: <ChatSyncCard observedSource={snapshot.source} /> }]} />
+          <BackgroundTasks snapshot={snapshot} />
+        </Space> },
+        { key: "diagnostics", label: "连接与诊断", children: <Space orientation="vertical" size="large" className="w-full">
+      <Card title="连接观察与最近诊断">
         <Row gutter={[16, 16]}>
           {snapshot.modules.map((module) => <Col xs={24} md={8} key={module.id}><HealthModulePanel module={module} /></Col>)}
         </Row>
@@ -47,7 +59,7 @@ export function StatusPage() {
       <Card title="诊断动作">
         <DataDirBanner />
         <Space wrap>
-          <Button type="primary" icon={<ExperimentOutlined />} loading={creatingTask} onClick={createTestTask}>创建测试任务</Button>
+          <Button type="primary" icon={<ExperimentOutlined />} disabled={account.blocked} loading={creatingTask} onClick={createTestTask}>创建测试任务</Button>
           <Button disabled={!canDiagnose} loading={testingNode === "ChatInput_GoToInput"} onClick={() => void runNodeTest("ChatInput_GoToInput")}>检查聊天输入框</Button>
           <Button disabled={!canDiagnose} loading={testingNode === "ContactSearch_GoToSearch"} onClick={() => void runNodeTest("ContactSearch_GoToSearch")}>检查联系人搜索框</Button>
           <Button disabled={!canDiagnose} loading={sweepingCards} icon={<ScanOutlined />} onClick={() => void sweepCards()}>立即扫描</Button>
@@ -55,24 +67,8 @@ export function StatusPage() {
         <Typography.Paragraph type="secondary" className="mt-3 mb-0">界面检查仅需客户端窗口已接入，会排队执行，只识别控件，不点击或输入。选择卖家且客户端窗口接入后，可以发送、填入测试和跳转联系人，其中发送与填入仍需查看截图并确认联系人与内容。“立即扫描”会导航到未富化产品卡所在的会话，促使客户端请求卡片详情。客户端只在收到新卡片消息时才会请求，历史卡片可能仍无法富化。</Typography.Paragraph>
       </Card>
 
-      <Card title="任务队列">
-        <AppTable
-          rowKey="id"
-          dataSource={snapshot.tasks}
-          loading={loading}
-          scroll={{ x: 900 }}
-          columns={[
-            { title: "任务 ID", dataIndex: "id", width: 150 },
-            { title: "操作类型", dataIndex: "type", width: 180 },
-            { title: "目标", dataIndex: "target", width: 180, render: (value: string | undefined) => value || "—" },
-            { title: "创建时间", dataIndex: "createdAt", width: 180 },
-            { title: "状态", dataIndex: "status", width: 120, render: (value: TaskItem["status"]) => <StatusTag status={value} /> },
-            { title: "任务消息", dataIndex: "message", minWidth: 220 },
-            { title: "结果", dataIndex: "result", minWidth: 220, render: (value: string | undefined, task: TaskItem) => value ?? (task.status === "succeeded" || task.status === "failed" ? "—" : "未完成") },
-          ]}
-          locale={{ emptyText: EMPTY_TEXT.tasks }}
-        />
-      </Card>
+        </Space> },
+      ]} />
     </Space>
   );
 }
@@ -100,11 +96,10 @@ function SyncDetailTile({ label, value }: { label: string; value: string }) {
 }
 
 function ChatSyncCard({ observedSource }: { observedSource?: SourceSyncStatus | null }) {
-  const { snapshot, blocked } = useAccount();
-  const source: SourceSyncStatus | null = blocked ? null : observedSource ?? snapshot?.source ?? null;
+  const { blocked } = useAccount();
+  const source = blocked ? null : observedSource;
   const time = (value: number | null) => (value == null ? "尚无记录" : formatDateTime(value));
   return (
-    <Card title="聊天同步">
       <Space orientation="vertical" size="middle" className="w-full">
         <SyncStatus />
         {source ? (
@@ -120,8 +115,7 @@ function ChatSyncCard({ observedSource }: { observedSource?: SourceSyncStatus | 
             {source.last_error ? <Alert type="error" showIcon title={source.last_error} /> : null}
             {source.observation_stale ? <Alert type="warning" showIcon title={`尚无成功源库观察或已超过 ${source.observation_max_age_s} 秒。已有存档可能过期；这不表示同步任务已失败。`} /> : null}
           </>
-        ) : null}
+        ) : <Typography.Text type="secondary">当前快照未提供可用的聊天同步详情</Typography.Text>}
       </Space>
-    </Card>
   );
 }

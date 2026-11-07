@@ -13,6 +13,10 @@ from backend.app.background import BackgroundRuntime
 WAIT = 5
 
 
+def resource_observation(runtime, name):
+    return next(item for item in runtime.observation()["resources"] if item["name"] == name)
+
+
 class ControlledWake:
     """Exposes timer waits and advances them without wall-clock sleeps."""
 
@@ -97,6 +101,9 @@ def test_readiness_retains_trigger_until_gate_opens_or_stop(runtime, stop_pendin
         assert wake.waits.get(timeout=WAIT) == (None, False)
         worker.trigger()
         assert wake.waits.get(timeout=WAIT) == (1, False)
+        blocked = resource_observation(runtime, "gated")
+        assert (blocked["state"], blocked["pending"], blocked["active"]) == ("blocked", 1, 0)
+        assert blocked["next_run_at"] is not None
         assert calls == []
         wake.elapse()
         assert wake.waits.get(timeout=WAIT) == (1, False)
@@ -108,6 +115,9 @@ def test_readiness_retains_trigger_until_gate_opens_or_stop(runtime, stop_pendin
             # The original trigger survives gate retries without another trigger.
             wake.elapse()
             assert wake.waits.get(timeout=WAIT) == (None, False)
+            waiting = resource_observation(runtime, "gated")
+            assert (waiting["state"], waiting["pending"], waiting["completed"]) == ("waiting", 0, 1)
+            assert waiting["next_run_at"] is None
     finally:
         worker.stop(timeout=WAIT)
     assert calls == ([] if stop_pending else ["run"])
@@ -120,21 +130,36 @@ def test_stop_during_readiness_check_does_not_start_action(runtime):
 
     def ready():
         checking.set()
-        assert release.wait(WAIT)
+        assert release.wait(WAIT * 2)
         return True
 
     worker = runtime.schedule("stopping-gate", lambda: calls.append("run"), delay=None, ready=ready).start()
     try:
         worker.trigger()
         assert checking.wait(WAIT)
-        worker.request_stop()
+        with ThreadPoolExecutor(max_workers=1) as caller:
+            try:
+                observed = caller.submit(runtime.observation).result(timeout=WAIT)
+                blocked, = observed["resources"]
+                assert (blocked["state"], blocked["active"], blocked["pending"]) == ("blocked", 0, 1)
+                assert blocked["next_run_at"] is None
+                worker.request_stop()
+                stopping = caller.submit(runtime.observation).result(timeout=WAIT)["resources"][0]
+                assert stopping["state"] == "stopping"
+                assert not release.is_set()
+            finally:
+                release.set()
     finally:
         release.set()
         worker.stop(timeout=WAIT)
     assert calls == []
 
 
-def test_schedule_recovers_after_failure_and_honors_next_delay(runtime):
+def test_schedule_recovers_after_failure_and_honors_next_delay(runtime, monkeypatch):
+    from backend.app import background
+
+    clock = [100.0]
+    monkeypatch.setattr(background, "time", lambda: clock[0])
     wake = ControlledWake()
     calls = []
 
@@ -142,17 +167,29 @@ def test_schedule_recovers_after_failure_and_honors_next_delay(runtime):
         calls.append(len(calls) + 1)
         if len(calls) == 1:
             raise ValueError("transient action failure")
+        if len(calls) == 3:
+            return False
         return 7 if len(calls) == 2 else None
 
     worker = runtime.schedule("retry", action, interval=30, delay=10, wake=wake).start()
     try:
         assert wake.waits.get(timeout=WAIT) == (10, False)
-        for next_delay in (30, 7, 30):
+        initial = resource_observation(runtime, "retry")
+        assert (initial["state"], initial["next_run_at"], initial["started_at"]) == ("waiting", 110.0, 100.0)
+        for index, next_delay in enumerate((30, 7, False, 30)):
+            clock[0] += 10
             wake.elapse()
             assert wake.waits.get(timeout=WAIT) == (next_delay, False)
+            observed = resource_observation(runtime, "retry")
+            assert (observed["state"], observed["active"], observed["pending"]) == ("waiting", 0, 0)
+            assert (observed["completed"], observed["failed"], observed["last_error"]) == (index, 1, "ValueError")
+            assert observed["last_started_at"] == observed["last_completed_at"] == clock[0]
+            assert observed["next_run_at"] == clock[0] + next_delay
     finally:
         worker.stop(timeout=WAIT)
-    assert calls == [1, 2, 3]
+    assert calls == [1, 2, 3, 4]
+    stopped = resource_observation(runtime, "retry")
+    assert stopped["state"] == "stopped" and stopped["next_run_at"] is None
 
 
 def test_stopping_schedule_drains_current_action_without_running_pending_trigger(runtime):
@@ -172,8 +209,12 @@ def test_stopping_schedule_drains_current_action_without_running_pending_trigger
         worker.trigger()
         assert entered.wait(WAIT)
         worker.trigger()
+        observed = resource_observation(runtime, "stop-pending")
+        assert (observed["state"], observed["active"], observed["pending"]) == ("running", 1, 1)
         with pytest.raises(TimeoutError):
             worker.stop(timeout=0)
+        stopping = resource_observation(runtime, "stop-pending")
+        assert stopping["state"] == "stopping" and stopping["completed"] == 0
         assert not finished.is_set()
         with pytest.raises(RuntimeError):
             worker.trigger()
@@ -206,6 +247,8 @@ def test_worker_has_clean_context_and_stop_timeout_preserves_liveness(runtime):
         with pytest.raises(TimeoutError):
             worker.stop(timeout=0)
         assert worker.is_alive()
+        stopping = resource_observation(runtime, "context-worker")
+        assert (stopping["state"], stopping["active"], stopping["completed"]) == ("stopping", 1, 0)
         assert worker.join(timeout=0) is False
         with pytest.raises(RuntimeError):
             worker.trigger()
@@ -219,6 +262,8 @@ def test_worker_has_clean_context_and_stop_timeout_preserves_liveness(runtime):
         context.reset(token)
     assert worker.join(timeout=0) is True
     assert observations == [("creation", True)]
+    stopped = resource_observation(runtime, "context-worker")
+    assert (stopped["state"], stopped["active"], stopped["completed"]) == ("stopped", 0, 1)
     with pytest.raises(RuntimeError):
         worker.start()
 
@@ -242,6 +287,82 @@ def test_completed_worker_rejects_triggers(runtime):
     assert calls == ["run"]
     with pytest.raises(RuntimeError):
         worker.trigger()
+
+
+def test_observation_is_passive_and_independent_of_lifecycle_locks(runtime, monkeypatch):
+    from backend.app import background
+
+    clock = [100.0]
+    monkeypatch.setattr(background, "time", lambda: clock[0])
+    entered = Event()
+    release = Event()
+    calls = []
+    runtime.worker("unstarted", lambda stop: calls.append("worker"))
+    runtime.schedule("unstarted-schedule", lambda: calls.append("action"),
+                     ready=lambda: calls.append("ready"))
+    pool = runtime.pool("unused")
+    assert runtime.observation() == {"closing": False, "observed_at": 100.0, "resources": []}
+
+    def run(stop):
+        with runtime._lock, worker._lock, pool._lock:
+            entered.set()
+            assert release.wait(WAIT * 2)
+        return False
+
+    worker = runtime.worker("observed", run)
+    worker.start()
+    try:
+        assert entered.wait(WAIT)
+        with ThreadPoolExecutor(max_workers=1) as caller:
+            try:
+                snapshot = caller.submit(runtime.observation).result(timeout=WAIT)
+                assert snapshot == {
+                    "closing": False, "observed_at": 100.0,
+                    "resources": [{
+                        "name": "observed", "kind": "worker", "state": "running",
+                        "active": 1, "pending": 0, "completed": 0, "failed": 0,
+                        "started_at": 100.0, "last_started_at": 100.0,
+                        "last_completed_at": None, "next_run_at": None, "last_error": None,
+                    }],
+                }
+                snapshot["resources"][0]["active"] = 999
+                fresh = caller.submit(runtime.observation).result(timeout=WAIT)
+                assert fresh["resources"][0]["active"] == 1
+                assert calls == [] and not release.is_set()
+                clock[0] = 105.0
+            finally:
+                release.set()
+    finally:
+        release.set()
+        assert worker.join(timeout=WAIT)
+    completed = resource_observation(runtime, "observed")
+    assert (completed["state"], completed["completed"], completed["failed"]) == ("completed", 1, 0)
+    assert completed["last_completed_at"] == 105.0
+    completed["state"] = "failed"
+    assert resource_observation(runtime, "observed")["state"] == "completed"
+
+
+@pytest.mark.parametrize("fail_start", [False, True])
+def test_worker_failure_retains_only_exception_type(runtime, monkeypatch, fail_start):
+    from backend.app import background
+
+    def fail(*args):
+        raise ValueError("private task content and arguments")
+
+    worker = runtime.worker("failed", fail)
+    if fail_start:
+        monkeypatch.setattr(background.Thread, "start", fail)
+        with pytest.raises(ValueError):
+            worker.start()
+    else:
+        worker.start()
+        assert worker.join(timeout=WAIT)
+    observed = resource_observation(runtime, "failed")
+    assert (observed["state"], observed["failed"], observed["completed"]) == ("failed", 1, 0)
+    assert (observed["active"], observed["pending"], observed["last_error"]) == (0, 0, "ValueError")
+    worker.request_stop()
+    assert resource_observation(runtime, "failed") == observed
+    assert "private" not in str(runtime.observation())
 
 
 def test_stop_callback_failure_still_joins_the_running_worker(runtime, monkeypatch):
@@ -411,6 +532,110 @@ def test_pool_callback_is_running_work_and_respects_shutdown_timeout(runtime):
         assert pool.join(timeout=WAIT)
 
 
+def test_pool_observation_counts_callbacks_queue_failures_and_cancellation(runtime):
+    entered = Queue()
+    finish_actions = Event()
+    callbacks = Queue()
+    finish_callbacks = Event()
+    ran = []
+    pool = runtime.pool("observed-pool", max_workers=2)
+
+    def action(number):
+        entered.put(number)
+        assert finish_actions.wait(WAIT * 3)
+        if number == 0:
+            raise ValueError("private submission payload")
+        return False
+
+    def callback(future):
+        callbacks.put(future)
+        assert finish_callbacks.wait(WAIT * 3)
+
+    first = pool.submit(action, 0)
+    second = pool.submit(action, 1)
+    first.add_done_callback(callback)
+    second.add_done_callback(callback)
+    try:
+        assert {entered.get(timeout=WAIT), entered.get(timeout=WAIT)} == {0, 1}
+        canceled = pool.submit(lambda: ran.append("canceled"))
+        last = pool.submit(lambda: ran.append("last"))
+        assert canceled.cancel()
+        finish_actions.set()
+        assert {callbacks.get(timeout=WAIT), callbacks.get(timeout=WAIT)} == {first, second}
+        assert first.done() and second.done()
+        with ThreadPoolExecutor(max_workers=1) as caller:
+            try:
+                with runtime._lock, pool._lock:
+                    snapshot = caller.submit(runtime.observation).result(timeout=WAIT)
+                observed, = snapshot["resources"]
+                assert (observed["kind"], observed["state"]) == ("pool", "running")
+                assert (observed["active"], observed["pending"]) == (2, 2)
+                assert (observed["completed"], observed["failed"], observed["last_completed_at"]) == (0, 0, None)
+                assert not last.done() and not finish_callbacks.is_set()
+                with pytest.raises(ExceptionGroup):
+                    runtime.shutdown(timeout=0)
+                closing = caller.submit(runtime.observation).result(timeout=WAIT)
+                assert closing["closing"] is True
+                stopping, = closing["resources"]
+                assert (stopping["state"], stopping["active"], stopping["pending"]) == ("stopping", 2, 2)
+            finally:
+                finish_callbacks.set()
+    finally:
+        finish_actions.set()
+        finish_callbacks.set()
+        assert pool.join(timeout=WAIT)
+    assert canceled.cancelled() and ran == ["last"]
+    assert isinstance(first.exception(timeout=WAIT), ValueError)
+    assert second.result(timeout=WAIT) is False and last.result(timeout=WAIT) is None
+    stopped = resource_observation(runtime, "observed-pool")
+    assert (stopped["state"], stopped["active"], stopped["pending"]) == ("stopped", 0, 0)
+    assert (stopped["completed"], stopped["failed"], stopped["last_error"]) == (2, 1, "ValueError")
+    assert stopped["last_completed_at"] >= stopped["last_started_at"] >= stopped["started_at"]
+
+
+def test_released_history_is_bounded_and_does_not_retain_work(runtime):
+    import gc
+    import weakref
+
+    class Action:
+        def __init__(self, index):
+            self.index = index
+
+        def __call__(self, stop):
+            if self.index == 54:
+                raise ValueError("private short-lived failure")
+            return False
+
+    entered = Event()
+
+    def running(stop):
+        entered.set()
+        stop.wait()
+
+    anchor = runtime.worker("still-running", running).start()
+    references = []
+    try:
+        assert entered.wait(WAIT)
+        for index in range(55):
+            action = Action(index)
+            references.append(weakref.ref(action))
+            worker = runtime.worker(f"short-{index}", action).start()
+            assert worker.join(timeout=WAIT)
+            del worker, action
+        gc.collect()
+        assert all(reference() is None for reference in references)
+        resources = runtime.observation()["resources"]
+        assert len(resources) == 51
+        history = [item for item in resources if item["name"] != "still-running"]
+        assert [item["name"] for item in history] == [f"short-{index}" for index in range(5, 55)]
+        assert all(item["state"] == "completed" and item["completed"] == 1 for item in history[:-1])
+        assert (history[-1]["state"], history[-1]["last_error"]) == ("failed", "ValueError")
+        assert resource_observation(runtime, "still-running")["state"] == "running"
+    finally:
+        anchor.stop(timeout=WAIT)
+    assert len(runtime.observation()["resources"]) == 50
+
+
 def test_shutdown_closes_admission_and_continues_ordered_cleanup_after_errors(runtime):
     cleanup_order = []
     cancellations = []
@@ -495,6 +720,9 @@ def test_readiness_exception_retains_pending_work_for_retry(runtime):
         worker.trigger()
         assert wake.waits.get(timeout=WAIT) == (1, False)
         assert calls == []
+        observed = resource_observation(runtime, "failing-gate")
+        assert (observed["state"], observed["pending"], observed["failed"]) == ("blocked", 1, 1)
+        assert observed["last_error"] == "OSError"
         wake.elapse()
         assert wake.waits.get(timeout=WAIT) == (None, False)
         assert calls == ["run"]

@@ -394,6 +394,17 @@ class Updater:
                     self._note_stale(result)
             return copy.deepcopy(self.state)
 
+    def observation(self) -> dict:
+        """Reads published progress without probing the helper or waiting for an operation."""
+        if not self.lock.acquire(blocking=False):
+            raise BlockingIOError("Updater observation is busy")
+        try:
+            return {key: self.state[key] for key in (
+                "supported", "reason", "phase", "auto", "downloaded_bytes", "total_bytes", "error",
+            )}
+        finally:
+            self.lock.release()
+
     def _clear_handoff_locked(self) -> None:
         self._handoff_finished.set()
         self._handoff_id = None
@@ -782,6 +793,11 @@ def get_updater() -> Updater:
         if _instance is None:
             _instance = Updater()
         return _instance
+
+
+def observe_updater() -> dict | None:
+    instance = _instance
+    return instance.observation() if instance is not None else None
 
 
 def register_update_runtime() -> None:

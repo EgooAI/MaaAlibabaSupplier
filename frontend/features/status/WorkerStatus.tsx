@@ -1,122 +1,123 @@
 "use client";
 
-import { Alert, Card, Col, Row, Space, Tag, Tooltip, Typography } from "antd";
-import type { QueueObservation, WorkerObservation } from "@/types/status";
-import { formatDateTime } from "@/domain/time";
+import { Alert, Card, Col, Collapse, Row, Space, Tag, Typography } from "antd";
+import { AppTable } from "@/components/AppTable";
+import {
+  backgroundReadError, observationTime, runtimeRows, runtimeStatus, serviceSummaries, workStatus,
+  type ServiceSummary, type WorkStatus,
+} from "@/domain/status/backgroundModel";
+import type { SystemStatusSnapshot } from "@/types/status";
+
+export function WorkStateTag({ status }: { status: WorkStatus }) {
+  return <Tag color={status.color}>{status.label}</Tag>;
+}
+
+function ServiceCard({ service }: { service: ServiceSummary }) {
+  return (
+    <Card size="small" className="h-full" title={service.title} extra={<WorkStateTag status={service.status} />}>
+      <Space orientation="vertical" size="small" className="w-full">
+        {service.details.map((detail) => <Typography.Text key={detail}>{detail}</Typography.Text>)}
+        {service.resources.map((resource, index) => (
+          <div key={`${resource.name}:${resource.started_at}:${index}`}>
+            <Typography.Text type="secondary">{resource.name} </Typography.Text>
+            <WorkStateTag status={runtimeStatus([resource])} />
+            {resource.last_error ? <Typography.Text type="warning">上次异常：{resource.last_error}</Typography.Text> : null}
+          </div>
+        ))}
+        {service.error ? <Typography.Text type="danger">{service.error}</Typography.Text> : null}
+      </Space>
+    </Card>
+  );
+}
 
 const workerNames: Record<string, string> = {
-  "im-source-check": "源库检查服务",
-  "outbox-verifier": "发送结果核对服务",
-  "card-sweep": "卡片清扫服务",
+  "im-source-check": "源库检查服务", "outbox-verifier": "发送结果核对服务", "card-sweep": "卡片清扫服务",
 };
 const phases: Record<string, string> = {
   not_started: "未启动", starting: "启动中", checking_source: "检查源库", waiting: "等待下一轮",
   reconciling: "核对中", scanning: "读取待核对任务", reading_source: "读取本地消息", stopped: "循环已退出",
-  selecting: "筛选目标", sweeping: "导航会话", idle: "空闲（等待手动触发）",
+  selecting: "筛选目标", sweeping: "导航会话", idle: "等待手动触发",
 };
-const queueNames: Record<string, string> = { maafw: "界面任务队列", translation: "翻译任务队列" };
-const time = (value: number | null | undefined) => value == null ? "尚无记录" : formatDateTime(value);
-const seconds = (value: number | null | undefined) => value == null ? "未知" : `${Math.floor(value)} 秒`;
+const poolNames: Record<string, string> = { product_cards: "产品卡池", inquiry_cards: "询盘卡池", user_info: "联系人池" };
 
-function workerState(worker: WorkerObservation | null) {
-  if (!worker?.started) return { label: "未启动", color: "default" };
-  if (!worker.alive) return { label: "线程未存活", color: "red" };
-  return worker.stopping ? { label: "停止中，线程仍存活", color: "orange" } : { label: "线程存活", color: "green" };
-}
-
-function queueState(queue: QueueObservation) {
-  if (!queue.initialized) return { label: "未启动", color: "default" };
-  return queue.alive ? { label: "线程存活", color: "green" } : { label: "线程未存活", color: "red" };
-}
-
-function Metric({ label, value, tone }: { label: string; value: string | number; tone?: "success" | "warning" }) {
-  const toneClass = tone === "success" ? "text-emerald-600" : tone === "warning" ? "text-amber-600" : "text-slate-800";
+function WorkerObservations({ snapshot }: { snapshot: SystemStatusSnapshot }) {
   return (
-    <div className="rounded-md bg-slate-50 px-3 py-1.5">
-      <div className="text-xs text-slate-500">{label}</div>
-      <div className={`text-sm font-semibold tabular-nums ${toneClass}`}>{value}</div>
-    </div>
+    <Space orientation="vertical" size="middle" className="w-full">
+      {Object.entries(snapshot.workers ?? {}).map(([name, worker]) => (
+        <div key={name}>
+          <Typography.Text strong>{workerNames[name] ?? name} </Typography.Text>
+          {worker ? (
+            <>
+              <Tag>{!worker.started ? "未启动" : !worker.alive ? "线程已停止" : worker.stopping ? "停止中" : "线程存活，仅执行证据"}</Tag>
+              <Typography.Paragraph className="mb-1">
+                阶段：{phases[worker.phase] ?? worker.phase} · 持续 {worker.phase_age_s == null ? "未知" : `${Math.floor(worker.phase_age_s)} 秒`} · 已完成循环 {worker.completed_iterations}
+                {name !== "card-sweep" ? ` · ${name === "im-source-check" ? "待提交同步目标" : "待核对数量"}：${worker.pending ?? "未观察 / 不适用"}` : ""}
+              </Typography.Paragraph>
+              <Typography.Text type="secondary">启动：{observationTime(worker.started_at)} · 最近心跳：{observationTime(worker.heartbeat_at)} · 最近进展：{observationTime(worker.last_progress_at)}</Typography.Text>
+              {worker.last_error ? <Typography.Paragraph type="warning">上次循环异常：{worker.last_error}</Typography.Paragraph> : null}
+            </>
+          ) : <Typography.Text type="secondary">尚无观察记录</Typography.Text>}
+        </div>
+      ))}
+      {Object.entries(snapshot.queues ?? {}).map(([name, queue]) => (
+        <div key={name}>
+          <Typography.Text strong>{name === "maafw" ? "GUI" : name === "translation" ? "翻译" : name} 执行队列 </Typography.Text>
+          <Tag>{!queue.initialized ? "未启动" : queue.alive ? "线程存活，仅执行证据" : "线程已停止"}</Tag>
+          <Typography.Text>进程内排队 {queue.pending} · 当前任务：{queue.current_age_s == null ? "无" : `已运行 ${Math.floor(queue.current_age_s)} 秒`} · 最近完成：{observationTime(queue.last_completed)}</Typography.Text>
+        </div>
+      ))}
+      {!snapshot.workers && !snapshot.queues ? <Typography.Text type="secondary">未提供工作循环观察</Typography.Text> : null}
+    </Space>
   );
 }
 
-function SweepMetrics({ worker, pools }: { worker: WorkerObservation; pools?: Record<string, number> }) {
-  const enriched = worker.enriched ?? 0;
-  const failed = worker.failed ?? 0;
+export function WorkerStatus({ snapshot }: { snapshot: SystemStatusSnapshot }) {
+  const background = snapshot.background;
+  const summaries = serviceSummaries(snapshot);
+  const runtimeError = backgroundReadError(background, "runtime");
+  const poolsError = backgroundReadError(background, "pools");
   return (
-    <div className="flex flex-wrap gap-2">
-      <Metric label="目标会话" value={worker.targets ?? 0} />
-      <Metric label="已访问" value={worker.visited ?? 0} />
-      <Metric label="已富化" value={enriched} tone={enriched > 0 ? "success" : undefined} />
-      <Metric label="未富化" value={failed} tone={failed > 0 ? "warning" : undefined} />
-      <Metric label="最近一轮" value={time(worker.last_sweep_at)} />
-      {pools?.product_cards != null ? <Metric label="产品卡池" value={pools.product_cards} /> : null}
-    </div>
-  );
-}
-
-function WorkerPanel({ id, worker, pools }: { id: string; worker: WorkerObservation | null; pools?: Record<string, number> }) {
-  const state = workerState(worker);
-  const tag = <Tag color={state.color}>{state.label}</Tag>;
-  return (
-    <div className="h-full rounded-lg border border-slate-200 bg-white p-4">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <Typography.Text strong>{workerNames[id] ?? id}</Typography.Text>
-        {worker ? (
-          <Tooltip title={<div className="whitespace-pre-line">{`启动：${time(worker.started_at)}\n最近心跳：${time(worker.heartbeat_at)}\n最近进展：${time(worker.last_progress_at)}`}</div>}>
-            <span className="cursor-help">{tag}</span>
-          </Tooltip>
-        ) : tag}
-      </div>
-      {worker ? (
-        <Space orientation="vertical" size={2} className="w-full">
-          <Typography.Text>
-            阶段：{phases[worker.phase] ?? worker.phase} · 持续 {seconds(worker.phase_age_s)} · 已完成循环 {worker.completed_iterations}
-          </Typography.Text>
-          {id === "card-sweep" ? <SweepMetrics worker={worker} pools={pools} /> : (
-            <Tooltip title={`观察于 ${time(worker.pending_observed_at)}`}>
-              <Typography.Text type="secondary" className="cursor-help">
-                {id === "im-source-check" ? "待提交同步目标" : "待核对数量"}：{worker.pending == null ? "未观察 / 不适用" : worker.pending}
-              </Typography.Text>
-            </Tooltip>
-          )}
-          {worker.last_error ? <Alert type="warning" showIcon title={`上次循环异常：${worker.last_error}`} /> : null}
-        </Space>
-      ) : <Typography.Text type="secondary">尚无观察记录。</Typography.Text>}
-    </div>
-  );
-}
-
-function QueuePanel({ id, queue }: { id: string; queue: QueueObservation }) {
-  const state = queueState(queue);
-  return (
-    <div className="h-full rounded-lg border border-slate-200 bg-white p-4">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <Typography.Text strong>{queueNames[id] ?? id}</Typography.Text>
-        <Tooltip title={`最近完成：${time(queue.last_completed)}`}>
-          <span className="cursor-help"><Tag color={state.color}>{state.label}</Tag></span>
-        </Tooltip>
-      </div>
-      <Typography.Text>排队 {queue.pending} · 当前任务：{queue.current_age_s == null ? "无" : `已运行 ${Math.floor(queue.current_age_s)} 秒`}</Typography.Text>
-    </div>
-  );
-}
-
-export function WorkerStatus({ workers, queues, pools }: {
-  workers: Record<string, WorkerObservation | null>;
-  queues?: Record<string, QueueObservation>;
-  pools?: Record<string, number>;
-}) {
-  return (
-    <Card title="后台观察">
-      <Typography.Text type="secondary">线程存活和循环完成不代表源库新鲜、CRM 已提交或消息已送达。阶段耗时仅供观察，不会据此自动判定失败或重发。</Typography.Text>
-      <Row gutter={[16, 16]} className="mt-4">
-        {Object.entries(workers).map(([id, worker]) => (
-          <Col xs={24} xl={12} key={id}><WorkerPanel id={id} worker={worker} pools={pools} /></Col>
-        ))}
-        {Object.entries(queues ?? {}).map(([id, queue]) => (
-          <Col xs={24} xl={12} key={`queue-${id}`}><QueuePanel id={id} queue={queue} /></Col>
-        ))}
-      </Row>
-    </Card>
+    <Space orientation="vertical" size="large" className="w-full">
+      {!background ? <Alert type="info" showIcon title="当前快照未提供统一后台数据" description="仍可查看已有同步、诊断与工作循环观察。业务队列、实验、Outbox 和运行时状态尚未提供。" /> : null}
+      {background?.runtime.closing ? <Alert type="warning" showIcon title="后台正在停止，等待已接收工作结束" description="关闭请求不代表所有执行器已经停止。" /> : null}
+      {background && Object.keys(background.errors).length ? <Alert type="warning" showIcon title="部分快照读取失败" description={Object.entries(background.errors).map(([name, error]) => <div key={name}>{name}：{error}</div>)} /> : null}
+      <Typography.Text type="secondary">业务列表仅含当前工作区。执行器和缓存池为进程范围观察，线程存活和循环完成不代表源库新鲜、CRM 已提交或消息已送达。</Typography.Text>
+      {(["数据处理", "业务任务", "运行维护"] as const).map((category) => (
+        <section key={category} aria-label={category}>
+          <Typography.Title level={5} className="mt-0">{category}</Typography.Title>
+          <Row gutter={[16, 16]}>
+            {summaries.filter((service) => service.category === category).map((service) => <Col xs={24} md={12} xl={8} key={service.id}><ServiceCard service={service} /></Col>)}
+          </Row>
+        </section>
+      ))}
+      <Collapse items={[
+        {
+          key: "runtime", label: "基础执行器详情与已结束历史",
+          children: !background || runtimeError ? <Typography.Text type="secondary">{runtimeError ? `运行时读取失败：${runtimeError}` : "未提供运行时快照"}</Typography.Text> : (
+            <Space orientation="vertical" className="w-full">
+              <Typography.Text type="secondary">观察于 {observationTime(background.runtime.observed_at)}。计数为执行器生命周期累计，不代表业务提交或平台送达。</Typography.Text>
+              <AppTable
+                rowKey="key" size="small" dataSource={runtimeRows(background.runtime.resources)} scroll={{ x: 1200 }}
+                columns={[
+                  { title: "执行器 / 类型", width: 240, render: (_, resource) => <><div>{resource.name}</div><Typography.Text type="secondary">{resource.kind} · {resource.instanceLabel}</Typography.Text></> },
+                  { title: "状态", width: 130, render: (_, resource) => <WorkStateTag status={{ ...workStatus(resource.state), color: resource.state === "completed" ? "default" : workStatus(resource.state).color }} /> },
+                  { title: "执行 / 排队", width: 120, render: (_, resource) => `${resource.active} / ${resource.pending}` },
+                  { title: "累计完成 / 异常", width: 140, render: (_, resource) => `${resource.completed} / ${resource.failed}` },
+                  { title: "实例启动", width: 170, render: (_, resource) => observationTime(resource.started_at) },
+                  { title: "最近执行 / 完成 / 下次计划", width: 220, render: (_, resource) => <>{observationTime(resource.last_started_at)}<br />{observationTime(resource.last_completed_at)}<br />{observationTime(resource.next_run_at)}</> },
+                  { title: "上次异常", dataIndex: "last_error", render: (value: string | null) => value || "无记录" },
+                ]}
+                locale={{ emptyText: "尚无执行器记录" }}
+              />
+            </Space>
+          ),
+        },
+        { key: "workers", label: "工作循环与队列观察", children: <WorkerObservations snapshot={snapshot} /> },
+        {
+          key: "pools", label: "缓存池计数",
+          children: poolsError ? <Typography.Text type="warning">缓存池读取失败：{poolsError}</Typography.Text> : snapshot.pools ? <Space wrap>{Object.entries(snapshot.pools).map(([name, count]) => <Tag key={name}>{poolNames[name] ?? name}：{count}</Tag>)}{!Object.keys(snapshot.pools).length ? <Typography.Text type="secondary">暂无缓存池记录</Typography.Text> : null}</Space> : <Typography.Text type="secondary">缓存池数据未提供</Typography.Text>,
+        },
+      ]} />
+    </Space>
   );
 }

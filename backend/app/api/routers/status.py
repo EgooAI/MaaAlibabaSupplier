@@ -20,6 +20,10 @@ from backend.app.shared.backend import status as status_mod
 from backend.app.shared.backend.maafw_runner import run_node
 from backend.app.shared.mitm.pool import observe_pools
 from backend.app.task_queue import DEFAULT_QUEUE_NAME, TaskQueue, get_task_queue, observe_task_queues
+from backend.app.background import get_background_runtime
+from backend.app.shared.agent.experiment_runs import runs
+from backend.app.shared.crm.outbox_store import OutboxStore
+from backend.app.updater import observe_updater
 
 router = APIRouter(route_class=AccountRoute)
 
@@ -65,11 +69,52 @@ def _network_health(status: dict) -> str:
     return "uncertain"
 
 
-def _observed_tasks() -> list:
+def _observed_tasks(epoch: str | None = None) -> list:
     # Status reads must not create a worker just to observe an empty queue.
     with TaskQueue._instance_lock:
         queue = TaskQueue._instances.get(DEFAULT_QUEUE_NAME)
-    return [s for s in queue.all_snapshots() if not s.description.startswith(("Outbox ", "Translation "))] if queue else []
+    epoch = epoch if epoch is not None else get_account_context().epoch
+    return queue.observation_for_epoch(epoch, exclude_prefixes=("Outbox ", "Translation "))["tasks"] if queue else []
+
+
+def _background_snapshot(context) -> dict:
+    errors = {}
+    runtime = get_background_runtime().observation()
+    # Experiment execution belongs to a workspace, unlike infrastructure counters.
+    runtime["resources"] = [resource for resource in runtime["resources"]
+                            if not resource["name"].startswith("experiment-run-")]
+    with TaskQueue._instance_lock:
+        queues = {name: TaskQueue._instances.get(name) for name in ("maafw", "translation")}
+    observations = {name: queue.observation_for_epoch(context.epoch, exclude_prefixes=("Outbox ",))
+                    if queue is not None else {"counts": {}, "tasks": []} for name, queue in queues.items()}
+    tasks = [{**_snapshot_to_task_item(task), "queue": name}
+             for name, observation in observations.items() for task in observation["tasks"]]
+    try:
+        outbox = OutboxStore().observation(seller=context.self_ali_id, data_dir=context.data_dir)
+    except Exception as exc:
+        errors["outbox"] = type(exc).__name__
+        outbox = {"counts": {}, "recent": []}
+    try:
+        update = observe_updater()
+    except Exception as exc:
+        errors["update"] = type(exc).__name__
+        update = None
+    return {"runtime": runtime, "queueTasks": tasks,
+            "queueCounts": {name: observation["counts"] for name, observation in observations.items()},
+            "experiments": runs.observations(context),
+            "outbox": outbox, "update": update, "errors": errors}
+
+
+def _scoped_workers(context) -> dict:
+    workers = status_mod.observe_workers()
+    for name in ("outbox-verifier", "card-sweep"):
+        worker = workers.get(name)
+        if worker is not None and worker.get("context") != context.to_dict():
+            worker = {**worker, "context": None, "pending": None, "last_error": None}
+            if name == "card-sweep":
+                worker.update(targets=None, visited=None, enriched=None, failed=None, last_sweep_at=None)
+            workers[name] = worker
+    return workers
 
 
 def _snapshot_to_task_item(s) -> dict:
@@ -135,12 +180,12 @@ def _build_system_snapshot() -> dict:
     receiver = asdict(status_mod.check_mitm_receiver())
     data_dir = status_mod.check_data_dir_status()
     data_dir_observed_at = time.time()
-    snaps = _observed_tasks()
+    snaps = _observed_tasks(context.epoch)
     node = _last_node_result
     client = get_client_status() if node else None
     node_current = bool(node and node.get("context") == context.to_dict()
                         and node.get("window_generation") == client["window_generation"] and client["connected"])
-    workers = status_mod.observe_workers()
+    workers = _scoped_workers(context)
     queues = observe_task_queues()
     queues_observed_at = time.time()
     for queue in queues.values():
@@ -152,6 +197,7 @@ def _build_system_snapshot() -> dict:
     if source is not None:
         source["last_error"] = user_message(source["last_error"]) if source["last_error"] else ""
     key_healthy = user["key_validation"] == "valid" and not user["observation_stale"] and user["has_key"] and user["db_exists"]
+    background = _background_snapshot(context)
     if get_account_context() != context:
         raise AppError("读取系统状态期间账号已切换，请刷新后重试。", status_code=409)
     # Each health label is limited to its evidence; diagnostics are historical.
@@ -164,6 +210,7 @@ def _build_system_snapshot() -> dict:
         "queues": queues,
         "pools": observe_pools(),
         "source": source,
+        "background": background,
         "modules": [
             {
                 "id": "health-identity",

@@ -147,6 +147,18 @@ class TaskQueue:
             self._evict_locked(time.time())
             return [r.snapshot() for r in self._requests.values()]
 
+    def observation_for_epoch(self, epoch: str, *, limit: int = 100, exclude_prefixes=()) -> dict:
+        """Observes scoped counts and active-first history without eviction."""
+        now = time.time()
+        with self._lock:
+            requests = [r for r in self._requests.values() if r.log_context.get("account_epoch") == epoch
+                        and not r.description.startswith(exclude_prefixes)
+                        and (r.completed_at is None or now - r.completed_at <= TASK_RETENTION_S)]
+            counts = {str(status): sum(request.status == status for request in requests) for status in TaskStatus}
+            priority = {TaskStatus.RUNNING: 0, TaskStatus.PENDING: 1, TaskStatus.FAILED: 2, TaskStatus.SUCCEEDED: 2}
+            requests.sort(key=lambda request: (priority[request.status], -request.created_at))
+            return {"counts": counts, "tasks": [request.snapshot() for request in requests[:limit]]}
+
     def shutdown(self, timeout: float = 5.0) -> None:
         """Drain accepted work before releasing the instance and worker."""
         self._worker.stop(timeout)

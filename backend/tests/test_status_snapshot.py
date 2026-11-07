@@ -1,5 +1,6 @@
 import unittest
 import time
+from threading import Event
 from dataclasses import replace
 from unittest import mock
 
@@ -34,7 +35,7 @@ class StatusSnapshotTestCase(unittest.TestCase):
         body = self.client.get("/api/status").json()
         self.assertEqual(body["code"], 0)
         snapshot = body["data"]
-        for key in ("updatedAt", "modules", "tasks", "pools"):
+        for key in ("updatedAt", "modules", "tasks", "pools", "background"):
             self.assertIn(key, snapshot)
         module_ids = [module["id"] for module in snapshot["modules"]]
         self.assertEqual(
@@ -51,6 +52,33 @@ class StatusSnapshotTestCase(unittest.TestCase):
         body = self.client.post("/api/status/refresh").json()
         self.assertEqual(body["code"], 0)
         self.assertIn("modules", body["data"])
+
+    def test_status_exposes_an_accepted_queued_task_without_claiming_completion(self) -> None:
+        from backend.app.task_queue import get_task_queue
+
+        queue = get_task_queue()
+        entered, release = Event(), Event()
+
+        def block():
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("test gate was not released")
+            return True, "done"
+
+        queue.enqueue(block, description="unscoped test gate")
+        try:
+            self.assertTrue(entered.wait(2))
+            with mock.patch.object(status_router, "get_task_queue", return_value=queue):
+                submitted = self.client.post("/api/status/test-tasks", json={"type": "test"}).json()["data"]
+            observed = self.client.get("/api/status").json()["data"]["background"]
+            tasks = observed["queueTasks"]
+            self.assertEqual([task["id"] for task in tasks], [submitted["id"]])
+            self.assertEqual(tasks[0]["queue"], "maafw")
+            self.assertEqual(tasks[0]["status"], "queued")
+            self.assertIsNone(tasks[0]["resultSuccess"])
+        finally:
+            release.set()
+            queue.shutdown()
 
     def test_system_snapshot_reports_pool_counts(self) -> None:
         from backend.app.shared.mitm.pool import ProductCard, get_product_card_pool

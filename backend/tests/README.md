@@ -69,6 +69,15 @@ Future callbacks, account-context isolation, and cleanup after partial startup.
 and startup-failure cleanup. Sync, card-sweep, updater and experiment suites exercise
 their domain-specific shutdown and persistence behavior through the same runtime.
 
+`test_background_status.py` and `test_status_snapshot.py` cover passive observations,
+workspace-scoped queue/experiment/outbox records, persisted send uncertainty, and
+partial read failures without hiding other sources. Runtime tests also cover bounded
+history, queue/active counts and observation during blocked callbacks. Frontend
+`StatusPage`, `StatusAndShutdown` and background-model tests cover business evidence,
+normal stops, stale snapshots, account changes and visibility-aware polling. These
+use isolated stores and mocked external services; they do not validate real browser
+layout, client recognition or update installation.
+
 ## GUI Regression Coverage
 
 - `test_gui_tasks.py` checks acceptance snapshots, response preparation failures,

@@ -147,6 +147,16 @@ class RunRegistry:
                     return state
         return None
 
+    def observations(self, owner, *, limit: int = 50) -> list[dict]:
+        """Observes current-workspace runs without starting or cancelling work."""
+        with self._lock, self._owners_lock:
+            states = [state for run_id, state in self._runs.items()
+                      if (bound := self._owners.get(run_id)) is not None
+                      and (bound.self_ali_id, bound.data_dir) == (owner.self_ali_id, owner.data_dir)]
+        snapshots = [{**state.snapshot(), "cancelRequested": state.token.cancelled} for state in states]
+        snapshots.sort(key=lambda item: (item["finishedAt"] is None, item["startedAt"]), reverse=True)
+        return snapshots[:limit]
+
     def forget(self, run_id: str) -> None:
         with self._lock:
             self._runs.pop(run_id, None)

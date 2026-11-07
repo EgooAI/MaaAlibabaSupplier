@@ -3,111 +3,171 @@
 import { App } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { backend } from "@/services/client";
-import { accountSession } from "@/services/accountSession";
+import { accountSession, AccountChangedError } from "@/services/accountSession";
 import { operationErrorMessage } from "@/services/errors";
 import type { NodeTestEntry, SystemStatusSnapshot } from "@/types/status";
 
 const POLL_INTERVAL_MS = 2000;
 
+interface WorkbenchScope {
+  generation: number;
+  isCurrent: () => boolean;
+  refresh: () => Promise<boolean>;
+  creatingTask: boolean;
+  testingNode: boolean;
+  sweepingCards: boolean;
+}
+
 export function useStatusWorkbench() {
   const { message } = App.useApp();
   const [snapshot, setSnapshot] = useState<SystemStatusSnapshot>();
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
   const [testingNode, setTestingNode] = useState<NodeTestEntry>();
   const [sweepingCards, setSweepingCards] = useState(false);
   const [lastFailure, setLastFailure] = useState<{ at: number; message: string }>();
-  const inFlight = useRef<Promise<boolean> | null>(null);
-  const lifecycle = useRef(0);
-
-  const loadSnapshot = useCallback(() => {
-    if (inFlight.current) return inFlight.current;
-    const generation = lifecycle.current;
-    const accountGeneration = accountSession.get().generation;
-    const current = () => lifecycle.current === generation && accountSession.get().generation === accountGeneration;
-    const pending = (async () => {
-      try {
-        const nextSnapshot = await backend.getSystemStatus();
-        if (!current()) return false;
-        setSnapshot(nextSnapshot);
-        setLastFailure(undefined);
-        return true;
-      } catch (error: unknown) {
-        if (current()) setLastFailure({ at: Date.now(), message: operationErrorMessage(error, "系统状态加载失败") });
-        return false;
-      } finally {
-        if (current()) setLoading(false);
-      }
-    })();
-    inFlight.current = pending;
-    void pending.finally(() => { if (inFlight.current === pending) inFlight.current = null; });
-    return pending;
-  }, []);
+  const lifecycle = useRef<WorkbenchScope | null>(null);
+  const refresh = useCallback(() => lifecycle.current?.refresh() ?? Promise.resolve(false), []);
 
   useEffect(() => {
-    const generation = lifecycle.current;
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
-      if (cancelled) return;
-      if (!document.hidden) await loadSnapshot();
-      if (!cancelled) timer = setTimeout(poll, POLL_INTERVAL_MS);
-    };
-    let accountGeneration = accountSession.get().generation;
-    const unsubscribe = accountSession.subscribe(() => {
-      const next = accountSession.get().generation;
-      if (next === accountGeneration) return;
-      accountGeneration = next;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const startAccount = () => {
+      clearTimeout(timer);
+      const account = accountSession.get();
+      const epoch = account.snapshot?.account.epoch;
+      // Each account owns its pending read and action locks, even while old work settles.
+      let inFlight: Promise<boolean> | null = null;
+      const scope: WorkbenchScope = {
+        generation: account.generation,
+        isCurrent: () => !cancelled && lifecycle.current === scope && accountSession.get().generation === scope.generation,
+        creatingTask: false,
+        testingNode: false,
+        sweepingCards: false,
+        refresh() {
+          if (!scope.isCurrent() || document.hidden) return Promise.resolve(false);
+          if (inFlight) return inFlight;
+          clearTimeout(timer);
+          setRefreshing(true);
+          const pending = (async () => {
+            try {
+              const nextSnapshot = await backend.getSystemStatus();
+              if (!scope.isCurrent()) return false;
+              if (epoch !== undefined && nextSnapshot.context?.epoch !== epoch) throw new AccountChangedError();
+              setSnapshot(nextSnapshot);
+              setLastFailure(undefined);
+              return true;
+            } catch (error: unknown) {
+              if (scope.isCurrent()) setLastFailure({ at: Date.now(), message: operationErrorMessage(error, "系统状态加载失败") });
+              return false;
+            } finally {
+              if (scope.isCurrent()) {
+                setLoading(false);
+                setRefreshing(false);
+              }
+            }
+          })();
+          inFlight = pending;
+          void pending.then(() => {
+            if (!scope.isCurrent()) return;
+            inFlight = null;
+            if (!document.hidden) timer = setTimeout(() => { void scope.refresh(); }, POLL_INTERVAL_MS);
+          });
+          return pending;
+        },
+      };
+      lifecycle.current = scope;
       setSnapshot(undefined);
       setLastFailure(undefined);
       setLoading(true);
+      setRefreshing(false);
+      setCreatingTask(false);
+      setTestingNode(undefined);
+      setSweepingCards(false);
+      void scope.refresh();
+    };
+    const unsubscribe = accountSession.subscribe(() => {
+      if (accountSession.get().generation !== lifecycle.current?.generation) startAccount();
     });
-    queueMicrotask(poll);
-    return () => { cancelled = true; lifecycle.current = generation + 1; clearTimeout(timer); unsubscribe(); };
-  }, [loadSnapshot]);
+    const onVisibility = () => {
+      if (document.hidden) clearTimeout(timer);
+      else void lifecycle.current?.refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onVisibility);
+    queueMicrotask(() => { if (!cancelled && !lifecycle.current) startAccount(); });
+    return () => {
+      cancelled = true;
+      lifecycle.current = null;
+      clearTimeout(timer);
+      unsubscribe();
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onVisibility);
+    };
+  }, []);
 
   async function createTestTask() {
-    if (creatingTask) return;
+    const scope = lifecycle.current;
+    if (!scope?.isCurrent() || scope.creatingTask) return;
+    scope.creatingTask = true;
     setCreatingTask(true);
     try {
       await backend.createTestTask({ type: "前端连通性测试", target: "Console" });
-      const synced = await loadSnapshot();
+      if (!scope.isCurrent()) return;
+      const synced = await scope.refresh();
+      if (!scope.isCurrent()) return;
       if (synced) message.success("测试任务已创建");
       else message.warning("测试任务已创建，状态未同步");
     } catch (error: unknown) {
-      message.error(operationErrorMessage(error, "测试任务创建失败", "请先查看任务列表，勿立即重复提交"));
+      if (scope.isCurrent()) message.error(operationErrorMessage(error, "测试任务创建失败", "请先查看任务列表，勿立即重复提交"));
     } finally {
-      setCreatingTask(false);
+      if (scope.isCurrent()) {
+        scope.creatingTask = false;
+        setCreatingTask(false);
+      }
     }
   }
 
   async function runNodeTest(entry: NodeTestEntry) {
-    if (testingNode) return;
+    const scope = lifecycle.current;
+    if (!scope?.isCurrent() || scope.testingNode) return;
+    scope.testingNode = true;
     setTestingNode(entry);
     try {
       await backend.runNodeTest(entry);
-      message.info("节点测试任务已提交排队，请在状态页任务列表查看结果（每 2 秒自动更新）");
+      if (scope.isCurrent()) message.info("节点测试任务已提交排队，请在状态页任务列表查看结果（每 2 秒自动更新）");
     } catch (error: unknown) {
-      message.error(operationErrorMessage(error, "节点测试提交失败", "请先查看任务列表，勿立即重复提交"));
+      if (scope.isCurrent()) message.error(operationErrorMessage(error, "节点测试提交失败", "请先查看任务列表，勿立即重复提交"));
     } finally {
-      setTestingNode(undefined);
+      if (scope.isCurrent()) {
+        scope.testingNode = false;
+        setTestingNode(undefined);
+      }
     }
   }
 
   async function sweepCards() {
-    if (sweepingCards) return;
+    const scope = lifecycle.current;
+    if (!scope?.isCurrent() || scope.sweepingCards) return;
+    scope.sweepingCards = true;
     setSweepingCards(true);
     try {
       await backend.sweepCards();
-      const synced = await loadSnapshot();
+      if (!scope.isCurrent()) return;
+      const synced = await scope.refresh();
+      if (!scope.isCurrent()) return;
       if (synced) message.info("卡片扫描已触发，进度见「卡片清扫服务」（每 2 秒自动更新）。历史卡片可能无法富化。");
       else message.warning("卡片扫描已触发，状态未同步");
     } catch (error: unknown) {
-      message.error(operationErrorMessage(error, "卡片扫描触发失败"));
+      if (scope.isCurrent()) message.error(operationErrorMessage(error, "卡片扫描触发失败"));
     } finally {
-      setSweepingCards(false);
+      if (scope.isCurrent()) {
+        scope.sweepingCards = false;
+        setSweepingCards(false);
+      }
     }
   }
 
-  return { snapshot, loading, lastFailure, creatingTask, testingNode, sweepingCards, createTestTask, runNodeTest, sweepCards };
+  return { snapshot, loading, refreshing, refresh, lastFailure, creatingTask, testingNode, sweepingCards, createTestTask, runNodeTest, sweepCards };
 }

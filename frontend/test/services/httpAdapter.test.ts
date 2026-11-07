@@ -90,6 +90,18 @@ describe("http adapter contract", () => {
     expect(new Headers(vi.mocked(fetch).mock.calls[0][1]?.headers).get("X-Account-Epoch")).toBe("mock-1");
   });
 
+  it("binds status test submissions to their originating account", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ code: 0, msg: "ok", data: { id: "task", status: "queued" } }),
+      { headers: { "X-Account-Epoch": "mock-1" } },
+    ));
+    await httpBackend.createTestTask({ type: "test", target: "Console" });
+    expect(new Headers(vi.mocked(fetch).mock.calls[0][1]?.headers).get("X-Account-Epoch")).toBe("mock-1");
+    accountSession.invalidate();
+    await expect(httpBackend.createTestTask({ type: "test", target: "Console" })).rejects.toMatchObject({ name: "AccountChangedError" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("sends authenticated update requests with exact payloads and no account epoch", async () => {
     accountSession.invalidate();
     const data = { supported: false, phase: "idle", reason: "source build" };

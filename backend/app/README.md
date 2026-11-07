@@ -47,6 +47,8 @@
 
 当前同步检查、Outbox 核查和自动更新使用定时 schedule，产品卡补全使用仅触发的 schedule。CRM 写入使用单 worker pool，实验运行、更新握手、receiver、子进程日志采集和 Maa Agent 等待使用受管 Worker。接口示例、关闭顺序与模块职责见 [后台任务接入说明](BACKGROUND.md)。
 
+系统状态页通过 `GET /api/status` 的 `background` 观察运行时、GUI/翻译任务、当前工作区的实验与 Outbox，以及更新进度。进程执行器计数与账号业务结果分别展示，准入阻塞、停止中、正常停止和失败使用不同状态。观察不启动工作，局部读取失败显示未知，网络失败保留带过期提示的最后快照。字段与页面生命周期见 [系统状态契约](api/STATUS.md)。
+
 ## MITM 模块设计
 
 ### 架构

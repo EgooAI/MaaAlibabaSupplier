@@ -70,14 +70,14 @@ class OutboxStore:
         self.database_path = Path(database_path).expanduser().resolve()
 
     @contextmanager
-    def _connection(self, *, write: bool = False, create: bool = False) -> Iterator[sqlite3.Connection]:
+    def _connection(self, *, write: bool = False, create: bool = False, timeout: float = 30) -> Iterator[sqlite3.Connection]:
         mode = "rwc" if create else "rw" if write else "ro"
         with closing(sqlite3.connect(
             self.database_path.as_uri() + f"?mode={mode}", uri=True,
-            timeout=30, isolation_level=None,
+            timeout=timeout, isolation_level=None,
         )) as conn:
             conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA busy_timeout=30000")
+            conn.execute(f"PRAGMA busy_timeout={int(timeout * 1000)}")
             conn.execute("PRAGMA foreign_keys=ON")
             try:
                 if write:
@@ -227,6 +227,28 @@ class OutboxStore:
             f"SELECT * FROM app_outbox WHERE seller=? AND data_dir=? AND status IN ({','.join('?' for _ in states)}) "
             "ORDER BY created_at, id", (*_scope(seller, data_dir), *states),
         )]
+
+    def observation(self, *, seller: str, data_dir: str | Path, limit: int = 20) -> dict:
+        """Reads scoped counts and metadata in one snapshot, without payloads or migrations."""
+        empty = {"counts": {}, "recent": []}
+        if not seller or not data_dir or not self.database_path.is_file():
+            return empty
+        scope = _scope(seller, data_dir)
+        with self._connection(timeout=0.1) as conn:
+            conn.execute("BEGIN")
+            if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_outbox'").fetchone():
+                return empty
+            counts = {row["status"]: row["count"] for row in conn.execute(
+                "SELECT status, count(*) AS count FROM app_outbox WHERE seller=? AND data_dir=? GROUP BY status", scope,
+            )}
+            recent = [dict(row) for row in conn.execute(
+                "SELECT id, status, action, conversation_id AS conversationId, created_at AS createdAt, "
+                "updated_at AS updatedAt, may_have_sent AS mayHaveSent FROM app_outbox "
+                "WHERE seller=? AND data_dir=? ORDER BY updated_at DESC, id DESC LIMIT ?", (*scope, limit),
+            )]
+        for record in recent:
+            record["mayHaveSent"] = bool(record["mayHaveSent"])
+        return {"counts": counts, "recent": recent}
 
     def events(self, id: str, *, seller: str, data_dir: str | Path) -> list[dict]:
         rows = self._read(

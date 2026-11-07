@@ -113,6 +113,7 @@ class CardSweepService:
         self._thread = None
         self._observation_lock = RLock()
         self._observation = {
+            "context": None,
             "started_at": None, "heartbeat_at": None, "last_progress_at": None, "last_sweep_at": None,
             "phase": "not_started", "phase_started_at": None,
             "completed_iterations": 0, "last_error": None,
@@ -189,13 +190,15 @@ class CardSweepService:
             log_event("card.sweep_skipped", reason="outbox_busy")
             self._observe("idle")
             return
+        self._observe("selecting", context=context.to_dict(), last_error=None,
+                      targets=None, visited=0, enriched=0, failed=0, last_sweep_at=None)
         adapter = CRMAdapter()
         try:
-            self._observe("selecting")
             unresolved = select_targets(adapter, context.self_ali_id, get_product_card_pool())
         finally:
             adapter.engine.dispose()
         targets = unresolved[:SWEEP_MAX_TARGETS]
+        self._observe("selecting", targets=len(targets))
         log_event("card.sweep_selected", targets=len(unresolved))
         if not targets:
             self._observe("idle")
@@ -206,7 +209,8 @@ class CardSweepService:
             log_event("card.sweep_skipped", reason="gui_unavailable")
             self._observe("idle", last_error=str(exc), targets=len(targets), visited=0, enriched=0, failed=0)
             return
-        self._observe("sweeping", last_error=None, targets=len(targets), visited=0, enriched=0, failed=0)
+        self._observe("sweeping", context=context.to_dict(), last_error=None,
+                      targets=len(targets), visited=0, enriched=0, failed=0)
 
         def navigate(contact_ali_id: str) -> tuple[bool, str]:
             result = gui_session.run_guarded(token, lambda: maafw_runner.goto_contact(contact_ali_id))
