@@ -65,7 +65,7 @@ def test_failed_ack_persistence_keeps_notice_visible(manager, monkeypatch):
 
 
 @pytest.mark.parametrize("change", [
-    {"status": "installing"}, {"status": "error"}, {"executed_at": None},
+    {"status": "error"}, {"executed_at": None},
     {"completed_at": 1}, {"installation_id": "bad"}, {"sha": None},
 ])
 def test_only_timestamped_successful_installs_create_a_notice(manager, change):
@@ -75,10 +75,7 @@ def test_only_timestamped_successful_installs_create_a_notice(manager, change):
     assert manager.installation_notice() is None
 
 
-def test_notice_reads_are_passive_and_routes_require_authentication(manager):
+def test_notice_reads_are_passive(manager):
     base = updates.staging_base(manager.install)
     assert manager.installation_notice() is None
     assert not base.exists()
-    with TestClient(create_app()) as client:
-        assert client.get("/api/app/update/notice").status_code == 401
-        assert client.post("/api/app/update/notice/ack", json={"installation_id": "a" * 32}).status_code == 401

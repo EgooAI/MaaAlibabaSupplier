@@ -197,9 +197,6 @@ class Worker:
             self._observation.stop()
             self.stop_event.set()
             self.wake.set()
-            if self._thread is None and self._activity is not None:
-                self._activity.close()
-                self._activity = None
         if first and self._on_stop is not None:
             self._on_stop()
 

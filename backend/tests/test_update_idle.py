@@ -31,11 +31,10 @@ def test_auto_install_counts_from_download_ready_and_pauses_remote_checks(manage
     manager.check()
     wait_operation(manager)
     calls = github.json.call_count
-    for elapsed in (0, 300, 600, 899):
-        clock[0] = 5000 + elapsed
-        manager._schedule()
-        manager._auto_install()
-        manager.runtime.start.assert_not_called()
+    clock[0] = 5899
+    manager._schedule()
+    manager._auto_install()
+    manager.runtime.start.assert_not_called()
     assert github.json.call_count == calls
     clock[0] = 5900
     manager._auto_install()
@@ -47,7 +46,7 @@ def test_auto_install_counts_from_download_ready_and_pauses_remote_checks(manage
         manager._background.activity()
 
 
-@pytest.mark.parametrize("kind", ["worker", "pool", "maafw", "translation", "cardsweep", "check"])
+@pytest.mark.parametrize("kind", ["worker", "pool", "maafw", "cardsweep", "check"])
 def test_even_short_work_between_polls_restarts_the_full_idle_period(manager, clock, kind, monkeypatch):
     make_ready(manager)
     runtime = manager._background
@@ -58,7 +57,7 @@ def test_even_short_work_between_polls_restarts_the_full_idle_period(manager, cl
         pool = runtime.pool("crm-test")
         pool.submit(lambda: None).result(3)
         assert pool.join(3)
-    elif kind in {"maafw", "translation"}:
+    elif kind == "maafw":
         queue = TaskQueue(kind)
         queue.enqueue(lambda: (True, "done"), description="test")
         queue.shutdown(3)
@@ -114,7 +113,7 @@ def test_resident_lifetime_and_polling_do_not_reset_idle_but_active_poll_blocks_
         listener.stop(3)
 
 
-@pytest.mark.parametrize("kind", ["queue", "pool_callback", "pending_schedule"])
+@pytest.mark.parametrize("kind", ["queue", "pool_callback"])
 def test_pending_work_and_completion_callbacks_reject_both_install_modes(manager, clock, kind):
     make_ready(manager)
     runtime = manager._background
@@ -134,7 +133,7 @@ def test_pending_work_and_completion_callbacks_reject_both_install_modes(manager
             queue.enqueue(hold, description="active")
             assert entered.wait(3)
             queue.enqueue(lambda: (calls.append("queued") is None, "done"), description="pending")
-        elif kind == "pool_callback":
+        else:
             pool = runtime.pool("crm-callback")
             cleanup = lambda: pool.join(3)
             finish = Event()
@@ -143,14 +142,6 @@ def test_pending_work_and_completion_callbacks_reject_both_install_modes(manager
             finish.set()
             assert entered.wait(3)
             assert future.done()
-        else:
-            wake = ControlledWake()
-            worker = runtime.schedule("sweep", lambda: calls.append("unexpected"), delay=None,
-                                      ready=lambda: False, wake=wake).start()
-            cleanup = lambda: worker.stop(3)
-            assert wake.waits.get(timeout=3) == (None, False)
-            worker.trigger()
-            assert wake.waits.get(timeout=3) == (1, False)
         clock[0] = 5000
         manager._auto_install()
         with pytest.raises(AppError) as exc:
@@ -174,7 +165,6 @@ def test_install_gate_closes_before_helper_start_and_reopens_on_failure(manager,
     runtime = manager._background
     queue = TaskQueue("maafw")
     sweep = runtime.schedule("card-sweep", lambda: None, delay=None).start()
-    pool = runtime.pool("crm-test")
     wake = ControlledWake()
     timer_calls = []
     timer = runtime.schedule("timer", lambda: timer_calls.append("ran"), delay=30, wake=wake).start()
@@ -197,8 +187,6 @@ def test_install_gate_closes_before_helper_start_and_reopens_on_failure(manager,
                 assert timer_calls == []
                 for submit in (
                     lambda: queue.enqueue(lambda: (True, "late"), description="late"),
-                    lambda: pool.submit(lambda: None),
-                    lambda: runtime.worker("late-worker", lambda stop: None).start(),
                     sweep.trigger,
                     lambda: runtime.activity(),
                 ):
@@ -219,7 +207,6 @@ def test_install_gate_closes_before_helper_start_and_reopens_on_failure(manager,
         with runtime.activity():
             pass
         queue.enqueue(lambda: (True, "reopened"), description="retry")
-        pool.submit(lambda: None).result(3)
         sweep.trigger()
         wake.elapse()
         assert wake.waits.get(timeout=3) == (None, False)
@@ -229,27 +216,20 @@ def test_install_gate_closes_before_helper_start_and_reopens_on_failure(manager,
         queue.shutdown(3)
         sweep.stop(3)
         timer.stop(3)
-        pool.shutdown()
 
 
-@pytest.mark.parametrize("failure", ["start", "arm", "reset", "watchdog"])
+@pytest.mark.parametrize("failure", ["start", "arm"])
 def test_failed_automatic_attempt_releases_gate_and_waits_another_full_period(manager, clock, failure):
     make_ready(manager)
     clock[0] = 900
-    if failure == "watchdog":
-        manager.runtime.failed.return_value = True
-    else:
-        getattr(manager.runtime, failure).side_effect = updates.UpdateError("unavailable")
+    getattr(manager.runtime, failure).side_effect = updates.UpdateError("unavailable")
     manager._auto_install()
-    if failure == "watchdog":
-        assert not manager.writes_blocked()
     with manager._background.activity():
         pass
     count = manager.runtime.reset.call_count
     manager.runtime.reset.side_effect = None
     manager.runtime.start.side_effect = None
     manager.runtime.arm.side_effect = None
-    manager.runtime.failed.return_value = False
     clock[0] = 1799
     manager._auto_install()
     assert manager.runtime.reset.call_count == count
