@@ -100,6 +100,19 @@ try {
     if ((Read-Json $result).version -cne 'v3') { throw 'A held result file was not left untouched' }
     $checks++
 
+    $bootstrap = @{result=(Join-Path $scratch 'last-result.json')}
+    $request = @{nonce=('a' * 32); expected=@{sha=('b' * 40)}}
+    $executedAt = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 60
+    Result 'installed' 'completed' 'v2'
+    $noticePath = Join-Path $scratch 'installation-notice.json'
+    $notice = Read-Json $noticePath
+    if ($notice.installation_id -cne $request.nonce -or $notice.executed_at -ne $executedAt -or $notice.completed_at -lt $executedAt) {
+        throw 'The installation notice lost its identity or execution time'
+    }
+    Result 'error' 'later failure' 'v3'
+    if ((Read-Json $noticePath).installation_id -cne $notice.installation_id) { throw 'A failure cleared the success notice' }
+    $checks++
+
     "Passed $checks nondestructive helper checks on PowerShell $($PSVersionTable.PSVersion)."
 } finally {
     if ($null -ne $held) { $held.Dispose() }

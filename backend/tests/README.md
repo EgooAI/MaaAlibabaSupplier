@@ -69,6 +69,16 @@ Future callbacks, account-context isolation, and cleanup after partial startup.
 and startup-failure cleanup. Sync, card-sweep, updater and experiment suites exercise
 their domain-specific shutdown and persistence behavior through the same runtime.
 
+`test_update_idle.py` advances a controlled clock and uses real managed workers,
+queues and schedules with mocked installation I/O. It covers the 15-minute window,
+short intervening work, pending tasks, callback completion, immediate manual idle
+admission, the helper-start mutex and failure recovery. `test_update_notice.py`
+uses temporary updater files and authenticated clients to verify cross-device and
+restart-persistent acknowledgment, stale IDs and failed persistence. The helper's
+PowerShell checks also verify timestamped notice publication without executing an
+installer. Frontend UpdateCard/UpdateNotice tests cover restart reads, rejection
+dialogs, durable-dismissal responses and stale polling results.
+
 `test_background_status.py` and `test_status_snapshot.py` cover passive observations,
 workspace-scoped queue/experiment/outbox records, persisted send uncertainty, and
 partial read failures without hiding other sources. Runtime tests also cover bounded

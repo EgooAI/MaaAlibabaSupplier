@@ -46,6 +46,20 @@ def check_update(body: UpdateCheck) -> dict:
     return ok(get_updater().check())
 
 
+class UpdateAcknowledgment(UpdateCheck):
+    installation_id: str = Field(pattern=r"^[0-9a-f]{32}$", strict=True)
+
+
+@router.get("/api/app/update/notice")
+def update_notice() -> dict:
+    return ok(get_updater().installation_notice())
+
+
+@router.post("/api/app/update/notice/ack")
+def acknowledge_update(body: UpdateAcknowledgment) -> dict:
+    return ok(get_updater().acknowledge_installation(body.installation_id))
+
+
 @router.post("/api/app/update/install")
 async def install_update(body: UpdateInstall, request: Request) -> dict:
     updater = get_updater()

@@ -238,6 +238,8 @@ export const mockBackend: OperationsBackend = {
   }),
   checkAppUpdate: async () => { throw new Error("Application updates are unavailable in mocks"); },
   installAppUpdate: async () => { throw new Error("Application updates are unavailable in mocks"); },
+  getInstallationNotice: () => delay(null),
+  acknowledgeInstallation: () => delay(null),
 
   requestTranslations: async ({ texts, force = false, conversationId }) => {
     void conversationId;

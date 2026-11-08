@@ -1,4 +1,4 @@
-import type { UpdateState } from "@/types/update";
+import type { InstallationNotice, UpdateState } from "@/types/update";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -51,4 +51,14 @@ export function parseUpdateState(value: unknown): UpdateState {
 export function parseInstallAcceptance(value: unknown): { accepted: true } {
   if (!isRecord(value) || value.accepted !== true) throw new Error("安装请求未返回有效确认");
   return { accepted: true };
+}
+
+export function parseInstallationNotice(value: unknown): InstallationNotice | null {
+  if (value === null) return null;
+  if (!isRecord(value) || typeof value.id !== "string" || !/^[0-9a-f]{32}$/.test(value.id)
+    || typeof value.version !== "string" || !isCount(value.executed_at) || value.executed_at === 0
+    || !isCount(value.completed_at) || value.completed_at < value.executed_at) {
+    throw new Error("更新通知响应无效，请稍后重试");
+  }
+  return value as unknown as InstallationNotice;
 }

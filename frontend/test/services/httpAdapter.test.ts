@@ -110,10 +110,14 @@ describe("http adapter contract", () => {
     await expect(httpBackend.getAppUpdate()).resolves.toEqual(data);
     await httpBackend.checkAppUpdate();
     await httpBackend.installAppUpdate("run/42:attempt/2");
+    await httpBackend.getInstallationNotice();
+    await httpBackend.acknowledgeInstallation("a".repeat(32));
     expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method ?? "GET", init.body && JSON.parse(init.body)])).toEqual([
       ["/api/app/update", "GET", undefined],
       ["/api/app/update/check", "POST", {}],
       ["/api/app/update/install", "POST", { candidate_id: "run/42:attempt/2", confirm: true }],
+      ["/api/app/update/notice", "GET", undefined],
+      ["/api/app/update/notice/ack", "POST", { installation_id: "a".repeat(32) }],
     ]);
     for (const [, init] of fetchMock.mock.calls) {
       expect(new Headers(init.headers).get("Authorization")).toBe("Bearer test-session");
@@ -127,6 +131,8 @@ describe("http adapter contract", () => {
     () => httpBackend.getAppUpdate(),
     () => httpBackend.checkAppUpdate(),
     () => httpBackend.installAppUpdate("candidate"),
+    () => httpBackend.getInstallationNotice(),
+    () => httpBackend.acknowledgeInstallation("a".repeat(32)),
   ])("aborts update requests on auth teardown and rejects late responses without retrying", async (call) => {
     let resolve!: (value: Response) => void;
     const fetchMock = vi.fn<typeof fetch>(() => new Promise<Response>((done) => { resolve = done; }));

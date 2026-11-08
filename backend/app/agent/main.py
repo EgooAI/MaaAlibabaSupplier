@@ -63,7 +63,7 @@ def main() -> None:
     runtime.on_shutdown("agent-server", _shutdown_agent_server)
     try:
         AgentServer.start_up(socket_id)
-        join_thread = runtime.worker("maa-agent-server-join", lambda stop: AgentServer.join()).start()
+        join_thread = runtime.worker("maa-agent-server-join", lambda stop: AgentServer.join(), resident=True).start()
         while join_thread.is_alive():
             join_thread.join(timeout=0.2)
     except KeyboardInterrupt:

@@ -107,6 +107,7 @@ class OutboxService:
                 runtime = get_background_runtime()
                 self._thread = runtime.schedule(
                     "outbox-verifier", self._verify_once, interval=RECONCILE_INTERVAL, delay=RECONCILE_INTERVAL,
+                    resident=True,
                 )
                 runtime.on_shutdown(f"outbox:{id(self)}", self.stop, priority=30)
                 self._thread.start()

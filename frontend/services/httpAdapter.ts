@@ -193,6 +193,8 @@ export const httpBackend: OperationsBackend = {
   resetCache: () => requestVoid("/api/cache/reset", { method: "POST" }),
   shutdownApp: () => request("/api/app/shutdown", "shutdown", { method: "POST" }),
   getAppUpdate: () => requestJson("/api/app/update"),
+  getInstallationNotice: () => requestJson("/api/app/update/notice"),
+  acknowledgeInstallation: (id) => requestJson("/api/app/update/notice/ack", { method: "POST", body: JSON.stringify({ installation_id: id }) }),
   checkAppUpdate: () => requestJson("/api/app/update/check", { method: "POST", body: JSON.stringify({}) }),
   installAppUpdate: (candidateId) => requestJson("/api/app/update/install", { method: "POST", body: JSON.stringify({ candidate_id: candidateId, confirm: true }) }),
 

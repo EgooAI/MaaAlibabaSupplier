@@ -269,7 +269,7 @@ class SyncService:
             name = f"im-source-check-{id(self):x}"
             self._thread = runtime.schedule(
                 name, self._run_once, interval=self.interval,
-                wake=self.middleware._coordinator.wake,
+                wake=self.middleware._coordinator.wake, resident=True,
             )
             self._stop = self._thread.stop_event
             self._shutdown_complete = False

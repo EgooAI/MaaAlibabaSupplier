@@ -385,6 +385,7 @@ def make_ready(manager):
     installer.write_bytes(b"installer")
     manager.state.update(phase="ready", candidate={"id": "opaque", "version": "v1.2.3"})
     manager.prepared = (installer, build())
+    manager._ready_since = manager._clock()
 
 
 def test_install_auth_gate_no_account_lock_and_arms_after_response(manager, monkeypatch):
@@ -933,7 +934,8 @@ def test_newer_build_replaces_the_installer_and_deletes_the_old_one(manager, mon
     old = manager.prepared[0]
 
     github.runs = [run(id=22, run_number=14)]
-    assert manager._scheduled_cycle() is True
+    manager.check()
+    wait_operation(manager)
 
     new = manager.prepared[0]
     assert new != old and new.is_file() and not old.exists()
@@ -950,7 +952,8 @@ def test_failed_replacement_keeps_the_verified_installer_installable(manager, mo
 
     github.runs = [run(id=22, run_number=14)]
     github.download.side_effect = updates.UpdateError("offline")
-    assert manager._scheduled_cycle() is False
+    manager.check()
+    wait_operation(manager)
 
     state = manager.snapshot()
     assert state["phase"] == "ready" and state["candidate"]["id"] == candidate and state["error"] == "offline"
@@ -1003,7 +1006,7 @@ def test_schedule_preserves_initial_delay_backoff_cap_and_recovery(manager, monk
     results = iter([False, False, True] + [False] * 10)
     monkeypatch.setattr(manager, "_scheduled_cycle", lambda: next(results))
     manager._start_scheduler()
-    assert schedule.call_args.kwargs == {"interval": 300, "delay": 60}
+    assert schedule.call_args.kwargs == {"interval": 300, "delay": 60, "control": True}
     action = schedule.call_args.args[1]
     assert [action() for _ in range(3)] == [600, 1200, 300]
     assert [action() for _ in range(10)][-1] == updates.AUTO_BACKOFF_MAX

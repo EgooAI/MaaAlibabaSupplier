@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { InfoCircleOutlined, ReloadOutlined, SyncOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, Descriptions, Progress, Space, Spin, Tag, Tooltip, Typography } from "antd";
-import { ActionConfirmModal } from "@/components/ActionConfirmModal";
+import { Alert, Button, Card, Descriptions, Modal, Progress, Space, Spin, Tag, Tooltip, Typography } from "antd";
 import { useAuth } from "@/features/auth/AuthProvider";
 import type { UpdateState } from "@/types/update";
 import { useAppUpdate } from "./hooks/useAppUpdate";
+import { formatFullDateTime } from "@/domain/time";
 
 const phaseLabels: Record<UpdateState["phase"], string> = {
   idle: "待检查", checking: "正在检查", downloading: "正在下载",
@@ -41,7 +41,7 @@ export function UpdateCard() {
 }
 
 function UpdateControls() {
-  const { state, pending, error, installResult, activePhase, restarting, run } = useAppUpdate();
+  const { state, pending, error, installResult, installRejection, dismissRejection, activePhase, restarting, run } = useAppUpdate();
   const [confirmation, setConfirmation] = useState<UpdateState["candidate"]>(null);
   const candidate = state?.candidate;
   const disabled = !state?.supported || pending !== null || activePhase || restarting;
@@ -53,8 +53,8 @@ function UpdateControls() {
   return <Card title="程序更新" extra={<Tag color={restarting ? "processing" : state?.phase === "ready" ? "success" : "default"}>{restarting ? "等待重新连接" : state ? phaseLabels[state.phase] : error ? "状态不可用" : "读取状态"}</Tag>}>
     <Space orientation="vertical" size="middle" className="w-full">
       {state?.supported ? <Typography.Text type="secondary">{state.auto
-        ? "程序每 5 分钟在后台检查指定 GitHub Actions 来源，发现新版本后自动下载并校验。安装需要手动确认，安装后将立即重启程序。"
-        : "后台自动检查已关闭，请手动检查更新；发现新版本后会自动下载。安装需要手动确认，安装后将立即重启程序。"}</Typography.Text> : null}
+        ? "程序每 5 分钟检查更新并自动下载校验。更新包就绪后暂停定时检查，后台任务连续空闲 15 分钟后自动安装并重启。也可在空闲时手动立即安装。"
+        : "后台自动检查已关闭，自动安装也已关闭。手动检查会下载更新，后台任务空闲时可立即安装并重启。"}</Typography.Text> : null}
       {!state && pending ? <Spin size="small" aria-label="读取更新状态" /> : null}
       {state ? <>
         <Descriptions size="small" column={{ xs: 1, sm: 2, lg: 3 }} styles={{ content: { overflowWrap: "anywhere", minWidth: 0 } }} items={[
@@ -81,27 +81,38 @@ function UpdateControls() {
           {progress !== null ? <Progress percent={progress} status={state.phase === "error" ? "exception" : state.phase === "downloading" ? "active" : "normal"} /> : null}
           <Typography.Text type="secondary">已下载 {(state.downloaded_bytes / 1048576).toFixed(1)} MiB{state.total_bytes === null ? "，总大小未知" : ` / ${(state.total_bytes / 1048576).toFixed(1)} MiB`}</Typography.Text>
         </div> : null}
-        {state.last_result ? <Alert type="info" showIcon title="上次更新结果" description={`${state.last_result.status}：${state.last_result.message}${state.last_result.version ? `（${state.last_result.version}）` : ""}`} /> : null}
+        {state.last_result ? <Alert type="info" showIcon title={state.last_result.status === "installed" ? "最近一次安装已完成" : "上次更新结果"}
+          description={state.last_result.status === "installed"
+            ? `已安装 ${state.last_result.version ?? "新版本"} 并重新启动程序。${state.last_result.executed_at ? `安装执行时间：${formatFullDateTime(state.last_result.executed_at)}` : ""}`
+            : `${state.last_result.message}${state.last_result.version ? `（${state.last_result.version}）` : ""}`} /> : null}
       </> : null}
       {error || state?.error ? <Alert type="error" showIcon title="更新请求失败" description={error || state?.error} /> : null}
       {restarting ? <Alert type={installResult === "uncertain" ? "warning" : "info"} showIcon
         title={installResult === "uncertain" ? "无法确认安装请求是否已接受" : "正在更新，等待程序重启"}
-        description={installResult === "uncertain" ? "连接中断或响应无效，安装可能已经开始。请手动刷新查看状态，不要重复提交安装。" : "服务可能暂时断开。请求已进入安装流程，尚未确认安装完成；请在程序重启后手动重新连接。"}
+        description={installResult === "uncertain" ? "连接中断或响应无效，安装可能已经开始。请手动刷新查看状态，不要重复提交安装。" : "安装请求已接受，程序正在更新并重启。连接恢复后将自动显示最新状态。"}
       /> : null}
       {restarting ? <Button icon={<ReloadOutlined />} onClick={() => window.location.reload()}>手动刷新并重新连接</Button> : <Space wrap>
         <Button icon={<SyncOutlined />} disabled={disabled} loading={pending === "check" || state?.phase === "checking"} onClick={() => void run("check")}>检查更新</Button>
-        {state?.phase === "ready" && candidate ? <Button danger type="primary" disabled={disabled || Boolean(error)} loading={pending === "install"} onClick={() => setConfirmation(candidate)}>安装并立即重启</Button> : null}
+        {state?.phase === "ready" && candidate ? <Button type="primary" disabled={disabled || Boolean(error)} loading={pending === "install"} onClick={() => setConfirmation(candidate)}>安装并立即重启</Button> : null}
         {error || state?.phase === "error" ? <Button disabled={pending !== null} onClick={() => void run("status")}>刷新本地状态</Button> : null}
       </Space>}
-      <ActionConfirmModal open={confirmation !== null} title="安装更新并立即重启" okText="确认安装并重启"
-        warning="安装将立即中断正在执行的任务，包括消息发送和批量发送，不会等待任务结束。已发送消息的结果可能未知；重启后请先核实发送记录和客户会话，不要直接重试，以免重复发送。"
-        details={confirmation ? [{ label: "版本", value: confirmation.version }, { label: "提交", value: <span className="break-all">{confirmation.sha}</span> }] : []}
-        onCancel={() => setConfirmation(null)} onConfirm={() => {
+      <Modal open={confirmation !== null} title="安装更新并立即重启" okText="确认安装并重启" cancelText="取消"
+        onCancel={() => setConfirmation(null)} onOk={() => {
           if (!confirmation) return;
           const id = confirmation.id;
           setConfirmation(null);
           void run("install", id);
-        }} />
+        }}>
+        <Typography.Paragraph>后台任务空闲时立即安装并重启。有任务运行或排队时，本次安装将被拒绝。</Typography.Paragraph>
+        {confirmation ? <Descriptions column={1} items={[
+          { key: "version", label: "版本", children: confirmation.version },
+          { key: "sha", label: "提交", children: <span className="break-all">{confirmation.sha}</span> },
+        ]} /> : null}
+      </Modal>
+      <Modal open={installRejection !== null} title="暂时无法安装更新" okText="知道了"
+        onOk={dismissRejection} onCancel={dismissRejection} cancelButtonProps={{ style: { display: "none" } }}>
+        <Typography.Paragraph>{installRejection}</Typography.Paragraph>
+      </Modal>
     </Space>
   </Card>;
 }

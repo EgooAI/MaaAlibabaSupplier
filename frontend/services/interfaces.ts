@@ -5,7 +5,7 @@ import type { ComposeTranslationResult, ExportConversationsInput, ExportConversa
 import type { PortraitBatchInput, PortraitBatchResult, PortraitExportInput, PortraitExportResult, PortraitOperationEntry, PortraitTag } from "@/types/portrait";
 import type { SelfInfo } from "@/types/home";
 import type { AccountEpoch, ConnectionSnapshot } from "@/types/connection";
-import type { UpdateState } from "@/types/update";
+import type { InstallationNotice, UpdateState } from "@/types/update";
 import type { AliIdList, CreateTestTaskInput, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestEntry, NodeTestSubmission, SystemStatusSnapshot, TaskItem, TaskSnapshot } from "@/types/status";
 import type { CreateExperimentInput, Experiment, ExperimentSummary, ExperimentVariantInput, RunSnapshot, UpdateExperimentInput } from "@/types/experiment";
 
@@ -20,6 +20,8 @@ export interface OperationsBackend {
   getAppUpdate(): Promise<UpdateState>;
   checkAppUpdate(): Promise<UpdateState>;
   installAppUpdate(candidateId: string): Promise<{ accepted: true }>;
+  getInstallationNotice(): Promise<InstallationNotice | null>;
+  acknowledgeInstallation(id: string): Promise<InstallationNotice | null>;
 
   requestTranslations(input: RequestTranslationsInput): Promise<RequestTranslationsResult>;
   queryTranslations(input: TranslationQueryInput): Promise<TranslationQueryResult>;

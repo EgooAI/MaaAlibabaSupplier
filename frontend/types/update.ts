@@ -17,5 +17,12 @@ export interface UpdateState {
   downloaded_bytes: number;
   total_bytes: number | null;
   error: string | null;
-  last_result: { status: string; message: string; version: string | null } | null;
+  last_result: { status: string; message: string; version: string | null; executed_at?: number; completed_at?: number } | null;
+}
+
+export interface InstallationNotice {
+  id: string;
+  version: string;
+  executed_at: number;
+  completed_at: number;
 }

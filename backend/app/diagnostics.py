@@ -21,6 +21,7 @@ from pathlib import Path
 from starlette.responses import JSONResponse, Response
 
 from backend.app.api.envelope import err
+from backend.app.background import WorkBlocked, get_background_runtime
 from backend.app.shared.utils.logging import ERROR_CATEGORIES, NATIVE_ENTRIES
 from backend.app.shared.utils.settings import resolve_backend_root, resolve_repo_root
 
@@ -757,6 +758,7 @@ class _Lease:
         self.lock = threading.Lock()
         self.worker_done = False
         self.closed = False
+        self.activity = get_background_runtime().activity()
 
     def finish(self, *, worker=False):
         with self.lock:
@@ -766,6 +768,7 @@ class _Lease:
                 self.closed = True
             if self.worker_done and self.closed:
                 _ADMISSION.release()
+                self.activity.close()
 
 
 class DiagnosticResponse(Response):
@@ -776,14 +779,23 @@ class DiagnosticResponse(Response):
             await JSONResponse(err("A diagnostic download is already active."), status_code=429,
                                headers={"Retry-After": "2"})(scope, receive, send)
             return
-        lease = _Lease()
+        try:
+            lease = _Lease()
+        except WorkBlocked:
+            _ADMISSION.release()
+            await JSONResponse(err("Application update installation is active."), status_code=409)(scope, receive, send)
+            return
+        except BaseException:
+            _ADMISSION.release()
+            raise
         # Scheduling is synchronous, so cancellation cannot strand an unstarted lease.
         import asyncio
 
         try:
             future = asyncio.get_running_loop().run_in_executor(None, build_bundle)
         except BaseException:
-            _ADMISSION.release()
+            lease.finish(worker=True)
+            lease.finish()
             raise
 
         def worker_finished(done):

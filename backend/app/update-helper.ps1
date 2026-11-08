@@ -67,7 +67,15 @@ function Matches-Nonce([string]$Name, [string]$Nonce) {
 }
 function Result([string]$Status, [string]$Message, $Version) {
     # Diagnostics only: a locked or missing result file must never stop the install.
-    try { Write-Json $bootstrap.result @{status=$Status; message=$Message; version=$Version} } catch { }
+    $result = @{
+        status=$Status; message=$Message; version=$Version
+        installation_id=$request.nonce; executed_at=$executedAt
+        completed_at=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); sha=$request.expected.sha
+    }
+    try { Write-Json $bootstrap.result $result } catch { }
+    if ($Status -ceq 'installed') {
+        try { Write-Json (Join-Path (Split-Path -Parent $bootstrap.result) 'installation-notice.json') $result } catch { }
+    }
 }
 function Open-VerifiedInstaller([string]$Path, [string]$ExpectedHash) {
     $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
@@ -105,6 +113,7 @@ $lockedInstaller = $null
 $bootstrap = $null
 $request = $null
 $armed = $false
+$executedAt = $null
 try {
     $bootstrap = Read-Json (Join-Path $Stage 'bootstrap.json')
     $rootHandle = [MaaUpdateNative]::OpenProcess(0x101000, $false, [uint32]$bootstrap.root_pid)
@@ -122,8 +131,8 @@ try {
     if (-not [MaaUpdateNative]::Identity($rootHandle, $bootstrap.root_created, $bootstrap.root_path) -or -not [MaaUpdateNative]::Member($rootHandle, $jobHandle)) { throw 'Root identity changed' }
     Write-Json (Join-Path $Stage 'accepted.json') @{nonce=$nonce; status='accepted'}
 
-    # Commit only after the application finished sending its acceptance response.
-    # The application may still abort before then; nothing has been stopped yet.
+    # Manual handoffs commit after their HTTP response; automatic handoffs commit
+    # after acceptance. The application can still abort before either commit.
     $go = $false
     $deadline = [DateTime]::UtcNow.AddSeconds(60)
     while ([MaaUpdateNative]::WaitForSingleObject($rootHandle, 0) -ne 0) {
@@ -155,6 +164,7 @@ try {
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
     $info.Arguments = '/VERYSILENT /SUPPRESSMSGBOXES /SP- /NORESTART /NORESTARTAPPLICATIONS /NOCLOSEAPPLICATIONS /RESTARTEXITCODE=3010 /DIR="' + $install + '" /LOG="' + $log + '"'
+    $executedAt = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     $setup = [Diagnostics.Process]::Start($info)
     if (-not $setup.WaitForExit(900000)) { throw 'Installer completion timed out; no restart attempted' }
     if ($setup.ExitCode -eq 3010) { Result 'reboot_required' 'The installer requires a Windows restart. The application was not restarted.' $request.expected.version; return }

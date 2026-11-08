@@ -641,6 +641,7 @@ def test_admission_held_until_outer_send_cleanup(monkeypatch, outcome):
             busy = await asyncio.wait_for(asgi_request(app, token), 5)
             assert busy[0]["status"] == 429
             assert len(threads) == 1 and threads[0] != threading.get_ident()
+            assert not diag.get_background_runtime().begin_install()
             if outcome == "cancel":
                 request.cancel()
             elif outcome == "disconnect":
@@ -687,6 +688,7 @@ def test_cancelled_build_holds_admission_until_worker_exits(monkeypatch):
                 await request
             busy = await asyncio.wait_for(asgi_request(app, token), 5)
             assert busy[0]["status"] == 429
+            assert not diag.get_background_runtime().begin_install()
         finally:
             release.set()
             await asyncio.wait_for(exited.wait(), 5)
@@ -696,6 +698,8 @@ def test_cancelled_build_holds_admission_until_worker_exits(monkeypatch):
         await asyncio.get_running_loop().shutdown_default_executor()
         assert diag._ADMISSION.acquire(blocking=False)
         diag._ADMISSION.release()
+        assert diag.get_background_runtime().begin_install()
+        diag.get_background_runtime().end_install()
 
     asyncio.run(scenario())
 
@@ -709,6 +713,24 @@ def test_build_failure_releases_admission_and_does_not_echo(monkeypatch):
             response = client.get(URL)
             assert response.status_code == 503 and "private" not in response.text
         assert client.get(URL).status_code == 200
+
+
+def test_installation_blocks_diagnostic_work_without_leaking_download_admission(monkeypatch):
+    app = main.create_app()
+    token = app.state.auth_store.issue()
+    runtime = diag.get_background_runtime()
+    build = Mock(return_value=b"test bundle")
+    monkeypatch.setattr(diag, "build_bundle", build)
+    assert runtime.begin_install()
+    try:
+        messages = asyncio.run(asgi_request(app, token))
+        assert messages[0]["status"] == 409
+        build.assert_not_called()
+    finally:
+        runtime.end_install()
+    messages = asyncio.run(asgi_request(app, token))
+    assert messages[0]["status"] == 200
+    build.assert_called_once()
 
 
 @pytest.mark.parametrize("url", ["http://example.com", "https://user:private@example.com", "https://example.com/?token=private",

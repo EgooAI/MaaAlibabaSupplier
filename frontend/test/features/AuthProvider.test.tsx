@@ -25,6 +25,7 @@ vi.mock("antd", () => {
 });
 
 const connectionSnapshot = { ...baseSnapshot, client: { connected: true, window_generation: "window-a", detail: "客户端窗口已连接" } };
+const installationNotice = { id: "a".repeat(32), version: "v2", executed_at: 1794000000, completed_at: 1794000120 };
 const response = (data: unknown, status = 200, headers?: HeadersInit) => new Response(JSON.stringify({ code: status === 200 ? 0 : 1, msg: "ok", data }), { status, headers });
 let container: HTMLDivElement;
 let root: Root;
@@ -76,7 +77,7 @@ describe("global authentication gate", () => {
     let finish!: (value: Response) => void;
     vi.mocked(fetch).mockImplementation((url) => url === "/api/auth/session"
       ? new Promise<Response>((resolve) => { finish = resolve; })
-      : Promise.resolve(response(connectionSnapshot)));
+      : Promise.resolve(response(url === "/api/app/update/notice" ? installationNotice : connectionSnapshot)));
     await mount();
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -84,7 +85,8 @@ describe("global authentication gate", () => {
     expect(container.querySelector("[data-workspace]")).toBeNull();
     await act(async () => { finish(response({ authenticated: true })); });
     expect(mounts).toBe(1);
-    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual(["/api/auth/session", "/api/settings/connection"]);
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual(["/api/auth/session", "/api/settings/connection", "/api/app/update/notice"]);
+    expect(container.textContent).toContain("已安装 v2 并重新启动程序");
     expect(window.location.pathname + window.location.search + window.location.hash).toBe("/chat/customer-sessions/?conversation=42#draft");
     await act(async () => {
       localStorage.clear();
@@ -92,7 +94,8 @@ describe("global authentication gate", () => {
       await vi.advanceTimersByTimeAsync(30_000);
       window.dispatchEvent(new Event("focus"));
     });
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(container.textContent).not.toContain("已安装 v2 并重新启动程序");
     expect(container.querySelector("[data-workspace]")).toBeNull();
     expect(container.querySelector("input[type=password]")).not.toBeNull();
   });
@@ -109,10 +112,11 @@ describe("global authentication gate", () => {
     expect(retry.disabled).toBe(false);
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem(AUTH_STORAGE_KEY)).toBe("saved");
-    vi.mocked(fetch).mockResolvedValueOnce(response({ authenticated: true })).mockResolvedValue(response(connectionSnapshot));
+    vi.mocked(fetch).mockResolvedValueOnce(response({ authenticated: true }))
+      .mockImplementation((url) => Promise.resolve(response(url === "/api/app/update/notice" ? null : connectionSnapshot)));
     await click("重新验证登录");
     expect(container.querySelector("[data-workspace]")).not.toBeNull();
-    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch).toHaveBeenCalledTimes(4);
   });
 
   it("requires an explicit temporary-session choice, clears the password, and shows logout failure", async () => {
@@ -121,6 +125,7 @@ describe("global authentication gate", () => {
     vi.mocked(fetch).mockImplementation((url) => {
       if (url === "/api/auth/login") return Promise.resolve(response({ token: "temporary" }));
       if (url === "/api/auth/logout") return Promise.reject(new Error("offline"));
+      if (url === "/api/app/update/notice") return Promise.resolve(response(null));
       return Promise.resolve(response(connectionSnapshot));
     });
     await act(async () => {
@@ -148,7 +153,7 @@ describe("global authentication gate", () => {
 
   it("unmounts the workspace on a current 401 without replaying its mutation", async () => {
     localStorage.setItem(AUTH_STORAGE_KEY, "saved");
-    vi.mocked(fetch).mockResolvedValueOnce(response({ authenticated: true })).mockResolvedValueOnce(response(connectionSnapshot));
+    vi.mocked(fetch).mockResolvedValueOnce(response({ authenticated: true })).mockResolvedValueOnce(response(connectionSnapshot)).mockResolvedValueOnce(response(null));
     await mount();
     vi.mocked(fetch).mockResolvedValue(new Response("", { status: 401, headers: { "X-Request-ID": "business-unauthorized" } }));
     await act(async () => { await expect(httpBackend.resetCache()).rejects.toThrow("登录状态已变化"); });
@@ -156,6 +161,6 @@ describe("global authentication gate", () => {
     expect(container.textContent).toContain("登录凭证已失效");
     expect(container.textContent).toContain("请求 ID：business-unauthorized");
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch).toHaveBeenCalledTimes(4);
   });
 });

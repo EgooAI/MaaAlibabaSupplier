@@ -52,6 +52,7 @@ class _TaskRequest:
     started_at: float | None
     completed_at: float | None
     log_context: Mapping
+    release_activity: Callable[[], None]
 
     def snapshot(self) -> TaskSnapshot:
         return TaskSnapshot(
@@ -85,7 +86,7 @@ class TaskQueue:
                 instance._last_completed: float | None = None
                 runtime = get_background_runtime()
                 instance._worker = runtime.worker(
-                    f"{name}-task-queue", lambda stop: instance._work(), on_stop=instance._close,
+                    f"{name}-task-queue", lambda stop: instance._work(), on_stop=instance._close, resident=True,
                 )
                 runtime.on_shutdown(f"queue:{name}", instance.shutdown, priority=20)
                 instance._worker.start()
@@ -129,6 +130,7 @@ class TaskQueue:
                 started_at=None,
                 completed_at=None,
                 log_context=MappingProxyType({**capture_log_context(), "queue_task_id": task_id, "queue": self._name}),
+                release_activity=self._worker.runtime.activity().close,
             )
             self._requests[request.task_id] = request
             self._queue.append(request.task_id)
@@ -198,26 +200,29 @@ class TaskQueue:
                 request.started_at = time.time()
                 self._current_started = request.started_at
 
-            with bind_log_context(**request.log_context):
-                log_event("queue.started")
-                try:
-                    ok, msg = request.fn()
-                except Exception as exc:
-                    logger.exception("Queued task failed")
-                    ok, msg = False, str(exc)
-                with self._condition:
-                    request.result = (ok, msg)
-                    request.completed_at = time.time()
-                    self._last_completed = request.completed_at
-                    self._current_started = None
-                    if ok:
-                        request.status = TaskStatus.SUCCEEDED
-                        request.message = msg or "执行成功"
-                    else:
-                        request.status = TaskStatus.FAILED
-                        request.message = msg or "执行失败"
-                log_event("queue.succeeded" if ok else "queue.failed",
-                          duration_ms=(request.completed_at - request.started_at) * 1000)
+            try:
+                with bind_log_context(**request.log_context):
+                    log_event("queue.started")
+                    try:
+                        ok, msg = request.fn()
+                    except Exception as exc:
+                        logger.exception("Queued task failed")
+                        ok, msg = False, str(exc)
+                    with self._condition:
+                        request.result = (ok, msg)
+                        request.completed_at = time.time()
+                        self._last_completed = request.completed_at
+                        self._current_started = None
+                        if ok:
+                            request.status = TaskStatus.SUCCEEDED
+                            request.message = msg or "执行成功"
+                        else:
+                            request.status = TaskStatus.FAILED
+                            request.message = msg or "执行失败"
+                    log_event("queue.succeeded" if ok else "queue.failed",
+                              duration_ms=(request.completed_at - request.started_at) * 1000)
+            finally:
+                request.release_activity()
 
 
 def observe_task_queues() -> dict[str, dict]:

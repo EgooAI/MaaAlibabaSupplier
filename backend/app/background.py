@@ -18,6 +18,30 @@ from typing import Callable
 from loguru import logger
 
 
+class WorkBlocked(RuntimeError):
+    """Rejects new work while installation owns admission."""
+
+
+class _Activity:
+    def __init__(self, runtime, resets_idle):
+        self.runtime = runtime
+        self.resets_idle = resets_idle
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def close(self):
+        with self.runtime._lock:
+            if self not in self.runtime._activities:
+                return
+            self.runtime._activities.remove(self)
+            if self.resets_idle and not any(item.resets_idle for item in self.runtime._activities):
+                self.runtime._idle_since = self.runtime._clock()
+
+
 class _Observation:
     """Maintains scalar snapshots under a lock never held across application calls."""
 
@@ -87,7 +111,7 @@ class _Observation:
 
 class Worker:
     def __init__(self, runtime, name, run, *, on_stop=None, wake=None,
-                 managed=True, daemon=True, kind="worker"):
+                 managed=True, daemon=True, kind="worker", resident=False, control=False):
         self.runtime = runtime
         self.name = name
         self.stop_event = Event()
@@ -96,6 +120,9 @@ class Worker:
         self._on_stop = on_stop
         self._managed = managed
         self._daemon = daemon
+        self._resident = resident
+        self._control = control
+        self._activity = None
         self._lock = RLock()
         self._thread: Thread | None = None
         self._observation = _Observation(runtime, name, kind)
@@ -143,6 +170,10 @@ class Worker:
             if is_worker:
                 observation.finish(error)
             observation.exit("failed" if error is not None else None)
+            with self._lock:
+                if self._activity is not None:
+                    self._activity.close()
+                    self._activity = None
             if self._managed:
                 self.runtime._release(self)
 
@@ -153,6 +184,8 @@ class Worker:
                 raise RuntimeError(f"Worker {self.name} is stopping")
             observation = self._observation
             if observation.data["kind"] == "schedule":
+                if not self._control and self._activity is None:
+                    self._activity = self.runtime.activity(resets_idle=not self._resident)
                 with observation.lock:
                     observation.triggered = True
                     observation.data["pending"] = 1
@@ -164,6 +197,9 @@ class Worker:
             self._observation.stop()
             self.stop_event.set()
             self.wake.set()
+            if self._thread is None and self._activity is not None:
+                self._activity.close()
+                self._activity = None
         if first and self._on_stop is not None:
             self._on_stop()
 
@@ -203,40 +239,45 @@ class ManagedPool:
         with self._lock:
             if self._closing:
                 raise RuntimeError(f"Pool {self.name} is stopping")
-            self.runtime._admit(self)
-            if len(self._workers) < self._max_workers:
-                # The pool owns these workers and must finish accepted writes even
-                # when the application's bounded shutdown wait expires.
-                self._live_workers += 1
-                try:
-                    worker = Worker(self.runtime, f"{self.name}-{len(self._workers)}",
-                                    lambda stop: self._work(), managed=False, daemon=False).start()
-                except BaseException as exc:
-                    self._live_workers -= 1
-                    self._observation.fail(type(exc).__name__)
-                    if not self._live_workers:
-                        self._observation.exit("failed")
-                    raise
-                self._workers.append(worker)
-            future = Future()
-            self._pending.add(future)
-            with self._observation.lock:
-                self._observation.data["pending"] += 1
-                if not self._observation.data["active"] and self._live_workers:
-                    self._observation._state("waiting")
-            self._queue.put((future, copy_context(), fn, args, kwargs))
-            return future
+            activity = self.runtime.activity()
+            try:
+                self.runtime._admit(self)
+                if len(self._workers) < self._max_workers:
+                    # Pool workers drain accepted writes even after a shutdown timeout.
+                    self._live_workers += 1
+                    try:
+                        worker = Worker(self.runtime, f"{self.name}-{len(self._workers)}",
+                                        lambda stop: self._work(), managed=False, daemon=False).start()
+                    except BaseException as exc:
+                        self._live_workers -= 1
+                        self._observation.fail(type(exc).__name__)
+                        if not self._live_workers:
+                            self._observation.exit("failed")
+                        raise
+                    self._workers.append(worker)
+                future = Future()
+                self._pending.add(future)
+                with self._observation.lock:
+                    self._observation.data["pending"] += 1
+                    if not self._observation.data["active"] and self._live_workers:
+                        self._observation._state("waiting")
+                self._queue.put((future, copy_context(), fn, args, kwargs, activity))
+                return future
+            except BaseException:
+                activity.close()
+                raise
 
     def _work(self):
         observation = self._observation
         try:
             while (item := self._queue.get()) is not None:
-                future, context, fn, args, kwargs = item
+                future, context, fn, args, kwargs, activity = item
                 with self._lock:
                     self._pending.discard(future)
                     with observation.lock:
                         observation.data["pending"] -= 1
                 if not future.set_running_or_notify_cancel():
+                    activity.close()
                     continue
                 observation.begin()
                 error = None
@@ -260,6 +301,7 @@ class ManagedPool:
                     # Future completion precedes callbacks; the worker is still
                     # occupied until all synchronous callbacks have returned.
                     observation.finish(error)
+                    activity.close()
         finally:
             with self._lock:
                 self._live_workers -= 1
@@ -300,7 +342,7 @@ class ManagedPool:
 class BackgroundRuntime:
     """Closes admission, runs ordered business cleanup, then stops and joins work."""
 
-    def __init__(self):
+    def __init__(self, *, clock=monotonic):
         self._lock = RLock()
         self._shutdown_lock = RLock()
         self._resources = {}
@@ -309,11 +351,51 @@ class BackgroundRuntime:
         self._observations = {}
         self._history = deque(maxlen=50)
         self.closing = False
+        self._clock = clock
+        self._activities = set()
+        self._idle_since = clock()
+        self._installing = False
+
+    def activity(self, *, resets_idle=True):
+        """Reserves work through completion, including queueing and callbacks."""
+        with self._lock:
+            if self.closing:
+                raise RuntimeError("Background runtime is stopping")
+            if self._installing:
+                raise WorkBlocked("Application update installation is active")
+            activity = _Activity(self, resets_idle)
+            self._activities.add(activity)
+            return activity
+
+    def begin_install(self, *, idle_for=0.0, ready_since=0.0):
+        """Atomically checks continuous idleness and closes work admission.
+
+        Manual installation uses zero delay but still requires no admitted work.
+        Resident polling reserves execution but does not reset the idle clock.
+        """
+        with self._lock:
+            if self.closing or self._installing:
+                return False
+            if self._activities or self._clock() - max(self._idle_since, ready_since) < idle_for:
+                return False
+            self._installing = True
+            return True
+
+    def end_install(self):
+        """Reopens admission after an uncommitted or failed installation."""
+        with self._lock:
+            self._installing = False
+            self._idle_since = self._clock()
 
     def _admit(self, resource):
         with self._lock:
             if self.closing:
                 raise RuntimeError("Background runtime is stopping")
+            if self._installing and not getattr(resource, "_control", False):
+                raise WorkBlocked("Application update installation is active")
+            if (isinstance(resource, Worker) and resource._observation.data["kind"] == "worker"
+                    and not resource._resident and not resource._control):
+                resource._activity = self.activity()
             self._resources[resource] = None
             observation = resource._observation
             with self._observation_lock:
@@ -323,6 +405,9 @@ class BackgroundRuntime:
 
     def _release(self, resource):
         with self._lock:
+            if isinstance(resource, Worker) and resource._activity is not None:
+                resource._activity.close()
+                resource._activity = None
             self._resources.pop(resource, None)
             with self._observation_lock:
                 observation = resource._observation
@@ -346,13 +431,14 @@ class BackgroundRuntime:
                 ],
             }
 
-    def worker(self, name, run, *, on_stop=None):
-        return Worker(self, name, run, on_stop=on_stop)
+    def worker(self, name, run, *, on_stop=None, resident=False, control=False):
+        return Worker(self, name, run, on_stop=on_stop, resident=resident, control=control)
 
     def pool(self, name, *, max_workers=1):
         return ManagedPool(self, name, max_workers)
 
-    def schedule(self, name, action, *, interval=None, delay=0.0, wake=None, ready=None):
+    def schedule(self, name, action, *, interval=None, delay=0.0, wake=None, ready=None,
+                 resident=False, control=False):
         """Runs non-overlapping calls on a fixed-delay timer or coalesced triggers.
 
         None disables the timer. A returned delay overrides the next interval.
@@ -379,6 +465,18 @@ class BackgroundRuntime:
                         observation._state("blocked" if ready is not None else "waiting")
                 if stop.is_set():
                     return
+                with worker._lock:
+                    if not control and worker._activity is None:
+                        try:
+                            worker._activity = self.activity(resets_idle=not resident)
+                        except WorkBlocked:
+                            next_delay = 1.0
+                            blocked = True
+                            continue
+                        except RuntimeError:
+                            if self.closing:
+                                return
+                            raise
                 try:
                     admitted = ready is None or ready()
                 except Exception as exc:
@@ -391,6 +489,9 @@ class BackgroundRuntime:
                     continue
                 if stop.is_set():
                     return
+                with worker._lock:
+                    activity = worker._activity
+                    worker._activity = None
                 observation.begin()
                 error = None
                 try:
@@ -399,11 +500,20 @@ class BackgroundRuntime:
                     error = type(exc).__name__
                     logger.exception("Scheduled activity '{}' failed", name)
                     override = None
-                observation.finish(error)
+                finally:
+                    observation.finish(error)
+                    if activity is not None:
+                        with worker._lock:
+                            # A trigger accepted during readiness belongs to the
+                            # follow-up call and must keep admission reserved.
+                            if observation.triggered and worker._activity is None:
+                                worker._activity = activity
+                            else:
+                                activity.close()
                 next_delay = interval if override is None else override
                 blocked = False
 
-        worker = Worker(self, name, run, wake=wake, kind="schedule")
+        worker = Worker(self, name, run, wake=wake, kind="schedule", resident=resident, control=control)
         return worker
 
     def on_shutdown(self, name: str, callback: Callable[[], None], *, priority=0):

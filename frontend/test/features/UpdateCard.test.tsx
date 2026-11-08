@@ -23,7 +23,7 @@ vi.mock("antd", () => {
     Spin: () => <span>loading</span>,
     Progress: ({ percent }: { percent: number }) => <progress value={percent} max={100} />,
     Descriptions: Object.assign(({ title, items, children }: { title?: string; items?: { key: string; label: string; children: ReactNode }[]; children?: ReactNode }) => <div>{title}{items?.map((item) => <div key={item.key}>{item.label}: {item.children}</div>)}{children}</div>, { Item: Group }),
-    Button: ({ children, disabled, loading, onClick }: ButtonHTMLAttributes<HTMLButtonElement> & { loading?: boolean }) => <button disabled={disabled || loading} onClick={onClick}>{children}</button>,
+    Button: ({ children, disabled, loading, onClick, danger }: ButtonHTMLAttributes<HTMLButtonElement> & { loading?: boolean; danger?: boolean }) => <button data-danger={Boolean(danger)} disabled={disabled || loading} onClick={onClick}>{children}</button>,
     Modal: ({ open, title, children, onOk, onCancel, okText }: { open: boolean; title: string; children: ReactNode; onOk: () => void; onCancel: () => void; okText: string }) => open ? <div role="dialog">{title}{children}<button onClick={onOk}>{okText}</button><button onClick={onCancel}>取消</button></div> : null,
   };
 });
@@ -168,31 +168,36 @@ describe("application update", () => {
     expect(mocks.backend.checkAppUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it("does not poll once the backend reports installing", async () => {
+  it("keeps reading local state during restart and returns to normal after reconnecting", async () => {
     mocks.backend.getAppUpdate.mockResolvedValue(update({ phase: "installing", candidate }));
     await render();
-    await advance(60_000);
-    expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(1);
+    await advance();
+    expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(2);
+    mocks.backend.getAppUpdate.mockResolvedValue(update({ current: { version: "v2", sha: candidate.sha },
+      last_result: { status: "installed", message: "helper completed", version: "v2", executed_at: 1794000000 } }));
+    await advance();
+    expect(container.textContent).toContain("最近一次安装已完成");
+    expect(container.textContent).toContain("安装执行时间");
+    expect(container.textContent).not.toContain("等待程序重启");
+    expect(button("检查更新").disabled).toBe(false);
   });
 
   it("requires confirmation for the exact candidate and sends nothing on cancel", async () => {
     mocks.backend.getAppUpdate.mockResolvedValue(update({ phase: "ready", candidate }));
     await render();
     expect(container.textContent).toContain(candidate.created_at);
+    expect(button("安装并立即重启").dataset.danger).toBe("false");
     await click("安装并立即重启");
     const dialog = container.querySelector('[role="dialog"]')!;
     expect(dialog.textContent).toContain(candidate.sha);
-    expect(dialog.textContent).toContain("立即中断");
-    expect(dialog.textContent).toContain("结果可能未知");
-    expect(dialog.textContent).toContain("不要直接重试");
+    expect(dialog.textContent).toContain("后台任务空闲时立即安装");
+    expect(dialog.textContent).toContain("有任务运行或排队时，本次安装将被拒绝");
     await click("取消");
     expect(mocks.backend.installAppUpdate).not.toHaveBeenCalled();
     await click("安装并立即重启");
     await click("确认安装并重启");
     expect(mocks.backend.installAppUpdate).toHaveBeenCalledExactlyOnceWith(candidate.id);
-    expect(container.textContent).toContain("尚未确认安装完成");
-    await advance(60_000);
-    expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("连接恢复后将自动显示最新状态");
     const reload = vi.spyOn(window.location, "reload").mockImplementation(() => {});
     await click("手动刷新并重新连接");
     expect(reload).toHaveBeenCalledTimes(1);
@@ -232,30 +237,30 @@ describe("application update", () => {
     expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it.each([409, 503])("shows an explicit HTTP %s install rejection and permits a confirmed retry after local refresh", async (status) => {
+  it.each([409, 503])("shows an explicit HTTP %s install rejection in a dialog and permits a new manual attempt", async (status) => {
     mocks.backend.getAppUpdate.mockResolvedValue(update({ phase: "ready", candidate }));
     const message = `Installation rejected before handoff (${status})`;
     mocks.backend.installAppUpdate.mockRejectedValueOnce(new ApiError(message, "/api/app/update/install", { status }));
     await render();
     await click("安装并立即重启");
     await click("确认安装并重启");
-    expect(container.textContent).toContain(message);
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain(message);
     expect(container.textContent).not.toContain("无法确认安装请求是否已接受");
     expect(container.textContent).not.toContain("手动刷新并重新连接");
     expect(container.textContent).toContain(candidate.sha);
-    expect(button("安装并立即重启").disabled).toBe(true);
-    await advance(60_000);
-    expect(mocks.backend.getAppUpdate).toHaveBeenCalledTimes(1);
+    expect(button("安装并立即重启").disabled).toBe(false);
+    await click("知道了");
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
     expect(mocks.backend.installAppUpdate).toHaveBeenCalledTimes(1);
     const nextCandidate = { ...candidate, id: "refreshed-candidate" };
     mocks.backend.getAppUpdate.mockResolvedValueOnce(update({ phase: "ready", candidate: nextCandidate }));
-    await click("刷新本地状态");
+    await advance(30_000);
     expect(container.textContent).not.toContain(message);
     await click("安装并立即重启");
     expect(mocks.backend.installAppUpdate).toHaveBeenCalledTimes(1);
     await click("确认安装并重启");
     expect(mocks.backend.installAppUpdate).toHaveBeenNthCalledWith(2, nextCandidate.id);
-    expect(container.textContent).toContain("尚未确认安装完成");
+    expect(container.textContent).toContain("连接恢复后将自动显示最新状态");
   });
 
   it.each([null, {}, { accepted: false }, { accepted: "true" }, { accepted: 1 }])("requires literal acceptance and treats a malformed success receipt as uncertain: %j", async (receipt) => {

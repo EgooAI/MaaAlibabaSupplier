@@ -89,6 +89,47 @@ def test_timer_and_triggers_serialize_and_coalesce_one_followup(runtime):
     assert calls == [1, 2, 3]
 
 
+def test_trigger_during_readiness_keeps_followup_reserved_for_install_gate(runtime):
+    probes = []
+
+    class ProbeWake(ControlledWake):
+        def wait(self, timeout=None):
+            if timeout == 30:
+                probes.append(runtime.begin_install())
+            return super().wait(timeout)
+
+    wake = ProbeWake()
+    calls = []
+
+    def ready():
+        if calls:
+            return False
+        worker.trigger()
+        return True
+
+    worker = runtime.schedule("reserved-followup", lambda: calls.append("first"),
+                              interval=30, delay=None, wake=wake, ready=ready).start()
+    try:
+        assert wake.waits.get(timeout=WAIT) == (None, False)
+        worker.trigger()
+        assert wake.waits.get(timeout=WAIT) == (30, True)
+        assert wake.waits.get(timeout=WAIT) == (1, False)
+        assert probes == [False]
+        assert calls == ["first"]
+    finally:
+        worker.stop(WAIT)
+        runtime.end_install()
+
+
+def test_stopping_an_unstarted_schedule_releases_its_accepted_trigger(runtime):
+    worker = runtime.schedule("not-started", lambda: None, delay=None)
+    worker.trigger()
+    assert not runtime.begin_install()
+    worker.stop(WAIT)
+    assert runtime.begin_install()
+    runtime.end_install()
+
+
 @pytest.mark.parametrize("stop_pending", [False, True])
 def test_readiness_retains_trigger_until_gate_opens_or_stop(runtime, stop_pending):
     wake = ControlledWake()

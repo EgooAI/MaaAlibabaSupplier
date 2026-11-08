@@ -1,4 +1,4 @@
-"""Scheduled Actions updates with manual installation. Import never contacts GitHub."""
+"""Downloads Actions updates and installs while idle. Import never contacts GitHub."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from concurrent.futures import Future
 from pathlib import Path
 
 from backend.app.api.envelope import AppError
-from backend.app.background import Worker, get_background_runtime
+from backend.app.background import WorkBlocked, Worker, get_background_runtime
 from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.utils.settings import resolve_repo_root
 
@@ -63,7 +63,14 @@ def terminal_result(result: dict) -> dict | None:
     if (result.get("status") in _TERMINAL_RESULTS
             and isinstance(result.get("message"), str)
             and (result.get("version") is None or isinstance(result["version"], str))):
-        return {key: result.get(key) for key in ("status", "message", "version")}
+        projected = {key: result.get(key) for key in ("status", "message", "version")}
+        if (isinstance(result.get("installation_id"), str)
+                and re.fullmatch(r"[0-9a-f]{32}", result["installation_id"])
+                and type(result.get("executed_at")) is int and result["executed_at"] > 0
+                and type(result.get("completed_at")) is int and result["completed_at"] >= result["executed_at"]
+                and isinstance(result.get("sha"), str) and re.fullmatch(r"[0-9a-f]{40}", result["sha"])):
+            projected.update({key: result[key] for key in ("installation_id", "executed_at", "completed_at", "sha")})
+        return projected
     return None
 
 
@@ -113,6 +120,8 @@ _STAGE_KEEP = 4
 AUTO_CHECK_INTERVAL = 300.0
 AUTO_FIRST_DELAY = 60.0
 AUTO_BACKOFF_MAX = 6 * 3600.0
+AUTO_INSTALL_IDLE = 15 * 60.0
+AUTO_INSTALL_INTERVAL = 1.0
 DISK_MARGIN = 512 * 1024**2
 
 
@@ -319,6 +328,8 @@ class Updater:
         self._workers: list[Worker] = []
         self._stopping = False
         self._schedule_delay = AUTO_FIRST_DELAY
+        self._ready_since = None
+        self._clock = time.monotonic
         source = {"repository": os.environ.get("MAA_UPDATE_REPOSITORY", "EgooAI/MaaAlibabaSupplier"),
                   "branch": os.environ.get("MAA_UPDATE_BRANCH", "main"),
                   "workflow": os.environ.get("MAA_UPDATE_WORKFLOW", "install.yml"),
@@ -329,7 +340,7 @@ class Updater:
                 self.build = build
         except (OSError, ValueError, UpdateError):
             pass
-        self.state = {"supported": False, "reason": "Manual updates require the installed Windows main launcher.",
+        self.state = {"supported": False, "reason": "Updates require the installed Windows main launcher.",
                       "phase": "idle", "current": {"version": self.build.get("version", "development"),
                                                     "sha": self.build.get("sha"), "run_id": self.build.get("run_id")},
                       "source": source, "candidate": None, "downloaded_bytes": 0, "total_bytes": None,
@@ -405,10 +416,50 @@ class Updater:
         finally:
             self.lock.release()
 
+    def _installation_notice_locked(self) -> dict | None:
+        try:
+            base = staging_base(self.install)
+            result = terminal_result(read_json(base / "installation-notice.json"))
+        except (FileNotFoundError, UpdateError, ValueError):
+            return None
+        if result is None or result["status"] != "installed" or "installation_id" not in result or not result["version"]:
+            return None
+        try:
+            acknowledged = read_json(base / "acknowledged-installation.json")
+        except (FileNotFoundError, UpdateError, ValueError):
+            acknowledged = {}
+        if acknowledged.get("installation_id") == result["installation_id"]:
+            return None
+        return {"id": result["installation_id"], "version": result["version"],
+                "executed_at": result["executed_at"], "completed_at": result["completed_at"]}
+
+    def installation_notice(self) -> dict | None:
+        """Reads the latest successful installation and its shared acknowledgment."""
+        with self.lock:
+            try:
+                return self._installation_notice_locked()
+            except OSError:
+                raise AppError("暂时无法读取更新通知，请稍后重试。", status_code=503) from None
+
+    def acknowledge_installation(self, installation_id: str) -> dict | None:
+        """Persists acknowledgment only for the notice the device actually saw."""
+        with self.lock:
+            try:
+                notice = self._installation_notice_locked()
+                if notice is not None and notice["id"] == installation_id:
+                    atomic_json(staging_base(self.install) / "acknowledged-installation.json",
+                                {"installation_id": installation_id})
+                    return None
+                return notice
+            except OSError:
+                raise AppError("更新通知确认未保存，请稍后重试。", status_code=503) from None
+
     def _clear_handoff_locked(self) -> None:
         self._handoff_finished.set()
         self._handoff_id = None
         self.handoff.clear()
+        self._background.end_install()
+        self._ready_since = self._clock()
 
     def _cancel_install_locked(self, message: str, reason: str) -> None:
         try:
@@ -523,10 +574,15 @@ class Updater:
         """
         with self.lock:
             if (self._stopping or not self.state["supported"] or self.state["phase"] not in {"idle", "ready", "error"}
-                    or self.handoff.is_set() or self._busy):
+                    or self.handoff.is_set() or self._busy or self.prepared is not None):
+                return True
+            try:
+                activity = self._background.activity()
+            except WorkBlocked:
                 return True
             self._busy = True
-        return self._run_guarded("auto", lambda: self._cycle(announce=False))
+        with activity:
+            return self._run_guarded("auto", lambda: self._cycle(announce=False))
 
     def _schedule(self) -> float:
         if self._scheduled_cycle():
@@ -538,8 +594,27 @@ class Updater:
     def _start_scheduler(self) -> None:
         with self.lock:
             self._start_worker_locked(self._background.schedule(
-                "auto-updater", self._schedule, interval=AUTO_CHECK_INTERVAL, delay=AUTO_FIRST_DELAY,
+                "auto-installer", self._auto_install, interval=AUTO_INSTALL_INTERVAL,
+                delay=AUTO_INSTALL_INTERVAL, control=True,
             ))
+            self._start_worker_locked(self._background.schedule(
+                "auto-updater", self._schedule, interval=AUTO_CHECK_INTERVAL, delay=AUTO_FIRST_DELAY,
+                control=True,
+            ))
+
+    def _auto_install(self) -> None:
+        with self.lock:
+            candidate = self.state["candidate"]
+        if candidate is None:
+            return
+        try:
+            operation_id = self.install_update(candidate["id"], automatic=True)
+        except AppError as exc:
+            log_event("update.auto_install", status="deferred", reason=exc.message)
+            return
+        if operation_id is not None:
+            # There is no HTTP response to await for a backend-initiated handoff.
+            self.arm(operation_id)
 
     @staticmethod
     def _message(exc: Exception) -> str:
@@ -608,6 +683,7 @@ class Updater:
             raise
         with self.lock:
             self.prepared = (installer, prepared)
+            self._ready_since = self._clock()
             self.state.update(phase="ready", candidate={**candidate, "version": prepared["version"]})
             count = self.state["downloaded_bytes"]
         log_event("update.download", status="ready", run_id=selected["run_id"], count=count)
@@ -701,19 +777,39 @@ class Updater:
             self._stage = None
         return installer, prepared
 
-    def install_update(self, candidate_id: str) -> str:
+    def install_update(self, candidate_id: str, *, automatic=False) -> str | None:
         with self.lock:
+            if automatic and (self._stopping or not self.state["auto"] or not self.state["supported"]
+                              or self.state["phase"] != "ready" or self._busy or self.handoff.is_set()):
+                return None
             self._admit()
             self._candidate(candidate_id)
+            if self._busy:
+                raise AppError("后台任务正在运行，请等待空闲后再安装更新。", status_code=409)
             if self.state["phase"] != "ready" or self.prepared is None or self.runtime is None:
                 raise AppError("Download and verify the update before installing.", status_code=409)
             if not self.prepared[0].is_file():
                 # Security software or a cleanup may remove a long-held installer.
                 self.prepared = None
+                self._ready_since = None
                 self.state.update(phase="idle", candidate=None, downloaded_bytes=0, total_bytes=None)
                 raise AppError("The downloaded installer is missing; check for updates again.", status_code=409)
-            # A finished attempt must not be mistaken for the one about to start.
-            self.runtime.reset()
+            if self._ready_since is None:
+                self._ready_since = self._clock()
+            if not self._background.begin_install(
+                idle_for=AUTO_INSTALL_IDLE if automatic else 0.0,
+                ready_since=self._ready_since if automatic else 0.0,
+            ):
+                if automatic:
+                    return None
+                raise AppError("后台任务正在运行或排队，请等待空闲后再安装更新。", status_code=409)
+            try:
+                # A finished attempt must not be mistaken for the one about to start.
+                self.runtime.reset()
+            except Exception:
+                self._background.end_install()
+                self._ready_since = self._clock()
+                raise AppError("Could not prepare the update helper.", status_code=503) from None
             self.handoff.set()
             operation_id = self._handoff_id = uuid.uuid4().hex
             finished = self._handoff_finished = threading.Event()
@@ -744,7 +840,7 @@ class Updater:
 
         try:
             with self.lock:
-                self._start_worker_locked(self._background.worker("update-handoff", handoff))
+                self._start_worker_locked(self._background.worker("update-handoff", handoff, control=True))
             accepted.result()
         except Exception as exc:
             with self.lock:

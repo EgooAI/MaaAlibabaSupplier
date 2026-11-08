@@ -1,18 +1,31 @@
 # Application Updates
 
 The backend checks GitHub every 5 minutes and downloads and verifies a newer build
-on its own. Installation always needs a manual **Install and restart** confirmation.
+on its own. A verified candidate installs automatically after 15 continuous minutes
+without nonresident background work. Manual **Install and restart** uses the same
+idle check without the 15-minute delay; busy applications reject the request.
 Settings also provides **Check for updates**, which runs the same check and
 download immediately. Opening Settings reads only local updater state. The UI
 reads that state every 30 seconds, every 1.5 seconds while a check or download
-runs, and after installation handoff it offers a manual reconnect button.
+runs or installation is in progress. It keeps reading through a restart and shows
+the result after reconnecting; an ambiguous manual submission is never retried.
 
 The scheduler lives in the backend process, so it runs without a browser tab. It
 starts only in a supported installation, waits 60 seconds after startup for the
 first check, and then repeats every 5 minutes. After a failed cycle the wait
 doubles, up to 6 hours, and returns to 5 minutes after a success. A cycle never
-starts while another check, download or installation is active. Set
-`MAA_UPDATE_AUTO=0` to disable the scheduler; manual checks still work.
+starts while another check, download or installation is active. Once a candidate
+is ready, scheduled remote checks pause so they cannot continually reset the idle
+clock. Manual checks can still replace the candidate. Set `MAA_UPDATE_AUTO=0` to
+disable both automatic checking and installation; manual operations still work.
+
+Idle time uses a monotonic clock and starts no earlier than candidate readiness.
+Workers, GUI/translation queues, CRM pool calls, experiments, card sweeps and
+update checks reserve work until completion, including queued work and pool
+callbacks. API writes also reserve admission through response completion. Even a
+short operation between timer checks restarts the full 15-minute wait. Resident
+listeners and log readers do not count. Resident IM/Outbox polling does not reset
+the clock, but an executing poll still prevents installation at that instant.
 
 ## Configuration
 
@@ -82,13 +95,16 @@ does not add a Windows service, request elevation, or bypass GUI confirmation.
 ## API and Lifecycle
 
 All endpoints require the existing Bearer authentication and use `{code,msg,data}`
-envelopes. No seller epoch or idle-task gate is required.
+envelopes. No seller epoch is required. Both installation paths require idle work
+admission and acquire the same process-wide installation mutex.
 
 | Endpoint | Request | Behavior |
 | --- | --- | --- |
 | `GET /api/app/update` | None | Local build, source, `auto` flag, progress, candidate and previous result |
 | `POST /api/app/update/check` | `{}` | Starts one asynchronous GitHub check, then downloads a newer build |
 | `POST /api/app/update/install` | `{"candidate_id":"...","confirm":true}` | Starts the single-use helper for an already verified candidate |
+| `GET /api/app/update/notice` | None | Latest unacknowledged successful installation, or null |
+| `POST /api/app/update/notice/ack` | `{"installation_id":"..."}` | Acknowledges that installation for every device; returns any newer notice or null |
 
 Candidates have opaque server-generated IDs. The browser cannot submit an
 installer URL, executable path, process ID, or command. Duplicate active
@@ -110,19 +126,25 @@ requires free disk space of twice that size plus 512 MiB, because the archive an
 the extracted installer coexist until unpacking ends. Installation re-checks that the installer file
 still exists and returns 409 when security software or a cleanup removed it.
 
-Confirmation starts one single-use helper for that attempt and blocks new API
-writes. The helper validates the application identity, the installer location and
+Installation atomically checks idle work and blocks new submissions, triggers and
+API writes before starting its single-use helper. Busy manual attempts return 409
+and the UI explains the rejection in a normal dialog. Timer actions pause while
+installation owns admission. The helper validates the application identity, the installer location and
 the commit files, then acknowledges; the outer ASGI layer commits termination
-only after the successful acceptance response has finished sending. A response
+only after the successful acceptance response has finished sending. An automatic
+attempt commits directly after helper acceptance. A response
 failure, cancelled request, helper failure, or missing commit releases the
 handoff without requiring a status-page visit. A dead helper fails only its own
-attempt: the next confirmation starts a new one without downloading again. This
+attempt: the next confirmation starts a new one without downloading again. Failed
+or cancelled handoffs reopen task admission; automatic retries wait another full
+15 minutes. This
 cannot guarantee the browser received the response over the network; an ambiguous
 network failure is shown as uncertain rather than automatically retried.
 
 The helper verifies the installer hash under a retained read-only file lock,
 then terminates the owned Windows Job immediately and waits for the application
-process itself to exit. It **does not wait for business tasks to finish**. If the
+process itself to exit. Work was already idle and admission closed before handoff;
+the helper does not perform a second business-task drain. If the
 application does not stop, the helper records an error and does not run the
 installer. No global process-name kill is used, and the separately running
 Alibaba Supplier client is not targeted.
@@ -182,6 +204,8 @@ Staging and results live outside the installation:
 ```text
 %LOCALAPPDATA%/MaaAlibabaSupplierUpdater/<installation-path-hash>/
     last-result.json
+    installation-notice.json
+    acknowledged-installation.json
     <download-stage>/<installer>.exe
     <download-stage>/installer.log
     <broker-stage>/update-helper.ps1, bootstrap.json
@@ -204,7 +228,18 @@ replaces `last-result.json` atomically, clearing a read-only attribute first; a
 destination that stays locked still loses the terminal record and leaves only
 the `.tmp`. The backend records an `installed` result that does not describe the
 running build as stale, so a lost write is visible in diagnostics.
-`last-result.json` and its pending `.tmp` are never pruned.
+Result, notification and acknowledgment files are never pruned.
+
+After successful installation and restarted-process verification, the helper writes
+`installation-notice.json` with a unique installation ID, version, installer start
+time (`executed_at`) and result time (`completed_at`), both Unix seconds. Failures
+do not replace the last success notice. Older result files without timestamps still
+appear in Settings but do not fabricate an execution time or a completion notice.
+The global authenticated UI shows the notice on every page and polls every five
+seconds while visible. It has no automatic timeout or local dismiss button.
+**知道了** persists the exact ID to `acknowledged-installation.json`; refreshing,
+restarting or using another device does not restore it. A stale acknowledgment
+cannot dismiss a later installation. Failed persistence leaves the notice visible.
 
 Inno Setup performs an in-place upgrade. It preserves an existing `.env` and
 excludes runtime data, debug files, and MaaFW config/data directories from the
@@ -219,7 +254,6 @@ tested migration. There is no automatic full application/database rollback.
 Keep your normal backups, and inspect the staged installer log if an upgrade
 fails after the application stops.
 
-Immediate termination can interrupt a send after it reached the client but
-before the result was recorded. Verify interrupted tasks manually and never
-automatically resend them. After restart, reconnect and confirm the GUI account
-as required by the existing business safeguards.
+Installation does not establish platform delivery for earlier sends. Verify
+uncertain tasks manually and never automatically resend them. After restart,
+reconnect and confirm the GUI account as required by the existing business safeguards.

@@ -2,8 +2,8 @@
 
 The job is created and joined at startup, before application children, so every
 descendant stays contained. The job allows breakaway children: one single-use
-updater broker is started outside containment when the user confirms an
-installation. A dead broker only fails the attempt it belongs to; the next
+updater broker is started outside containment after installation admission.
+A dead broker only fails the attempt it belongs to; the next
 attempt starts a new broker. The broker is never a member of the job it
 terminates.
 """
@@ -104,7 +104,8 @@ class WindowsUpdateRuntime:
         """Start this attempt's single-use broker and wait until it accepts.
 
         A previous attempt's exited process is not reused. Nothing is armed
-        until the application writes the commit file after its response.
+        until the application writes the commit file after acceptance. Manual
+        installations also wait for the complete HTTP acceptance response.
         The PowerShell runtime is resolved again for every attempt, so a shell
         that vanished since registration fails only this attempt.
         """

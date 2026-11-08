@@ -16,13 +16,14 @@ export function useAppUpdate() {
   const [pending, setPending] = useState<Action | null>("status");
   const [error, setError] = useState<string | null>(null);
   const [installResult, setInstallResult] = useState<"accepted" | "uncertain" | null>(null);
+  const [installRejection, setInstallRejection] = useState<string | null>(null);
   const lifetime = useRef({ active: false, request: 0, busy: false });
   const activePhase = state?.phase === "checking" || state?.phase === "downloading";
   const restarting = installResult !== null || state?.phase === "installing";
 
   async function run(action: Action, candidateId?: string) {
     const scope = lifetime.current;
-    if (!scope.active || scope.busy || restarting) return;
+    if (!scope.active || scope.busy || (restarting && action !== "status")) return;
     if (action !== "status" && (!state?.supported || activePhase)) return;
     if (action === "install" && (!candidateId || candidateId !== state?.candidate?.id || state.phase !== "ready" || error)) return;
     scope.busy = true;
@@ -30,6 +31,7 @@ export function useAppUpdate() {
     const current = () => scope.active && request === scope.request;
     setPending(action);
     setError(null);
+    setInstallRejection(null);
     try {
       if (action === "install") {
         const receipt = await backend.installAppUpdate(candidateId!);
@@ -38,12 +40,18 @@ export function useAppUpdate() {
         setInstallResult("accepted");
       } else {
         const value = action === "status" ? await backend.getAppUpdate() : await backend.checkAppUpdate();
-        if (current()) setState(parseUpdateState(value));
+        if (current()) {
+          const snapshot = parseUpdateState(value);
+          setState({ ...snapshot });
+          if (installResult === "accepted" && snapshot.phase !== "installing") setInstallResult(null);
+        }
       }
     } catch (cause) {
       if (!current()) return;
       const installRejected = cause instanceof ApiError && (cause.status === 409 || cause.status === 503);
-      if (action === "install" && !installRejected) {
+      if (action === "install" && installRejected) {
+        setInstallRejection(cause.message);
+      } else if (action === "install") {
         // A lost response may follow a successful handoff. Never retry installation automatically.
         setInstallResult("uncertain");
       } else {
@@ -73,12 +81,13 @@ export function useAppUpdate() {
   }, []);
 
   useEffect(() => {
-    if (!state?.supported || pending || error || restarting) return;
+    if (!state?.supported || pending || (error && !restarting) || installResult === "uncertain") return;
     // Schedule only after the previous request settles, so slow reads cannot overlap.
     // The backend checks and downloads on its own; this only reads its local state.
-    const timer = window.setTimeout(readStatus, activePhase ? ACTIVE_POLL_MS : IDLE_POLL_MS);
+    const timer = window.setTimeout(readStatus, activePhase || restarting ? ACTIVE_POLL_MS : IDLE_POLL_MS);
     return () => window.clearTimeout(timer);
-  }, [state, activePhase, pending, error, restarting]);
+  }, [state, activePhase, pending, error, restarting, installResult]);
 
-  return { state, pending, error, installResult, activePhase, restarting, run };
+  return { state, pending, error, installResult, installRejection,
+    dismissRejection: () => setInstallRejection(null), activePhase, restarting, run };
 }

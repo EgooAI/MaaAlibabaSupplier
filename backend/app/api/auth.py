@@ -207,6 +207,7 @@ class AuthMiddleware:
         disconnected = False
         send_failed = False
         app_returned = False
+        activity = None
 
         async def receive_request() -> Message:
             nonlocal disconnected
@@ -280,6 +281,14 @@ class AuthMiddleware:
                     if get_updater().writes_blocked():
                         await reject(409, "Application update handoff is active; new writes are unavailable.")
                         return
+                    if path != "/api/app/update/install":
+                        from backend.app.background import WorkBlocked, get_background_runtime
+
+                        try:
+                            activity = get_background_runtime().activity()
+                        except WorkBlocked:
+                            await reject(409, "Application update installation is active; new writes are unavailable.")
+                            return
             await self.app(scope, receive_request, send_response)
             app_returned = True
         except Exception as exc:
@@ -289,6 +298,8 @@ class AuthMiddleware:
             # Do not log exception locals: login bodies and bearer tokens are secrets.
             await reject(500, "Internal server error")
         finally:
+            if activity is not None:
+                activity.close()
             # http.access already carries writes, errors and slow reads; a
             # second record is useful only when completion itself was abnormal.
             if status is None or not complete or disconnected or send_failed:

@@ -69,7 +69,7 @@ def _start_mitm_receiver(*, host: str, port: int, internal_token: str) -> Reusab
         finally:
             server.server_close()
 
-    thread = get_background_runtime().worker("mitm-receiver", _run, on_stop=server.shutdown)
+    thread = get_background_runtime().worker("mitm-receiver", _run, on_stop=server.shutdown, resident=True)
     try:
         thread.start()
         get_background_runtime().on_shutdown("mitm-receiver", thread.stop, priority=-30)

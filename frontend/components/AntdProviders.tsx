@@ -5,6 +5,7 @@ import zhCN from "antd/locale/zh_CN";
 import type { ReactNode } from "react";
 import { AccountProvider } from "@/features/account/AccountProvider";
 import { AuthGate, AuthProvider } from "@/features/auth/AuthProvider";
+import { UpdateNotice } from "@/features/settings/UpdateNotice";
 
 export function AntdProviders({ children }: { children: ReactNode }) {
   return (
@@ -34,7 +35,7 @@ export function AntdProviders({ children }: { children: ReactNode }) {
         },
       }}
     >
-      <App><AuthProvider><AuthGate><AccountProvider>{children}</AccountProvider></AuthGate></AuthProvider></App>
+      <App><AuthProvider><AuthGate><UpdateNotice /><AccountProvider>{children}</AccountProvider></AuthGate></AuthProvider></App>
     </ConfigProvider>
   );
 }
