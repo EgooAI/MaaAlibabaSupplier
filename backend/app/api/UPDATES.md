@@ -241,6 +241,14 @@ seconds while visible. It has no automatic timeout or local dismiss button.
 restarting or using another device does not restore it. A stale acknowledgment
 cannot dismiss a later installation. Failed persistence leaves the notice visible.
 
+An open page keeps the frontend it loaded until it is refreshed. Each exported
+frontend records a build identity in `build-id.json`, and the global UI fetches it
+every 30 seconds while visible, also on focus and page restore. A mismatch shows a
+persistent refresh card in the same bottom-right stack as the installation notice.
+Acknowledging the installation notice does not dismiss it, and the page never
+reloads automatically. Pages loaded before this check shipped cannot detect the
+first update and still need one manual refresh.
+
 Inno Setup performs an in-place upgrade. It preserves an existing `.env` and
 excludes runtime data, debug files, and MaaFW config/data directories from the
 payload copy. Its post-install launch is skipped during silent installation;

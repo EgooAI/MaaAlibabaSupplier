@@ -75,7 +75,7 @@ export function UpdateNotice() {
   }, []);
 
   if (!notice) return null;
-  return <div role="status" aria-live="polite" className="fixed bottom-4 right-4 z-[1100] w-[min(24rem,calc(100vw-2rem))]">
+  return <div role="status" aria-live="polite">
     <Card title="程序更新完成" size="small" className="shadow-xl">
       <Space orientation="vertical" className="w-full">
         <Typography.Text>已安装 {notice.version} 并重新启动程序。</Typography.Text>

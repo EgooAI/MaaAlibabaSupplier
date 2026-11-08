@@ -2,7 +2,8 @@
 
 Default: download the latest Node.js (minor-pinned, no overrides) into
 .portable/node, install the pnpm version pinned by frontend/package.json, then
-run `pnpm install` and `pnpm build` for frontend/.
+run `pnpm install` and `pnpm build` for frontend/. `--export` also embeds a build
+identity that the UI uses to detect pages left open across an installation.
 
 Usage:
   python tools/install_1_frontend.py [--use-system] [--no-frozen] [--export]
@@ -15,6 +16,8 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import uuid
 from pathlib import Path
 
 import _common as common
@@ -40,6 +43,41 @@ def pnpm_version() -> str:
     if not match:
         common.fail("frontend/package.json does not pin a pnpm version via packageManager.")
     return match.group(1)
+
+
+def resolve_build_id() -> str:
+    """Returns a stable identity for the exported frontend source tree."""
+    try:
+        tree = subprocess.check_output(
+            ["git", "rev-parse", "HEAD:frontend"],
+            cwd=common.REPO_ROOT,
+            stderr=subprocess.DEVNULL,
+        ).decode("ascii").strip()
+        dirty = bool(subprocess.check_output(
+            ["git", "status", "--porcelain", "--", "frontend"],
+            cwd=common.REPO_ROOT,
+            stderr=subprocess.DEVNULL,
+        ).strip())
+    except (OSError, subprocess.CalledProcessError, UnicodeDecodeError):
+        return uuid.uuid4().hex
+    if not tree:
+        return uuid.uuid4().hex
+    return f"{tree}-{uuid.uuid4().hex[:12]}" if dirty else tree
+
+
+def write_build_id(out_dir: Path, build_id: str) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "build-id.json").write_text(
+        json.dumps({"schema_version": 1, "build_id": build_id}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def verify_build_id(out_dir: Path, build_id: str) -> None:
+    for path in out_dir.rglob("*.js"):
+        if build_id in path.read_text(encoding="utf-8", errors="ignore"):
+            return
+    common.fail("The frontend build identity was not embedded in the exported JavaScript.")
 
 
 def resolve_node_archive() -> str:
@@ -101,9 +139,18 @@ def main() -> int:
         install_cmd.append("--frozen-lockfile")
     common.run(install_cmd, cwd=common.FRONTEND_DIR)
 
+    build_id = None
+    build_id_path = common.FRONTEND_DIR / "out" / "build-id.json"
     if args.export:
+        build_id = resolve_build_id()
         os.environ["NEXT_EXPORT"] = "1"
+        os.environ["NEXT_PUBLIC_APP_BUILD"] = build_id
+        build_id_path.unlink(missing_ok=True)
+        common.log(f"Frontend build identity: {build_id}")
     common.run(pnpm_cmd + ["build"], cwd=common.FRONTEND_DIR)
+    if build_id is not None:
+        write_build_id(build_id_path.parent, build_id)
+        verify_build_id(build_id_path.parent, build_id)
 
     common.log("Stage 1 done.")
     return 0
