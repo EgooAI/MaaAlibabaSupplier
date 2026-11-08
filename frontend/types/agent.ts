@@ -203,6 +203,12 @@ export interface AgentTestDraftInput {
   requiresTool?: boolean;
 }
 
+export interface BranchAgentSessionInput {
+  messageIndex?: number;
+  versionKind?: "preset" | "draft";
+  draft?: AgentTestDraftInput;
+}
+
 export interface AgentTestInput {
   agentId: ID;
   content?: string;

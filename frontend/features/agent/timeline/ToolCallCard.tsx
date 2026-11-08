@@ -11,7 +11,7 @@ import { toolRendererOf, type ToolRendererProps } from "./toolRenderers";
 export function ToolCallCard({ call, simulated, intent }: ToolRendererProps) {
   // Failures start open so the reason is visible without a click; a successful
   // call starts collapsed. The user's toggle wins after the first interaction.
-  const [open, setOpen] = useState(!call.ok);
+  const [open, setOpen] = useState(!call.ok || call.name === "reply_customer");
   const renderer = toolRendererOf(call.name);
   const summary = renderer?.summarize?.(call.arguments ?? {}) ?? "";
 

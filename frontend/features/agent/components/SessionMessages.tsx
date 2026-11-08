@@ -4,6 +4,7 @@ import { RobotOutlined, ShopOutlined } from "@ant-design/icons";
 import { Alert, Avatar, Button, Card, Dropdown, Space, Tag, Typography } from "antd";
 import { renderContentHtml } from "@/domain/render/markdown";
 import { EMPTY_TEXT } from "@/components/empty";
+import { TimeText } from "@/components/TimeText";
 import type { AgentTestSession } from "@/types/agent";
 import { ToolCallTimeline } from "../timeline/ToolCallTimeline";
 
@@ -45,7 +46,7 @@ export function SessionMessages({ session, onForkFromTurn }: SessionMessagesProp
               />
               <Card size="small" className={isAssistant ? "bg-slate-50" : "bg-blue-50"}>
                 <div className="flex items-center justify-between gap-2">
-                  <Typography.Text className="text-xs">{item.createdAt}</Typography.Text>
+                  <TimeText value={item.createdAt} className="text-xs" />
                   <Space size={4}>
                     {item.mode === "simulated" && isAssistant ? <Tag color="gold">模拟</Tag> : null}
                     {canFork ? (

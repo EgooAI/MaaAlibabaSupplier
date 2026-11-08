@@ -131,7 +131,7 @@ describe("SessionMessages", () => {
     });
 
     const card = container.querySelector("button[aria-expanded]");
-    act(() => card?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(card?.getAttribute("aria-expanded")).toBe("true");
     expect(container.textContent).toContain("We can ship tomorrow.");
     expect(container.textContent).toContain("中文参考");
     expect(container.textContent).toContain("模拟");

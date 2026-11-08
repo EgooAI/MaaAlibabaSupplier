@@ -831,10 +831,28 @@ export const mockBackend: OperationsBackend = {
     return delay(undefined);
   },
 
-  branchAgentTestSession: async (id, messageIndex) => {
+  branchAgentTestSession: async (id, input) => {
     const source = getAgentSession(id);
+    const options = typeof input === "number" ? { messageIndex: input } : input ?? {};
+    const messageIndex = options.messageIndex;
     const messages = messageIndex === undefined ? source.messages : source.messages.slice(0, messageIndex + 1);
-    const branch = { ...structuredClone(source), id: `session-${crypto.randomUUID()}`, title: `${source.title} - 分支`, createdAt: nowText(), messages };
+    const branch = {
+      ...structuredClone(source),
+      id: `session-${crypto.randomUUID()}`,
+      title: `${source.title} - 分支`,
+      createdAt: nowText(),
+      messages,
+      ...(options.versionKind === "draft" && options.draft ? {
+        draft: true,
+        pinned: {
+          kind: "draft" as const,
+          prompt: options.draft.prompt,
+          llm_level: options.draft.level,
+          tools: options.draft.tools,
+          requires_tool: options.draft.requiresTool,
+        },
+      } : options.versionKind === "preset" ? { draft: false, pinned: { ...structuredClone(source.pinned), kind: "preset" as const } } : {}),
+    };
     consoleStore = { ...consoleStore, history: [branch, ...consoleStore.history] };
     return delay(branch);
   },

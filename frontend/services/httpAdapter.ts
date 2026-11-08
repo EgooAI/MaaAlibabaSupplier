@@ -287,7 +287,17 @@ export const httpBackend: OperationsBackend = {
   undoAgentTestSession: (id) => requestJson(`/api/agent/test-history/${encodeURIComponent(id)}/undo`, { method: "POST" }),
   regenerateAgentTestSessionReply: (id) => requestAi(`/api/agent/test-history/${encodeURIComponent(id)}/regenerate`, { method: "POST" }),
   deleteAgentTestSession: (id) => requestVoid(`/api/agent/test-history/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  branchAgentTestSession: (id, messageIndex) => requestJson(`/api/agent/test-history/${encodeURIComponent(id)}/branch`, { method: "POST", body: JSON.stringify(messageIndex === undefined ? {} : { messageIndex }) }),
+  branchAgentTestSession: (id, input) => {
+    const options = typeof input === "number" ? { messageIndex: input } : input ?? {};
+    const draft = options.draft;
+    return requestJson(`/api/agent/test-history/${encodeURIComponent(id)}/branch`, {
+      method: "POST",
+      body: JSON.stringify({
+        ...options,
+        draft: draft ? { prompt: draft.prompt, level: draft.level, tools: draft.tools, requires_tool: draft.requiresTool } : undefined,
+      }),
+    });
+  },
 
   createExperiment: (input) => requestJson("/api/agent/experiments", { method: "POST", body: JSON.stringify(input) }),
   listExperiments: (agentId) => requestJson(`/api/agent/experiments${agentId ? `?agentId=${encodeURIComponent(agentId)}` : ""}`),

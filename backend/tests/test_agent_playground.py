@@ -144,6 +144,60 @@ def test_pinned_revision_changes_behaviour_but_keeps_the_frozen_prefix(client, a
     assert calls[0]["preset_override"].prompt == "旧提示词"
 
 
+def test_prompt_draft_branch_keeps_context_and_original_pin(client, archive, monkeypatch):
+    _, apply = archive
+    apply(("buyer", [row(1, text="hello")]))
+    sid = client.get("/api/conversations").json()["data"]["items"][0]["sid"]
+    original = _fork(client, sid, 0).json()["data"]
+    _captured_run(monkeypatch)
+    run = client.post("/api/agent/test", json={
+        "agentId": CHAT_REPLY_SUGGESTION_AGENT_APID,
+        "sessionId": original["id"], "content": "follow up", "inputMode": "buyer",
+    })
+    assert run.status_code == 200, run.text
+    original = run.json()["data"]["session"]
+
+    response = client.post(f"/api/agent/test-history/{original['id']}/branch", json={
+        "versionKind": "draft",
+        "draft": {
+            "prompt": "临时新提示词", "level": 0,
+            "tools": ["reply_customer"], "requires_tool": True,
+        },
+    })
+
+    assert response.status_code == 200, response.text
+    branch = response.json()["data"]
+    assert [message["content"] for message in branch["messages"]] == [message["content"] for message in original["messages"]]
+    assert branch["parentId"] == original["id"]
+    assert branch["pinned"]["kind"] == "draft"
+    assert branch["pinned"]["prompt"] == "临时新提示词"
+    assert original["pinned"]["prompt"] == "你是建议 Agent"
+
+    calls = _captured_run(monkeypatch)
+    next_run = client.post("/api/agent/test", json={
+        "agentId": CHAT_REPLY_SUGGESTION_AGENT_APID,
+        "sessionId": branch["id"], "content": "next", "inputMode": "buyer",
+    })
+    assert next_run.status_code == 200, next_run.text
+    assert calls[0]["preset_override"].prompt == "临时新提示词"
+
+    saved = client.post("/api/agent/presets", json={
+        "apid": CHAT_REPLY_SUGGESTION_AGENT_APID, "name": "建议", "description": "d",
+        "prompt": "正式新提示词", "intelevel": 0, "tools": ["reply_customer"],
+        "enabled": True, "requires_tool": True,
+    })
+    assert saved.status_code == 200, saved.text
+    saved_branch_response = client.post(f"/api/agent/test-history/{original['id']}/branch", json={
+        "versionKind": "preset",
+    })
+    assert saved_branch_response.status_code == 200, saved_branch_response.text
+    saved_branch = saved_branch_response.json()["data"]
+    assert saved_branch["pinned"]["kind"] == "preset"
+    assert saved_branch["pinned"]["prompt"] == "正式新提示词"
+    assert saved_branch["draft"] is False
+    assert original["pinned"]["prompt"] == "你是建议 Agent"
+
+
 def test_forked_sessions_are_invisible_to_another_seller(client, archive):
     _, apply = archive
     apply(("buyer", [row(1, text="hello")]))

@@ -134,6 +134,9 @@ class ForkMessageInput(BaseModel):
 class BranchInput(BaseModel):
     # Truncate the copy after this message; omitted copies the whole session.
     messageIndex: int | None = Field(default=None, ge=0)
+    # A new version is opt-in so ordinary branches continue inheriting the pin.
+    versionKind: str | None = None
+    draft: DraftPresetInput | None = None
 
 
 def _refresh_llm_runtime() -> None:
@@ -877,13 +880,34 @@ def branch_session(session_id: str, body: BranchInput | None = None) -> dict:
         if index >= len(messages):
             raise AppError("消息不存在", status_code=404)
         messages = messages[: index + 1]
+    pinned = None
+    draft = None
+    if body is not None and body.versionKind is not None:
+        preset = AgentPresetManager().get_agent_preset(content.apid)
+        if preset is None:
+            raise AppError("Agent 不存在", status_code=404)
+        if body.versionKind == "draft":
+            if body.draft is None:
+                raise AppError("draft is required when versionKind=draft", status_code=422)
+            draft = _parse_draft(
+                prompt=body.draft.prompt, level=body.draft.level,
+                tools=body.draft.tools, requires_tool=body.draft.requires_tool,
+            )
+            pinned = _pinned_from_draft(draft)
+            _require_runnable_preset(_draft_override(preset, draft))
+        elif body.versionKind == "preset":
+            pinned = _pinned_from_preset(preset)
+            raw = {**raw, "draft": None}
+        else:
+            raise AppError("versionKind must be preset or draft", status_code=422)
     try:
         branched = ChatHistory(
             name=f"{hist.name}-分支",
             content=build_history_content(
                 apid=content.apid, agent_name=content.agent_name,
                 messages=messages, existing=raw,
-                scope=_current_scope(), parent_id=str(hist.id)),
+                scope=_current_scope(), parent_id=str(hist.id),
+                pinned=pinned, draft=draft),
         )
         manager.add_chat_history(branched)
     except Exception:

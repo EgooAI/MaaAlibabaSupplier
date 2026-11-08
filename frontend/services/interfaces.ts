@@ -1,4 +1,4 @@
-import type { AgentConsoleState, AgentPresetRevision, AgentTestInput, AgentTestResult, AgentTestSession, AgentToolDefinition, DbAgentPreset, DocumentLlmConfig, ForkAgentSessionInput, SystemAgentDefinition } from "@/types/agent";
+import type { AgentConsoleState, AgentPresetRevision, AgentTestInput, AgentTestResult, AgentTestSession, AgentToolDefinition, BranchAgentSessionInput, DbAgentPreset, DocumentLlmConfig, ForkAgentSessionInput, SystemAgentDefinition } from "@/types/agent";
 import type { AssistantSuggestionResult, ConversationAnalysis, ConversationDetail } from "@/types/chatCanonical";
 import type { ConversationPage, ConversationQuery, InboxOverview, ReadReceipt } from "@/types/inbox";
 import type { ComposeTranslationResult, ExportConversationsInput, ExportConversationsResult, OutboxTask, RequestTranslationsInput, RequestTranslationsResult, TranslationQueryInput, TranslationQueryResult, TranslationJobSnapshot, SendMessageInput, SendMessageResult, ConversationRevision } from "@/types/chatOperations";
@@ -87,7 +87,7 @@ export interface OperationsBackend {
   undoAgentTestSession(id: string): Promise<AgentTestSession>;
   regenerateAgentTestSessionReply(id: string): Promise<AgentTestSession>;
   deleteAgentTestSession(id: string): Promise<void>;
-  branchAgentTestSession(id: string, messageIndex?: number): Promise<AgentTestSession>;
+  branchAgentTestSession(id: string, input?: number | BranchAgentSessionInput): Promise<AgentTestSession>;
 
   createExperiment(input: CreateExperimentInput): Promise<Experiment>;
   listExperiments(agentId?: string): Promise<ExperimentSummary[]>;

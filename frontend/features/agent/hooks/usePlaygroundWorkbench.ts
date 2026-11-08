@@ -4,7 +4,9 @@ import { App } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { backend } from "@/services/client";
 import { operationErrorMessage } from "@/services/errors";
-import type { AgentConfig, AgentTestSession } from "@/types/agent";
+import { agentConfigToPreset, agentPresetToDbPreset } from "@/domain/agent/agentModel";
+import { nowText } from "@/domain/time";
+import type { AgentConfig, AgentTestDraftInput, AgentTestSession } from "@/types/agent";
 
 /** Sessions the Playground owns: forked/simulated ones only. */
 export function isPlaygroundSession(session: AgentTestSession) {
@@ -22,7 +24,7 @@ export function usePlaygroundWorkbench(initialSessionId?: string) {
   const [activeSession, setActiveSession] = useState<AgentTestSession>();
   const [frozenInput, setFrozenInput] = useState("");
   const [frozenInputError, setFrozenInputError] = useState<string>();
-  const [draft, setDraft] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [inputMode, setInputMode] = useState<"buyer" | "agent">("buyer");
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -64,7 +66,6 @@ export function usePlaygroundWorkbench(initialSessionId?: string) {
         setActiveSession(session);
         setFrozenInput(frozen);
         setFrozenInputError(undefined);
-        setDraft("");
       })
       .catch((caught: unknown) => {
         if (cancelled || selected !== selection.current) return;
@@ -79,6 +80,12 @@ export function usePlaygroundWorkbench(initialSessionId?: string) {
     () => agents.find((agent) => agent.id === activeSession?.agentId),
     [agents, activeSession?.agentId],
   );
+  const draft = activeSessionId ? drafts[activeSessionId] ?? "" : "";
+
+  function setDraft(value: string) {
+    if (!activeSessionId) return;
+    setDrafts((current) => ({ ...current, [activeSessionId]: value }));
+  }
 
   function replaceSession(session: AgentTestSession) {
     setActiveSession(session);
@@ -101,7 +108,7 @@ export function usePlaygroundWorkbench(initialSessionId?: string) {
       });
       if (selected !== selection.current) return;
       replaceSession(result.session);
-      setDraft("");
+      setDrafts((current) => ({ ...current, [activeSession.id]: "" }));
     } catch (caught: unknown) {
       setError(operationErrorMessage(caught, "模拟运行失败"));
     } finally {
@@ -133,10 +140,51 @@ export function usePlaygroundWorkbench(initialSessionId?: string) {
       const copy = await backend.branchAgentTestSession(activeSession.id, index);
       if (selected !== selection.current) return;
       setSessions((current) => [copy, ...current.filter((item) => item.id !== copy.id)]);
+      setActiveSession(undefined);
       setActiveSessionId(copy.id);
       message.success("已从该回合分叉");
     } catch (caught: unknown) {
       setError(operationErrorMessage(caught, "分叉失败"));
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function branchWithPrompt(prompt: string, savePreset: boolean) {
+    if (!activeSession || !activeAgent || running || !prompt.trim()) return false;
+    const selected = selection.current;
+    setRunning(true);
+    setError(undefined);
+    try {
+      if (savePreset) {
+        const preset = agentConfigToPreset(activeAgent, {
+          name: activeAgent.name,
+          description: activeAgent.description,
+          prompt: prompt.trim(),
+          level: activeAgent.level ?? 0,
+          capabilities: activeAgent.capabilities,
+          requiresTool: activeAgent.requiresTool,
+        }, nowText());
+        await backend.saveAgentPreset(agentPresetToDbPreset(preset, { revisionNote: "从 Playground 保存提示词" }));
+      }
+      const draft: AgentTestDraftInput = {
+        prompt: prompt.trim(),
+        level: activeSession.pinned?.llm_level ?? activeAgent.level ?? 0,
+        tools: activeSession.pinned?.tools ?? activeAgent.capabilities,
+        requiresTool: activeSession.pinned?.requires_tool ?? activeAgent.requiresTool,
+      };
+      const branch = await backend.branchAgentTestSession(activeSession.id, savePreset
+        ? { versionKind: "preset" }
+        : { versionKind: "draft", draft });
+      if (selected !== selection.current) return false;
+      setSessions((current) => [branch, ...current.filter((item) => item.id !== branch.id)]);
+      setActiveSession(undefined);
+      setActiveSessionId(branch.id);
+      message.success(savePreset ? "Agent 配置已保存，并已创建模拟分支" : "已应用提示词并创建模拟分支");
+      return true;
+    } catch (caught: unknown) {
+      setError(operationErrorMessage(caught, savePreset ? "保存提示词或创建分支失败" : "创建模拟分支失败"));
+      return false;
     } finally {
       setRunning(false);
     }
@@ -157,10 +205,20 @@ export function usePlaygroundWorkbench(initialSessionId?: string) {
     }
   }
 
+  function selectSession(id: string) {
+    if (id === activeSessionId || running) return;
+    ++selection.current;
+    setActiveSession(undefined);
+    setFrozenInput("");
+    setFrozenInputError(undefined);
+    setError(undefined);
+    setActiveSessionId(id);
+  }
+
   return {
     agents, sessions, activeSession, activeSessionId, activeAgent,
     frozenInput, frozenInputError, draft, setDraft, inputMode, setInputMode,
-    loading, running, error, run, regenerate, forkHere, removeSession,
-    selectSession: (id: string) => { ++selection.current; setActiveSessionId(id); },
+    loading, running, error, run, regenerate, forkHere, branchWithPrompt, removeSession,
+    selectSession,
   };
 }
