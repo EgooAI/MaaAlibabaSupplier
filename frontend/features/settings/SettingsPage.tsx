@@ -7,7 +7,7 @@ import { AliIdentityCard } from "./AliIdentityCard";
 import { useDataDirSettings } from "./hooks/useDataDirSettings";
 import { useShutdownApp } from "./hooks/useShutdownApp";
 import { useAccount } from "@/features/account/AccountProvider";
-import { ConnectionFlowCard, SyncCard } from "@/features/account/AccountFlow";
+import { ConnectionFlowCard } from "@/features/account/AccountFlow";
 import { UpdateCard } from "./UpdateCard";
 
 type DataDirControls = ReturnType<typeof useDataDirSettings>;
@@ -62,8 +62,7 @@ export function AccountSetup() {
   return (
     <Row gutter={[16, 16]} className="w-full">
       <Col span={24}><ConnectionFlowCard /></Col>
-      <Col xs={24} xl={12}><DataDirCard controls={dataDirControls} /></Col>
-      <Col xs={24} xl={12}><SyncCard /></Col>
+      <Col span={24}><DataDirCard controls={dataDirControls} /></Col>
       <Col span={24}>
         <AliIdentityCard key={JSON.stringify([snapshot?.data_dir.path, snapshot?.account.epoch])} dataDirOk={snapshot?.data_dir.state === "ok"} />
       </Col>

@@ -3,7 +3,7 @@ import { act, type ReactNode, type ButtonHTMLAttributes } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountProvider } from "@/features/account/AccountProvider";
-import { ConnectionFlowCard, SyncCard } from "@/features/account/AccountFlow";
+import { ConnectionFlowCard } from "@/features/account/AccountFlow";
 import { DataDirBanner } from "@/features/settings/DataDirBanner";
 import { accountSession } from "@/services/accountSession";
 import { connectionSnapshot } from "@/mock/connectionData";
@@ -19,7 +19,8 @@ vi.mock("antd", () => {
   const Text = ({ children }: { children: ReactNode }) => <div>{children}</div>;
   return {
     App: { useApp: () => ({ message: mocks.message }) },
-    Space: Text, Tag: Text, Typography: { Text },
+    Space: ({ children, role }: { children: ReactNode; role?: string }) => <div role={role}>{children}</div>,
+    Tag: Text, Typography: { Text },
     Card: ({ title, extra, children }: { title: string; extra?: ReactNode; children: ReactNode }) => <section aria-label={title}>{extra}{children}</section>,
     Tooltip: Text,
     Alert: ({ title, description, type }: { title: ReactNode; description?: ReactNode; type: string }) => <div role="alert" data-type={type}>{title}{description}</div>,
@@ -57,10 +58,10 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-const mount = async () => { await act(async () => root.render(<AccountProvider><ConnectionFlowCard /><SyncCard /><DataDirBanner /></AccountProvider>)); };
+const mount = async () => { await act(async () => root.render(<AccountProvider><ConnectionFlowCard /><DataDirBanner /></AccountProvider>)); };
 const poll = async () => { await act(async () => { await vi.advanceTimersByTimeAsync(10_000); }); };
 const step = (key: string) => container.querySelector(`[data-step="${key}"]`)!;
-const syncButton = () => container.querySelector<HTMLButtonElement>('section[aria-label="密钥与聊天同步"] button')!;
+const syncButton = () => container.querySelector<HTMLButtonElement>('section[aria-label="接入进度"] [role="status"] button')!;
 
 describe("account connection flow", () => {
   it("connects the client automatically for the selected seller", async () => {
