@@ -6,9 +6,11 @@ import { Alert, Button, Card, Empty, Popover, Spin, Tooltip } from "antd";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { inboxQueryFromUrl, inboxQueryToUrl } from "@/domain/chat/inboxModel";
 import { statusLabel, waitingLabel } from "@/domain/chat/chatModel";
+import { countryCodeOf } from "@/domain/country";
 import { ConversationFilters, ConversationPaging } from "./conversation/ConversationFilters";
 import { InboxBadges } from "./conversation/InboxBadges";
 import { CardDetailDrawer } from "@/components/CardDetailDrawer";
+import { CountryFlag } from "@/components/CountryFlag";
 import { SessionListPanel } from "@/components/SessionListPanel";
 import { useSplitSessionMobile } from "@/components/SplitSessionLayout";
 import { useStickToBottom } from "@/components/useStickToBottom";
@@ -56,6 +58,8 @@ function ChatWorkspace() {
   }, [params, changeQuery]);
   const active = workbench.activeConversation;
   const localTime = useLocalTime(active?.customer.country);
+  const activeCountryCode = countryCodeOf(active?.customer.country);
+  const headerMeta = [localTime, active?.customer.company].filter(Boolean).join(" · ");
   const [customerInfoOpen, setCustomerInfoOpen] = useState(false);
   const [forkIndex, setForkIndex] = useState<number>();
   const [analysisFocus, setAnalysisFocus] = useState<AnalysisFocus>("intent");
@@ -113,7 +117,12 @@ function ChatWorkspace() {
         {isMobile ? <Button type="text" aria-label="返回列表" icon={<ArrowLeftOutlined />} onClick={() => setMobileView("list")} /> : null}
         <div className="min-w-0">
           <div className="truncate">{active?.customer.name || "消息时间线"}</div>
-          {active && (localTime || active.customer.company || active.customer.country) ? <div className="truncate text-xs font-normal text-slate-500">{[localTime, active.customer.company, active.customer.country].filter(Boolean).join(" · ")}</div> : null}
+          {active && (headerMeta || activeCountryCode) ? (
+            <div className="truncate text-xs font-normal text-slate-500">
+              <CountryFlag country={active.customer.country} showName />
+              {headerMeta ? <span>{activeCountryCode ? " · " : ""}{headerMeta}</span> : null}
+            </div>
+          ) : null}
         </div>
       </div>}
       extra={

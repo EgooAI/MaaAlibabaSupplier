@@ -4,6 +4,7 @@ import { Avatar, Button, Checkbox, Empty, Radio, Space, Tag, Typography } from "
 import { useMemo } from "react";
 import { avatarColorOf, avatarInitialOf } from "@/domain/chat/avatarModel";
 import { dialogueCountOf, groupConversations } from "@/domain/chat/chatModel";
+import { CountryFlag } from "@/components/CountryFlag";
 import { TimeText } from "@/components/TimeText";
 import { portraitStageColor, portraitStageLabel } from "@/domain/portrait/portraitModel";
 import { InboxBadges } from "./InboxBadges";
@@ -89,8 +90,13 @@ export function ConversationList({
                          <Typography.Text strong ellipsis>{item.customer.name}</Typography.Text>
                          <span className="shrink-0 text-[11px] text-slate-400">{groupMode === "count" ? `${dialogueCountOf(item)} 条` : <TimeText value={item.updatedAt} />}</span>
                       </div>
-                      {item.latestMessage ? <div className="mt-1 truncate text-xs text-slate-500">{item.latestMessage}</div> : null}
-                      <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                      {item.latestMessage ? (
+                        <div className="mt-1 flex min-w-0 items-center gap-1.5" data-testid="conversation-preview">
+                          <CountryFlag country={item.customer.country} showCode={false} />
+                          <span className="min-w-0 flex-1 truncate text-xs text-slate-500">{item.latestMessage}</span>
+                        </div>
+                      ) : null}
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1" data-testid="conversation-badges">
                         <InboxBadges conversation={item} compact={!selectable} />
                         {item.customer.businessStage !== "unknown" ? (
                           <Tag color={portraitStageColor(item.customer.businessStage)} className="!m-0 !text-[11px]">
@@ -100,7 +106,6 @@ export function ConversationList({
                         {item.customer.businessTags.slice(0, 2).map((tag) => (
                           <Tag key={tag.tag_id} className="!m-0 !text-[11px]">{tag.name}</Tag>
                         ))}
-                        {item.customer.country ? <span className="text-[11px] text-slate-400">{item.customer.country}</span> : null}
                       </div>
                     </div>
                   </div>

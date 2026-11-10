@@ -44,3 +44,14 @@ body {
 .app-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
+
+.country-flag.fi {
+  /* The package class supplies the image; this fixes the list-row box to 4:3. */
+  width: 16px;
+  height: 12px;
+  border-radius: 2px;
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
+  box-shadow: 0 0 0 1px rgb(15 23 42 / 0.08);
+}
