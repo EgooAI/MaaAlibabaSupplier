@@ -22,17 +22,18 @@ from pathlib import Path
 from typing import Any, Iterator
 from uuid import uuid4
 
+from backend.app.shared import contract
 from backend.app.shared.crm.paths import default_crm_database_path
 from backend.app.shared.crm.sync_store import canonical_source_dir
 from backend.app.shared.crm.views import is_self_account, resolve_contact_cid
 
-PORTRAIT_STAGES = ("unknown", "new_inquiry", "following_up", "negotiating", "won", "dormant", "lost")
-LOST_REASONS = ("unreachable", "price", "product_mismatch", "delivery", "competitor", "unclear")
-MAX_BATCH_TARGETS = 50
-MAX_EXPORT_TARGETS = 100
-TAG_NAME_MAX = 40
-TAG_DESCRIPTION_MAX = 200
-LOST_NOTE_MAX = 500
+PORTRAIT_STAGES = contract.PORTRAIT_STAGES
+LOST_REASONS = contract.LOST_REASONS
+MAX_BATCH_TARGETS = contract.PORTRAIT_BATCH_MAX
+MAX_EXPORT_TARGETS = contract.PORTRAIT_EXPORT_MAX
+TAG_NAME_MAX = contract.PORTRAIT_TAG_NAME_MAX
+TAG_DESCRIPTION_MAX = contract.PORTRAIT_TAG_DESCRIPTION_MAX
+LOST_NOTE_MAX = contract.PORTRAIT_LOST_NOTE_MAX
 
 
 class PortraitConflict(Exception):

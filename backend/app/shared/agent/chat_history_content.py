@@ -16,9 +16,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
+from backend.app.shared import contract
+
 SCHEMA_VERSION = 3
-SESSION_TYPES = frozenset({"test", "playground", "fork"})
-PINNED_KINDS = frozenset({"preset", "draft"})
+SESSION_TYPES = frozenset(contract.SESSION_TYPES)
+PINNED_KINDS = frozenset(contract.PINNED_KINDS)
 
 
 class ChatHistoryToolCall(BaseModel):

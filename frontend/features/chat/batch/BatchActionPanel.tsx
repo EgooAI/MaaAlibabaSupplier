@@ -3,6 +3,7 @@
 import { CloseOutlined } from "@ant-design/icons";
 import { Button, Card, Checkbox, Input, Segmented, Typography } from "antd";
 import { useMemo, useState } from "react";
+import { PORTRAIT_LOST_NOTE_MAX } from "@/domain/contract.generated";
 import { LOST_REASON_OPTIONS, PORTRAIT_STAGE_OPTIONS, lostReasonLabel, portraitStageLabel } from "@/domain/portrait/portraitModel";
 import { portraitChangesError, previewPortraitChanges } from "@/domain/portrait/batchPreview";
 import type { BatchPanelAction, BatchPanelView } from "@/domain/portrait/batchPreview";
@@ -162,7 +163,7 @@ export function BatchActionPanel({ action, targets, portraitTags, busy, exportin
                 <Input.TextArea
                   aria-label="失败备注"
                   rows={2}
-                  maxLength={500}
+                  maxLength={PORTRAIT_LOST_NOTE_MAX}
                   showCount
                   placeholder="失败备注（可选）"
                   value={lostNote}

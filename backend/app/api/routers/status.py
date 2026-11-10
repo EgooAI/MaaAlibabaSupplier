@@ -17,6 +17,7 @@ from backend.app.shared.backend.im_layout import encrypted_db_path
 from backend.app.shared.crm.account_keys import get_key_source
 from backend.app.shared.backend.gui_session import get_client_status
 from backend.app.shared.backend import status as status_mod
+from backend.app.shared.backend.maafw_nodes import MANUAL_NODE_TESTS
 from backend.app.shared.backend.maafw_runner import run_node
 from backend.app.shared.mitm.pool import observe_pools
 from backend.app.task_queue import (
@@ -29,10 +30,7 @@ from backend.app.updater import observe_updater
 
 router = APIRouter(route_class=AccountRoute)
 
-ALLOWED_NODE_ENTRIES = {
-    "ChatInput_GoToInput": "Diagnostics_ChatInput",
-    "ContactSearch_GoToSearch": "Diagnostics_ContactSearch",
-}
+ALLOWED_NODE_ENTRIES = MANUAL_NODE_TESTS
 
 # Last manual node-test outcome shown in the aggregate snapshot.
 # None means "not tested yet" (polls must not trigger real MaaFW runs).

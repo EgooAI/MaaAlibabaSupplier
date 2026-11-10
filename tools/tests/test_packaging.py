@@ -46,6 +46,10 @@ class PackagingTests(unittest.TestCase):
         info = json.loads((self.payload / "build-info.json").read_text(encoding="utf-8"))
         self.assertEqual(info, self.expected)
 
+    def test_installer_app_id_matches_build_identity(self):
+        script = (Path(__file__).resolve().parents[1] / "packaging" / "Setup.iss").read_text(encoding="utf-8")
+        self.assertIn(install.APP_ID, script)
+
     def test_local_build_fallbacks(self):
         for environment in ({}, {name: "" for name in self.environment}):
             with self.subTest(environment=environment), patch.dict(os.environ, environment, clear=True):

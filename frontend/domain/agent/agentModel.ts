@@ -1,3 +1,4 @@
+import { LLM_MAX_LEVEL } from "@/domain/contract.generated";
 import type { AgentConfig, AgentEditValues, AgentPreset, AgentSaveOptions, AgentTestMessage, AgentTestSession, AgentToolDefinition, DbAgentPreset, DocumentLlmConfig, LlmLevelConfig, SystemAgentDefinition } from "@/types/agent";
 import { formatMonthDay } from "@/domain/time";
 
@@ -7,14 +8,6 @@ export type AgentTestTurn = {
   startIndex: number;
   endIndex: number;
 };
-
-export const SYSTEM_AGENT_APIDS = {
-  translation: "agent-1bad27aabaac439da678f31d53855b5d",
-  replySuggestion: "agent-5a43bda9e1304108a1a78a3575a44e27",
-  stageAnalysis: "agent-f6fb1e0ddff44d27bb3e19e243a70584",
-  intentAnalysis: "agent-c9b80fdfad234392b55d84de93a186ae",
-  composeTranslation: "agent-7e2b4c9d1a5f4d38b6c0a91f3e8d2c47",
-} as const;
 
 export function getLatestAgentTestTurn(session: AgentTestSession): AgentTestTurn | null {
   const endIndex = session.messages.length - 1;
@@ -72,11 +65,11 @@ export function formatAgentSessionDate(createdAt: string) {
 }
 
 export function isAgentLevel(value: number) {
-  return Number.isInteger(value) && value >= 0 && value <= 4;
+  return Number.isInteger(value) && value >= 0 && value <= LLM_MAX_LEVEL;
 }
 
 export function normalizeAgentLevel(value: number) {
-  if (!isAgentLevel(value)) throw new Error("Agent 等级必须是 0 到 4 的整数");
+  if (!isAgentLevel(value)) throw new Error(`Agent 等级必须是 0 到 ${LLM_MAX_LEVEL} 的整数`);
   return value;
 }
 
@@ -119,7 +112,7 @@ export function dbPresetToAgentPreset(input: DbAgentPreset, current?: AgentPrese
   return {
     id: input.apid,
     name: input.name,
-    category: input.category ?? current?.category ?? (isSystemAgentApid(input.apid) ? "system" : "regular"),
+    category: input.category ?? current?.category ?? "regular",
     enabled: input.enabled,
     description: input.description,
     prompt: input.prompt,
@@ -145,10 +138,6 @@ export function agentPresetToConfig(preset: AgentPreset): AgentConfig {
     apid: id,
     requiresTool: Boolean(preset.requiresTool),
   };
-}
-
-export function isSystemAgentApid(apid: string) {
-  return Object.values(SYSTEM_AGENT_APIDS).includes(apid as (typeof SYSTEM_AGENT_APIDS)[keyof typeof SYSTEM_AGENT_APIDS]);
 }
 
 export function normalizeAgentEditValues(values: AgentEditValues) {

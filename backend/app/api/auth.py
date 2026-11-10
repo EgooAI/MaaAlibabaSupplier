@@ -25,8 +25,9 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from backend.app.api.envelope import err
+from backend.app.shared.utils import paths
 from backend.app.shared.utils.log_context import bind_log_context, log_event
-from backend.app.shared.utils.settings import FRONTEND_DEV_ORIGINS, resolve_backend_root
+from backend.app.shared.utils.settings import FRONTEND_DEV_ORIGINS
 
 # Successful read requests below this threshold are described by aggregate
 # counters instead of one JSON record each; slower reads stay individually
@@ -71,7 +72,7 @@ def validate_auth_config() -> AuthConfig:
     override = os.environ.get("MAA_AUTH_DB_PATH")
     if override is not None and not override.strip():
         raise ValueError("MAA_AUTH_DB_PATH must be a nonempty file path")
-    path = Path(override).expanduser() if override is not None else resolve_backend_root() / "data" / "auth.sqlite"
+    path = Path(override).expanduser() if override is not None else paths.auth_db_path()
     return AuthConfig(bytes.fromhex(value), path.resolve())
 
 

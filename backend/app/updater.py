@@ -21,16 +21,17 @@ from collections.abc import Collection
 from concurrent.futures import Future
 from pathlib import Path
 
+from backend.app import updater_paths
 from backend.app.api.envelope import AppError
+from backend.app.app_identity import APP_ID, BUILD_KEYS
 from backend.app.background import WorkBlocked, Worker, get_background_runtime
+from backend.app.shared.utils import paths
 from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.utils.settings import resolve_repo_root
 
-APP_ID = "580868F7-B96A-4214-829A-609D552F2C3A"
 REPOSITORY_PATTERN = r"[A-Za-z0-9][A-Za-z0-9-]*/(?!\.{1,2}$)[A-Za-z0-9_.-]+"
 MAX_ZIP = 2 * 1024**3
 MAX_UNPACKED = 3 * 1024**3
-BUILD_KEYS = ("schema_version", "app_id", "version", "repository", "sha", "run_id", "run_number", "run_attempt")
 
 
 class UpdateError(Exception):
@@ -102,20 +103,19 @@ def resolve_powershell(install: Path) -> str:
 
 
 def staging_base(install: Path) -> Path:
-    local = os.environ.get("LOCALAPPDATA")
-    if not local or not Path(local).is_absolute():
-        raise UpdateError("LOCALAPPDATA is unavailable.")
-    identity = hashlib.sha256(str(install.resolve()).casefold().encode("utf-8")).hexdigest()[:24]
-    base = (Path(local) / "MaaAlibabaSupplierUpdater" / identity).resolve()
-    if base.is_relative_to(install.resolve()):
-        raise UpdateError("Updater staging must be outside the installation.")
-    return base
+    try:
+        return updater_paths.staging_base(install)
+    except ValueError as exc:
+        raise UpdateError(str(exc)) from None
 
 
 _STAGE_NAME = re.compile(r"[0-9a-f]{32}")
 _INSTALLER_NAME = r"MaaAlibabaSupplier-(v[A-Za-z0-9][A-Za-z0-9.+_-]*)-Setup\.exe"
 _INSTALLER_VERSION = re.compile(_INSTALLER_NAME)
-_ARTIFACT_NAME = re.compile(_INSTALLER_NAME + r"|artifact\.zip(\.part)?")
+_ARTIFACT_NAME = re.compile(
+    _INSTALLER_NAME + "|" + re.escape(updater_paths.ARTIFACT_FILENAME)
+    + f"({re.escape(updater_paths.ARTIFACT_PART_SUFFIX)})?"
+)
 _STAGE_KEEP = 4
 AUTO_CHECK_INTERVAL = 300.0
 AUTO_FIRST_DELAY = 60.0
@@ -335,7 +335,7 @@ class Updater:
                   "workflow": os.environ.get("MAA_UPDATE_WORKFLOW", "install.yml"),
                   "artifact": os.environ.get("MAA_UPDATE_ARTIFACT", "MaaAlibabaSupplier-Setup")}
         try:
-            build = read_json(self.install / "build-info.json")
+            build = read_json(paths.build_info_path(self.install))
             if valid_build(build):
                 self.build = build
         except (OSError, ValueError, UpdateError):
@@ -346,7 +346,7 @@ class Updater:
                       "source": source, "candidate": None, "downloaded_bytes": 0, "total_bytes": None,
                       "error": None, "last_result": None, "auto": False}
         try:
-            result = read_json(staging_base(self.install) / "last-result.json")
+            result = read_json(staging_base(self.install) / updater_paths.RESULT_FILENAME)
             terminal = terminal_result(result)
             if terminal is not None:
                 self.state["last_result"] = terminal
@@ -419,13 +419,13 @@ class Updater:
     def _installation_notice_locked(self) -> dict | None:
         try:
             base = staging_base(self.install)
-            result = terminal_result(read_json(base / "installation-notice.json"))
+            result = terminal_result(read_json(base / updater_paths.NOTICE_FILENAME))
         except (FileNotFoundError, UpdateError, ValueError):
             return None
         if result is None or result["status"] != "installed" or "installation_id" not in result or not result["version"]:
             return None
         try:
-            acknowledged = read_json(base / "acknowledged-installation.json")
+            acknowledged = read_json(base / updater_paths.ACKNOWLEDGED_FILENAME)
         except (FileNotFoundError, UpdateError, ValueError):
             acknowledged = {}
         if acknowledged.get("installation_id") == result["installation_id"]:
@@ -447,7 +447,7 @@ class Updater:
             try:
                 notice = self._installation_notice_locked()
                 if notice is not None and notice["id"] == installation_id:
-                    atomic_json(staging_base(self.install) / "acknowledged-installation.json",
+                    atomic_json(staging_base(self.install) / updater_paths.ACKNOWLEDGED_FILENAME,
                                 {"installation_id": installation_id})
                     return None
                 return notice
@@ -755,7 +755,7 @@ class Updater:
             # Pruning is safe against an armed handoff because _admit blocks
             # further attempts until it clears.
             prune_stage_directories(base, protected=protected)
-            archive = stage / "artifact.zip.part"
+            archive = stage / f"{updater_paths.ARTIFACT_FILENAME}{updater_paths.ARTIFACT_PART_SUFFIX}"
 
             def progress(size, total):
                 with self.lock:
@@ -763,7 +763,7 @@ class Updater:
             digest = GitHub().download(f"/repos/{selected['repository']}/actions/artifacts/{selected['artifact_id']}/zip", archive, progress)
             if digest != selected["digest"]:
                 raise UpdateError("Artifact SHA-256 verification failed.")
-            verified = stage / "artifact.zip"
+            verified = stage / updater_paths.ARTIFACT_FILENAME
             os.replace(archive, verified)
             installer, prepared = unpack_verified(verified, stage, selected)
             # The verified archive has no consumer after extraction.

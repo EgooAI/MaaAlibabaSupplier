@@ -9,6 +9,7 @@ from maa.context import Context
 from maa.custom_recognition import CustomRecognition
 
 from backend.app.agent.nodes.auxi.read_clipboard import matches_expected_text, read_clipboard_text
+from backend.app.shared.utils import paths
 
 
 VK_C = 0x43
@@ -17,9 +18,7 @@ KEYEVENTF_KEYUP = 0x0002
 
 
 def _save_latest_copy_text(text: str) -> None:
-    from backend.app.shared.utils.settings import resolve_backend_root
-
-    output_path = resolve_backend_root() / "debug" / "copy_text.latest.txt"
+    output_path = paths.copy_text_latest_path()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(text, encoding="utf-8")
 

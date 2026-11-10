@@ -22,6 +22,8 @@ from maa.toolkit import Toolkit
 
 from backend.app.shared.backend.account_context import account_lock
 from backend.app.shared.backend.gui_evidence import ClientFrame, frame_from_image
+from backend.app.shared.backend.maafw_nodes import DIAGNOSTIC_NODE_NAMES
+from backend.app.shared.utils import paths
 from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.utils.native_logs import NativeLogSessions, NATIVE_MAX_BYTES
 
@@ -34,7 +36,7 @@ _tasker: Tasker | None = None
 _window_hwnd: int | None = None
 _window_generation = ""
 _run_lock = RLock()
-_READ_ONLY_ENTRIES = frozenset({"Diagnostics_ChatInput", "Diagnostics_ContactSearch"})
+_READ_ONLY_ENTRIES = DIAGNOSTIC_NODE_NAMES
 _native_logs: NativeLogSessions | None = None
 _native_jobs: dict[int, object] = {}
 _native_post_uncertain = False
@@ -176,7 +178,7 @@ def _ensure_init() -> tuple[Tasker | None, str | None]:
         if _tasker is None:
             if not outer_boundary or _native_jobs or _native_post_uncertain:
                 raise RuntimeError("Native initialization deferred until outstanding operations are resolved")
-            user_path = str(backend_root / "debug")
+            user_path = str(paths.debug_dir(backend_root))
             os.makedirs(user_path, exist_ok=True)
             try:
                 initialized = Toolkit.init_option(user_path)
@@ -208,7 +210,7 @@ def _ensure_init() -> tuple[Tasker | None, str | None]:
             raise RuntimeError("MaaFW 窗口连接失败")
 
         resource = Resource()
-        if not _wait_native(_post_native(resource.post_bundle, backend_root / "assets" / "resource")).succeeded:
+        if not _wait_native(_post_native(resource.post_bundle, paths.maafw_resource_dir(backend_root))).succeeded:
             raise RuntimeError("MaaFW 资源加载失败")
 
         tasker = Tasker()

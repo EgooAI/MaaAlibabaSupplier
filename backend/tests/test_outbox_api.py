@@ -78,6 +78,7 @@ def test_two_step_contract_png_and_immutable_content(client, outbox, sdk, action
     assert outbox.queue.run()[0]
     task = client.get(f"/api/outbox/{task['id']}").json()["data"]
     assert task["status"] == "awaiting_confirmation"
+    assert task["screenshot_expires_at"] == task["screenshot_at"] + 120
     assert [entry for entry, _ in sdk.calls] == ["ContactSearch"]
     assert sdk.calls[0][1]["ContactSearch_InputText"]["action"]["param"]["input_text"] == "buyer-login"
     image = client.get(task["screenshot_url"])

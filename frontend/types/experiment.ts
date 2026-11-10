@@ -1,11 +1,12 @@
 import type { ID } from "@/types/common";
+import type { PinnedKind, StepMode } from "@/domain/contract.generated";
 import type { AgentTestDraftInput, AgentTestSession } from "@/types/agent";
 
 /** One scripted input every variant receives at the same position. */
 export interface ExperimentStep {
   index: number;
   /** buyer: send text as the buyer's next message; agent: continue unprompted. */
-  mode: "buyer" | "agent";
+  mode: StepMode;
   text: string;
   label: string;
 }
@@ -71,7 +72,7 @@ export interface ExperimentSummary extends Omit<Experiment, "variants"> {
 
 export interface ExperimentVariantInput {
   label?: string;
-  versionKind: "preset" | "draft";
+  versionKind: PinnedKind;
   revisionId?: number | null;
   draft?: AgentTestDraftInput | null;
 }

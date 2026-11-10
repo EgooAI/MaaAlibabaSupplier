@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import itertools
 import json
 import os
@@ -20,8 +19,10 @@ from pathlib import Path
 
 from starlette.responses import JSONResponse, Response
 
+from backend.app import updater_paths
 from backend.app.api.envelope import err
 from backend.app.background import WorkBlocked, get_background_runtime
+from backend.app.shared.utils import paths
 from backend.app.shared.utils.logging import ERROR_CATEGORIES, NATIVE_ENTRIES
 from backend.app.shared.utils.settings import resolve_backend_root, resolve_repo_root
 
@@ -279,7 +280,7 @@ def _runtime_summary(deadline: float) -> dict:
                 result["observations"]["http_observed_at"] = observed_at
     except Exception:
         result["observations_status"] = "unavailable"
-    path = resolve_repo_root() / "build-info.json"
+    path = paths.build_info_path(resolve_repo_root())
     try:
         if time.monotonic() >= deadline:
             result["build"]["status"] = "omitted_deadline"
@@ -306,20 +307,29 @@ def _runtime_summary(deadline: float) -> dict:
 
 def _sources() -> tuple[list[Source], Path | None]:
     backend, repo = resolve_backend_root(), resolve_repo_root()
+    log_dir = paths.log_dir(backend)
+    debug_dir = paths.debug_dir(backend)
+    assets_dir = paths.assets_dir(backend)
+    deps_dir = paths.deps_bin_dir(backend)
     sources = []
     for name in ("api", "agent"):
-        sources.append(Source(name, backend / "data/logs",
+        sources.append(Source(name, log_dir,
                               rf"{name}(?:[._-][0-9A-Za-z_.-]{{1,80}})?\.(?:log|jsonl)(?:\.\d{{1,3}})?",
                               (f"{name}.log", f"{name}.jsonl"), "application"))
     sources.extend([
-        Source("yak", backend / "data/logs", r"yak_mitm(?:\.[0-9_.-]+)?\.log(?:\.\d{1,3})?", ("yak_mitm.log",), "yak"),
-        Source("cli", backend / "data/logs", r"maafw_cli\.log(?:\.\d{1,3})?", ("maafw_cli.log",), "native"),
-        Source("cli-legacy", backend / "debug", r"maafw\.log(?:\.\d{1,3})?", ("maafw.log",), "native"),
-        Source("startup", backend / "data/logs", r"startup_failure\.log(?:\.\d{1,3})?", ("startup_failure.log",), "startup"),
+        Source("yak", log_dir, r"yak_mitm(?:\.[0-9_.-]+)?\.log(?:\.\d{1,3})?",
+               (paths.YAK_LOG_FILENAME,), "yak"),
+        Source("cli", log_dir, r"maafw_cli\.log(?:\.\d{1,3})?",
+               (paths.MAAFW_CLI_LOG_FILENAME,), "native"),
+        Source("cli-legacy", debug_dir, r"maafw\.log(?:\.\d{1,3})?", ("maafw.log",), "native"),
+        Source("startup", log_dir, r"startup_failure\.log(?:\.\d{1,3})?",
+               (paths.STARTUP_FAILURE_LOG_FILENAME,), "startup"),
     ])
-    for label, directory in (("backend", backend / "debug"), ("backend-nested", backend / "debug/debug"),
-                             ("assets", backend / "assets/debug"), ("deps", backend / "deps/bin/debug"),
-                             ("deps-nested", backend / "deps/bin/debug/debug")):
+    for label, directory in (
+        ("backend", debug_dir), ("backend-nested", debug_dir / "debug"),
+        ("assets", assets_dir / "debug"), ("deps", deps_dir / "debug"),
+        ("deps-nested", deps_dir / "debug" / "debug"),
+    ):
         for prefix in ("maa", "maafw"):
             if label == "backend" and prefix == "maafw":
                 pattern = r"maafw[._-][0-9A-Za-z_.-]{1,80}\.log(?:\.\d{1,3})?"
@@ -329,14 +339,15 @@ def _sources() -> tuple[list[Source], Path | None]:
                 current = (f"{prefix}.log",)
             sources.append(Source(f"native-{label}-{prefix}", directory, pattern, current, "native"))
     # Match the updater's fixed per-install identity without resolving away reparse points.
-    local = os.environ.get("LOCALAPPDATA", "")
-    stage = None
-    if local and Path(local).is_absolute():
-        identity = hashlib.sha256(str(repo.resolve()).casefold().encode("utf-8")).hexdigest()[:24]
-        stage = Path(local) / "MaaAlibabaSupplierUpdater" / identity
-        sources.append(Source("update-result", stage, r"last-result\.json", ("last-result.json",), "result"))
+    try:
+        stage = updater_paths.staging_root(repo)
+    except ValueError:
+        stage = None
+    if stage is not None:
+        sources.append(Source("update-result", stage, r"last-result\.json",
+                              (updater_paths.RESULT_FILENAME,), "result"))
     for name in ("backend", "frontend"):
-        sources.append(Source(f"dev-{name}", repo / "debug", rf"dev-preview-{name}\.log(?:\.err)?",
+        sources.append(Source(f"dev-{name}", repo / paths.DEBUG_DIRNAME, rf"dev-preview-{name}\.log(?:\.err)?",
                               (f"dev-preview-{name}.log", f"dev-preview-{name}.log.err"), "application"))
     return sources, stage
 
@@ -630,7 +641,7 @@ def build_bundle() -> bytes:
         for _, directory in sorted(candidates, reverse=True)[:4]:
             sources.append(Source("installer", directory, r"installer\.log", ("installer.log",), "installer"))
 
-    native_root = resolve_backend_root() / "data/logs/native"
+    native_root = paths.native_log_dir(resolve_backend_root())
     sessions = []
     active = runtime["observations"].get("native_active_session")
     native_names = dict.fromkeys(([active] if active else []) + entries(native_root))

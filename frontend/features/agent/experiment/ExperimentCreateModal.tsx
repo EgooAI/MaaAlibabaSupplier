@@ -3,12 +3,12 @@
 import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import { Alert, App, Button, Input, Modal, Select, Space, Tag, Tooltip, Typography } from "antd";
 import { useEffect, useMemo, useState, type ReactElement } from "react";
+import { EXPERIMENT_MAX_VARIANTS } from "@/domain/contract.generated";
 import { backend } from "@/services/client";
 import type { AgentConfig, AgentPresetRevision, AgentTestDraftInput } from "@/types/agent";
 import type { CreateExperimentSourceInput, Experiment, ExperimentVariantInput } from "@/types/experiment";
 
-/** Mirrors the backend's MAX_VARIANTS_PER_EXPERIMENT. */
-const MAX_VARIANTS = 4;
+const MAX_VARIANTS = EXPERIMENT_MAX_VARIANTS;
 
 type VersionKind = "preset" | "revision" | "draft";
 

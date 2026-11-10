@@ -19,9 +19,9 @@ from pathlib import Path
 from typing import Callable
 from uuid import uuid4
 
-from backend.app.shared.utils.process_logs import (
-    LOG_MAX_AGE_S, LOG_MAX_BYTES, bounded_lines, check_plain_path, is_reparse,
-)
+from backend.app.shared.utils import paths
+from backend.app.shared.utils.log_policy import LOG_MAX_AGE_S, LOG_MAX_BYTES
+from backend.app.shared.utils.process_logs import bounded_lines, check_plain_path, is_reparse
 
 NATIVE_MAX_BYTES = 256 * 1024 * 1024
 NATIVE_MAX_SESSIONS = 128
@@ -50,9 +50,7 @@ class NativeLogSessions:
         self, root: Path | None = None, *, max_bytes: int = NATIVE_MAX_BYTES,
         max_age_s: float = LOG_MAX_AGE_S,
     ) -> None:
-        from backend.app.shared.utils.settings import resolve_backend_root
-
-        self.root = root if root is not None else resolve_backend_root() / "data" / "logs" / "native"
+        self.root = root if root is not None else paths.native_log_dir()
         self.max_bytes = max_bytes
         self.max_age_s = max_age_s
         self.active: Path | None = None

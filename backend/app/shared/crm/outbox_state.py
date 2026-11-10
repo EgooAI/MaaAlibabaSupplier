@@ -1,9 +1,9 @@
 """Single source for outbox statuses, transitions, editable fields and risk rules."""
 
-PENDING_STATUSES = (
-    "queued", "navigating", "awaiting_confirmation", "queued_send", "running", "verifying",
-)
-STATUSES = PENDING_STATUSES + ("observed", "filled", "failed", "unknown", "cancelled")
+from backend.app.shared import contract
+
+PENDING_STATUSES = contract.OUTBOX_PENDING_STATUSES
+STATUSES = contract.OUTBOX_STATUSES
 
 NON_EXECUTING_STATUSES = frozenset({"queued", "awaiting_confirmation", "queued_send"})
 # A GUI action may already have happened (search, input or send).

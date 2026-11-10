@@ -14,9 +14,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, Iterator
 
-LOG_MAX_BYTES = 10 * 1024 * 1024
-LOG_ARCHIVES = 5
-LOG_MAX_AGE_S = 7 * 24 * 60 * 60
+from backend.app.shared.utils import paths
+from backend.app.shared.utils.log_policy import LOG_ARCHIVES, LOG_MAX_AGE_S, LOG_MAX_BYTES
+
 MAX_LINE_BYTES = 16 * 1024
 
 
@@ -300,8 +300,6 @@ def report_startup_failure(exc: BaseException) -> None:
     except Exception:
         pass
     try:
-        from backend.app.shared.utils.settings import resolve_backend_root
-
-        RotatingDiagnosticFile(resolve_backend_root() / "data" / "logs" / "startup_failure.log").write(safe)
+        RotatingDiagnosticFile(paths.startup_failure_log_path()).write(safe)
     except Exception:
         pass

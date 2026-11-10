@@ -3,6 +3,7 @@
 import { TranslationOutlined, UndoOutlined } from "@ant-design/icons";
 import { Button, Input } from "antd";
 import { useEffect, useRef, useState } from "react";
+import { COMPOSE_TRANSLATION_MAX_CHARS } from "@/domain/contract.generated";
 import { AccountChangedError, useAccountBackend } from "@/features/account/AccountProvider";
 import { backendErrorMessage } from "@/services/errors";
 
@@ -47,7 +48,7 @@ export function ComposeTranslator({ conversationId, draft, onDraftChange }: { co
       <Input.TextArea
         aria-label="需要翻译的文字"
         autoSize={{ minRows: 1, maxRows: 4 }}
-        maxLength={4000}
+        maxLength={COMPOSE_TRANSLATION_MAX_CHARS}
         value={source}
         onChange={(event) => setSource(event.target.value)}
         placeholder="输入需要翻译的中文，译文会替换上方输入框"

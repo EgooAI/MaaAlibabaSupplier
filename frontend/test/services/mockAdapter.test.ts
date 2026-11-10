@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { SYSTEM_AGENT_APIDS, agentPresetToDbPreset } from "@/domain/agent/agentModel";
+import { agentPresetToDbPreset } from "@/domain/agent/agentModel";
+import { SYSTEM_AGENT_APIDS } from "@/mock/systemAgentFixtures";
 import { mockBackend } from "@/test/support/mockAdapter";
 import { accountSession, scopeBackend } from "@/services/accountSession";
 import type { PortraitBatchInput } from "@/types/portrait";

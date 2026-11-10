@@ -2,6 +2,7 @@
 
 import { App, Button, Card, Input, Select, Space, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
+import { PORTRAIT_LOST_NOTE_MAX, PORTRAIT_TAG_NAME_MAX } from "@/domain/contract.generated";
 import { AccountChangedError, useAccountBackend } from "@/features/account/AccountProvider";
 import {
   LOST_REASON_OPTIONS,
@@ -187,7 +188,7 @@ export function PortraitEditor({ conversation, tags, onTagCreated, onSaved, onTa
           <Input
             aria-label="失败备注"
             size="small"
-            maxLength={500}
+            maxLength={PORTRAIT_LOST_NOTE_MAX}
             placeholder="失败备注（可选）"
             value={lostNote}
             onChange={(event) => setLostNote(event.target.value)}
@@ -219,7 +220,7 @@ export function PortraitEditor({ conversation, tags, onTagCreated, onSaved, onTa
           <Input
             aria-label="新标签名称"
             size="small"
-            maxLength={40}
+            maxLength={PORTRAIT_TAG_NAME_MAX}
             placeholder="新标签名称"
             value={newTagName}
             onChange={(event) => setNewTagName(event.target.value)}

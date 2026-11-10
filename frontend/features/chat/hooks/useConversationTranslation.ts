@@ -2,6 +2,7 @@
 
 import { App } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { TRANSLATION_TEXTS_MAX } from "@/domain/contract.generated";
 import { isResolvedTranslation, isTranslatableMessage, mergeMessageTextTranslations } from "@/domain/chat/chatModel";
 import { AccountChangedError, useAccountBackend } from "@/features/account/AccountProvider";
 import type { ChatMessage, ConversationDetail } from "@/types/chatCanonical";
@@ -18,8 +19,8 @@ type TranslationJobState = {
 
 const TRANSLATION_POLL_INTERVAL_MS = 2000;
 const TRANSLATION_OBSERVATION_MS = 300000;
-const TRANSLATION_QUERY_CHUNK = 500;
-const TRANSLATION_SUBMIT_CHUNK = 500;
+const TRANSLATION_QUERY_CHUNK = TRANSLATION_TEXTS_MAX;
+const TRANSLATION_SUBMIT_CHUNK = TRANSLATION_TEXTS_MAX;
 
 /** Message translation: submit, observe, absorb cache and expose pending state. */
 export function useConversationTranslation(

@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from backend.app.api.account_scope import AccountRoute, OutboxObservationRoute, outbox_context, request_epoch
 from backend.app.api.envelope import AppError, ok, user_message
 from backend.app.shared.backend.account_context import get_account_context
-from backend.app.shared.backend.outbox_service import ScreenshotExpiredError, get_outbox_service
+from backend.app.shared.backend.outbox_service import SCREENSHOT_TTL, ScreenshotExpiredError, get_outbox_service
 from backend.app.shared.crm.outbox_state import REASON_CODES, SAFE_REASONS
 
 router = APIRouter(route_class=AccountRoute)
@@ -24,6 +24,8 @@ _PUBLIC_FIELDS = (
 def public_task(record: dict) -> dict:
     """Never serialize source baselines, arbitrary failure details or GUI tokens."""
     result = {name: record[name] for name in _PUBLIC_FIELDS}
+    if record.get("screenshot_at") is not None:
+        result["screenshot_expires_at"] = record["screenshot_at"] + SCREENSHOT_TTL
     reason = record.get("reason")
     result["reason"] = (
         reason if reason is None or reason in REASON_CODES else

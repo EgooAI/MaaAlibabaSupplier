@@ -1,3 +1,4 @@
+import type { OutboxStatus } from "@/domain/contract.generated";
 import type { SourceSyncStatus } from "./connection";
 
 export type TranslationJobStatus = "pending" | "running" | "succeeded" | "failed";
@@ -48,7 +49,7 @@ export interface OutboxTask {
   login_id: string;
   content: string;
   action: "send" | "test";
-  status: "queued" | "navigating" | "awaiting_confirmation" | "queued_send" | "running" | "verifying" | "observed" | "filled" | "failed" | "unknown" | "cancelled";
+  status: OutboxStatus;
   version: number;
   attempt: number;
   may_have_sent: boolean;
@@ -57,6 +58,7 @@ export interface OutboxTask {
   updated_at: number;
   screenshot_id: string | null;
   screenshot_at: number | null;
+  screenshot_expires_at?: number | null;
   matched_message_id: string | null;
   idempotency_key: string;
   evidence?: unknown;

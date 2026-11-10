@@ -45,10 +45,10 @@ from backend.app.shared.utils.app_config import (
     write_app_config,
 )
 from backend.app.shared.backend import im_layout
+from backend.app.shared.utils import paths
 from backend.app.shared.utils.env import get_env_str
 from backend.app.shared.utils.im_wal import WalError, checksum_chain, read_wal_header, rekey_wal_copy
 from backend.app.shared.utils.log_context import failure_report_due
-from backend.app.shared.utils.settings import resolve_backend_root
 
 _CACHE_TTL = 5.0  # seconds
 SOURCE_OBSERVATION_MAX_AGE = 30.0  # UI freshness only; never an execution timeout.
@@ -141,7 +141,7 @@ class IMDBMiddleware:
         if file_raw:
             self._data_dir = Path(file_raw)
             self._data_dir_source = SOURCE_FILE
-        self._cache_dir = resolve_backend_root() / "data" / ".cache"
+        self._cache_dir = paths.cache_dir()
         self._cache_dir.mkdir(parents=True, exist_ok=True)
 
     def _reset_runtime_state(self) -> None:
@@ -376,7 +376,7 @@ class IMDBMiddleware:
     def _migrate_legacy_key_file(self, db_path: Path, ali_id: str) -> bytes | None:
         """One-time import of the legacy aes_key.bin into the database."""
         candidates = [
-            resolve_backend_root() / "data" / ".cache" / "aes_key.bin",
+            paths.aes_key_path(),
             Path("data/.cache/aes_key.bin"),
         ]
         for path in candidates:

@@ -16,6 +16,18 @@ def ensure_sdk_path() -> None:
 
 ensure_sdk_path()
 
+from core.base import BaseManager  # noqa: E402
+from utils.common import (  # noqa: E402
+    bootstrap_engine,
+    get_database_lock,
+    set_default_database_path_provider,
+    utc_now,
+)
+
+from backend.app.shared.crm.paths import default_crm_database_path  # noqa: E402
+
+set_default_database_path_provider(default_crm_database_path)
+
 try:
     from backend.app.crm_sdk import core, models
 except ImportError:
@@ -60,6 +72,7 @@ __all__ = [
     "AgentPresetManager",
     "AgentPresetRevision",
     "AgentPresetRevisionManager",
+    "BaseManager",
     "ChatHistory",
     "ChatHistoryManager",
     "Customer",
@@ -80,5 +93,8 @@ __all__ = [
     "SessionMetaManager",
     "Translate",
     "TranslateManager",
+    "bootstrap_engine",
     "ensure_sdk_path",
+    "get_database_lock",
+    "utc_now",
 ]

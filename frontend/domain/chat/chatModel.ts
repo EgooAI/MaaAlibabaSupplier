@@ -1,3 +1,4 @@
+import type { ReplyState } from "@/domain/contract.generated";
 import type { ChatMessage, Conversation, ConversationDetail } from "@/types/chatCanonical";
 import { formatDateTime } from "@/domain/time";
 
@@ -40,14 +41,16 @@ export function groupConversations(conversations: Conversation[], mode: Conversa
   return entries.map(([label, items]) => ({ label, items }));
 }
 
+const REPLY_STATE_LABELS: Record<ReplyState, string> = {
+  needs_reply: "待回复",
+  waiting_customer: "等待客户",
+  history_pending: "历史待确认",
+  none: "无需回复",
+  unknown: "回复状态未知",
+};
+
 export function statusLabel(status: Conversation["replyState"] | (string & {})) {
-  return ({
-    needs_reply: "待回复",
-    waiting_customer: "等待客户",
-    history_pending: "历史待确认",
-    none: "无需回复",
-    unknown: "回复状态未知",
-  } as Record<string, string>)[status] ?? String(status);
+  return REPLY_STATE_LABELS[status as ReplyState] ?? String(status);
 }
 
 /** 待回复会话的已等待时长，如“已等待 3 小时”；非待回复或起点未知时返回 null。 */

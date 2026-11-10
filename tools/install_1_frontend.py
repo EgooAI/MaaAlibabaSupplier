@@ -22,6 +22,11 @@ from pathlib import Path
 
 import _common as common
 
+try:
+    from . import generate_frontend_contract
+except ImportError:
+    import generate_frontend_contract
+
 PNPM_CJS = Path("node_modules") / "pnpm" / "bin" / "pnpm.cjs"
 NPM_CLI = Path("node_modules") / "npm" / "bin" / "npm-cli.js"
 PNPM_STORE = common.PORTABLE_DIR / "pnpm-store"
@@ -138,6 +143,7 @@ def main() -> int:
     if not args.no_frozen:
         install_cmd.append("--frozen-lockfile")
     common.run(install_cmd, cwd=common.FRONTEND_DIR)
+    generate_frontend_contract.write()
 
     build_id = None
     build_id_path = common.FRONTEND_DIR / "out" / "build-id.json"

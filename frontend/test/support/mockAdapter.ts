@@ -7,7 +7,9 @@ import { buildConversationExport } from "@/domain/chat/chatModel";
 import { nowText } from "@/domain/time";
 import { adaptConversationDetail, adaptConversationSummary } from "@/services/chatAdapter";
 import { buildSystemStatusSnapshot, taskSnapshotToTaskItem } from "@/domain/status/statusModel";
-import { SYSTEM_AGENT_APIDS, agentPresetToConfig, agentPresetToDbPreset, canRunAgentExecution, dbPresetToAgentPreset, documentToLlmLevelConfig, getLatestAgentTestTurn, normalizeAgentTools, removeLatestAgentTestTurn, replaceLatestAgentTestReply, upsertLlmLevel } from "@/domain/agent/agentModel";
+import { EXPERIMENT_MAX_STEPS as MAX_EXPERIMENT_STEPS, EXPERIMENT_MAX_VARIANTS as MAX_EXPERIMENT_VARIANTS } from "@/domain/contract.generated";
+import { agentPresetToConfig, agentPresetToDbPreset, canRunAgentExecution, dbPresetToAgentPreset, documentToLlmLevelConfig, getLatestAgentTestTurn, normalizeAgentTools, removeLatestAgentTestTurn, replaceLatestAgentTestReply, upsertLlmLevel } from "@/domain/agent/agentModel";
+import { SYSTEM_AGENT_APIDS } from "@/mock/systemAgentFixtures";
 import type { AgentConsoleState, AgentPreset, AgentPresetRevision, AgentSessionPin, AgentTestMessage, AgentTestSession, DbAgentPreset } from "@/types/agent";
 import type { CreateExperimentInput, Experiment, ExperimentSource, ExperimentSummary, ExperimentVariantInput, RunSnapshot, UpdateExperimentInput } from "@/types/experiment";
 import type { BusinessCard } from "@/types/cards";
@@ -103,9 +105,7 @@ let tagRevision = 0;
 let experimentStore: MockExperiment[] = [];
 let experimentSeq = 0;
 const runStore = new Map<string, RunSnapshot>();
-// Mirrors the backend's limits so the mock refuses what the server would.
-const MAX_EXPERIMENT_VARIANTS = 4;
-const MAX_EXPERIMENT_STEPS = 20;
+// The generated limits keep the mock refusing what the server would.
 const EXPERIMENT_RUN_DELAY_MS = 120;
 // The frozen prefix a source-less session and a session-sourced experiment share.
 const MOCK_FROZEN_INPUT = "冻结的历史消息";
@@ -367,7 +367,7 @@ export const mockBackend: OperationsBackend = {
       id: crypto.randomUUID(), conversation_id: Number(conversationId), contact_ali_id: conversation.customer.aliId ?? "",
       login_id: conversation.customer.loginId ?? "", content, action, idempotency_key, status: "queued", version: 1,
       attempt: 1, may_have_sent: false, reason: null, created_at: Date.now() / 1000, updated_at: Date.now() / 1000,
-      screenshot_id: null, screenshot_at: null, matched_message_id: null,
+      screenshot_id: null, screenshot_at: null, screenshot_expires_at: null, matched_message_id: null,
     };
     outboxStore.set(task.id, { scope: outboxScope(), task });
     return delay({ outbox: structuredClone(task) });
@@ -384,14 +384,14 @@ export const mockBackend: OperationsBackend = {
   cancelOutbox: async (id, version) => {
     const task = getMockOutbox(id, version);
     if (!canCancel(task)) throw new Error("任务不可取消");
-    Object.assign(task, { status: "cancelled", version: version + 1, screenshot_id: null, screenshot_at: null, updated_at: Date.now() / 1000 });
+    Object.assign(task, { status: "cancelled", version: version + 1, screenshot_id: null, screenshot_at: null, screenshot_expires_at: null, updated_at: Date.now() / 1000 });
     return delay(structuredClone(task));
   },
   retryOutbox: async (id, version) => {
     requireMockClient();
     const task = getMockOutbox(id, version);
     if (!canRetry(task)) throw new Error("任务不可重试");
-    Object.assign(task, { status: "queued", version: version + 1, attempt: task.attempt + 1, screenshot_id: null, screenshot_at: null, updated_at: Date.now() / 1000 });
+    Object.assign(task, { status: "queued", version: version + 1, attempt: task.attempt + 1, screenshot_id: null, screenshot_at: null, screenshot_expires_at: null, updated_at: Date.now() / 1000 });
     return delay(structuredClone(task));
   },
   getOutboxScreenshot: async () => { throw new Error("Mock 不提供真实客户端截图"); },

@@ -53,6 +53,7 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.engine import URL
 from sqlmodel import Session
 
+from backend.app.shared import contract
 from backend.app.shared.crm.identities import sender_matches, session_key_prefix
 from backend.app.shared.crm.paths import default_crm_database_path
 from backend.app.shared.crm.sdk import Message, SessionMeta
@@ -344,10 +345,15 @@ class InboxStore:
                 effective_time(m) == last_reply for m in pending
             )
             history_pending = bool(pending) and not new_pending
-            reply_state = "history_pending" if history_pending else "needs_reply" if pending else "waiting_customer" if sellers else "none"
+            reply_state = (
+                contract.REPLY_HISTORY_PENDING if history_pending
+                else contract.REPLY_NEEDS_REPLY if pending
+                else contract.REPLY_WAITING_CUSTOMER if sellers
+                else contract.REPLY_NONE
+            )
             latest_known = max((effective_time(m) for m in buyers + sellers), default=0)
             if unknown and any(effective_time(m) >= latest_known for m in unknown):
-                reply_state = "unknown"
+                reply_state = contract.REPLY_UNKNOWN
                 uncertain = True
             pending_since = min(map(effective_time, new_pending)) if new_pending else None
             result[sid] = {

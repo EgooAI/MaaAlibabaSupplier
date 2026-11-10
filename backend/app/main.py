@@ -11,15 +11,15 @@ from pathlib import Path
 from loguru import logger
 from backend.app.background import get_background_runtime, shutdown_background
 
+from backend.app.shared.utils import paths
 from backend.app.shared.utils.env import get_env_int, get_env_str
 from backend.app.shared.utils.settings import (
-    MAA_API_HOST_DEFAULT,
+    MITM_PROXY_HOST_DEFAULT,
     MITM_PROXY_PORT_DEFAULT,
     MITM_RECEIVER_HOST_DEFAULT,
     MITM_RECEIVER_PORT_DEFAULT,
     YAK_STARTUP_GRACE_S,
     resolve_backend_root,
-    resolve_repo_root,
 )
 
 # Console-subsystem children (yak.exe) pop their own console window when the
@@ -88,7 +88,7 @@ def _resolve_yak_executable(backend_root: Path) -> str:
     on_path = shutil.which("yak")
     if on_path:
         return on_path
-    return str(backend_root / ".portable" / "yak" / "yak.exe")
+    return str(paths.yak_executable_path(backend_root))
 
 
 def _wait_for_port(host: str, port: int, *, timeout_s: float = 5.0) -> bool:
@@ -112,11 +112,12 @@ def _start_yak_mitm(
     child_env["MITM_RECEIVER_HOST"] = host
     child_env["MITM_RECEIVER_PORT"] = str(port)
     yak_exe = _resolve_yak_executable(backend_root)
-    yak_script = backend_root / "yak_mitm.yak"
-    proxy_host = get_env_str("MITM_PROXY_HOST", MAA_API_HOST_DEFAULT)
+    yak_script = paths.yak_script_path(backend_root)
+    proxy_host = get_env_str("MITM_PROXY_HOST", MITM_PROXY_HOST_DEFAULT)
     proxy_port = get_env_int("MITM_PROXY_PORT", MITM_PROXY_PORT_DEFAULT)
-    log_dir = backend_root / "data" / "logs"
-    log_path = log_dir / "yak_mitm.log"
+    child_env["MITM_PROXY_HOST"] = proxy_host
+    child_env["MITM_PROXY_PORT"] = str(proxy_port)
+    log_path = paths.yak_log_path(backend_root)
 
     if not yak_script.exists():
         logger.warning("Yak MITM script not found; proxy was not created")

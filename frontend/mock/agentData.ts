@@ -1,4 +1,5 @@
-import { SYSTEM_AGENT_APIDS, agentPresetToConfig } from "@/domain/agent/agentModel";
+import { agentPresetToConfig } from "@/domain/agent/agentModel";
+import { SYSTEM_AGENT_APIDS } from "./systemAgentFixtures";
 import type { AgentConsoleState, AgentPreset, AgentToolDefinition, DocumentLlmConfig, LlmLevelConfig, SystemAgentDefinition } from "@/types/agent";
 
 const systemAgentSources = [

@@ -14,6 +14,7 @@ from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 
 from backend.app.api import auth, auth_cli, main
+from backend.app.shared.utils import settings
 from backend.tests.auth_client import authenticate
 
 
@@ -400,7 +401,7 @@ def test_frontend_is_public_and_docs_are_disabled(tmp_path, monkeypatch):
     output = tmp_path / "frontend" / "out"
     output.mkdir(parents=True)
     (output / "index.html").write_text("<html>Public shell</html>", encoding="utf-8")
-    monkeypatch.setattr(main, "resolve_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(settings, "REPO_ROOT", tmp_path)
     with TestClient(main.create_app()) as client:
         assert client.get("/").text == "<html>Public shell</html>"
         for path in ("/docs", "/redoc", "/openapi.json"):

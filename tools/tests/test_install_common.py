@@ -69,5 +69,11 @@ class MaaFrameworkInstallTests(unittest.TestCase):
                     fetch.assert_any_call(_common.MAAFW_REPO, "v99.0.0")
 
 
+class PinnedVersionTests(unittest.TestCase):
+    def test_maafw_pin_matches_runtime_requirement(self):
+        requirements = (_common.BACKEND_DIR / "app" / "requirements.txt").read_text(encoding="utf-8")
+        self.assertIn(f"maafw=={_common.MAAFW_VERSION.lstrip('v')}", requirements)
+
+
 if __name__ == "__main__":
     unittest.main()

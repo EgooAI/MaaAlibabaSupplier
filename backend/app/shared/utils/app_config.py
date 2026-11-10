@@ -19,9 +19,8 @@ from typing import Any
 
 from loguru import logger
 
-from backend.app.shared.utils.settings import resolve_backend_root
+from backend.app.shared.utils import paths
 
-CONFIG_FILENAME = "app_config.json"
 CONFIG_KEY_ALIBABA_DATA_DIR = "alibaba_data_dir"
 CONFIG_KEY_SELF_ALI_ID = "self_ali_id"
 CONFIG_KEY_IM_DATA_REVISION = "im_data_revision"
@@ -30,7 +29,7 @@ _lock = threading.RLock()
 
 
 def config_file_path() -> Path:
-    return resolve_backend_root() / "data" / CONFIG_FILENAME
+    return paths.app_config_path()
 
 
 def read_app_config() -> dict[str, Any]:

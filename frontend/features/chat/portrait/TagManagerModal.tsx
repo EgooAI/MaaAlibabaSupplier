@@ -2,6 +2,7 @@
 
 import { App, Button, Input, Modal, Tag, Typography } from "antd";
 import { useState } from "react";
+import { PORTRAIT_TAG_DESCRIPTION_MAX, PORTRAIT_TAG_NAME_MAX } from "@/domain/contract.generated";
 import { AccountChangedError, useAccountBackend } from "@/features/account/AccountProvider";
 import type { PortraitTag } from "@/types/portrait";
 
@@ -123,7 +124,7 @@ export function TagManagerModal({ open, onClose, tags, onChanged }: {
                 <Input
                   aria-label={`标签名称：${tag.name}`}
                   size="small"
-                  maxLength={40}
+                  maxLength={PORTRAIT_TAG_NAME_MAX}
                   value={draftName}
                   onChange={(event) => setDraftName(event.target.value)}
                   onPressEnter={() => void saveEdit(tag)}
@@ -131,7 +132,7 @@ export function TagManagerModal({ open, onClose, tags, onChanged }: {
                 <Input
                   aria-label={`标签说明：${tag.name}`}
                   size="small"
-                  maxLength={200}
+                  maxLength={PORTRAIT_TAG_DESCRIPTION_MAX}
                   placeholder="标签说明（可选，便于理解口径）"
                   value={draftDescription}
                   onChange={(event) => setDraftDescription(event.target.value)}

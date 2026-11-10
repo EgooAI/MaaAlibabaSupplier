@@ -4,11 +4,8 @@ from pathlib import Path
 
 
 def default_crm_database_path() -> Path:
+    from backend.app.shared.utils import paths
     from backend.app.shared.utils.env import get_env_str
-    from backend.app.shared.utils.settings import CRM_DB_RELATIVE_DEFAULT, resolve_backend_root
+    from backend.app.shared.utils.settings import CRM_DB_RELATIVE_DEFAULT
 
-    raw = get_env_str("MAA_CRM_DB_PATH", CRM_DB_RELATIVE_DEFAULT)
-    path = Path(raw)
-    if not path.is_absolute():
-        path = resolve_backend_root() / path
-    return path
+    return paths.resolve_backend_relative(get_env_str("MAA_CRM_DB_PATH", CRM_DB_RELATIVE_DEFAULT))

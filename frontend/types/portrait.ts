@@ -1,13 +1,10 @@
-export type PortraitStage =
-  | "unknown"
-  | "new_inquiry"
-  | "following_up"
-  | "negotiating"
-  | "won"
-  | "dormant"
-  | "lost";
+import type {
+  LostReason as GeneratedLostReason,
+  PortraitStage as GeneratedPortraitStage,
+} from "@/domain/contract.generated";
 
-export type LostReason = "unreachable" | "price" | "product_mismatch" | "delivery" | "competitor" | "unclear";
+export type PortraitStage = GeneratedPortraitStage;
+export type LostReason = GeneratedLostReason;
 
 export interface BusinessTag {
   tag_id: string;

@@ -12,9 +12,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
+from backend.app.shared import contract
+
 EXPERIMENT_SCHEMA_VERSION = 1
-MAX_STEPS = 20
-STEP_MODES = frozenset({"buyer", "agent"})
+MAX_STEPS = contract.EXPERIMENT_MAX_STEPS
+STEP_MODES = frozenset(contract.STEP_MODES)
 
 
 class ExperimentStep(BaseModel):

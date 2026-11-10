@@ -22,9 +22,8 @@ from Crypto.Cipher import AES
 from loguru import logger
 from sqlmodel import Field, SQLModel
 
-from backend.app.crm_sdk.core.base import BaseManager
-from backend.app.crm_sdk.utils.common import bootstrap_engine, get_database_lock, utc_now
 from backend.app.shared.crm.paths import default_crm_database_path
+from backend.app.shared.crm.sdk import BaseManager, bootstrap_engine, get_database_lock, utc_now
 
 AES_KEY_SIZES = (16, 24, 32)
 SQLITE_MAGIC = b"SQLite format 3\x00"

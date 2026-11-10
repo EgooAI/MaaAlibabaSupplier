@@ -13,25 +13,22 @@ from pathlib import Path
 
 from loguru import logger
 
+from backend.app.shared.backend.maafw_nodes import PIPELINE_NODE_NAMES
+from backend.app.shared.utils import paths
+from backend.app.shared.utils.log_policy import (
+    LOG_ARCHIVE_BYTES,
+    LOG_ARCHIVES,
+    LOG_MAX_AGE_S,
+    LOG_MAX_BYTES,
+)
 from backend.app.shared.utils.settings import resolve_backend_root
 
 _CONFIGURED = False
 _CONFIGURE_LOCK = threading.Lock()
-LOG_MAX_BYTES = 10 * 1024 * 1024
-LOG_ARCHIVES = 5
-LOG_MAX_AGE_S = 7 * 24 * 60 * 60
-LOG_ARCHIVE_BYTES = LOG_MAX_BYTES * LOG_ARCHIVES
 _LABEL = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
 _ANSI_SGR = re.compile(r"\x1b\[[0-9;:]{0,64}m")
 _NATIVE_IDS = frozenset({"task_id", "job_id", "node_id", "reco_id", "action_id", "pid", "tid", "line"})
-NATIVE_ENTRIES = frozenset({
-    "ChatInput", "ChatInput_GoToInput", "ChatInput_SelectAll", "ChatInput_SelectAll_A",
-    "ChatInput_SelectAll_ReleaseCtrl", "ChatInput_ClearText", "ChatInput_InputText",
-    "ChatInput_SendOnly", "ChatInput_SendMessage", "ContactSearch", "ContactSearch_GoToSearch",
-    "ContactSearch_ClickSearchButton", "ContactSearch_ClearSearchBox", "ContactSearch_InputText",
-    "ContactSearch_PressEnter", "Diagnostics_ChatInput", "Diagnostics_ChatInput_Recognize",
-    "Diagnostics_ContactSearch", "Diagnostics_ContactSearch_Recognize",
-})
+NATIVE_ENTRIES = PIPELINE_NODE_NAMES
 ERROR_CATEGORIES = {
     "timeout": "timeout", "timed out": "timeout", "connection refused": "connection_refused",
     "connection reset": "connection_reset", "permission denied": "permission_denied",
@@ -459,13 +456,14 @@ def configure_logging(*, source: str = "application") -> None:
                        colorize=False, level="INFO")
         if sys.stderr is not None:
             logger.add(sys.stderr, **options)
-        log_dir = resolve_backend_root() / "data" / "logs"
+        root = resolve_backend_root()
+        log_dir = paths.log_dir(root)
         log_dir.mkdir(parents=True, exist_ok=True)
         # Separate writers avoid cross-process rotation races. At most 60 MiB per
         # writer (120 MiB application + agent), with seven-day archive retention.
-        filename = "agent.log" if source == "agent" else "api.log"
-        _retain_logs(log_dir.glob(f"{Path(filename).stem}.*.log"))
-        logger.add(log_dir / filename, rotation=_log_rotation(), retention=_retain_logs, enqueue=True,
+        log_path = paths.agent_log_path(root) if source == "agent" else paths.api_log_path(root)
+        _retain_logs(log_dir.glob(f"{log_path.stem}.*.log"))
+        logger.add(log_path, rotation=_log_rotation(), retention=_retain_logs, enqueue=True,
                    encoding="utf-8", **options)
         logging.basicConfig(handlers=[_InterceptHandler()], level=logging.INFO, force=True)
         # Third-party request logging duplicates explicit instrumentation while

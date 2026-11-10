@@ -15,7 +15,8 @@ from backend.app.api.account_scope import is_account_path, request_epoch, respon
 from backend.app.api.auth import LOGIN_LIMITER, AuthMiddleware, SessionStore, validate_auth_config
 from backend.app.api.envelope import AppError, err, user_message
 from backend.app.shared.backend.account_context import get_account_context
-from backend.app.shared.utils.settings import FRONTEND_DEV_ORIGINS, resolve_repo_root
+from backend.app.shared.utils import paths
+from backend.app.shared.utils.settings import FRONTEND_DEV_ORIGINS
 from backend.app.shared.utils.log_context import bind_log_context
 from backend.app.updater import stop_update_scheduler
 
@@ -119,7 +120,7 @@ def create_app() -> FastAPI:
 
     # Serve the exported frontend (frontend/out) from the same origin when it
     # has been built with NEXT_EXPORT=1; dev uses the Next.js server instead.
-    frontend_out = resolve_repo_root() / "frontend" / "out"
+    frontend_out = paths.frontend_out_dir()
     if frontend_out.is_dir():
         app.mount("/", StaticFiles(directory=frontend_out, html=True), name="frontend")
     return app

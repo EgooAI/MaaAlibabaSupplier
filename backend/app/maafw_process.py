@@ -7,6 +7,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from backend.app.shared.utils import paths
 from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.utils.process_logs import attach_process_log, colorless_child_env, finish_process_log
 
@@ -24,8 +25,8 @@ class MaaFWProcess:
         from backend.app.shared.utils.settings import resolve_backend_root
 
         self.backend_root = backend_root or resolve_backend_root()
-        self.workdir = self.backend_root / "assets"
-        self.executable = self.workdir / "MaaPiCli.exe"
+        self.workdir = paths.assets_dir(self.backend_root)
+        self.executable = paths.maafw_cli_path(self.backend_root)
         self.process: subprocess.Popen | None = None
 
     def start(self) -> None:
@@ -41,8 +42,8 @@ class MaaFWProcess:
 
         command = [str(self.executable)]
         env = colorless_child_env()
-        env["PATH"] = str(self.backend_root / "deps" / "bin") + os.pathsep + env.get("PATH", "")
-        log_path = self.backend_root / "data" / "logs" / "maafw_cli.log"
+        env["PATH"] = str(paths.deps_bin_dir(self.backend_root)) + os.pathsep + env.get("PATH", "")
+        log_path = paths.maafw_cli_log_path(self.backend_root)
         try:
             self.process = subprocess.Popen(
                 command,

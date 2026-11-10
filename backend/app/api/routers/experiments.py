@@ -81,6 +81,7 @@ from backend.app.shared.backend.account_context import (
     bind_account_context,
     get_account_context,
 )
+from backend.app.shared import contract
 from backend.app.shared.crm.sdk import (
     AgentPreset,
     AgentPresetManager,
@@ -88,7 +89,6 @@ from backend.app.shared.crm.sdk import (
     ChatHistoryManager,
     Experiment,
     ExperimentManager,
-    MAX_VARIANTS_PER_EXPERIMENT,
 )
 from backend.app.shared.crm.views import format_created_at
 from backend.app.shared.utils.log_context import log_event
@@ -99,6 +99,7 @@ router = APIRouter(route_class=AccountRoute)
 # registry drops them (a restart drops them all: they are not persisted).
 RUN_RETENTION_SECONDS = 600.0
 RUN_MAX_PARALLEL = 4
+MAX_VARIANTS_PER_EXPERIMENT = contract.EXPERIMENT_MAX_VARIANTS
 
 
 class DraftPresetInput(BaseModel):

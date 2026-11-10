@@ -16,6 +16,7 @@ from threading import Lock
 from typing import Any, Iterable
 
 from backend.app.api.envelope import AppError
+from backend.app.shared import contract
 from backend.app.shared.agent.chat_history_content import (
     ChatHistoryPin,
     ChatHistorySource,
@@ -44,9 +45,9 @@ from backend.app.shared.crm.sdk import (
     ChatHistoryManager,
     Experiment,
     ExperimentManager,
-    MAX_VARIANTS_PER_EXPERIMENT,
 )
 
+MAX_VARIANTS_PER_EXPERIMENT = contract.EXPERIMENT_MAX_VARIANTS
 VARIANT_SEPARATOR = " · "
 
 # Variant threads finish at the same time and all update the experiment's step
@@ -102,7 +103,7 @@ def create_experiment(
             messages=list(messages or []),
         )
         histories.add_chat_history(hist)
-        manager.attach_variant(experiment.id, hist.id)
+        manager.attach_variant(experiment.id, hist.id, max_variants=MAX_VARIANTS_PER_EXPERIMENT)
         created.append(hist)
     return experiment, created
 

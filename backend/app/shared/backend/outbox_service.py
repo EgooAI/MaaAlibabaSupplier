@@ -27,7 +27,7 @@ from backend.app.shared.crm.outbox_state import (
     is_compensatable,
     is_gui_risk,
 )
-from backend.app.shared.utils.settings import resolve_backend_root
+from backend.app.shared.utils import paths
 from backend.app.task_queue import get_task_queue
 from backend.app.shared.utils.log_context import bind_log_context, capture_log_context, failure_report_due, log_event
 
@@ -62,7 +62,7 @@ class OutboxService:
         self._thread: Worker | None = None
         self._verification_failures = 0
         self._reconcile_lock = RLock()
-        self._screenshot_dir = resolve_backend_root() / "data" / "outbox"
+        self._screenshot_dir = paths.outbox_dir()
         self._observation_lock = RLock()
         self._observation = {
             "started_at": None, "heartbeat_at": None, "last_progress_at": None,

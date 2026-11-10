@@ -124,6 +124,8 @@ def test_yak_receives_token_only_in_child_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("NO_COLOR", "0")
     monkeypatch.setenv("MITM_RECEIVER_HOST", "127.0.0.1")
     monkeypatch.setenv("MITM_RECEIVER_PORT", "8085")
+    monkeypatch.setenv("MITM_PROXY_HOST", "127.0.0.2")
+    monkeypatch.setenv("MITM_PROXY_PORT", "9090")
     monkeypatch.setattr(main, "_resolve_yak_executable", lambda root: "yak.exe")
     monkeypatch.setattr(main, "_wait_for_port", lambda *args, **kwargs: True)
     process = Mock(pid=123, stdout=BytesIO())
@@ -137,6 +139,7 @@ def test_yak_receives_token_only_in_child_environment(monkeypatch, tmp_path):
     child = popen.call_args.kwargs["env"]
     assert child["MAA_MITM_INTERNAL_TOKEN"] == "new-private-token"
     assert child["MITM_RECEIVER_HOST"] == "::1" and child["MITM_RECEIVER_PORT"] == "9015"
+    assert child["MITM_PROXY_HOST"] == "127.0.0.2" and child["MITM_PROXY_PORT"] == "9090"
     assert child["NO_COLOR"] == "1" and child["TERM"] == "dumb"
     assert child["CLICOLOR"] == "0" and child["CLICOLOR_FORCE"] == "0"
     assert os.environ["MAA_MITM_INTERNAL_TOKEN"] == "inherited-token"

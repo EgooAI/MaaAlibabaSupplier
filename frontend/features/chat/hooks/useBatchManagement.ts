@@ -2,6 +2,7 @@
 
 import { App } from "antd";
 import { useMemo, useState } from "react";
+import { PORTRAIT_BATCH_MAX, PORTRAIT_EXPORT_MAX } from "@/domain/contract.generated";
 import { AccountChangedError, useAccountBackend } from "@/features/account/AccountProvider";
 import type { ConversationGroupMode } from "@/domain/chat/chatModel";
 import type { BatchPanelAction, BatchPanelView } from "@/domain/portrait/batchPreview";
@@ -145,8 +146,8 @@ export function useBatchManagement(initialQuery: ConversationQuery = {}) {
       message.warning("所选会话缺少可维护的客户身份，无法修改画像");
       return;
     }
-    if (targets.length > 50) {
-      message.warning("单批最多 50 个会话，请减少选择后重试");
+    if (targets.length > PORTRAIT_BATCH_MAX) {
+      message.warning(`单批最多 ${PORTRAIT_BATCH_MAX} 个会话，请减少选择后重试`);
       return;
     }
     setPortraitBusy(true);
@@ -177,8 +178,8 @@ export function useBatchManagement(initialQuery: ConversationQuery = {}) {
       message.warning("所选会话缺少可维护的客户身份，无法导出客户资料");
       return;
     }
-    if (targets.length > 100) {
-      message.warning("单次最多导出 100 个会话，请减少选择后重试");
+    if (targets.length > PORTRAIT_EXPORT_MAX) {
+      message.warning(`单次最多导出 ${PORTRAIT_EXPORT_MAX} 个会话，请减少选择后重试`);
       return;
     }
     setExportingPortraits(true);

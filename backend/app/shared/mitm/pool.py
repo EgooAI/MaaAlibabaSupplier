@@ -10,16 +10,13 @@ from typing import Generic, TypeVar
 
 from pydantic import BaseModel, Field
 
+from backend.app.shared.utils import paths
 from backend.app.shared.utils.env import get_env_str
-from backend.app.shared.utils.settings import POOLS_DB_RELATIVE_DEFAULT, resolve_backend_root
+from backend.app.shared.utils.settings import POOLS_DB_RELATIVE_DEFAULT
 
 
 def _get_db_path() -> Path:
-    raw = get_env_str("MAA_POOLS_DB_PATH", POOLS_DB_RELATIVE_DEFAULT)
-    path = Path(raw)
-    if not path.is_absolute():
-        path = resolve_backend_root() / path
-    return path
+    return paths.resolve_backend_relative(get_env_str("MAA_POOLS_DB_PATH", POOLS_DB_RELATIVE_DEFAULT))
 
 
 def _get_connection() -> sqlite3.Connection:

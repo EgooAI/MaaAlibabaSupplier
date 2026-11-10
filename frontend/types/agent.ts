@@ -1,4 +1,5 @@
 import type { ID } from "@/types/common";
+import type { PinnedKind, SessionType, StepMode } from "@/domain/contract.generated";
 
 export interface DocumentLlmConfig {
   level: number;
@@ -170,7 +171,7 @@ export interface AgentSessionSource {
 }
 
 export interface AgentSessionPin {
-  kind: "preset" | "draft";
+  kind: PinnedKind;
   revision_id?: number | null;
   name?: string;
   prompt?: string;
@@ -186,7 +187,7 @@ export interface AgentTestSession {
   draft?: boolean;
   createdAt: string;
   /** test / playground / fork */
-  type?: "test" | "playground" | "fork";
+  type?: SessionType;
   parentId?: string | null;
   /** Set when this session is one variant of an experiment. */
   experimentId?: string | null;
@@ -205,7 +206,7 @@ export interface AgentTestDraftInput {
 
 export interface BranchAgentSessionInput {
   messageIndex?: number;
-  versionKind?: "preset" | "draft";
+  versionKind?: PinnedKind;
   draft?: AgentTestDraftInput;
 }
 
@@ -215,7 +216,7 @@ export interface AgentTestInput {
   sessionId?: ID;
   draft?: AgentTestDraftInput;
   /** buyer: append the content as a buyer message; agent: run on current context. */
-  inputMode?: "buyer" | "agent";
+  inputMode?: StepMode;
 }
 
 export interface AgentTestResult {
@@ -229,7 +230,7 @@ export interface ForkAgentSessionInput {
   agentId: ID;
   conversationId: number;
   messageIndex: number;
-  versionKind?: "preset" | "draft";
+  versionKind?: PinnedKind;
   revisionId?: number | null;
   draft?: AgentTestDraftInput | null;
 }

@@ -1,7 +1,8 @@
+import type { ReplyState } from "@/domain/contract.generated";
 import type { Conversation } from "./chatCanonical";
 import type { LostReason, PortraitStage } from "./portrait";
 
-export type ReplyState = "needs_reply" | "waiting_customer" | "history_pending" | "none" | "unknown";
+export type { ReplyState } from "@/domain/contract.generated";
 
 export interface InboxStateDto {
   unread_count: number;

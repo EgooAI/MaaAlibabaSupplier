@@ -127,7 +127,7 @@ try {
     $base = [IO.Path]::GetFullPath((Split-Path -Parent $Stage)).TrimEnd('\') + '\'
     $install = [IO.Path]::GetFullPath($bootstrap.install).TrimEnd('\')
     if (-not $installer.StartsWith($base, [StringComparison]::OrdinalIgnoreCase) -or $installer.StartsWith($install + '\', [StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetExtension($installer) -ine '.exe') { throw 'Invalid installer location' }
-    if ($request.expected.app_id -cne '580868F7-B96A-4214-829A-609D552F2C3A' -or $request.expected.schema_version -ne 1) { throw 'Invalid build identity' }
+    if ($request.expected.app_id -cne $bootstrap.app_id -or $request.expected.schema_version -ne $bootstrap.schema_version) { throw 'Invalid build identity' }
     if (-not [MaaUpdateNative]::Identity($rootHandle, $bootstrap.root_created, $bootstrap.root_path) -or -not [MaaUpdateNative]::Member($rootHandle, $jobHandle)) { throw 'Root identity changed' }
     Write-Json (Join-Path $Stage 'accepted.json') @{nonce=$nonce; status='accepted'}
 

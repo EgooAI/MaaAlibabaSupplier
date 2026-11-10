@@ -1,3 +1,4 @@
+import { PORTRAIT_BATCH_MAX } from "@/domain/contract.generated";
 import { lostReasonLabel, portraitStageLabel } from "./portraitModel";
 import type { BusinessTag, PortraitChangesInput } from "@/types/portrait";
 import type { Conversation } from "@/types/chatCanonical";
@@ -18,7 +19,7 @@ export interface PortraitPreviewRow {
   lines: string[];
 }
 
-const MAX_BATCH_SESSIONS = 50;
+const MAX_BATCH_SESSIONS = PORTRAIT_BATCH_MAX;
 
 function tagName(tagId: string, targets: Conversation[], catalog: BusinessTag[]): string {
   for (const tag of catalog) if (tag.tag_id === tagId) return tag.archived ? `${tag.name}（已停用）` : tag.name;

@@ -16,6 +16,7 @@ from backend.app.api.envelope import AppError, api_error, ok, user_message
 from backend.app.api.account_scope import AccountRoute, OutboxObservationRoute, outbox_context, request_epoch
 from backend.app.api.connection import _INTERNAL_SOURCE_FIELDS, safe_has_selected_archive
 from backend.app.api.routers.outbox import public_task
+from backend.app.shared import contract
 from backend.app.shared.backend.account_context import AccountContext, get_account_context
 from backend.app.shared.backend.image_fetch import ImageFetchError, ImageUnavailable, fetch_image
 from backend.app.shared.backend.outbox_service import get_outbox_service
@@ -74,7 +75,8 @@ images = APIRouter(route_class=OutboxObservationRoute)
 
 _STAGE_TASK = "分析客户当前所处成交阶段，并给出下一步推进建议。"
 _SCORE_RE = re.compile(r"(\d+(?:\.\d+)?)")
-COMPOSE_TRANSLATION_MAX_CHARS = 4000
+COMPOSE_TRANSLATION_MAX_CHARS = contract.COMPOSE_TRANSLATION_MAX_CHARS
+ReplyState = Literal[*contract.REPLY_STATES]
 
 
 class ComposeTranslationInput(BaseModel):
@@ -86,7 +88,7 @@ class InboxFilters(BaseModel):
     search_scope: Literal["all", "customer", "messages"] = "all"
     country: str | None = None
     tag: str | None = None
-    reply_state: Literal["needs_reply", "waiting_customer", "history_pending", "none", "unknown"] | None = None
+    reply_state: ReplyState | None = None
     unread: bool | None = None
     portrait_stage: list[str] | None = None
     portrait_completeness: Literal["all", "maintained", "unmaintained"] = "all"

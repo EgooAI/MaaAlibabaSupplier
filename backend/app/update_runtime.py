@@ -20,7 +20,9 @@ import sys
 import time
 import uuid
 
-from backend.app.updater import (BUILD_KEYS, UpdateError, atomic_json, read_json, resolve_powershell,
+from backend.app import updater_paths
+from backend.app.app_identity import APP_ID, BUILD_KEYS, BUILD_SCHEMA_VERSION
+from backend.app.updater import (UpdateError, atomic_json, read_json, resolve_powershell,
                                  terminal_result)
 
 JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x00000800
@@ -120,15 +122,17 @@ class WindowsUpdateRuntime:
         stage = self.base / uuid.uuid4().hex
         try:
             stage.mkdir(parents=True, exist_ok=False)
-            shutil.copyfile(Path(__file__).with_name("update-helper.ps1"), stage / "update-helper.ps1")
-            atomic_json(stage / "bootstrap.json", {
+            shutil.copyfile(Path(__file__).with_name(updater_paths.HELPER_SCRIPT_FILENAME),
+                            stage / updater_paths.HELPER_SCRIPT_FILENAME)
+            atomic_json(stage / updater_paths.BOOTSTRAP_FILENAME, {
                 "job": self.job_name, "root_pid": os.getpid(),
                 "root_created": str((created.dwHighDateTime << 32) | created.dwLowDateTime),
                 "root_path": str(Path(sys.executable).resolve()), "install": str(self.install),
-                "result": str(self.base / "last-result.json"),
+                "result": str(self.base / updater_paths.RESULT_FILENAME),
+                "app_id": APP_ID, "schema_version": BUILD_SCHEMA_VERSION,
             })
             nonce = uuid.uuid4().hex
-            atomic_json(stage / "request.json", {
+            atomic_json(stage / updater_paths.REQUEST_FILENAME, {
                 "nonce": nonce, "installer": str(installer),
                 "installer_sha256": prepared["installer_sha256"],
                 "expected": {key: prepared[key] for key in BUILD_KEYS},
@@ -144,10 +148,10 @@ class WindowsUpdateRuntime:
                 env.pop(key)
         # Keep PowerShell's own error text locally; diagnostics never exports it.
         try:
-            with (stage / "helper.log").open("ab") as helper_log:
+            with (stage / updater_paths.HELPER_LOG_FILENAME).open("ab") as helper_log:
                 process = subprocess.Popen(
                     [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-                     "-File", str(stage / "update-helper.ps1"), "-Stage", str(stage)],
+                     "-File", str(stage / updater_paths.HELPER_SCRIPT_FILENAME), "-Stage", str(stage)],
                     cwd=str(stage), env=env, stdin=subprocess.DEVNULL,
                     stdout=helper_log, stderr=subprocess.STDOUT, close_fds=True,
                     creationflags=CREATE_BREAKAWAY_FROM_JOB | subprocess.CREATE_NO_WINDOW
@@ -174,7 +178,7 @@ class WindowsUpdateRuntime:
         deadline = time.monotonic() + _HELPER_ACCEPT_SECONDS
         while time.monotonic() < deadline:
             try:
-                accepted = read_json(self.stage / "accepted.json")
+                accepted = read_json(self.stage / updater_paths.ACCEPTED_FILENAME)
             except (OSError, ValueError, UpdateError):
                 accepted = None
             if accepted is not None and accepted.get("nonce") == self.nonce:
@@ -190,18 +194,18 @@ class WindowsUpdateRuntime:
         if (self.process is None or self.process.poll() is not None
                 or self.stage is None or not self.nonce):
             raise UpdateError("Updater helper is unavailable.")
-        atomic_json(self.stage / "go.json", {"nonce": self.nonce})
+        atomic_json(self.stage / updater_paths.GO_FILENAME, {"nonce": self.nonce})
 
     def cancel(self) -> None:
         if self.stage is not None and self.nonce:
-            atomic_json(self.stage / "cancel.json", {"nonce": self.nonce})
+            atomic_json(self.stage / updater_paths.CANCEL_FILENAME, {"nonce": self.nonce})
 
     def failed(self) -> bool:
         if self.process is not None and self.process.poll() is not None:
             return True
         if self.stage is not None and self.nonce:
             try:
-                accepted = read_json(self.stage / "accepted.json")
+                accepted = read_json(self.stage / updater_paths.ACCEPTED_FILENAME)
             except (OSError, ValueError, UpdateError):
                 return False
             return accepted.get("nonce") == self.nonce and accepted.get("status") == "error"
@@ -210,6 +214,6 @@ class WindowsUpdateRuntime:
     def result(self) -> dict | None:
         """Only terminal results. An interrupted attempt is ignored by the app."""
         try:
-            return terminal_result(read_json(self.base / "last-result.json"))
+            return terminal_result(read_json(self.base / updater_paths.RESULT_FILENAME))
         except (OSError, ValueError, UpdateError):
             return None

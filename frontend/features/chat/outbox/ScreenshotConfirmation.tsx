@@ -6,7 +6,7 @@ import type { OutboxTask } from "@/types/chatOperations";
 import type { OperationsBackend } from "@/services/interfaces";
 import { AccountChangedError } from "@/services/accountSession";
 import { formatFullDateTime } from "@/domain/time";
-import { frameFresh, SCREENSHOT_TTL_MS } from "./outboxModel";
+import { frameFresh, screenshotTtlSeconds } from "./outboxModel";
 
 export function ScreenshotConfirmation({ task, seller, recipient, canOperate, backend, onTask, onClose }: {
   task: OutboxTask; seller: string; recipient: string; canOperate: boolean; backend: OperationsBackend;
@@ -40,7 +40,8 @@ export function ScreenshotConfirmation({ task, seller, recipient, canOperate, ba
           setError("任务或截图已变化，请重新查看并确认。");
           return;
         }
-        if (!frameFresh(current)) throw new Error(`截图已过期或不可用（有效期 ${SCREENSHOT_TTL_MS / 1000} 秒）。请刷新任务；若仍过期，可取消该任务后新建，或在安全失败状态下重试并重新截图。`);
+        const ttl = screenshotTtlSeconds(current);
+        if (!frameFresh(current)) throw new Error(`截图已过期或不可用${ttl === null ? "" : `（有效期 ${ttl} 秒）`}。请刷新任务；若仍过期，可取消该任务后新建，或在安全失败状态下重试并重新截图。`);
         const blob = await backend.getOutboxScreenshot(id, current.screenshot_id!, current.version);
         if (disposed) return;
         if (!frameFresh(current)) throw new Error("截图已过期，请刷新任务。");
@@ -51,8 +52,8 @@ export function ScreenshotConfirmation({ task, seller, recipient, canOperate, ba
           url = undefined;
           setFrame(undefined);
           setLoaded(false);
-          setError(`截图已过期（${SCREENSHOT_TTL_MS / 1000} 秒），请刷新任务后重新核对。读取不会自动重新截图或发送。`);
-        }, current.screenshot_at! * 1000 + SCREENSHOT_TTL_MS - Date.now());
+          setError(`截图已过期${ttl === null ? "" : `（${ttl} 秒）`}，请刷新任务后重新核对。读取不会自动重新截图或发送。`);
+        }, current.screenshot_expires_at! * 1000 - Date.now());
       } catch (err) {
         if (!disposed && !(err instanceof AccountChangedError)) setError(err instanceof Error ? err.message : "截图加载失败，请刷新任务。");
       }
@@ -90,6 +91,7 @@ export function ScreenshotConfirmation({ task, seller, recipient, canOperate, ba
   }
 
   const displayed = frame?.task ?? task;
+  const displayedTtl = screenshotTtlSeconds(displayed);
   return <Modal title="根据客户端截图二次确认联系人" open width={960} onCancel={onClose} footer={<Space wrap>
     <Button onClick={onClose}>稍后确认</Button>
     <Button disabled={busy} onClick={() => setRefresh((value) => value + 1)}>刷新任务与截图</Button>
@@ -101,7 +103,7 @@ export function ScreenshotConfirmation({ task, seller, recipient, canOperate, ba
     {error && <Alert type="warning" title={error} />}
     {!frame && !error && <Typography.Text>正在读取任务和截图…</Typography.Text>}
     {frame && <>
-      <Typography.Paragraph type="secondary">截图时间：{formatFullDateTime(frame.task.screenshot_at!)} · 有效期 {SCREENSHOT_TTL_MS / 1000} 秒</Typography.Paragraph>
+      <Typography.Paragraph type="secondary">截图时间：{formatFullDateTime(frame.task.screenshot_at!)} · 有效期 {displayedTtl ?? "未知"} 秒</Typography.Paragraph>
       <Button size="small" onClick={() => setFullSize((value) => !value)}>{fullSize ? "适应宽度" : "查看原尺寸"}</Button>
       <div className="mt-2 max-h-[60vh] overflow-auto">
         {/* Authenticated PNG bytes must never be passed through an image proxy or cache. */}

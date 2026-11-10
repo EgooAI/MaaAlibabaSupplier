@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from backend.app.api.envelope import AppError, api_error, ok, user_message
 from backend.app.api.account_scope import AccountRoute, request_epoch
+from backend.app.shared import contract
 from backend.app.shared.crm import get_translation
 from backend.app.shared.crm.translation_cache import get_translations
 from backend.app.task_queue import TaskSnapshot
@@ -13,7 +14,7 @@ from backend.app.translation_jobs import submit_translation_job, translation_job
 
 router = APIRouter(route_class=AccountRoute)
 
-TRANSLATION_TEXTS_MAX = 500
+TRANSLATION_TEXTS_MAX = contract.TRANSLATION_TEXTS_MAX
 
 
 class RequestTranslationsInput(BaseModel):

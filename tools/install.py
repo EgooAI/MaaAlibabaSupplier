@@ -32,11 +32,18 @@ from pathlib import Path
 
 import jsonc
 
-DEFAULT_VERSION = "v0.0.0-local"
-APP_ID = "580868F7-B96A-4214-829A-609D552F2C3A"
+try:
+    from . import _common as common
+except ImportError:
+    import _common as common
 
-working_dir = (Path(__file__).parent.parent / "backend").resolve()
-repo_root = working_dir.parent
+sys.path.insert(0, str(common.REPO_ROOT))
+from backend.app.app_identity import APP_ID, BUILD_SCHEMA_VERSION
+
+DEFAULT_VERSION = "v0.0.0-local"
+
+working_dir = common.BACKEND_DIR
+repo_root = common.REPO_ROOT
 install_path = repo_root / "install"
 payload_backend = install_path / "backend"
 assets_dir = working_dir / "assets"
@@ -197,7 +204,7 @@ def install_chores():
 
 def install_build_info(version: str) -> None:
     build_info = {
-        "schema_version": 1,
+        "schema_version": BUILD_SCHEMA_VERSION,
         "app_id": APP_ID,
         "version": version,
         "repository": os.environ.get("GITHUB_REPOSITORY") or None,
