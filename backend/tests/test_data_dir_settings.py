@@ -11,6 +11,7 @@ from backend.app.api.main import create_app
 from backend.tests.auth_client import authenticate
 from backend.app.api.routers import settings as settings_router
 from backend.app.shared.backend import im_db_middleware as mw_mod
+from backend.app.shared.backend import im_layout
 from backend.app.shared.backend.im_layout import encrypted_db_path, looks_like_data_dir
 from backend.app.shared.backend.account_context import get_account_context
 from backend.app.shared.crm import account_keys
@@ -136,6 +137,38 @@ class DataDirSettingsTestCase(unittest.TestCase):
         self.assertEqual([row["ali_id"] for row in rows], ["10001"])
         self.assertEqual(rows[0]["db_size"], 96)
         self.assertEqual(encrypted_db_path(layout, "10001"), instance)
+
+
+class DataDirCandidatesTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.root = Path(self.temp_dir.name)
+
+    def test_scan_finds_drive_roots_and_every_user_documents_folder(self) -> None:
+        drive_root = self.root / "drive-d"
+        drive_layout = _make_layout(drive_root)
+        users_root = self.root / "Users"
+        alice_layout = _make_layout(users_root / "alice" / "Documents" / "AlibabaSupplier")
+        bob_layout = _make_layout(users_root / "bob" / "Documents" / "AlibabaSupplier")
+        invalid = users_root / "carol" / "Documents" / "AlibabaSupplier" / "AlibabaSupplierData"
+        invalid.mkdir(parents=True)
+
+        with (
+            mock.patch.object(im_layout, "_drive_roots", return_value=[drive_root]),
+            mock.patch.object(im_layout, "_users_root", return_value=users_root),
+        ):
+            candidates = im_layout.find_data_dir_candidates()
+
+        self.assertEqual(
+            candidates,
+            [str(path.resolve()) for path in (drive_layout, alice_layout, bob_layout)],
+        )
+
+    def test_scan_deduplicates_repeated_locations(self) -> None:
+        layout = _make_layout(self.root)
+        with mock.patch.object(im_layout, "_search_locations", return_value=[layout, layout.resolve()]):
+            self.assertEqual(im_layout.find_data_dir_candidates(), [str(layout.resolve())])
 
 
 class AccountKeyTestCase(unittest.TestCase):

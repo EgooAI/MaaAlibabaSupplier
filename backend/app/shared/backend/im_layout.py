@@ -8,7 +8,9 @@ recently written profile is the active source.
 
 from __future__ import annotations
 
+import os
 import re
+import string
 from pathlib import Path
 
 from backend.app.shared.crm.identities import (
@@ -111,23 +113,56 @@ def encrypted_db_path(data_dir: Path, ali_id: str) -> Path:
     return profile / "database" / "im.sqlite"
 
 
+def _drive_roots() -> list[Path]:
+    """Return every present drive root (``C:/``, ``D:/``, ...)."""
+    listdrives = getattr(os, "listdrives", None)
+    if listdrives is None:
+        return [Path(f"{letter}:/") for letter in string.ascii_uppercase[2:]]
+    try:
+        return [Path(drive) for drive in listdrives()]
+    except OSError:
+        return []
+
+
+def _users_root() -> Path:
+    """Return the system drive's ``Users`` directory."""
+    return Path(f"{os.environ.get('SystemDrive', 'C:')}/Users")
+
+
+def _search_locations() -> list[Path]:
+    """Return every location checked for an Alibaba client data directory."""
+    locations = [root / DATA_DIR_NAME for root in _drive_roots()]
+    try:
+        users = sorted(
+            (entry for entry in _users_root().iterdir() if entry.is_dir()),
+            key=lambda entry: entry.name.casefold(),
+        )
+    except OSError:
+        users = []
+    locations.extend(
+        user / "Documents" / "AlibabaSupplier" / DATA_DIR_NAME for user in users
+    )
+    return locations
+
+
 def find_data_dir_candidates() -> list[str]:
-    """Scan drive roots (C:..Z:) for an ``AlibabaSupplierData`` dir with IM layout.
+    """Scan drive roots and per-user Documents folders for a real data dir.
 
-    Existence checks only — no recursion, completes in milliseconds.
+    Checks ``<drive>/AlibabaSupplierData`` for every present drive and
+    ``<system drive>/Users/<user>/Documents/AlibabaSupplier/AlibabaSupplierData``
+    for every user folder. Existence checks only — no recursion.
     """
-    import string
-
     found: list[str] = []
-    for letter in string.ascii_uppercase:
-        if letter < "C":
-            continue
-        candidate = Path(f"{letter}:/{DATA_DIR_NAME}")
+    seen: set[str] = set()
+    for candidate in _search_locations():
         try:
-            if not candidate.is_dir():
+            if not candidate.is_dir() or not looks_like_data_dir(candidate):
                 continue
+            resolved = str(candidate.resolve())
         except OSError:
             continue
-        if looks_like_data_dir(candidate):
-            found.append(str(candidate.resolve()))
+        key = os.path.normcase(resolved)
+        if key not in seen:
+            seen.add(key)
+            found.append(resolved)
     return found

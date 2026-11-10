@@ -23,7 +23,7 @@ export function useDataDirSettings() {
     try {
       const result = await backend.listDataDirCandidates();
       setCandidates(result.candidates);
-      if (result.candidates.length === 0) setError("未在各盘符根目录发现 AlibabaSupplierData，请手动填写");
+      if (result.candidates.length === 0) setError("未在盘符根目录或用户 Documents 下发现 AlibabaSupplierData，请手动填写");
     } catch {
       setError("自动探测失败，请手动填写");
     } finally {

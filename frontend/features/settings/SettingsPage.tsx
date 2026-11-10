@@ -27,7 +27,7 @@ function DataDirCard({ controls }: { controls: DataDirControls }) {
       ) : (
         <Space orientation="vertical" size="middle" className="w-full">
           <Typography.Text type="secondary">
-            配置本机阿里客户端数据目录，可自动探测各盘符根目录或手动填写；保存后即时生效，无需重启。
+            配置本机阿里客户端数据目录，可自动探测各盘符根目录及用户 Documents 下的 AlibabaSupplierData，也可手动填写；保存后即时生效，无需重启。
           </Typography.Text>
           {error ? <Alert type="error" showIcon title={error} /> : null}
           <Space.Compact className="w-full">
