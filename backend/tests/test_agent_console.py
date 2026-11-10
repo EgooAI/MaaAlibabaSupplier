@@ -55,11 +55,13 @@ class AgentConsoleTestCase(unittest.TestCase):
     def test_llm_config_roundtrip(self) -> None:
         payload = {
             "level": 4, "base_url": "https://llm.example", "api_key": "k",
-            "model_name": "m", "system_prompt": "", "context": 8000, "max_tool_rounds": 3,
+            "model_name": "m", "system_prompt": "", "context": 8000,
+            "reasoning_effort": "high", "max_tool_rounds": 3,
         }
         saved = self.client.put("/api/agent/llm-config", json=payload).json()
         self.assertEqual(saved["code"], 0)
         self.assertEqual(saved["data"]["model_name"], "m")
+        self.assertEqual(saved["data"]["reasoning_effort"], "high")
         body = self.client.get("/api/agent/console").json()
         self.assertEqual(body["code"], 0)
         console = body["data"]
@@ -71,16 +73,50 @@ class AgentConsoleTestCase(unittest.TestCase):
         self.assertEqual([level["level"] for level in levels], [0, 1, 2, 3, 4])
         self.assertEqual([level["model_name"] for level in levels], ["", "", "", "", "m"])
         self.assertTrue(all(isinstance(level["context"], int) and level["context"] > 0 for level in levels))
+        self.assertEqual([level["reasoning_effort"] for level in levels], ["medium", "medium", "medium", "medium", "high"])
 
     def test_llm_config_rejects_blank_required_fields(self) -> None:
         base = {
             "level": 0, "base_url": "https://llm.example", "api_key": "k",
-            "model_name": "m", "system_prompt": "", "context": 8000, "max_tool_rounds": 3,
+            "model_name": "m", "system_prompt": "", "context": 8000,
+            "reasoning_effort": "medium", "max_tool_rounds": 3,
         }
         for field in ("base_url", "api_key", "model_name"):
             payload = dict(base, **{field: "   "})
             resp = self.client.put("/api/agent/llm-config", json=payload)
             self.assertEqual(resp.status_code, 422)
+
+    def test_llm_config_requires_context(self) -> None:
+        payload = {
+            "level": 0, "base_url": "https://llm.example", "api_key": "k",
+            "model_name": "m", "system_prompt": "", "reasoning_effort": "medium",
+            "max_tool_rounds": 3,
+        }
+        resp = self.client.put("/api/agent/llm-config", json=payload)
+        self.assertEqual(resp.status_code, 422)
+
+    def test_llm_config_accepts_supported_reasoning_efforts(self) -> None:
+        base = {
+            "level": 0, "base_url": "https://llm.example", "api_key": "k",
+            "model_name": "m", "system_prompt": "", "context": 8000,
+            "max_tool_rounds": 3,
+        }
+        for effort in ("low", "medium", "high", "xhigh", "max"):
+            with self.subTest(effort=effort):
+                resp = self.client.put("/api/agent/llm-config", json={**base, "reasoning_effort": effort})
+                self.assertEqual(resp.status_code, 200)
+                self.assertEqual(resp.json()["data"]["reasoning_effort"], effort)
+
+    def test_llm_config_rejects_invalid_reasoning_effort(self) -> None:
+        payload = {
+            "level": 0, "base_url": "https://llm.example", "api_key": "k",
+            "model_name": "m", "system_prompt": "", "context": 8000,
+            "max_tool_rounds": 3,
+        }
+        for effort in ("none", "minimal", "", "LOW"):
+            with self.subTest(effort=effort):
+                resp = self.client.put("/api/agent/llm-config", json={**payload, "reasoning_effort": effort})
+                self.assertEqual(resp.status_code, 422)
 
     def test_preset_crud_and_system_guard(self) -> None:
         created = self.client.post("/api/agent/presets", json={

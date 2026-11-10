@@ -126,6 +126,7 @@ export const llmLevels: LlmLevelConfig[] = Array.from({ length: 5 }, (_, level) 
   model_name: level >= 3 ? "claude-sonnet-5" : "claude-haiku-4-5-20251001",
   system_prompt: `Level ${level} agent prompt for Alibaba seller workflow.`,
   context: 12000 + level * 4000,
+  reasoning_effort: level >= 3 ? "max" : "high",
   max_tool_rounds: 3 + level,
 }));
 
@@ -138,6 +139,7 @@ export const documentLlmConfig: DocumentLlmConfig = {
   model_name: llmLevel.model_name,
   system_prompt: llmLevel.system_prompt,
   context: llmLevel.context,
+  reasoning_effort: llmLevel.reasoning_effort,
   max_tool_rounds: llmLevel.max_tool_rounds ?? null,
 };
 

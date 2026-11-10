@@ -13,6 +13,9 @@ export const EXPERIMENT_MAX_VARIANTS = 4;
 export const EXPERIMENT_MAX_STEPS = 20;
 export const LLM_MAX_LEVEL = 4;
 
+export const REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
 export const OUTBOX_STATUSES = ["queued", "navigating", "awaiting_confirmation", "queued_send", "running", "verifying", "observed", "filled", "failed", "unknown", "cancelled"] as const;
 export type OutboxStatus = (typeof OUTBOX_STATUSES)[number];
 

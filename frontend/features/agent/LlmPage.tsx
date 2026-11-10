@@ -1,9 +1,11 @@
 "use client";
 
 import { EditOutlined } from "@ant-design/icons";
-import { Button, Card, Form, Input, InputNumber, Modal, Radio, Space, Tag, Typography } from "antd";
+import { Button, Card, Form, Input, InputNumber, Modal, Radio, Select, Space, Tag, Typography } from "antd";
 import { useMemo, useState } from "react";
 import { copyLlmLevelConfig, isValidToolRoundLimit } from "@/domain/agent/agentModel";
+import { REASONING_EFFORTS } from "@/domain/contract.generated";
+import type { ReasoningEffort } from "@/domain/contract.generated";
 import type { LlmLevelConfig } from "@/types/agent";
 import { AppTable } from "@/components/AppTable";
 import { EMPTY_TEXT } from "@/components/empty";
@@ -11,6 +13,14 @@ import { useAgentWorkbench } from "./hooks/useAgentWorkbench";
 import { PromptEditorField } from "./components/PromptEditorField";
 
 type LlmLevelFormValues = Omit<LlmLevelConfig, "level">;
+
+const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = {
+  low: "低",
+  medium: "中",
+  high: "高",
+  xhigh: "极高",
+  max: "最大",
+};
 
 export function LlmPage() {
   const workbench = useAgentWorkbench();
@@ -78,7 +88,7 @@ export function LlmPage() {
         <AppTable
           rowKey="level"
           dataSource={levels}
-          scroll={{ x: 1340 }}
+          scroll={{ x: 1480 }}
           columns={[
             {
               title: "Level",
@@ -95,6 +105,12 @@ export function LlmPage() {
               width: 150,
               align: "right" as const,
               render: (value: number) => `${value.toLocaleString()} tokens`,
+            },
+            {
+              title: "思考强度",
+              dataIndex: "reasoning_effort",
+              width: 120,
+              render: (value: ReasoningEffort) => REASONING_EFFORT_LABELS[value] ?? value,
             },
             { title: "最大工具轮数", dataIndex: "max_tool_rounds", width: 150, align: "right" as const, render: (value: number | null) => value ?? "不限" },
             {
@@ -135,9 +151,12 @@ export function LlmPage() {
           <Form.Item name="api_key" label="API Key" rules={[{ required: true, message: "请输入 API Key" }]}>
             <Input.Password />
           </Form.Item>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <Form.Item name="context" label="上下文长度" rules={[{ validator: (_, value: number | undefined) => typeof value === "number" && Number.isInteger(value) && value > 0 ? Promise.resolve() : Promise.reject(new Error("请输入正整数")) }]}>
               <InputNumber min={1} step={1000} precision={0} className="w-full" />
+            </Form.Item>
+            <Form.Item name="reasoning_effort" label="思考强度" rules={[{ required: true, message: "请选择思考强度" }]}>
+              <Select className="w-full" options={REASONING_EFFORTS.map((value) => ({ value, label: REASONING_EFFORT_LABELS[value] }))} />
             </Form.Item>
             <Form.Item name="max_tool_rounds" label="最大工具轮数" rules={[{ validator: (_, value: number | null) => isValidToolRoundLimit(value) ? Promise.resolve() : Promise.reject(new Error("请输入正整数或留空")) }]}>
               <InputNumber min={1} className="w-full" placeholder="留空表示不限制" />
@@ -164,7 +183,7 @@ export function LlmPage() {
         destroyOnHidden
       >
         <Typography.Paragraph type="secondary">
-          将 Level {copySource?.level ?? ""} 的模型、服务地址、API Key、系统提示词、上下文与工具轮数完整写入所选等级；所选等级已有配置会被直接覆盖。
+          将 Level {copySource?.level ?? ""} 的模型、服务地址、API Key、系统提示词、上下文、思考强度与工具轮数完整写入所选等级；所选等级已有配置会被直接覆盖。
         </Typography.Paragraph>
         <Radio.Group
           value={copyTarget}

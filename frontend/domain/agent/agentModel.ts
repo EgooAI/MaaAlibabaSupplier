@@ -204,6 +204,7 @@ export function documentToLlmLevelConfig(input: DocumentLlmConfig): LlmLevelConf
     model_name: input.model_name,
     system_prompt: input.system_prompt,
     context: input.context,
+    reasoning_effort: input.reasoning_effort,
     max_tool_rounds: normalizeToolRoundLimit(input.max_tool_rounds),
   };
 }
@@ -216,6 +217,7 @@ export function llmLevelToDocumentConfig(config: LlmLevelConfig): DocumentLlmCon
     model_name: config.model_name,
     system_prompt: config.system_prompt,
     context: config.context,
+    reasoning_effort: config.reasoning_effort,
     max_tool_rounds: normalizeToolRoundLimit(config.max_tool_rounds),
   };
 }

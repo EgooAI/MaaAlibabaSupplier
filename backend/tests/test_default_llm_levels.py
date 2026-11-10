@@ -34,6 +34,8 @@ class DefaultLlmLevelsTestCase(unittest.TestCase):
         self.assertEqual(config.base_url, "")
         self.assertEqual(config.api_key, "")
         self.assertEqual(config.model_name, "")
+        self.assertEqual(config.context, 128000)
+        self.assertEqual(config.reasoning_effort, "medium")
 
         ensure_default_llm_levels_seeded()
         self.assertEqual(len(LLMApiConfigManager().list_configs()), 1)

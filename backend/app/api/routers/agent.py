@@ -5,12 +5,13 @@ from typing import Any
 
 from fastapi import APIRouter
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from agent_pipeline.tools import ToolContext
 
 from backend.app.api.envelope import AppError, api_error, ok
 from backend.app.api.account_scope import AccountRoute
+from backend.app.shared.contract import REASONING_EFFORTS
 from backend.app.shared.agent.chat_history_content import (
     SCHEMA_VERSION,
     ChatHistoryContent,
@@ -84,8 +85,16 @@ class LlmConfigInput(BaseModel):
     api_key: str = ""
     model_name: str = ""
     system_prompt: str = ""
-    context: int = 12000
+    context: int = Field(gt=0)
+    reasoning_effort: str
     max_tool_rounds: int | None = None
+
+    @field_validator("reasoning_effort")
+    @classmethod
+    def _validate_reasoning_effort(cls, value: str) -> str:
+        if value not in REASONING_EFFORTS:
+            raise ValueError(f"思考强度必须是 {'、'.join(REASONING_EFFORTS)} 之一")
+        return value
 
 
 class PresetInput(BaseModel):
@@ -331,6 +340,7 @@ def _llm_level_payloads() -> list[dict]:
             "model_name": config.model_name,
             "system_prompt": config.system_prompt,
             "context": config.context,
+            "reasoning_effort": config.reasoning_effort,
             "max_tool_rounds": config.max_tool_rounds,
             # 兼容旧前端 camel 键。
             "baseUrl": config.base_url,
@@ -415,6 +425,7 @@ def save_llm_config(body: LlmConfigInput) -> dict:
             model_name=model_name,
             system_prompt=body.system_prompt,
             context=body.context,
+            reasoning_effort=body.reasoning_effort,
             max_tool_rounds=body.max_tool_rounds,
         )
         LLMApiConfigManager().upsert_config(config)
@@ -432,6 +443,7 @@ def save_llm_config(body: LlmConfigInput) -> dict:
         "model_name": saved.model_name,
         "system_prompt": saved.system_prompt,
         "context": saved.context,
+        "reasoning_effort": saved.reasoning_effort,
         "max_tool_rounds": saved.max_tool_rounds,
     })
 

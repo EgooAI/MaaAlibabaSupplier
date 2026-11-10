@@ -49,6 +49,7 @@ function level(level: number, model = ""): LlmLevelConfig {
     model_name: model,
     system_prompt: model ? `prompt-${level}` : "",
     context: 8000 + level * 1000,
+    reasoning_effort: "high",
     max_tool_rounds: 3,
   };
 }
@@ -131,6 +132,7 @@ describe("LlmPage copy as", () => {
       model_name: "model-0",
       system_prompt: "prompt-0",
       context: 8000,
+      reasoning_effort: "high",
       max_tool_rounds: 3,
     });
     expect(mocks.message.success).toHaveBeenCalledWith("已复制到 Level 2");

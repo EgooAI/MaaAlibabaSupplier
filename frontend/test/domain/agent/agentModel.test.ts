@@ -120,11 +120,13 @@ describe("agent model", () => {
       model_name: "model",
       system_prompt: "prompt",
       context: 16000,
+      reasoning_effort: "high",
       max_tool_rounds: null,
     };
     const level = documentToLlmLevelConfig(document);
     expect(level.max_tool_rounds).toBeNull();
-    expect(llmLevelToDocumentConfig(level)).toMatchObject({ level: 2, max_tool_rounds: null });
+    expect(level.reasoning_effort).toBe("high");
+    expect(llmLevelToDocumentConfig(level)).toMatchObject({ level: 2, reasoning_effort: "high", max_tool_rounds: null });
     expect(isValidToolRoundLimit(0)).toBe(false);
     expect(isValidToolRoundLimit(null)).toBe(true);
   });
@@ -137,6 +139,7 @@ describe("agent model", () => {
       model_name: "model-a",
       system_prompt: "prompt",
       context: 16000,
+      reasoning_effort: "max",
       max_tool_rounds: null,
     };
     expect(copyLlmLevelConfig(source, 3)).toEqual({ ...source, level: 3 });

@@ -37,6 +37,7 @@ def render() -> str:
         f"export const EXPERIMENT_MAX_STEPS = {contract.EXPERIMENT_MAX_STEPS};",
         f"export const LLM_MAX_LEVEL = {contract.LLM_MAX_LEVEL};",
         "",
+        _array("REASONING_EFFORTS", contract.REASONING_EFFORTS, "ReasoningEffort"),
         _array("OUTBOX_STATUSES", contract.OUTBOX_STATUSES, "OutboxStatus"),
         _array("REPLY_STATES", contract.REPLY_STATES, "ReplyState"),
         _array("PORTRAIT_STAGES", contract.PORTRAIT_STAGES, "PortraitStage"),

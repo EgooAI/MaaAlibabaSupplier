@@ -1,5 +1,5 @@
 import type { ID } from "@/types/common";
-import type { PinnedKind, SessionType, StepMode } from "@/domain/contract.generated";
+import type { PinnedKind, ReasoningEffort, SessionType, StepMode } from "@/domain/contract.generated";
 
 export interface DocumentLlmConfig {
   level: number;
@@ -8,6 +8,7 @@ export interface DocumentLlmConfig {
   model_name: string;
   system_prompt: string;
   context: number;
+  reasoning_effort: ReasoningEffort;
   max_tool_rounds: number | null;
 }
 
@@ -96,6 +97,7 @@ export interface LlmLevelConfig {
   model_name: string;
   system_prompt: string;
   context: number;
+  reasoning_effort: ReasoningEffort;
   max_tool_rounds: number | null;
 }
 
