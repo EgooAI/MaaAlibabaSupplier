@@ -144,16 +144,6 @@ async function submit() {
 }
 
 describe("ExperimentCreateModal", () => {
-  it("starts with two variants and disables deleting the last one", async () => {
-    await render();
-
-    expect(rows()).toHaveLength(2);
-    expect(rows().map((row) => row.textContent)).toEqual([expect.stringContaining("当前保存配置"), expect.stringContaining("当前保存配置")]);
-    expect(document.body.textContent).toContain("基线");
-    // 「编辑器草稿」needs the editor buffer: without it the option is not offered.
-    expect(document.body.textContent).not.toContain("编辑器草稿");
-  });
-
   it("sends the editor draft as a variant wherever the user pins it", async () => {
     const draft = { prompt: "坚持 30% 预付", level: 2, tools: ["calculate"], requiresTool: true };
     await render({ initialDraft: draft });

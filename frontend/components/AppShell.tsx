@@ -101,6 +101,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const selectedKey = resolveSelectedKey(pathname);
   const openKeys = resolveOpenKeys(pathname);
+  const logoutButton = <Button icon={<LogoutOutlined />} aria-label={temporary ? "退出临时登录" : "本机注销"} onClick={() => void logout()}><span className="hidden sm:inline">{temporary ? "退出临时登录" : "本机注销"}</span></Button>;
   return (
     <Layout className="fixed inset-0 min-h-0 items-stretch overflow-hidden">
       <Sider
@@ -153,9 +154,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </Typography.Title>
           <div className="flex min-w-0 items-center gap-2">
             {!blocked && snapshot?.capabilities.read_chat ? <AccountProfile key={`${snapshot.account.epoch}:${generation}`} /> : <Typography.Text type="secondary" className="inline-block max-w-24 truncate align-middle sm:max-w-48">{snapshot?.account.self_ali_id || "尚未选择账号"}</Typography.Text>}
-            <Tooltip title={temporary ? "临时登录，刷新后需重新登录" : "本机注销"}>
-              <Button icon={<LogoutOutlined />} aria-label={temporary ? "退出临时登录" : "本机注销"} onClick={() => void logout()}><span className="hidden sm:inline">{temporary ? "退出临时登录" : "本机注销"}</span></Button>
-            </Tooltip>
+            {temporary ? <Tooltip title="临时登录，刷新后需重新登录">{logoutButton}</Tooltip> : logoutButton}
           </div>
         </Header>
         <Content className={isCustomerChat ? "min-h-0 overflow-hidden p-2 sm:p-4" : "min-h-0 overflow-y-auto p-3 sm:p-6"}>

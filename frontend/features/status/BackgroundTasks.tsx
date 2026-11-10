@@ -13,7 +13,7 @@ const outboxStatusColors: Record<string, string> = {
   running: "blue", navigating: "blue", verifying: "blue",
 };
 const outboxEvidenceLabels: Record<string, string> = {
-  observed: "仅本地匹配，未确认平台送达",
+  observed: "本地匹配，平台送达待确认",
   filled: "仅填入，未发送",
 };
 const queueLabels: Record<string, string> = { maafw: "GUI", translation: "翻译" };
@@ -41,7 +41,7 @@ export function BackgroundTasks({ snapshot }: { snapshot: SystemStatusSnapshot }
           key: "queues", label: "GUI / 翻译任务",
           children: <Space orientation="vertical" size="middle" className="w-full">
             {background ? <Typography.Text type="secondary">仅含当前账号代次、保留期内的任务，活动任务优先，每类队列最多 100 条。{background.queueCounts ? "卡片计数覆盖保留期内全部任务，不受列表上限影响。" : "全量计数未提供，卡片仅统计列表样本。"}</Typography.Text> : null}
-            <Typography.Text type="secondary">任务完成只表示该操作结束。GUI 发送与核查结果请查看 Outbox。</Typography.Text>
+            <Typography.Text type="secondary">任务完成表示该操作结束。GUI 发送与核查结果请查看 Outbox。</Typography.Text>
             {!background ? <Typography.Text type="secondary">仅显示旧版快照任务，统一队列数据未提供。</Typography.Text> : null}
             <AppTable rowKey={(task) => `${task.queue}:${task.id}`} dataSource={tasks} scroll={{ x: 1100 }} columns={[
               { title: "队列", width: 110, render: (_, task) => queueLabels[task.queue] ?? "旧版任务" },
@@ -71,7 +71,7 @@ export function BackgroundTasks({ snapshot }: { snapshot: SystemStatusSnapshot }
           key: "outbox", label: "Outbox",
           children: <Space orientation="vertical" size="middle" className="w-full">
             <Typography.Text type="secondary">状态计数覆盖当前卖家与数据目录的全部 Outbox 记录，列表仅显示最近 20 条。</Typography.Text>
-            <Typography.Text type="secondary">发送与填入仍需在聊天工作台确认联系人、内容和截图。GUI 完成、本地匹配与平台送达是不同证据。</Typography.Text>
+            <Typography.Text type="secondary">发送与填入请在聊天工作台确认联系人、内容和截图。GUI 完成、本地匹配与平台送达是不同证据。</Typography.Text>
             {outboxError ? <Alert showIcon type="warning" title={`Outbox 读取失败：${outboxError}`} /> : background ? <Space wrap>{Object.entries(background.outbox.counts).map(([status, count]) => <span key={status}><OutboxStatus status={status} />{count}</span>)}</Space> : <WorkStateTag status={workStatus("unknown")} />}
             <AppTable rowKey="id" dataSource={background?.outbox.recent ?? []} scroll={{ x: 1050 }} columns={[
               { title: "任务 ID", dataIndex: "id", width: 200 },

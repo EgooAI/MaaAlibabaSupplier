@@ -183,7 +183,7 @@ export function serviceSummaries(snapshot: SystemStatusSnapshot): ServiceSummary
     },
     {
       id: "crm", title: "CRM 写入", category: "数据处理", resources: [], status: runtimeSummary(crm),
-      details: crm.length ? [`进程内执行 ${crm.reduce((sum, item) => sum + item.active, 0)} · 排队 ${crm.reduce((sum, item) => sum + item.pending, 0)}`, "写入执行状态不替代当前工作区的 CRM 提交版本。"] : ["尚无写入执行器记录"],
+      details: crm.length ? [`进程内执行 ${crm.reduce((sum, item) => sum + item.active, 0)} · 排队 ${crm.reduce((sum, item) => sum + item.pending, 0)}`, "CRM 提交版本见“聊天同步”。"] : ["尚无写入执行器记录"],
       error: crm.find((resource) => resource.last_error)?.last_error || undefined,
     },
     queueSummary("maafw", "GUI 队列"),
@@ -191,7 +191,7 @@ export function serviceSummaries(snapshot: SystemStatusSnapshot): ServiceSummary
     {
       id: "outbox", title: "Outbox 与核查", category: "业务任务", resources: matching("outbox-verifier"), error: outboxError,
       status: outboxCounts ? outboxSummary(outboxCounts) : workStatus("unknown", outboxError ? "读取失败" : undefined),
-      details: outboxCounts ? [`排队 ${(outboxCounts.queued ?? 0) + (outboxCounts.queued_send ?? 0)} · 执行 ${(outboxCounts.navigating ?? 0) + (outboxCounts.running ?? 0)} · 待确认 ${outboxCounts.awaiting_confirmation ?? 0}`, `核查中 ${outboxCounts.verifying ?? 0} · 结果未知 ${outboxCounts.unknown ?? 0} · 失败 ${outboxCounts.failed ?? 0}`, "本地匹配消息不表示平台送达。"] : ["Outbox 业务数据未提供"],
+      details: outboxCounts ? [`排队 ${(outboxCounts.queued ?? 0) + (outboxCounts.queued_send ?? 0)} · 执行 ${(outboxCounts.navigating ?? 0) + (outboxCounts.running ?? 0)} · 待确认 ${outboxCounts.awaiting_confirmation ?? 0}`, `核查中 ${outboxCounts.verifying ?? 0} · 结果未知 ${outboxCounts.unknown ?? 0} · 失败 ${outboxCounts.failed ?? 0}`, "平台送达结果以核对证据为准。"] : ["Outbox 业务数据未提供"],
     },
     {
       id: "cards", title: "卡片清扫服务", category: "数据处理", resources: matching("card-sweep"), error: card?.last_error || undefined,

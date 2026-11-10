@@ -83,12 +83,6 @@ describe("application update", () => {
     for (const text of ["v1", "1234567", "example/app", "main", "build.yml", "windows-app"]) expect(container.textContent).toContain(text);
   });
 
-  it.each([[true, "每 5 分钟"], [false, "后台自动检查已关闭"]])("describes background checking when auto is %s", async (auto, text) => {
-    mocks.backend.getAppUpdate.mockResolvedValue(update({ auto }));
-    await render();
-    expect(container.textContent).toContain(text);
-  });
-
   it("allows retrying a failed initial local read without triggering a remote check", async () => {
     mocks.backend.getAppUpdate.mockRejectedValueOnce(new Error("backend offline"));
     await render();

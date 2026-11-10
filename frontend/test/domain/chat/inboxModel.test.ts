@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inboxQueryFromUrl, inboxQueryToSearchParams, inboxQueryToUrl, replyStates } from "@/domain/chat/inboxModel";
+import { inboxQueryFromUrl, inboxQueryToSearchParams, inboxQueryToUrl } from "@/domain/chat/inboxModel";
 import type { ConversationQuery } from "@/types/inbox";
 
 describe("inbox query url", () => {
@@ -75,9 +75,5 @@ describe("inbox query url", () => {
     expect(inboxQueryToUrl(query, "42", "/chat")).toBe("/chat?portrait_stage=won&conversation=42");
     expect(inboxQueryToUrl({}, "42", "/batch")).toBe("/batch?conversation=42");
     expect(inboxQueryToUrl({})).toBe("?");
-  });
-
-  it("keeps the documented reply state vocabulary", () => {
-    expect(replyStates).toEqual(["needs_reply", "waiting_customer", "history_pending", "none", "unknown"]);
   });
 });

@@ -48,7 +48,7 @@ function WorkerObservations({ snapshot }: { snapshot: SystemStatusSnapshot }) {
           <Typography.Text strong>{workerNames[name] ?? name} </Typography.Text>
           {worker ? (
             <>
-              <Tag>{!worker.started ? "未启动" : !worker.alive ? "线程已停止" : worker.stopping ? "停止中" : "线程存活，仅执行证据"}</Tag>
+              <Tag>{!worker.started ? "未启动" : !worker.alive ? "线程已停止" : worker.stopping ? "停止中" : "线程运行中"}</Tag>
               <Typography.Paragraph className="mb-1">
                 阶段：{phases[worker.phase] ?? worker.phase} · 持续 {worker.phase_age_s == null ? "未知" : `${Math.floor(worker.phase_age_s)} 秒`} · 已完成循环 {worker.completed_iterations}
                 {name !== "card-sweep" ? ` · ${name === "im-source-check" ? "待提交同步目标" : "待核对数量"}：${worker.pending ?? "未观察 / 不适用"}` : ""}
@@ -62,7 +62,7 @@ function WorkerObservations({ snapshot }: { snapshot: SystemStatusSnapshot }) {
       {Object.entries(snapshot.queues ?? {}).map(([name, queue]) => (
         <div key={name}>
           <Typography.Text strong>{name === "maafw" ? "GUI" : name === "translation" ? "翻译" : name} 执行队列 </Typography.Text>
-          <Tag>{!queue.initialized ? "未启动" : queue.alive ? "线程存活，仅执行证据" : "线程已停止"}</Tag>
+          <Tag>{!queue.initialized ? "未启动" : queue.alive ? "线程运行中" : "线程已停止"}</Tag>
           <Typography.Text>进程内排队 {queue.pending} · 当前任务：{queue.current_age_s == null ? "无" : `已运行 ${Math.floor(queue.current_age_s)} 秒`} · 最近完成：{observationTime(queue.last_completed)}</Typography.Text>
         </div>
       ))}
@@ -77,9 +77,9 @@ export function WorkerStatus({ snapshot }: { snapshot: SystemStatusSnapshot }) {
   return (
     <Space orientation="vertical" size="large" className="w-full">
       {!background ? <Alert type="info" showIcon title="当前快照未提供统一后台数据" description="仍可查看已有同步、诊断与工作循环观察。业务队列、实验、Outbox 和运行时状态尚未提供。" /> : null}
-      {background?.runtime.closing ? <Alert type="warning" showIcon title="后台正在停止，等待已接收工作结束" description="关闭请求不代表所有执行器已经停止。" /> : null}
+      {background?.runtime.closing ? <Alert type="warning" showIcon title="后台正在停止，等待已接收工作结束" /> : null}
       {background && Object.keys(background.errors).length ? <Alert type="warning" showIcon title="部分快照读取失败" description={Object.entries(background.errors).map(([name, error]) => <div key={name}>{name}：{error}</div>)} /> : null}
-      <Typography.Text type="secondary">业务列表仅含当前工作区。执行器和缓存池为进程范围观察，线程存活和循环完成不代表源库新鲜、CRM 已提交或消息已送达。</Typography.Text>
+      <Typography.Text type="secondary">业务列表仅含当前工作区。执行器和缓存池为进程范围观察。</Typography.Text>
       {(["数据处理", "业务任务", "运行维护"] as const).map((category) => (
         <section key={category} aria-label={category}>
           <Typography.Title level={5} className="mt-0">{category}</Typography.Title>
@@ -93,7 +93,7 @@ export function WorkerStatus({ snapshot }: { snapshot: SystemStatusSnapshot }) {
           key: "runtime", label: "基础执行器详情与已结束历史",
           children: !background ? <Typography.Text type="secondary">未提供运行时快照</Typography.Text> : (
             <Space orientation="vertical" className="w-full">
-              <Typography.Text type="secondary">观察于 {observationTime(background.runtime.observed_at)}。计数为执行器生命周期累计，不代表业务提交或平台送达。</Typography.Text>
+              <Typography.Text type="secondary">观察于 {observationTime(background.runtime.observed_at)}。计数为执行器生命周期累计。</Typography.Text>
               <AppTable
                 rowKey="key" size="small" dataSource={runtimeRows(background.runtime.resources)} scroll={{ x: 1200 }}
                 columns={[

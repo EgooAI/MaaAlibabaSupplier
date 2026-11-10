@@ -17,9 +17,9 @@ export function useShutdownApp() {
     try {
       const receipt = await backend.shutdownApp();
       if (receipt.accepted) setTerminated(true);
-      else setShutdownError("后端未接受关闭请求，程序是否退出尚未确认。");
+      else setShutdownError("后端未接受关闭请求，请检查程序状态。");
     } catch (error) {
-      setShutdownError(operationErrorMessage(error, "关闭结果未知，请检查程序状态", "请检查程序是否仍在运行，勿将断线视为已退出"));
+      setShutdownError(operationErrorMessage(error, "关闭结果未知，请检查程序状态", "请检查程序是否仍在运行"));
     }
     setConfirmOpen(false);
     setTerminating(false);

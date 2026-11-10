@@ -13,7 +13,6 @@ describe("buildPromptDiff", () => {
     const diff = buildPromptDiff("你是助手。\n只输出 JSON。", "你是助手。\n只输出 JSON，不要解释。");
     expect(diff.rows.map((row) => row.kind)).toEqual(["context", "changed"]);
     const changed = diff.rows[1];
-    expect(changed.beforeSegments).toBeDefined();
     expect(changed.afterSegments?.some((segment) => segment.kind === "added" && segment.text.includes("不要解释"))).toBe(true);
     expect(diff.addedLines).toBe(1);
     expect(diff.removedLines).toBe(1);

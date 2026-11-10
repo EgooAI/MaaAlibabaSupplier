@@ -223,7 +223,7 @@ def _build_system_snapshot() -> dict:
                 "status": "healthy" if key_healthy else ("warning" if user["key_validation"] in ("invalid", "unavailable") or not user["has_key"] or not user["db_exists"] else "uncertain"),
                 "latency": None,
                 "description": f"{user.get('source')} · {user.get('ali_id') or '未选择'} · "
-                + ("密钥已验证且近期成功观察源库；不代表客户端登录身份或 CRM 提交完成" if key_healthy else "密钥尚未验证、不可用或源库观察已过期；已保存密钥不等于验证通过"),
+                + ("密钥已验证且近期成功观察源库" if key_healthy else "密钥尚未验证、不可用或源库观察已过期"),
                 "observedAt": user["last_observed_at"] if key_healthy else user_observed_at,
                 "evidence": "validated_source" if key_healthy else "key_presence_or_stale_validation",
             },
@@ -233,7 +233,7 @@ def _build_system_snapshot() -> dict:
                 "status": _network_health(proxy),
                 "latency": proxy.get("latency_ms"),
                 "description": f"{proxy.get('host')}:{proxy.get('port')}"
-                + " · 仅 TCP 端口探测，不代表业务就绪"
+                + " · 仅 TCP 端口探测"
                 + (f" · {proxy.get('error')}" if proxy.get("error") else ""),
                 "observedAt": proxy["observed_at"],
                 "evidence": proxy["evidence"],
@@ -244,7 +244,7 @@ def _build_system_snapshot() -> dict:
                 "status": _network_health(receiver),
                 "latency": receiver.get("latency_ms"),
                 "description": f"{receiver.get('host')}:{receiver.get('port')}"
-                + " · 仅 TCP 端口探测，不代表业务就绪"
+                + " · 仅 TCP 端口探测"
                 + (f" · {receiver.get('error')}" if receiver.get("error") else ""),
                 "observedAt": receiver["observed_at"],
                 "evidence": receiver["evidence"],
@@ -254,7 +254,7 @@ def _build_system_snapshot() -> dict:
                 "name": "MaaFW 上次手动检查",
                 "status": ("healthy" if node.get("success") else "warning") if node_current else "uncertain",
                 "latency": None,
-                "description": (f"上次手动检查：{node.get('message')} · 仅代表当时界面" if node_current else "上次检查不属于当前账号或窗口，请重新检查") if node else "尚未测试，请点击下方节点测试按钮",
+                "description": (f"上次手动检查：{node.get('message')}" if node_current else "上次检查不属于当前账号或窗口，请重新检查") if node else "尚未测试，请点击下方节点测试按钮",
                 "observedAt": node.get("completed_at") if node else None,
                 "evidence": "manual_diagnostic",
             },
@@ -263,7 +263,7 @@ def _build_system_snapshot() -> dict:
                 "name": "数据源目录",
                 "status": "healthy" if data_dir["state"] == "ok" else "warning",
                 "latency": None,
-                "description": (data_dir["path"] + " · 仅目录检查，不代表数据同步完成") if data_dir["path"] else "尚未配置阿里客户端数据目录，请前往设置页配置",
+                "description": (data_dir["path"] + " · 仅目录检查") if data_dir["path"] else "尚未配置阿里客户端数据目录，请前往设置页配置",
                 "observedAt": data_dir_observed_at,
                 "evidence": "directory_check",
             },

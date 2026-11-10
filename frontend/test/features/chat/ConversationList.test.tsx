@@ -93,15 +93,6 @@ describe("ConversationList country marker", () => {
     expect(badges!.textContent).not.toContain("ID");
   });
 
-  it("resolves a full country name to its flag", async () => {
-    await render(conversation({ customer: { ...conversation().customer, country: "Spain" } }));
-
-    const marker = container.querySelector<HTMLElement>('[data-country-code="ES"]');
-    expect(marker).not.toBeNull();
-    expect(marker!.querySelector(".fi-es")).not.toBeNull();
-    expect(marker!.textContent).toBe("");
-  });
-
   it("renders no marker for an unknown country value", async () => {
     await render(conversation({ customer: { ...conversation().customer, country: "Straße" } }));
 

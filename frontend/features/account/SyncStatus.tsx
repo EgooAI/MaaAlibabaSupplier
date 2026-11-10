@@ -29,6 +29,7 @@ export function SyncStatus({ refreshError = false, refreshPending = false, butto
       if (!(error instanceof AccountChangedError)) message.error(error instanceof Error ? error.message : "同步请求提交失败");
     }
   };
+  const refreshButton = <Button type={compact ? "text" : "default"} size="small" aria-label={actionLabel} icon={<ReloadOutlined />} loading={syncBusy || active} disabled={blocked || active || retrying || !snapshot.account.self_ali_id || snapshot.data_dir.state !== "ok"} onClick={() => void submit()}>{compact ? null : actionLabel}</Button>;
   return (
     <Space wrap size="small" role="status">
       <Tag color={blocked || refreshError ? "error" : active || refreshPending ? "processing" : retrying ? "warning" : failed || keyBlocked ? "error" : !source.ready || source.freshness === "stale" ? "warning" : "success"}>{label}</Tag>
@@ -36,7 +37,7 @@ export function SyncStatus({ refreshError = false, refreshPending = false, butto
       {retrying && !active ? <Typography.Text type="secondary">自动重试时间：{time(source.retry_at)}</Typography.Text> : null}
       {(failed || active) && source.stale ? <Typography.Text type="secondary">存档可能过期</Typography.Text> : null}
       <Typography.Text type="secondary" className={compact ? "hidden text-xs sm:inline" : undefined}>上次成功：{time(source.last_success)}</Typography.Text>
-      <Tooltip title={compact ? `${actionLabel} · 上次成功：${time(source.last_success)}` : actionLabel}><Button type={compact ? "text" : "default"} size="small" aria-label={actionLabel} icon={<ReloadOutlined />} loading={syncBusy || active} disabled={blocked || active || retrying || !snapshot.account.self_ali_id || snapshot.data_dir.state !== "ok"} onClick={() => void submit()}>{compact ? null : actionLabel}</Button></Tooltip>
+      {compact ? <Tooltip title={`${actionLabel} · 上次成功：${time(source.last_success)}`}>{refreshButton}</Tooltip> : refreshButton}
     </Space>
   );
 }

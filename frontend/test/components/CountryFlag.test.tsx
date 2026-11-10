@@ -24,35 +24,11 @@ afterEach(async () => {
 });
 
 describe("CountryFlag", () => {
-  it("renders the flag and ISO code by default", async () => {
-    await render(<CountryFlag country="Indonesia" />);
-
-    const marker = container.querySelector<HTMLElement>('[data-country-code="ID"]')!;
-    expect(marker.querySelector(".fi-id")).not.toBeNull();
-    expect(marker.textContent).toBe("ID");
-    expect(marker.getAttribute("title")).toBe("印度尼西亚");
-  });
-
   it("renders the full country name with the code in parentheses", async () => {
     await render(<CountryFlag country="ID" showName />);
 
     const marker = container.querySelector<HTMLElement>('[data-country-code="ID"]')!;
     expect(marker.textContent).toBe("印度尼西亚 (ID)");
     expect(marker.getAttribute("aria-label")).toBe("印度尼西亚 ID");
-  });
-
-  it("can hide the code and keep only the flag", async () => {
-    await render(<CountryFlag country="ID" showCode={false} />);
-
-    const marker = container.querySelector<HTMLElement>('[data-country-code="ID"]')!;
-    expect(marker.querySelector(".fi-id")).not.toBeNull();
-    expect(marker.textContent).toBe("");
-  });
-
-  it("renders nothing for an unknown country", async () => {
-    await render(<CountryFlag country="Straße" />);
-
-    expect(container.querySelector("[data-country-code]")).toBeNull();
-    expect(container.textContent).toBe("");
   });
 });

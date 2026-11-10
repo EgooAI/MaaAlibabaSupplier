@@ -172,7 +172,7 @@ export function useStatusWorkbench() {
       if (!scope.isCurrent()) return;
       const synced = await scope.refreshAfterAction();
       if (!scope.isCurrent()) return;
-      if (synced) message.info("卡片扫描已触发，进度见「卡片清扫服务」（每 2 秒自动更新）。历史卡片可能无法富化。");
+      if (synced) message.info("卡片扫描已触发，进度见「卡片清扫服务」（每 2 秒自动更新）。历史卡片可能保持未富化状态。");
       else message.warning("卡片扫描已触发，状态未同步");
     } catch (error: unknown) {
       if (scope.isCurrent()) message.error(operationErrorMessage(error, "卡片扫描触发失败"));

@@ -81,7 +81,7 @@ export function SettingsPage() {
         <Result
           status="info"
           title="关闭请求已接受"
-          subTitle="后端已接受退出请求，尚未确认所有进程退出。请检查程序状态后手动关闭本页面。"
+          subTitle="后端已接受退出请求。请检查程序状态后手动关闭本页面。"
         />
       </Card>
     );

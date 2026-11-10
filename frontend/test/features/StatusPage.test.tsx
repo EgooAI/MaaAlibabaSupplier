@@ -49,7 +49,7 @@ it("marks missing background data and preserves worker evidence and pool counts 
   expect(container.textContent).toContain("当前快照未提供统一后台数据");
   expect(container.textContent).not.toContain("待核对数量：3");
   await click("工作循环与队列观察");
-  expect(container.textContent).toContain("线程存活，仅执行证据");
+  expect(container.textContent).toContain("线程运行中");
   expect(container.textContent).toContain("持续 60 秒");
   expect(container.textContent).toContain("已完成循环 2");
   expect(container.textContent).toContain("待核对数量：3");
@@ -131,7 +131,7 @@ it("keeps queue completion, cooperative cancellation and local Outbox evidence s
   expect(container.textContent).toContain("全部 Outbox 记录，列表仅显示最近 20 条");
   const observed = [...container.querySelectorAll("tbody tr")].find((row) => row.textContent?.includes("observed-send"))!;
   expect(observed.textContent).toContain("本地发现匹配消息");
-  expect(observed.textContent).toContain("仅本地匹配，未确认平台送达");
+  expect(observed.textContent).toContain("本地匹配，平台送达待确认");
   expect(observed.querySelector(".ant-tag-green")).toBeNull();
   const uncertain = [...container.querySelectorAll("tbody tr")].find((row) => row.textContent?.includes("unknown-send"))!;
   expect(uncertain.textContent).toContain("结果未知");

@@ -138,7 +138,7 @@ function ChatWorkspace() {
               {active.unreadCount > 0 ? <span className="h-1.5 w-1.5 rounded-full bg-blue-500" aria-label={`本工作台未读 ${active.unreadCount}`} /> : null}
             </Button>
           </Popover> : null}
-          <Tooltip title="客户信息"><Button type="text" icon={<UserOutlined />} aria-label="客户信息" onClick={() => setCustomerInfoOpen(true)} disabled={!active}><span className="hidden sm:inline">客户信息</span></Button></Tooltip>
+          <Button type="text" icon={<UserOutlined />} aria-label="客户信息" onClick={() => setCustomerInfoOpen(true)} disabled={!active}><span className="hidden sm:inline">客户信息</span></Button>
         </div>
       }
       className="flex h-full min-h-0 w-full flex-col"

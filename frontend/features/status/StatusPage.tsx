@@ -53,7 +53,7 @@ export function StatusPage() {
         <Row gutter={[16, 16]}>
           {snapshot.modules.map((module) => <Col xs={24} md={8} key={module.id}><HealthModulePanel module={module} /></Col>)}
         </Row>
-        {snapshot.lastDiagnostic ? <Typography.Paragraph type="secondary" className="mt-3 mb-0">上次手动检查完成于 {formatDateTime(snapshot.lastDiagnostic.completed_at)} · 卖家 {snapshot.lastDiagnostic.context.self_ali_id || "未选择"} · {snapshot.lastDiagnostic.entry} · {snapshot.lastDiagnostic.currentContext ? "账号与窗口上下文匹配；不保证当前界面仍有效" : "账号或窗口上下文已失效"}</Typography.Paragraph> : null}
+        {snapshot.lastDiagnostic ? <Typography.Paragraph type="secondary" className="mt-3 mb-0">上次手动检查完成于 {formatDateTime(snapshot.lastDiagnostic.completed_at)} · 卖家 {snapshot.lastDiagnostic.context.self_ali_id || "未选择"} · {snapshot.lastDiagnostic.entry} · {snapshot.lastDiagnostic.currentContext ? "账号与窗口上下文匹配" : "账号或窗口上下文已失效"}</Typography.Paragraph> : null}
       </Card>
 
       <Card title="诊断动作">
@@ -64,7 +64,7 @@ export function StatusPage() {
           <Button disabled={!canDiagnose} loading={testingNode === "ContactSearch_GoToSearch"} onClick={() => void runNodeTest("ContactSearch_GoToSearch")}>检查联系人搜索框</Button>
           <Button disabled={!canDiagnose} loading={sweepingCards} icon={<ScanOutlined />} onClick={() => void sweepCards()}>立即扫描</Button>
         </Space>
-        <Typography.Paragraph type="secondary" className="mt-3 mb-0">界面检查仅需客户端窗口已接入，会排队执行，只识别控件，不点击或输入。选择卖家且客户端窗口接入后，可以发送、填入测试和跳转联系人，其中发送与填入仍需查看截图并确认联系人与内容。“立即扫描”会导航到未富化产品卡所在的会话，促使客户端请求卡片详情。客户端只在收到新卡片消息时才会请求，历史卡片可能仍无法富化。</Typography.Paragraph>
+        <Typography.Paragraph type="secondary" className="mt-3 mb-0">界面检查仅需客户端窗口已接入，会排队执行，只读取控件信息。选择卖家且客户端窗口接入后，可以发送、填入测试和跳转联系人，其中发送与填入仍需查看截图并确认联系人与内容。“立即扫描”会导航到未富化产品卡所在的会话，促使客户端请求卡片详情。客户端只在收到新卡片消息时才会请求，历史卡片可能保持未富化状态。</Typography.Paragraph>
       </Card>
 
         </Space> },
@@ -113,7 +113,7 @@ function ChatSyncCard({ observedSource }: { observedSource?: SourceSyncStatus | 
               <InfoCircleOutlined tabIndex={0} aria-label="技术细节" className="cursor-help text-slate-400" />
             </Tooltip>
             {source.last_error ? <Alert type="error" showIcon title={source.last_error} /> : null}
-            {source.observation_stale ? <Alert type="warning" showIcon title={`尚无成功源库观察或已超过 ${source.observation_max_age_s} 秒。已有存档可能过期；这不表示同步任务已失败。`} /> : null}
+            {source.observation_stale ? <Alert type="warning" showIcon title={`尚无成功源库观察或已超过 ${source.observation_max_age_s} 秒。已有存档可能过期。`} /> : null}
           </>
         ) : <Typography.Text type="secondary">当前快照未提供可用的聊天同步详情</Typography.Text>}
       </Space>
