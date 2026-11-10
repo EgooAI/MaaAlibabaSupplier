@@ -109,3 +109,26 @@ describe("ConversationList country marker", () => {
     expect(container.querySelector('[data-testid="conversation-preview"]')!.textContent).toBe("[图片]");
   });
 });
+
+describe("ConversationList routine status badges", () => {
+  it.each([
+    ["waiting_customer", "等待客户"],
+    ["none", "无需回复"],
+  ] as const)("hides the %s status tag", async (replyState, label) => {
+    await render(conversation({ replyState }));
+
+    const badges = container.querySelector<HTMLElement>('[data-testid="conversation-badges"]')!;
+    expect(badges.textContent).not.toContain(label);
+  });
+
+  it.each([
+    ["needs_reply", "待回复"],
+    ["history_pending", "历史待确认"],
+    ["unknown", "回复状态未知"],
+  ] as const)("keeps the %s status tag", async (replyState, label) => {
+    await render(conversation({ replyState }));
+
+    const badges = container.querySelector<HTMLElement>('[data-testid="conversation-badges"]')!;
+    expect(badges.textContent).toContain(label);
+  });
+});
