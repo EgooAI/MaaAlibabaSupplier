@@ -1,0 +1,33 @@
+{
+    "Common_DismissLowQualityDialog": {
+        "desc": "识别低质客户免打扰弹窗，点击左侧我知道了，每次任务最多点击一次",
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "Dialog/弹窗_低质客户免打扰.png"
+                ],
+                "roi": [
+                    468,
+                    544,
+                    407,
+                    136
+                ],
+                "green_mask": true,
+                "order_by": "Score"
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target_offset": [
+                    20,
+                    8,
+                    -247,
+                    -16
+                ]
+            }
+        },
+        "max_hit": 1
+    }
+}

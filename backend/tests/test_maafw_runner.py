@@ -512,13 +512,13 @@ def native_pipeline(tmp_path):
     assert controller.post_connection().wait().succeeded
     resource = Resource()
     pipeline = {}
-    for filename in ("ChatInput.json", "ContactSearch.json", "Diagnostics.json"):
+    for filename in ("ChatInput.json", "Common.json", "ContactSearch.json", "Diagnostics.json"):
         path = ASSETS / "resource" / "pipeline" / filename
         assert resource.post_pipeline(path).wait().succeeded
         pipeline.update(load_jsonc(path))
     templates = dict.fromkeys(
         template
-        for name in ("ChatInput_GoToInput", "ContactSearch_ClearSearchBox", "ContactSearch_ClickSearchButton")
+        for name in ("ChatInput_GoToInput", "ContactSearch_ClearSearchBox", "ContactSearch_ClickSearchButton", "Common_DismissLowQualityDialog")
         for template in pipeline[name]["recognition"]["param"]["template"]
     )
     images = []
@@ -536,6 +536,49 @@ def native_pipeline(tmp_path):
         images=images, templates=templates, pipeline=pipeline,
     )
     tasker.post_stop().wait()
+
+
+@pytest.mark.parametrize("dialog_position", [None, (490, 560), (560, 635)])
+def test_native_contact_search_dismisses_dialog_once_before_search(native_pipeline, monkeypatch, dialog_position):
+    native = native_pipeline
+    controller = native.controller
+    search = native.templates["Contact/联系人_搜索.png"]
+    height, width = search.shape[:2]
+    controller.frame[40:40 + height, 60:60 + width] = search
+    expected_boxes = [(60, 40, width, height)]
+    if dialog_position is not None:
+        pixels = native.templates["Dialog/弹窗_低质客户免打扰.png"].copy()
+        # Replaces masked pixels with a different background, as in a real screenshot.
+        pixels[(pixels == [0, 255, 0]).all(axis=2)] = [90, 30, 120]
+        x, y = dialog_position
+        h, w = pixels.shape[:2]
+        controller.frame[y:y + h, x:x + w] = pixels
+        expected_boxes.insert(0, (x + 20, y + 8, 60, 20))
+
+    click = controller.click
+
+    def bounded_click(x, y):
+        click(x, y)
+        # Keeps a missing max_hit regression from looping on the unchanged dialog.
+        return len(controller.clicks) <= len(expected_boxes)
+
+    monkeypatch.setattr(controller, "click", bounded_click)
+    override = {
+        "ContactSearch_FindSearchBox": {"timeout": 0},
+        "ContactSearch_InputText": {"action": {"param": {"input_text": "buyer-test"}}, "post_delay": 0},
+    }
+    # Both entry paths must check the dialog, with the once-only limit reset per task.
+    for entry in ("ContactSearch", "ContactSearch_GoToSearch"):
+        controller.clicks.clear()
+        controller.texts.clear()
+        controller.keys.clear()
+        detail = native.tasker.post_task(entry, override).wait().get()
+        assert detail is not None and detail.status.succeeded
+        assert len(controller.clicks) == len(expected_boxes)
+        for (x, y), (left, top, w, h) in zip(controller.clicks, expected_boxes):
+            assert left <= x < left + w and top <= y < top + h
+        assert controller.texts == ["buyer-test"]
+        assert controller.keys == [("click", 13)]
 
 
 @pytest.mark.parametrize("button", ["enabled", "disabled", "missing", "click_failed"])

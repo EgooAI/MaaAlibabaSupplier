@@ -8,6 +8,15 @@
         ]
     },
     "ContactSearch_GoToSearch": {
+        "desc": "搜索前尝试关闭弹窗，未匹配到则直接继续",
+        "pre_delay": 0,
+        "post_delay": 0,
+        "next": [
+            "[JumpBack]Common_DismissLowQualityDialog",
+            "ContactSearch_FindSearchBox"
+        ]
+    },
+    "ContactSearch_FindSearchBox": {
         "desc": "聚焦到联系人搜索框（守卫节点）",
         "pre_delay": 0,
         "post_delay": 0,
