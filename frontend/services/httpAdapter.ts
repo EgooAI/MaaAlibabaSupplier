@@ -168,11 +168,11 @@ function prepareAccountRequest(path: string, init?: RequestInit) {
     if (!new Headers(init?.headers).get("X-Account-Epoch")) throw new AccountChangedError();
     return { init };
   }
-  const scoped = path === "/api/settings/connection/retry" || /^\/api\/(agent(?:\/|$)|inbox(?:\/|$)|outbox(?:\/|$)|conversations(?:\/|$)|portraits(?:\/|$)|messages(?:\/|$)|self-info(?:\/|$)|cache\/reset(?:\/|$)|status\/(?:node-test|test-tasks)(?:\/|$)|cards(?:\/|$))/.test(path);
+  const scoped = path === "/api/settings/connection/retry" || /^\/api\/(agent(?:\/|$)|inbox(?:\/|$)|outbox(?:\/|$)|conversations(?:\/|$)|portraits(?:\/|$)|messages(?:\/|$)|self-info(?:\/|$)|cache\/reset(?:\/|$)|status\/(?:node-test|test-tasks)(?:\/|$)|cards(?:\/|$)|remote(?:\/|$))/.test(path);
   if (!scoped) return { init };
   const ticket = captureAccount();
   const { capabilities, client } = accountSession.get().snapshot!;
-  const operates = /\/goto-contact$/.test(path) || (/\/conversations\/[^/]+\/messages$/.test(path) && init?.method === "POST") || /\/outbox\/[^/]+\/(confirm|retry)$/.test(path);
+  const operates = /\/goto-contact$/.test(path) || path.startsWith("/api/remote/") || (/\/conversations\/[^/]+\/messages$/.test(path) && init?.method === "POST") || /\/outbox\/[^/]+\/(confirm|retry)$/.test(path);
   const usesAi = /\/(suggestions|analysis|compose-translation)$/.test(path) || (path === "/api/messages/translations" && init?.method === "POST");
   if (operates && !capabilities.operate_client) throw new Error("请先选择卖家账号，并等待客户端窗口自动接入");
   if (path === "/api/status/node-test" && !client.connected) throw new Error("请先等待客户端窗口自动接入，再运行只读界面检查");
@@ -183,6 +183,28 @@ function prepareAccountRequest(path: string, init?: RequestInit) {
 }
 
 export const httpBackend: OperationsBackend = {
+  createRemoteSession: () => requestJson("/api/remote/session", { method: "POST", body: JSON.stringify({}) }),
+  getRemoteFrame: async (sessionId, etag) => {
+    const path = `/api/remote/session/${encodeURIComponent(sessionId)}/frame`;
+    const auth = captureAuth();
+    const account = prepareAccountRequest(path);
+    const headers = new Headers(account.init?.headers);
+    headers.set("Authorization", `Bearer ${auth.token}`);
+    if (etag) headers.set("If-None-Match", etag);
+    const response = await fetch(path, requestInit({ headers, cache: "no-store", credentials: "omit", signal: AbortSignal.any([auth.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]) }));
+    auth.assertCurrent();
+    if (response.status === 401) { void authSession.unauthorized(auth.generation, response.headers.get("X-Request-ID") ?? undefined); auth.assertCurrent(); }
+    account.ticket?.assertCurrent(response.headers.get("X-Account-Epoch"));
+    if (response.status === 304) return { blob: null, etag: etag ?? null, width: 0, height: 0 };
+    if (!response.ok) throw new ApiError(envelopeMessage(await response.text(), path), path, { status: response.status });
+    if (response.headers.get("X-Account-Epoch") !== account.ticket!.epoch || response.headers.get("Content-Type")?.split(";")[0] !== "image/jpeg") throw new ApiError("远控截图响应无效", path);
+    return {
+      blob: await response.blob(), etag: response.headers.get("ETag"),
+      width: Number(response.headers.get("X-Frame-Width")), height: Number(response.headers.get("X-Frame-Height")),
+    };
+  },
+  remoteAction: async (input) => { await requestJson("/api/remote/action", { method: "POST", body: JSON.stringify(input) }); },
+  closeRemoteSession: async (sessionId) => { await requestVoid(`/api/remote/session/${encodeURIComponent(sessionId)}`, { method: "DELETE" }); },
   getConnection: () => requestJson("/api/settings/connection"),
   connectClient: (epoch) => requestJson("/api/settings/connection/connect", { method: "POST", body: JSON.stringify({ epoch }) }),
   retryConnection: async (epoch) => {

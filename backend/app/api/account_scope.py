@@ -27,7 +27,7 @@ def is_account_path(path: str) -> bool:
     return is_account_setting(path) or any(path == prefix or path.startswith(prefix + "/") for prefix in (
         "/api/conversations", "/api/inbox", "/api/messages", "/api/outbox", "/api/portraits",
         "/api/self-info", "/api/sync-state", "/api/cache/reset", "/api/status/node-test", "/api/status/test-tasks", "/api/cards",
-        "/api/agent",
+        "/api/agent", "/api/remote",
     ))
 
 

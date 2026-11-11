@@ -301,6 +301,41 @@ def capture_client_frame() -> ClientFrame:
         return frame
 
 
+def run_remote_action(action: str, payload: dict) -> tuple[bool, str]:
+    """Run one direct MaaFW controller action inside a guarded remote session."""
+    from backend.app.api.envelope import AppError
+    from backend.app.shared.backend import gui_session
+
+    with account_lock, _run_lock:
+        token = getattr(gui_session._active_session, "token", None)
+        if token is None:
+            raise AppError("Remote control requires run_guarded.", status_code=409)
+        gui_session._validate_token(token)
+        controller = _tasker.controller
+        if action == "click":
+            post = lambda: controller.post_click(payload["x"], payload["y"])
+        elif action == "long_press":
+            x, y = payload["x"], payload["y"]
+            post = lambda: controller.post_swipe(x, y, x, y, payload["duration"])
+        elif action == "drag":
+            post = lambda: controller.post_swipe(
+                payload["x1"], payload["y1"], payload["x2"], payload["y2"], payload["duration"]
+            )
+        elif action == "type":
+            post = lambda: controller.post_input_text(payload["text"])
+        else:
+            raise AppError("Unsupported remote control action.", status_code=422)
+        try:
+            job = _post_native(post)
+            if not _wait_native(job).succeeded:
+                return False, "MaaFW controller action failed."
+            gui_session._validate_token(token)
+            return True, "Action completed."
+        except Exception as exc:
+            logger.opt(exception=True).error("MaaFW remote control action failed")
+            return False, str(exc)
+
+
 def goto_contact(contact_ref: str) -> tuple[bool, str]:
     """Navigate to a contact's chat window via MaaFW ContactSearch pipeline."""
     override = {

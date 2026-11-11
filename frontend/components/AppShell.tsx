@@ -45,6 +45,7 @@ const navItems = [
     label: "设置",
     children: [
       { key: "/status", icon: <AppstoreOutlined />, label: <Link href="/status">系统状态</Link> },
+      { key: "/remote", icon: <SwapOutlined />, label: <Link href="/remote">客户端远控</Link> },
       { key: "/settings", icon: <PoweroffOutlined />, label: <Link href="/settings">系统设置</Link> },
     ],
   },
