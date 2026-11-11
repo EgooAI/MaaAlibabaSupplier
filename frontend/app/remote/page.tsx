@@ -1,6 +1,6 @@
 "use client";
 
-import { DownloadOutlined } from "@ant-design/icons";
+import { DownloadOutlined, PoweroffOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Input, Space, Spin, Typography } from "antd";
 import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -101,7 +101,11 @@ export default function RemotePage() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = "client-screenshot.png";
+      const now = new Date();
+      const pad = (value: number) => String(value).padStart(2, "0");
+      const date = `${pad(now.getFullYear() % 100)}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+      const time = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+      link.download = `client-${date}-${time}.png`;
       link.click();
       URL.revokeObjectURL(url);
     } catch (reason) {
@@ -111,9 +115,12 @@ export default function RemotePage() {
     }
   };
 
-  return <Card title="客户端远控" extra={<Typography.Text type="secondary">{activeSessionId ? "已连接" : "正在连接"}</Typography.Text>}>
+  return <Card>
     <Space direction="vertical" className="w-full" size="middle">
-      <Typography.Text type="secondary">点击或拖动客户端画面进行操作。长按约 600 毫秒触发。</Typography.Text>
+      <div className="flex items-center justify-between gap-4">
+        <Typography.Text type="secondary">点击或拖动客户端画面进行操作。长按约 600 毫秒触发。</Typography.Text>
+        <Typography.Text type="secondary" className="shrink-0">{stopped ? "已结束" : activeSessionId ? "已连接" : "正在连接"}</Typography.Text>
+      </div>
       {error ? <Alert type="warning" showIcon title={error} /> : null}
       {imageUrl && imageEpoch === snapshot?.account.epoch ? <Image
         src={imageUrl} alt="客户端实时画面" width={size.width} height={size.height} unoptimized draggable={false}
@@ -133,8 +140,10 @@ export default function RemotePage() {
         <Input value={text} onChange={(event) => setText(event.target.value)} onPressEnter={submitText} placeholder="输入要键入到客户端的文本" maxLength={4000} />
         <Button type="primary" disabled={!activeSessionId || busy || !text.trim()} onClick={submitText}>键入</Button>
       </Space.Compact>
-      <Button icon={<DownloadOutlined />} disabled={!activeSessionId || originalBusy} loading={originalBusy} onClick={() => void downloadOriginal()}>下载截图 PNG</Button>
-      <Button danger disabled={!activeSessionId} onClick={() => { void close(activeSessionId); setSessionId(undefined); setStopped(true); }}>结束远控</Button>
+      <Space>
+        <Button icon={<DownloadOutlined />} disabled={!activeSessionId || originalBusy} loading={originalBusy} onClick={() => void downloadOriginal()}>下载截图 PNG</Button>
+        <Button danger icon={<PoweroffOutlined />} disabled={!activeSessionId} onClick={() => { void close(activeSessionId); setSessionId(undefined); setStopped(true); }}>结束远控</Button>
+      </Space>
     </Space>
   </Card>;
 }

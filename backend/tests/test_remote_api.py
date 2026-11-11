@@ -1,4 +1,5 @@
 from io import BytesIO
+import re
 from types import SimpleNamespace
 
 import numpy as np
@@ -40,7 +41,7 @@ def test_remote_frame_uses_jpeg_and_avoids_retransmitting_unchanged_frame(client
     original = client.get(f"/api/remote/session/{session_id}/download")
     assert original.status_code == 200
     assert original.headers["content-type"] == "image/png"
-    assert original.headers["content-disposition"] == 'attachment; filename="client-screenshot.png"'
+    assert re.fullmatch(r'attachment; filename="client-\d{6}-\d{6}\.png"', original.headers["content-disposition"])
     assert original.headers["X-Frame-Width"] == "20"
     assert original.content == frame.png_bytes
 

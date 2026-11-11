@@ -107,7 +107,7 @@ def download_frame(session_id: str) -> Response:
     return Response(
         result.png_bytes, media_type="image/png",
         headers={
-            "Cache-Control": "no-store", "Content-Disposition": 'attachment; filename="client-screenshot.png"',
+            "Cache-Control": "no-store", "Content-Disposition": f'attachment; filename="client-{time.strftime("%y%m%d-%H%M%S")}.png"',
             "X-Frame-Width": str(result.width), "X-Frame-Height": str(result.height),
         },
     )

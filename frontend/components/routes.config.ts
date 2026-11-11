@@ -7,6 +7,7 @@ export type RouteInfo = {
 /** 单一事实源：文件路由 == 导航 == 标题。新增页面只改这里。 */
 export const ROUTES: RouteInfo[] = [
   { path: "/", title: "首页" },
+  { path: "/remote", title: "客户端远控" },
   { path: "/chat", title: "聊天工作台", navParent: "/chat" },
   { path: "/chat/customer-sessions", title: "聊天工作台", navParent: "/chat" },
   { path: "/chat/batch", title: "批量管理", navParent: "/chat" },
@@ -18,7 +19,6 @@ export const ROUTES: RouteInfo[] = [
   { path: "/agent/system-agents", title: "系统 Agent", navParent: "/agent" },
   { path: "/agent/regular-agents", title: "普通 Agent", navParent: "/agent" },
   { path: "/status", title: "系统状态", navParent: "settings" },
-  { path: "/remote", title: "客户端远控", navParent: "settings" },
   { path: "/settings", title: "系统设置", navParent: "settings" },
 ];
 
@@ -46,6 +46,6 @@ export function resolveSelectedKey(pathname: string): string {
 export function resolveOpenKeys(pathname: string): string[] {
   if (pathname === "/chat" || pathname.startsWith("/chat/")) return ["/chat"];
   if (pathname.startsWith("/agent/") || pathname === "/agent") return ["/agent"];
-  if (pathname.startsWith("/status") || pathname.startsWith("/settings") || pathname.startsWith("/remote")) return ["settings"];
+  if (pathname.startsWith("/status") || pathname.startsWith("/settings")) return ["settings"];
   return [];
 }
