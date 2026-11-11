@@ -42,6 +42,16 @@ describe("TimeText", () => {
     expect(container.textContent).toBe("1分钟前");
   });
 
+  it("uses the render time for new messages between shared timer ticks", async () => {
+    await render("2026-11-05 11:59:30");
+    await act(async () => vi.advanceTimersByTime(10_000));
+    await render("2026-11-05 12:00:09");
+    expect(container.textContent).toBe("刚刚");
+
+    await act(async () => vi.advanceTimersByTime(80_000));
+    expect(container.textContent).toBe("1分钟前");
+  });
+
   it("keeps unknown values readable instead of inventing a timestamp", async () => {
     await render("未知时间");
     const time = container.querySelector("time")!;

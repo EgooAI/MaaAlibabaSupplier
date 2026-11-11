@@ -45,6 +45,16 @@ def test_instance_profile_sender_and_cid_still_observe_the_send(case):
     assert result["status"] == "observed" and result["matched_message_id"] == "msg_a:new"
 
 
+@pytest.mark.parametrize("text", [" hello", "hello ", "\t\r\nhello\u00a0"])
+def test_boundary_whitespace_matches_without_rewriting_evidence(case, text):
+    record, snapshot = case
+    snapshot["messages"][0]["text"] = text
+    result = match_outbox(record, snapshot, [])
+    assert result["status"] == "observed" and result["matched_message_id"] == "msg_a:new"
+    assert result["evidence"]["message"]["text"] == text
+    assert record["content"] == "hello"
+
+
 def test_repeated_text_already_in_baseline_is_not_new(case):
     record, snapshot = case
     snapshot["messages"][0]["id"] = "msg_a:old"
@@ -53,7 +63,7 @@ def test_repeated_text_already_in_baseline_is_not_new(case):
 
 @pytest.mark.parametrize("field,value", [
     ("sender_id", "20002@icbu"), ("sender_id", "10001"), ("type", 1), ("type", False),
-    ("text", "hello "), ("text", "Hello"), ("is_system", True), ("is_auto_reply", True),
+    ("text", "hel lo"), ("text", "Hello"), ("text", None), ("is_system", True), ("is_auto_reply", True),
     ("extension_valid", False), ("cid", "10001-200020"), ("cid", "10001-20002-30003"),
     ("created_at", 994.99), ("created_at", 1122.01), ("created_at", float("nan")),
 ])
@@ -62,6 +72,14 @@ def test_nonmatching_or_unsafe_messages_cannot_observe(case, field, value):
     snapshot["messages"][0][field] = value
     result = match_outbox(record, snapshot, [])
     assert result["status"] == "verifying" and "matched_message_id" not in result
+
+
+@pytest.mark.parametrize("text", ["hello  there", "hello\nthere", "hello\tthere", "hello\u00a0there"])
+def test_internal_whitespace_is_not_normalized(case, text):
+    record, snapshot = case
+    record["content"] = "hello there"
+    snapshot["messages"][0]["text"] = text
+    assert match_outbox(record, snapshot, [])["status"] == "verifying"
 
 
 @pytest.mark.parametrize("occurred_at", [995.0, 1122.0])
@@ -81,16 +99,18 @@ def test_send_time_falls_back_to_created_at_not_updated_at(case):
     assert match_outbox(record, snapshot, [])["status"] == "unknown"
 
 
-def test_multiple_new_equal_text_messages_are_ambiguous(case):
+@pytest.mark.parametrize("text", ["hello", " hello "])
+def test_multiple_new_equal_text_messages_are_ambiguous(case, text):
     record, snapshot = case
-    snapshot["messages"].append({**snapshot["messages"][0], "id": "msg_b:second"})
+    snapshot["messages"].append({**snapshot["messages"][0], "id": "msg_b:second", "text": text})
     assert match_outbox(record, snapshot, [])["reason"] == "multiple_candidate_messages"
 
 
 @pytest.mark.parametrize("other_status", ["running", "verifying", "unknown"])
-def test_two_possible_attempts_both_unknown_independent_of_order(case, other_status):
+@pytest.mark.parametrize("content", ["hello", " hello "])
+def test_two_possible_attempts_both_unknown_independent_of_order(case, other_status, content):
     record, snapshot = case
-    other = {**deepcopy(record), "id": "task-two", "status": other_status}
+    other = {**deepcopy(record), "id": "task-two", "status": other_status, "content": content}
     for task, competitors in ((record, [record, other]), (other, [other, record])):
         result = match_outbox(task, snapshot, competitors)
         assert result["status"] == "unknown" and result["reason"] == "ambiguous_send_attempts"
@@ -108,9 +128,10 @@ def test_other_attempt_can_be_excluded_by_baseline_or_time(case):
     assert match_outbox(record, snapshot, [other])["status"] == "observed"
 
 
-def test_possible_competitor_missing_baseline_is_ambiguous(case):
+@pytest.mark.parametrize("content", ["hello", " hello "])
+def test_possible_competitor_missing_baseline_is_ambiguous(case, content):
     record, snapshot = case
-    other = {**record, "id": "task-two", "baseline": None, "status": "unknown"}
+    other = {**record, "id": "task-two", "baseline": None, "status": "unknown", "content": content}
     assert match_outbox(record, snapshot, [other])["reason"] == "ambiguous_send_attempts"
 
 
@@ -156,7 +177,7 @@ def test_waiting_and_unknown_are_preserved_for_later_observation(case, status, v
     assert match_outbox(record, snapshot, [])["status"] == expected
 
 
-@pytest.mark.parametrize("changes", [{"action": "test"}, {"may_have_sent": False}, {"status": "queued_send"}])
+@pytest.mark.parametrize("changes", [{"action": "test"}, {"may_have_sent": False}, {"status": "queued_send"}, {"content": " \t\n"}])
 def test_non_send_or_unstarted_task_never_observed(case, changes):
     record, snapshot = case
     record.update(changes)

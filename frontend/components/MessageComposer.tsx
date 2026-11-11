@@ -1,9 +1,9 @@
 "use client";
 
-import { DownOutlined, ExpandAltOutlined, SendOutlined, ToolOutlined } from "@ant-design/icons";
-import { Button, Dropdown, Input, Modal, Space, Tooltip } from "antd";
+import { DownOutlined, ExpandAltOutlined, SendOutlined, ShrinkOutlined, ToolOutlined } from "@ant-design/icons";
+import { Button, Dropdown, Input, Space, Tooltip } from "antd";
 import type { MenuProps } from "antd";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ComponentRef, type ReactNode } from "react";
 
 export type MessageComposerTool = {
   key: string;
@@ -43,7 +43,8 @@ export function MessageComposer({
   footer,
 }: MessageComposerProps) {
   const [expanded, setExpanded] = useState(false);
-  const [expandedDraft, setExpandedDraft] = useState("");
+  const textareaRef = useRef<ComponentRef<typeof Input.TextArea>>(null);
+  const expandLabel = expanded ? "收起长文本编辑" : "展开编辑长文本";
   const menuItems: MenuProps["items"] = useMemo(
     () => tools.map((tool) => ({ key: tool.key, label: tool.label, disabled: tool.disabled })),
     [tools],
@@ -52,12 +53,13 @@ export function MessageComposer({
 
   return (
     <div className="relative w-full">
-      <Space.Compact className={`w-full ${compact ? "overflow-hidden rounded-xl border border-slate-200 bg-white transition-colors [&:has(textarea:focus)]:border-blue-400" : ""}`} orientation="vertical">
+      <div className={`flex w-full flex-col ${compact ? "overflow-hidden rounded-xl border border-slate-200 bg-white transition-colors [&:has(textarea:focus)]:border-blue-400" : ""}`}>
         <Input.TextArea
-          autoSize={{ minRows: compact ? 1 : 3, maxRows: compact ? 6 : 8 }}
+          ref={textareaRef}
+          autoSize={compact && expanded ? false : { minRows: compact ? 1 : 3, maxRows: compact ? 6 : 8 }}
           variant={compact ? "borderless" : "outlined"}
-          className={compact ? "focus:!outline-none" : undefined}
-          style={compact ? { paddingRight: 40 } : undefined}
+          className={compact ? "focus:!outline-none" : "!rounded-b-none"}
+          style={compact ? { paddingRight: 40, ...(expanded ? { height: "min(50dvh, 400px)", resize: "none" } : {}) } : undefined}
           aria-label="消息内容"
           value={value}
           onChange={(event) => onChange(event.target.value)}
@@ -84,7 +86,7 @@ export function MessageComposer({
             <Space.Compact>
             <Button
               type="primary"
-              className={compact && !onFill ? "!rounded-full" : ""}
+              className={compact ? onFill ? "!rounded-s-full" : "!rounded-full" : ""}
               icon={<SendOutlined />}
               onClick={onSend}
               loading={loading}
@@ -93,51 +95,29 @@ export function MessageComposer({
               {sendLabel}
             </Button>
             {onFill ? <Dropdown trigger={["click"]} menu={{ items: [{ key: "fill", label: "仅填入客户端" }], onClick: onFill }} disabled={!canSend}>
-              <Button type="primary" aria-label="更多发送方式" icon={<DownOutlined />} disabled={!canSend} />
+              <Button type="primary" className={compact ? "!rounded-e-full" : undefined} aria-label="更多发送方式" icon={<DownOutlined />} disabled={!canSend} />
             </Dropdown> : null}
             </Space.Compact>
           </div>
         </div>
-      </Space.Compact>
+      </div>
       {compact ? (
-        <Tooltip title="展开编辑长文本">
+        <Tooltip title={expandLabel}>
           <Button
             type="text"
             size="small"
-            aria-label="展开编辑长文本"
-            icon={<ExpandAltOutlined />}
+            aria-label={expandLabel}
+            aria-expanded={expanded}
+            icon={expanded ? <ShrinkOutlined /> : <ExpandAltOutlined />}
             className="!absolute right-1.5 top-1.5 z-10 text-slate-400 hover:text-blue-500"
             disabled={disabled}
             onClick={() => {
-              setExpandedDraft(value);
-              setExpanded(true);
+              setExpanded((open) => !open);
+              textareaRef.current?.focus({ preventScroll: true });
             }}
           />
         </Tooltip>
       ) : null}
-      <Modal
-        title="编辑消息内容"
-        open={expanded}
-        okText="完成"
-        cancelText="取消"
-        onOk={() => {
-          onChange(expandedDraft);
-          setExpanded(false);
-        }}
-        onCancel={() => setExpanded(false)}
-        destroyOnHidden
-        width={640}
-      >
-        <Input.TextArea
-          aria-label="消息内容（展开编辑）"
-          value={expandedDraft}
-          onChange={(event) => setExpandedDraft(event.target.value)}
-          autoSize={{ minRows: 12, maxRows: 18 }}
-          placeholder={placeholder}
-          disabled={disabled}
-          showCount
-        />
-      </Modal>
     </div>
   );
 }

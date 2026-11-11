@@ -418,19 +418,27 @@ def test_real_matching_observes_unique_message_and_rejects_ambiguous_attempts(en
         assert env.service.reconcile_once() == []
 
 
-def test_real_matching_can_observe_late_ingestion_after_verification_timeout(env):
-    task = prepared(env)
+@pytest.mark.parametrize("source_text", ["Any further needs?", " Any further needs?"])
+def test_real_matching_can_observe_late_ingestion_after_verification_timeout(env, source_text):
+    task = prepared(env, content="Any further needs?")
     env.source["messages"] = []
     env.source["checked_at"] = env.now + 121
     assert env.service.reconcile_once() == []
     assert env.service.get(env.context, task["id"])["status"] == "unknown"
     env.source["messages"] = [{
         "id": "message:late", "sender_id": "seller@icbu", "cid": "seller-buyer",
-        "created_at": env.now + 1, "type": 0, "text": task["content"],
+        "created_at": env.now + 1, "type": 0, "text": source_text,
         "is_system": False, "is_auto_reply": False, "extension_valid": True,
     }]
-    assert env.service.reconcile_once()[0]["status"] == "observed"
+    observed = env.service.reconcile_once()[0]
+    assert observed["status"] == "observed"
+    saved = env.service.get(env.context, task["id"])
+    assert saved["matched_message_id"] == "message:late"
+    assert saved["evidence"]["message"]["text"] == source_text
+    assert saved["content"] == "Any further needs?"
+    assert env.service.reconcile_once() == []
     assert env.calls.count("click") == 1
+    assert env.calls.count("input") == 1 and env.queue.jobs == []
 
 
 def test_new_possible_send_during_source_read_is_included_in_ambiguity_check(env, monkeypatch):

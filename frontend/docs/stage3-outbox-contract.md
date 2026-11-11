@@ -18,6 +18,8 @@ The send button directly submits; its adjacent menu offers fill-only. There are 
 
 For `send`, a valid source-message baseline is required before GUI operations. `test` does not require a baseline. Before posting the native send task, the service durably records `may_have_sent=true`. A failed or interrupted possible send is never automatically replayed. The verifier checks local-source evidence approximately every two seconds with the existing 120-second occurrence window. A local match is not platform delivery or read evidence.
 
+Local text comparison strips only leading and trailing whitespace, matching the submission rule. Internal whitespace and case remain significant. The same comparison applies to candidate messages and competing sends, so whitespace variants cannot bypass ambiguity checks. Evidence retains the original source text and exact message ID. Existing unknown tasks remain eligible for later reconciliation without another send.
+
 Only `queued` is cancellable. Retry requires `failed && !may_have_sent` and captures a new account/window token. Restart invalidates unfinished work without replay. Old `awaiting_confirmation` and `queued_send` tasks become failed on recovery, or unknown if marked possibly sent. Legacy screenshot files, nullable database columns and audit events are retained; no new confirmation images are captured. Confirmation and screenshot API routes are retired.
 
 ## Drafts and idempotency

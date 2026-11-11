@@ -4,36 +4,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MessageComposer } from "@/components/MessageComposer";
 
-// antd Modal relies on portal + motion; happy-dom cannot unmount it after the
-// leave animation. Replace only Modal with a static inline double; every other
-// antd component stays real.
-vi.mock("antd", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("antd")>();
-  type ModalDoubleProps = {
-    open?: boolean;
-    title?: React.ReactNode;
-    okText?: string;
-    cancelText?: string;
-    onOk?: () => void;
-    onCancel?: () => void;
-    children?: React.ReactNode;
-  };
-  const Modal = ({ open, title, okText, cancelText, onOk, onCancel, children }: ModalDoubleProps) =>
-    open ? (
-      <div className="ant-modal-root">
-        <div className="ant-modal">
-          <div className="ant-modal-title">{title}</div>
-          <div className="ant-modal-content">{children}</div>
-          <div className="ant-modal-footer">
-            <button type="button" onClick={onCancel}>{cancelText ?? "取消"}</button>
-            <button type="button" onClick={onOk}>{okText ?? "确定"}</button>
-          </div>
-        </div>
-      </div>
-    ) : null;
-  return { ...actual, Modal };
-});
-
 let root: Root;
 let container: HTMLDivElement;
 
@@ -51,11 +21,7 @@ const render = async (props: Partial<Parameters<typeof MessageComposer>[0]> = {}
 };
 
 const expandButton = () => container.querySelector('button[aria-label="展开编辑长文本"]') as HTMLButtonElement | null;
-const modalTextarea = () => container.querySelector('textarea[aria-label="消息内容（展开编辑）"]') as HTMLTextAreaElement | null;
-const modalButton = (pattern: RegExp) =>
-  [...container.querySelectorAll(".ant-modal-footer button")].find(
-    (button) => pattern.test(button.textContent ?? ""),
-  ) as HTMLButtonElement | undefined;
+const collapseButton = () => container.querySelector('button[aria-label="收起长文本编辑"]') as HTMLButtonElement | null;
 
 const typeInto = (textarea: HTMLTextAreaElement, value: string) => {
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
@@ -84,7 +50,7 @@ describe("message composer", () => {
     await act(async () => send.click());
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(onFill).not.toHaveBeenCalled();
-    expect(container.querySelector(".ant-modal")).toBeNull();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
     await act(async () => (container.querySelector('[aria-label="更多发送方式"]') as HTMLButtonElement).click());
     const item = await vi.waitFor(() => {
       const option = [...document.querySelectorAll('[role="menuitem"]')].find((node) => node.textContent === "仅填入客户端");
@@ -103,25 +69,44 @@ describe("message composer", () => {
     expect(expandButton()).toBeNull();
   });
 
-  it.each([
-    ["confirm", /完\s*成/],
-    ["cancel", /取\s*消/],
-  ] as const)("seeds the expanded editor and handles %s without leaking edits", async (action, label) => {
+  it("edits the live draft inline and preserves the editor and selection across toggles", async () => {
     const onChange = vi.fn();
-    await render({ compact: true, value: "短回复", onChange });
+    const onSend = vi.fn();
+    const props = { compact: true, value: "短回复", onChange, onSend };
+    await render(props);
+    const textarea = container.querySelector("textarea")!;
+    textarea.focus();
+    textarea.setSelectionRange(1, 2);
     await act(async () => {
       expandButton()!.click();
     });
-    expect(modalTextarea()?.value).toBe("短回复");
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.querySelectorAll("textarea")).toHaveLength(1);
+    expect(container.querySelector("textarea")).toBe(textarea);
+    expect(document.activeElement).toBe(textarea);
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([1, 2]);
+    expect(collapseButton()?.getAttribute("aria-expanded")).toBe("true");
     await act(async () => {
-      typeInto(modalTextarea()!, "第一行\n第二行长文本");
+      typeInto(textarea, "第一行\n第二行长文本");
     });
-    expect(onChange).not.toHaveBeenCalled();
+    expect(onChange).toHaveBeenCalledExactlyOnceWith("第一行\n第二行长文本");
+    await render({ ...props, value: "第一行\n第二行长文本" });
     await act(async () => {
-      modalButton(label)!.click();
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
     });
-    if (action === "confirm") expect(onChange).toHaveBeenCalledExactlyOnceWith("第一行\n第二行长文本");
-    else expect(onChange).not.toHaveBeenCalled();
-    expect(modalTextarea()).toBeNull();
+    expect(onSend).toHaveBeenCalledTimes(1);
+
+    // A replacement from translation or another draft source must remain authoritative.
+    await render({ ...props, value: "更新后的草稿" });
+    textarea.setSelectionRange(2, 4);
+    await act(async () => {
+      collapseButton()!.click();
+    });
+    expect(container.querySelector("textarea")).toBe(textarea);
+    expect(textarea.value).toBe("更新后的草稿");
+    expect(document.activeElement).toBe(textarea);
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([2, 4]);
+    expect(expandButton()?.getAttribute("aria-expanded")).toBe("false");
+    expect(onChange).toHaveBeenCalledTimes(1);
   });
 });

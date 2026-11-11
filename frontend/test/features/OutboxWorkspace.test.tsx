@@ -215,9 +215,9 @@ describe("inline outbox workflow", () => {
     expect(chat.draft).toBe("submitted text");
   });
 
-  it("does not match by content and keeps observed tasks visible until their exact message is loaded", async () => {
+  it.each(["verifying", "unknown"] as const)("merges a %s task only after observation and its exact message is loaded", async (status) => {
     vi.useFakeTimers();
-    store = [outboxTask({ status: "verifying", may_have_sent: true })];
+    store = [outboxTask({ status, may_have_sent: true })];
     await start();
     store[0] = { ...store[0], status: "observed", version: 2, matched_message_id: "messages:7" };
     await tick();
@@ -225,7 +225,7 @@ describe("inline outbox workflow", () => {
     detail.messages = [{ id: "other", role: "seller", content: "submitted text", createdAt: new Date().toISOString(), externalMid: "alibaba_icbu:other:messages:7" }];
     await act(async () => chat.refreshActiveDetail());
     expect(taskBubble()).not.toBeNull();
-    detail.messages[0] = { ...detail.messages[0], id: "actual", externalMid: `alibaba_icbu:${connectionSnapshot.account.self_ali_id}:messages:7` };
+    detail.messages[0] = { ...detail.messages[0], id: "actual", content: " submitted text", externalMid: `alibaba_icbu:${connectionSnapshot.account.self_ali_id}:messages:7` };
     await act(async () => chat.refreshActiveDetail());
     expect(taskBubble()).toBeNull();
     expect(container.querySelectorAll("[data-message-id]")).toHaveLength(1);

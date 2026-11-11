@@ -191,8 +191,10 @@ that message time or source row IDs are reliable insertion/update cursors.
   synthetic frames. Stopping and posting the send job share an admission boundary;
   tests pause before and after posting to verify that stop cannot admit a late send.
 - `test_source_messages.py` / `test_send_verification.py` check reader pins,
-  complete baselines, strict source ownership, exact text and sender matching,
-  malformed extension data, duplicate candidates and ambiguous attempts.
+  complete baselines, strict source ownership, boundary-whitespace-tolerant text
+  and exact sender matching, malformed extension data, duplicate candidates and
+  ambiguous attempts under the same text comparison. Late evidence can recover
+  unknown tasks without another GUI input or send.
 - `test_outbox_api.py` checks task versions, retired confirmation endpoints,
   idempotent receipts including accepted reply intents, and fast busy conflicts.
 - Store tests recover old confirmation states without replay or artifact deletion.

@@ -34,8 +34,9 @@ function getSnapshot() {
 
 /** Relative or calendar-style time text; hovering shows the full yyyy-mm-dd hh:mm:ss. */
 export function TimeText({ value, className }: { value: string | number | null | undefined; className?: string }) {
-  const now = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  const text = formatSmartTime(value, new Date(now));
+  useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  // The shared tick schedules refreshes; new messages need the current render time.
+  const text = formatSmartTime(value);
   const full = formatFullDateTime(value);
   return <time className={className} title={full === text ? undefined : full}>{text}</time>;
 }

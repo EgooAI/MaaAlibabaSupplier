@@ -16,6 +16,10 @@ late reconciliation and observed tasks for claims (not a paginated UI listing).
 Persist observed through the store's atomic transition/unique message claim.
 Missing/invalid baselines remain unknown and must not be automatically retried.
 GUI authorization belongs to the sending service.
+
+Text comparison strips only boundary whitespace, as submission does. Internal
+whitespace and case remain significant. Candidate and competing-task checks use
+the same comparison; evidence retains the unmodified source text and message ID.
 """
 
 from __future__ import annotations
@@ -52,8 +56,14 @@ def _cid_key(cid: str) -> str:
     return "-".join(canonical_ali_id(part) for part in main.split("-"))
 
 
+def _text_key(value: object) -> str:
+    """Applies the submission whitespace rule without changing stored evidence."""
+    return value.strip() if isinstance(value, str) else ""
+
+
 def _candidates(record: dict, baseline: dict, messages: list[dict]) -> list[dict]:
     old_ids = set(baseline["ids"])
+    content = _text_key(record.get("content"))
     seller, contact = record.get("seller"), record.get("contact_ali_id")
     cids = {
         f"{canonical_ali_id(seller)}-{canonical_ali_id(contact)}",
@@ -65,7 +75,7 @@ def _candidates(record: dict, baseline: dict, messages: list[dict]) -> list[dict
         and message["id"] not in old_ids
         and sender_matches(message.get("sender_id"), seller)
         and type(message.get("type")) is int and message["type"] == 0
-        and message.get("text") == record.get("content")
+        and _text_key(message.get("text")) == content
         and message.get("is_system") is False and message.get("is_auto_reply") is False
         and message.get("extension_valid") is True
         and isinstance(message.get("cid"), str) and _cid_key(message["cid"]) in cids
@@ -86,7 +96,7 @@ def match_outbox(record: dict, snapshot: dict, other_records: Iterable[dict]) ->
         return result
     if (record.get("action") != "send" or record.get("may_have_sent") is not True
             or record.get("status") not in ("running", "verifying", "unknown")
-            or not isinstance(record.get("content"), str) or not record["content"]
+            or not _text_key(record.get("content"))
             or not isinstance(record.get("contact_ali_id"), str) or not record["contact_ali_id"]):
         result["reason"] = "task_not_verifiable"
         return result
@@ -124,7 +134,7 @@ def match_outbox(record: dict, snapshot: dict, other_records: Iterable[dict]) ->
             result["reason"] = "message_already_claimed"
             return result
         if (other.get("action") != "send" or other.get("may_have_sent") is not True
-                or other.get("content") != record["content"]
+                or _text_key(other.get("content")) != _text_key(record["content"])
                 or other.get("contact_ali_id") != record["contact_ali_id"]):
             continue
         other_baseline = _baseline(other)
