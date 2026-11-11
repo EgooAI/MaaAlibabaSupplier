@@ -9,8 +9,8 @@ export const ROUTES: RouteInfo[] = [
   { path: "/", title: "首页" },
   { path: "/chat", title: "聊天工作台", navParent: "/chat" },
   { path: "/chat/customer-sessions", title: "聊天工作台", navParent: "/chat" },
+  { path: "/chat/batch", title: "批量管理", navParent: "/chat" },
   { path: "/chat/agent-sessions", title: "Agent 会话", navParent: "/chat" },
-  { path: "/batch", title: "批量管理" },
   { path: "/agent", title: "自动化", navParent: "/agent" },
   { path: "/agent/llm", title: "LLM", navParent: "/agent" },
   { path: "/agent/playground", title: "Playground", navParent: "/agent" },
@@ -27,6 +27,7 @@ export const PAGE_TITLES: Record<string, string> = Object.fromEntries(
 
 export function resolveSelectedKey(pathname: string): string {
   if (pathname.startsWith("/chat/agent-sessions")) return "/chat/agent-sessions";
+  if (pathname.startsWith("/chat/batch")) return "/chat/batch";
   if (pathname.startsWith("/agent/system-agents")) return "/agent/system-agents";
   if (pathname.startsWith("/agent/regular-agents")) return "/agent/regular-agents";
   if (pathname.startsWith("/agent/playground")) return "/agent/playground";

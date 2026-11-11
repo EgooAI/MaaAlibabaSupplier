@@ -23,10 +23,10 @@ const navItems = [
     label: "聊天工作台",
     children: [
       { key: "/chat/customer-sessions", icon: <CommentOutlined />, label: <Link href="/chat/customer-sessions">客户会话</Link> },
+      { key: "/chat/batch", icon: <SelectOutlined />, label: <Link href="/chat/batch">批量管理</Link> },
       { key: "/chat/agent-sessions", icon: <RobotOutlined />, label: <Link href="/chat/agent-sessions">Agent 会话</Link> },
     ],
   },
-  { key: "/batch", icon: <SelectOutlined />, label: <Link href="/batch">批量管理</Link> },
   {
     key: "/agent",
     icon: <RobotOutlined />,

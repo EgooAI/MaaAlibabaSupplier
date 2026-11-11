@@ -92,7 +92,7 @@ function ChatWorkspace() {
               const search = new URLSearchParams(params);
               search.delete("conversation");
               const queries = search.toString();
-              router.push(queries ? `/batch?${queries}` : "/batch");
+              router.push(queries ? `/chat/batch?${queries}` : "/chat/batch");
             }}
           />
         </Tooltip>

@@ -1,5 +1,5 @@
-import { BatchPage } from "@/features/chat/BatchPage";
+import { redirect } from "next/navigation";
 
 export default function Page() {
-  return <BatchPage />;
+  redirect("/chat/batch");
 }

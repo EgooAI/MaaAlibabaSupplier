@@ -73,7 +73,7 @@ describe("inbox query url", () => {
   it("adds the conversation deep link only for the page path", () => {
     const query: ConversationQuery = { portrait_stage: ["won"] };
     expect(inboxQueryToUrl(query, "42", "/chat")).toBe("/chat?portrait_stage=won&conversation=42");
-    expect(inboxQueryToUrl({}, "42", "/batch")).toBe("/batch?conversation=42");
+    expect(inboxQueryToUrl({}, "42", "/chat/batch")).toBe("/chat/batch?conversation=42");
     expect(inboxQueryToUrl({})).toBe("?");
   });
 });

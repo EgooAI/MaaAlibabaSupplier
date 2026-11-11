@@ -7,6 +7,7 @@ describe("routes single source", () => {
     expect(resolveSelectedKey("/chat")).toBe("/chat/customer-sessions");
     expect(resolveSelectedKey("/chat/customer-sessions")).toBe("/chat/customer-sessions");
     expect(resolveSelectedKey("/chat/agent-sessions")).toBe("/chat/agent-sessions");
+    expect(resolveSelectedKey("/chat/batch")).toBe("/chat/batch");
     expect(resolveSelectedKey("/agent")).toBe("/agent/llm");
     expect(resolveSelectedKey("/agent/llm")).toBe("/agent/llm");
     expect(resolveSelectedKey("/agent/playground")).toBe("/agent/playground");
@@ -19,6 +20,7 @@ describe("routes single source", () => {
 
   it("resolves open keys to a single nav group", () => {
     expect(resolveOpenKeys("/chat/customer-sessions")).toEqual(["/chat"]);
+    expect(resolveOpenKeys("/chat/batch")).toEqual(["/chat"]);
     expect(resolveOpenKeys("/agent/llm")).toEqual(["/agent"]);
     expect(resolveOpenKeys("/status")).toEqual(["settings"]);
     expect(resolveOpenKeys("/")).toEqual([]);
