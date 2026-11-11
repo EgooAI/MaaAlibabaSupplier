@@ -177,6 +177,7 @@ function requireMockClient() {
 export const mockBackend: OperationsBackend = {
   createRemoteSession: async () => { requireMockClient(); return delay({ session_id: crypto.randomUUID().replaceAll("-", ""), expires_in: 300 }); },
   getRemoteFrame: async () => { throw new Error("Mock 不提供真实客户端截图"); },
+  downloadRemoteOriginal: async () => { throw new Error("Mock 不提供真实客户端截图"); },
   remoteAction: async () => { requireMockClient(); await delay(undefined); },
   closeRemoteSession: async () => { await delay(undefined); },
   getConnection: () => delay(structuredClone(connectionStore)),

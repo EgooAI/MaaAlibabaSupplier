@@ -1,5 +1,6 @@
 "use client";
 
+import { DownloadOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Input, Space, Spin, Typography } from "antd";
 import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -18,6 +19,7 @@ export default function RemotePage() {
   const [error, setError] = useState<string>();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [originalBusy, setOriginalBusy] = useState(false);
   const [stopped, setStopped] = useState(false);
   const etag = useRef<string | undefined>(undefined);
   const imageUrlRef = useRef<string | undefined>(undefined);
@@ -91,6 +93,23 @@ export default function RemotePage() {
     void sendAction({ action: "type", text });
     setText("");
   };
+  const downloadOriginal = async () => {
+    if (!activeSessionId || originalBusy) return;
+    setOriginalBusy(true);
+    try {
+      const blob = await backend.downloadRemoteOriginal(activeSessionId);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "client-screenshot.png";
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "原图下载失败");
+    } finally {
+      setOriginalBusy(false);
+    }
+  };
 
   return <Card title="客户端远控" extra={<Typography.Text type="secondary">{activeSessionId ? "已连接" : "正在连接"}</Typography.Text>}>
     <Space direction="vertical" className="w-full" size="middle">
@@ -114,6 +133,7 @@ export default function RemotePage() {
         <Input value={text} onChange={(event) => setText(event.target.value)} onPressEnter={submitText} placeholder="输入要键入到客户端的文本" maxLength={4000} />
         <Button type="primary" disabled={!activeSessionId || busy || !text.trim()} onClick={submitText}>键入</Button>
       </Space.Compact>
+      <Button icon={<DownloadOutlined />} disabled={!activeSessionId || originalBusy} loading={originalBusy} onClick={() => void downloadOriginal()}>下载截图 PNG</Button>
       <Button danger disabled={!activeSessionId} onClick={() => { void close(activeSessionId); setSessionId(undefined); setStopped(true); }}>结束远控</Button>
     </Space>
   </Card>;

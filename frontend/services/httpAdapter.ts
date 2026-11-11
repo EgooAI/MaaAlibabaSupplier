@@ -203,6 +203,7 @@ export const httpBackend: OperationsBackend = {
       width: Number(response.headers.get("X-Frame-Width")), height: Number(response.headers.get("X-Frame-Height")),
     };
   },
+  downloadRemoteOriginal: (sessionId) => request<Blob>(`/api/remote/session/${encodeURIComponent(sessionId)}/download`, "image"),
   remoteAction: async (input) => { await requestJson("/api/remote/action", { method: "POST", body: JSON.stringify(input) }); },
   closeRemoteSession: async (sessionId) => { await requestVoid(`/api/remote/session/${encodeURIComponent(sessionId)}`, { method: "DELETE" }); },
   getConnection: () => requestJson("/api/settings/connection"),

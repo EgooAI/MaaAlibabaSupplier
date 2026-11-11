@@ -93,6 +93,26 @@ def get_frame(session_id: str, if_none_match: str | None = Header(default=None))
     )
 
 
+@router.get("/api/remote/session/{session_id}/download")
+def download_frame(session_id: str) -> Response:
+    state = _get_session(session_id)
+
+    def capture():
+        _assert_active(state)
+        return maafw_runner.capture_client_frame()
+
+    result = gui_session.run_guarded(state["token"], capture)
+    if not hasattr(result, "png_bytes"):
+        raise AppError(result[1] if isinstance(result, tuple) else "截图下载失败。", status_code=503)
+    return Response(
+        result.png_bytes, media_type="image/png",
+        headers={
+            "Cache-Control": "no-store", "Content-Disposition": 'attachment; filename="client-screenshot.png"',
+            "X-Frame-Width": str(result.width), "X-Frame-Height": str(result.height),
+        },
+    )
+
+
 @router.post("/api/remote/action")
 def run_action(body: ActionInput) -> dict:
     state = _get_session(body.session_id)

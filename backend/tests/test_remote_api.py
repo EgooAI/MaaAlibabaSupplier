@@ -36,6 +36,14 @@ def test_remote_frame_uses_jpeg_and_avoids_retransmitting_unchanged_frame(client
     assert unchanged.content == b""
     assert unchanged.headers["ETag"] == first.headers["ETag"]
 
+    monkeypatch.setattr(maafw_runner, "capture_client_frame", lambda: frame)
+    original = client.get(f"/api/remote/session/{session_id}/download")
+    assert original.status_code == 200
+    assert original.headers["content-type"] == "image/png"
+    assert original.headers["content-disposition"] == 'attachment; filename="client-screenshot.png"'
+    assert original.headers["X-Frame-Width"] == "20"
+    assert original.content == frame.png_bytes
+
 
 def test_remote_action_checks_screenshot_bounds_and_dispatches(client, monkeypatch):
     connect(client)
