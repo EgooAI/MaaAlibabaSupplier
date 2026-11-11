@@ -99,7 +99,7 @@ describe("background business evidence", () => {
   });
 
   it.each([
-    ["running", "running"], ["awaiting_confirmation", "waiting"], ["queued_send", "queued"],
+    ["running", "running"], ["verifying", "running"], ["queued", "queued"],
   ])("prioritizes Outbox %s while retaining unknown and failure counts", (activeStatus, expected) => {
     const snapshot = statusSnapshot({ background: backgroundStatus({ outbox: { counts: { failed: 5, unknown: 2, [activeStatus]: 1 }, recent: [] } }) });
     const outbox = serviceSummaries(snapshot).find((service) => service.id === "outbox")!;

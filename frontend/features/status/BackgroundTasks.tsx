@@ -9,7 +9,7 @@ import type { BackgroundOutboxItem, SystemStatusSnapshot } from "@/types/status"
 import { WorkStateTag } from "./WorkerStatus";
 
 const outboxStatusColors: Record<string, string> = {
-  failed: "red", unknown: "orange", awaiting_confirmation: "orange",
+  failed: "red", unknown: "orange",
   running: "blue", navigating: "blue", verifying: "blue",
 };
 const outboxEvidenceLabels: Record<string, string> = {
@@ -71,7 +71,7 @@ export function BackgroundTasks({ snapshot }: { snapshot: SystemStatusSnapshot }
           key: "outbox", label: "Outbox",
           children: <Space orientation="vertical" size="middle" className="w-full">
             <Typography.Text type="secondary">状态计数覆盖当前卖家与数据目录的全部 Outbox 记录，列表仅显示最近 20 条。</Typography.Text>
-            <Typography.Text type="secondary">发送与填入请在聊天工作台确认联系人、内容和截图。GUI 完成、本地匹配与平台送达是不同证据。</Typography.Text>
+            <Typography.Text type="secondary">发送与仅填入从聊天工作台直接提交。GUI 完成、本地匹配与平台送达是不同证据。</Typography.Text>
             {outboxError ? <Alert showIcon type="warning" title={`Outbox 读取失败：${outboxError}`} /> : background ? <Space wrap>{Object.entries(background.outbox.counts).map(([status, count]) => <span key={status}><OutboxStatus status={status} />{count}</span>)}</Space> : <WorkStateTag status={workStatus("unknown")} />}
             <AppTable rowKey="id" dataSource={background?.outbox.recent ?? []} scroll={{ x: 1050 }} columns={[
               { title: "任务 ID", dataIndex: "id", width: 200 },

@@ -56,9 +56,6 @@ export interface OutboxTask {
   reason: string | null;
   created_at: number;
   updated_at: number;
-  screenshot_id: string | null;
-  screenshot_at: number | null;
-  screenshot_expires_at?: number | null;
   matched_message_id: string | null;
   idempotency_key: string;
   evidence?: unknown;

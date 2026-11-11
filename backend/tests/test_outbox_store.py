@@ -33,12 +33,10 @@ def move(store, scope, task, status, **changes):
 
 
 def advance(store, scope, task, target):
-    for status in ("navigating", "awaiting_confirmation", "queued_send", "running", "verifying"):
+    for status in ("navigating", "running", "verifying"):
         if task["status"] == target:
             break
         changes = {}
-        if status == "awaiting_confirmation":
-            changes = {"screenshot_id": "artifact-1", "screenshot_at": 123.5, "screenshot_digest": "sha256:abc"}
         if status == "verifying":
             changes = {"may_have_sent": True, "baseline": {"message_ids": ["old"], "revision": 7}}
         task = move(store, scope, task, status, **changes)
@@ -126,6 +124,33 @@ def test_reads_do_not_create_database_directories_or_schema(tmp_path, scope):
             "crm_sentinel", "app_outbox", "app_outbox_events",
         }
         assert conn.execute("SELECT * FROM crm_sentinel").fetchall() == [("preserved",)]
+
+
+@pytest.mark.parametrize("legacy_status", ["awaiting_confirmation", "queued_send"])
+@pytest.mark.parametrize("risky", [False, True])
+def test_upgrade_invalidates_legacy_confirmations_without_losing_artifacts_or_audit(store, scope, legacy_status, risky):
+    store.initialize()
+    with closing(sqlite3.connect(store.database_path)) as conn, conn:
+        schema = conn.execute("SELECT sql FROM sqlite_master WHERE name='app_outbox'").fetchone()[0]
+        conn.execute("DROP TABLE app_outbox")
+        schema = schema.replace("'navigating'", "'navigating','awaiting_confirmation','queued_send'")
+        schema = schema.replace("baseline TEXT", "screenshot_id TEXT, screenshot_at REAL, screenshot_digest TEXT, baseline TEXT")
+        conn.execute(schema)
+    task, _ = create(store, scope)
+    history = store.events(task["id"], **scope)
+    with closing(sqlite3.connect(store.database_path)) as conn, conn:
+        conn.execute("UPDATE app_outbox SET status=?, may_have_sent=?, screenshot_id='old', screenshot_at=1, screenshot_digest='digest' WHERE id=?",
+                     (legacy_status, risky, task["id"]))
+    store.initialize()
+    recovered = store.recover()
+    assert len(recovered) == 1
+    assert recovered[0]["status"] == ("unknown" if risky else "failed")
+    assert recovered[0]["may_have_sent"] is risky
+    assert "screenshot_id" not in recovered[0]
+    assert store.events(task["id"], **scope)[:-1] == history
+    with closing(sqlite3.connect(store.database_path)) as conn:
+        assert conn.execute("SELECT screenshot_id FROM app_outbox WHERE id=?", (task["id"],)).fetchone()[0] == "old"
+    assert store.recover() == []
 
 
 def test_default_database_path_uses_isolated_crm_configuration(monkeypatch, tmp_path, scope):
@@ -221,7 +246,7 @@ def test_scope_ownership_for_all_task_reads_and_writes(store, scope, tmp_path, c
     assert store.get(task["id"], **scope) == task
 
 
-@pytest.mark.parametrize("start,target", [("queued", "navigating"), ("queued_send", "running")])
+@pytest.mark.parametrize("start,target", [("queued", "navigating")])
 def test_concurrent_cancel_and_worker_claim_have_exactly_one_winner(store, scope, start, target):
     task, _ = create(store, scope)
     if start != "queued":
@@ -239,11 +264,11 @@ def test_concurrent_cancel_and_worker_claim_have_exactly_one_winner(store, scope
 
 
 @pytest.mark.parametrize("state", PENDING_STATUSES)
-def test_cancel_is_limited_to_safe_queued_or_confirmation_states(store, scope, state):
+def test_cancel_is_limited_to_queued_state(store, scope, state):
     task, _ = create(store, scope)
     if state != "queued":
         task = advance(store, scope, task, state)
-    if state in ("queued", "awaiting_confirmation", "queued_send"):
+    if state == "queued":
         cancelled = store.cancel(task["id"], task["version"], **scope)
         assert cancelled["status"] == "cancelled"
         assert cancelled["reason"] == "cancelled_by_user"
@@ -255,65 +280,31 @@ def test_cancel_is_limited_to_safe_queued_or_confirmation_states(store, scope, s
         assert store.get(task["id"], **scope) == task
 
 
-def test_version_cas_protects_confirmation_snapshot_and_retry_aba(store, scope):
+def test_version_cas_protects_worker_snapshot_and_retry_aba(store, scope):
     task, _ = create(store, scope)
     failed = move(store, scope, task, "failed", reason="safe_failure")
     retried = store.retry(task["id"], failed["version"], **scope)
     with pytest.raises(OutboxConflict):
         move(store, scope, task, "navigating")
-    current = advance(store, scope, retried, "awaiting_confirmation")
+    current = advance(store, scope, retried, "navigating")
     updated = store.update_fields(current["id"], current["status"], current["version"], **scope, reason="changed")
     with pytest.raises(OutboxConflict):
-        move(store, scope, current, "queued_send")
+        move(store, scope, current, "running")
     with pytest.raises(OutboxConflict):
         store.update_fields(current["id"], current["status"], current["version"], **scope, reason="stale")
     assert store.get(current["id"], **scope) == updated
-    assert move(store, scope, updated, "queued_send")["status"] == "queued_send"
-
-
-@pytest.mark.parametrize("expired", [False, True])
-def test_fresh_confirmation_invalidates_old_confirmation_and_worker_versions(store, scope, expired):
-    task, _ = create(store, scope)
-    original = advance(store, scope, task, "awaiting_confirmation")
-    queued = move(store, scope, original, "queued_send")
-    refreshed = move(
-        store, scope, queued, "awaiting_confirmation",
-        screenshot_id="artifact-2", screenshot_at=original["screenshot_at"] + (120 if expired else 1),
-        screenshot_digest=original["screenshot_digest"] if expired else "sha256:changed",
-        reason="screenshot_expired_or_changed",
-    )
-    assert refreshed["status"] == "awaiting_confirmation"
-    assert refreshed["version"] == queued["version"] + 1
-    assert refreshed["attempt"] == original["attempt"]
-    assert refreshed["may_have_sent"] is False
-    assert refreshed["screenshot_id"] != original["screenshot_id"]
-    assert store.events(task["id"], **scope)[-1]["previous"] == queued
-    assert store.events(task["id"], **scope)[-1]["current"] == refreshed
-    with pytest.raises(OutboxConflict):
-        move(store, scope, original, "queued_send")
-    with pytest.raises(OutboxConflict):
-        move(store, scope, queued, "running")
-    requeued = move(store, scope, refreshed, "queued_send")
-    # The same status recurs, but an old callback still cannot start input.
-    with pytest.raises(OutboxConflict):
-        move(store, scope, queued, "running")
-    with pytest.raises(OutboxConflict):
-        move(store, scope, requeued, "awaiting_confirmation", may_have_sent=True)
-    assert store.get(task["id"], **scope) == requeued
-    running = move(store, scope, requeued, "running")
-    assert running["version"] == requeued["version"] + 1
-    assert len(store.events(task["id"], **scope)) == running["version"]
+    assert move(store, scope, updated, "running")["status"] == "running"
 
 
 @pytest.mark.parametrize("may_have_sent", [False, True])
-def test_running_cannot_return_to_confirmation_even_if_changes_clear_risk(store, scope, may_have_sent):
+def test_running_cannot_return_to_queue_even_if_changes_clear_risk(store, scope, may_have_sent):
     task, _ = create(store, scope)
     task = advance(store, scope, task, "running")
     task = store.update_fields(
         task["id"], "running", task["version"], **scope, may_have_sent=may_have_sent,
     )
     with pytest.raises(OutboxConflict):
-        move(store, scope, task, "awaiting_confirmation", may_have_sent=False)
+        move(store, scope, task, "queued", may_have_sent=False)
     assert store.get(task["id"], **scope) == task
     assert store.events(task["id"], **scope)[-1]["kind"] == "transition"
 
@@ -328,11 +319,11 @@ def test_field_updates_are_not_recorded_as_transition_events(store, scope):
 
 
 @pytest.mark.parametrize("start,target", [
-    ("queued", "running"), ("queued", "queued_send"), ("navigating", "running"),
-    ("awaiting_confirmation", "running"), ("running", "queued"), ("verifying", "running"),
+    ("queued", "running"), ("queued", "queued_send"), ("navigating", "awaiting_confirmation"),
+    ("running", "queued"), ("verifying", "running"),
     ("verifying", "confirmed"), ("verifying", "delivered"), ("queued", "queued"),
 ])
-def test_transition_graph_rejects_skipped_confirmation_and_replay(store, scope, start, target):
+def test_transition_graph_rejects_retired_states_and_replay(store, scope, start, target):
     task, _ = create(store, scope)
     if start != "queued":
         task = advance(store, scope, task, start)
@@ -341,14 +332,10 @@ def test_transition_graph_rejects_skipped_confirmation_and_replay(store, scope, 
     assert store.get(task["id"], **scope) == task
 
 
-def test_screenshot_and_action_constraints_and_monotonic_send_risk(store, scope):
+def test_action_constraints_and_monotonic_send_risk(store, scope):
     task, _ = create(store, scope)
     navigating = move(store, scope, task, "navigating")
-    with pytest.raises(OutboxConflict, match="screenshot"):
-        move(store, scope, navigating, "awaiting_confirmation")
-    awaiting = move(store, scope, navigating, "awaiting_confirmation", screenshot_id="shot", screenshot_at=1)
-    queued_send = move(store, scope, awaiting, "queued_send")
-    running = move(store, scope, queued_send, "running")
+    running = move(store, scope, navigating, "running")
     with pytest.raises(OutboxConflict):
         move(store, scope, running, "filled")
     with pytest.raises(OutboxConflict):
@@ -391,14 +378,14 @@ def test_field_update_whitelist_and_validation(store, scope, changes):
 
 def test_retry_clears_current_artifacts_but_preserves_complete_event_history(store, scope):
     task, _ = create(store, scope)
-    task = advance(store, scope, task, "awaiting_confirmation")
+    task = advance(store, scope, task, "navigating")
     failed = move(store, scope, task, "failed", reason="session_expired", baseline={"revision": 8}, evidence={"detail": "safe"})
     with pytest.raises(OutboxConflict):
         move(store, scope, failed, "queued")
     queued = store.retry(failed["id"], failed["version"], **scope)
     assert queued["attempt"] == 2
     assert queued["status"] == "queued"
-    for name in ("screenshot_id", "screenshot_at", "screenshot_digest", "baseline", "evidence", "reason", "matched_message_id"):
+    for name in ("baseline", "evidence", "reason", "matched_message_id"):
         assert queued[name] is None
     assert queued["content"] == task["content"]
     events = store.events(task["id"], **scope)
@@ -408,7 +395,7 @@ def test_retry_clears_current_artifacts_but_preserves_complete_event_history(sto
         assert previous["current"] == current["previous"]
     assert events[-1]["kind"] == "retry"
     assert events[-1]["previous"] == failed
-    assert events[-1]["previous"]["screenshot_digest"] == "sha256:abc"
+    assert events[-1]["previous"]["evidence"] == {"detail": "safe"}
     assert events[-1]["current"] == queued
     with pytest.raises(OutboxConflict):
         store.retry(queued["id"], **scope)
@@ -440,9 +427,6 @@ def test_restart_invalidates_every_pending_state_without_replay(store, scope, st
     assert current["may_have_sent"] == task["may_have_sent"]
     assert current["version"] == task["version"] + 1
     assert current["attempt"] == 1
-    assert current["screenshot_id"] is current["screenshot_at"] is None
-    if state == "awaiting_confirmation":
-        assert current["reason"] == "restart_confirmation_lost"
     assert restarted.list_pending(**scope) == []
     assert restarted.recover() == []
     assert restarted.events(task["id"], **scope)[-1]["previous"] == task

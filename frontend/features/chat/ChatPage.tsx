@@ -1,8 +1,8 @@
 "use client";
 
-import { ArrowDownOutlined, ArrowLeftOutlined, CheckOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
+import { ArrowLeftOutlined, CheckOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
 import { Suspense, useEffect, useRef, useState } from "react";
-import { Alert, Button, Card, Empty, Popover, Spin, Tooltip } from "antd";
+import { Button, Card, Empty, Popover, Spin, Tooltip } from "antd";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { inboxQueryFromUrl, inboxQueryToUrl } from "@/domain/chat/inboxModel";
 import { statusLabel, waitingLabel } from "@/domain/chat/chatModel";
@@ -13,18 +13,15 @@ import { CardDetailDrawer } from "@/components/CardDetailDrawer";
 import { CountryFlag } from "@/components/CountryFlag";
 import { SessionListPanel } from "@/components/SessionListPanel";
 import { useSplitSessionMobile } from "@/components/SplitSessionLayout";
-import { useStickToBottom } from "@/components/useStickToBottom";
 import { ConversationList } from "./conversation/ConversationList";
 import { CustomerInfo } from "./conversation/CustomerInfo";
-import { MessageTimeline } from "./conversation/MessageTimeline";
-import { TranslationToolbar } from "./conversation/TranslationToolbar";
 import { useChatWorkbench } from "./hooks/useChatWorkbench";
 import { useLocalTime } from "./hooks/useLocalTime";
 import { DataDirBanner } from "@/features/settings/DataDirBanner";
 import { AssistantSuggestionModal } from "./modals/AssistantSuggestionModal";
 import { ForkSessionDrawer } from "./modals/ForkSessionDrawer";
 import { ChatAnalysisModal } from "./modals/ChatAnalysisModal";
-import { OutboxWorkspace } from "./outbox/OutboxWorkspace";
+import { ChatConversation } from "./ChatConversation";
 import { useAccount } from "@/features/account/AccountProvider";
 import { SyncStatus } from "@/features/account/SyncStatus";
 import type { ConversationQuery } from "@/types/inbox";
@@ -38,13 +35,12 @@ export function ChatPage() {
 }
 
 function ChatWorkspace() {
-  const { snapshot, blocked } = useAccount();
+  const { blocked } = useAccount();
   const router = useRouter();
   const { isMobile, mobileView, setMobileView } = useSplitSessionMobile();
   const params = useSearchParams().toString();
   const pathname = usePathname();
   const workbench = useChatWorkbench(inboxQueryFromUrl(new URLSearchParams(params)), new URLSearchParams(params).get("conversation") ?? undefined);
-  const canUseAi = !blocked && Boolean(snapshot?.capabilities.use_ai);
   const { changeQuery } = workbench;
   // 已应用筛选写回 URL（不含分页令牌），会话深链保持不变；刷新后不丢失筛选。
   const writeQueryToUrl = (query: ConversationQuery) => {
@@ -63,7 +59,6 @@ function ChatWorkspace() {
   const [customerInfoOpen, setCustomerInfoOpen] = useState(false);
   const [forkIndex, setForkIndex] = useState<number>();
   const [analysisFocus, setAnalysisFocus] = useState<AnalysisFocus>("intent");
-  const { scrollRef, showJumpButton, handleScroll, scrollToBottom } = useStickToBottom({ sessionKey: active?.id ?? "", followKey: active?.messages.length ?? 0 });
 
   function handleSelectConversation(id: string) {
     if (isMobile) setMobileView("detail");
@@ -146,68 +141,7 @@ function ChatWorkspace() {
       classNames={{ body: "flex min-h-0 flex-1 flex-col overflow-hidden" }}
     >
       {active ? (
-        <div className="flex min-h-0 flex-1 flex-col">
-          {workbench.translationNotice ? <Alert type="warning" showIcon title={workbench.translationNotice} action={<Button size="small" onClick={() => void workbench.reconcileTranslations()}>查询缓存</Button>} /> : null}
-          {workbench.translationStats.total > 0 ? (
-            <TranslationToolbar
-              visible={workbench.translationVisible}
-              onToggleVisible={workbench.toggleTranslation}
-              translatedCount={workbench.translationStats.translated}
-              untranslatedCount={workbench.translationStats.untranslated}
-              pendingCount={workbench.translationStats.pending}
-              canTranslate={canUseAi}
-              onTranslateMissing={workbench.translateMissing}
-              onRetranslateAll={workbench.retranslateConversation}
-            />
-          ) : null}
-          <div className="relative flex min-h-0 flex-1 flex-col">
-            {workbench.detailLoading ? (
-              <div className="flex flex-1 items-center justify-center"><Spin /></div>
-            ) : (
-              <div ref={scrollRef} onScroll={handleScroll} className="app-scroll min-h-0 flex-1 overflow-y-auto bg-slate-50/60 p-3 sm:p-5">
-                {!active.messages.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无聊天消息" /> : null}
-                <MessageTimeline
-                  messages={active.messages}
-                  conversationId={active.id}
-                  loadImage={workbench.loadMessageImage}
-                  buyerId={active.customer.id}
-                  buyerName={active.customer.name}
-                  showTranslations={workbench.translationVisible}
-                  pendingIds={workbench.translationPendingIds}
-                  failedIds={workbench.translationFailedIds}
-                  onTranslate={canUseAi ? (item, force) => void workbench.translateMessages([item], { force }) : undefined}
-                  onOpenCard={workbench.setActiveCardId}
-                  onForkFromMessage={canUseAi ? (index) => setForkIndex(index) : undefined}
-                />
-              </div>
-            )}
-            {showJumpButton ? (
-              <div className="absolute right-4 bottom-4 z-10">
-                <Tooltip title="回到底部" placement="left">
-                  <Button
-                    shape="circle"
-                    aria-label="回到底部"
-                    icon={<ArrowDownOutlined />}
-                    className="shadow-md"
-                    onClick={() => scrollToBottom(true)}
-                  />
-                </Tooltip>
-              </div>
-            ) : null}
-          </div>
-          <div className="shrink-0 border-t border-slate-100 px-3 pb-3 sm:px-4">
-            <OutboxWorkspace
-              key={active.id}
-              conversation={active}
-              value={workbench.draft}
-              onChange={workbench.setDraft}
-              takePendingIntent={workbench.takePendingIntent}
-              onOpenSuggestions={workbench.openSuggestions}
-              onOpenIntentAnalysis={() => void openAnalysis("intent")}
-              onOpenStageAnalysis={() => void openAnalysis("stage")}
-            />
-          </div>
-        </div>
+        <ChatConversation key={active.id} active={active} workbench={workbench} onFork={setForkIndex} onAnalysis={openAnalysis} />
       ) : (
         <div className="flex flex-1 items-center justify-center"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择一个会话，开始沟通" /></div>
       )}

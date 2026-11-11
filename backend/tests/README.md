@@ -105,7 +105,8 @@ layout, client recognition or update installation.
 Node diagnostics return an initial `pending` task snapshot with `success: null`.
 The status API exposes their execution results. Stage 3 replaces the original
 message-send response with a durable outbox record; GUI completion does not
-establish platform acceptance or recipient delivery. Drafts remain intact.
+establish platform acceptance or recipient delivery. Accepted receipts clear only
+the original unchanged draft; newer edits and uncertain submissions retain it.
 
 The status-page diagnostic entries map to independent recognition-only pipelines.
 They share the GUI queue, perform no input or click, and do not override business
@@ -137,8 +138,8 @@ this suite.
 
 Connection guards bind the selected seller, directory, epoch and window generation;
 they do not identify the client's logged-in seller or prove platform acceptance.
-Outbox recipient/content screenshot confirmation remains required. Browser layout
-screenshots and actual client behavior remain separate validation work.
+Navigation, input and sending share one guarded operation without manual confirmation.
+Browser layout screenshots and actual client behavior remain separate validation work.
 
 ## Isolation Incident And Guard
 
@@ -182,8 +183,8 @@ that message time or source row IDs are reliable insertion/update cursors.
 - `test_outbox_store.py` checks concurrent idempotency, immutable payloads,
   versioned state transitions, cancellation/claim races, restart recovery,
   conservative retry and unique local-message evidence claims.
-- `test_outbox_service.py` checks screenshot confirmation, expiry/change handling,
-  the durable send barrier, transient database failures after clicks, safe
+- `test_outbox_service.py` checks single-pass execution, baseline failure before any
+  GUI input, the durable send barrier, transient database failures after clicks, safe
   result-only retries and independent cleanup after shutdown failures.
 - `test_gui_evidence.py` checks fresh screenshot jobs, full-frame lossless PNG
   encoding, stale-image rejection, and native send-only recognition using
@@ -192,16 +193,17 @@ that message time or source row IDs are reliable insertion/update cursors.
 - `test_source_messages.py` / `test_send_verification.py` check reader pins,
   complete baselines, strict source ownership, exact text and sender matching,
   malformed extension data, duplicate candidates and ambiguous attempts.
-- `test_outbox_api.py` checks scoped images, no-store headers, task versions,
-  idempotent receipts and fast busy conflicts rather than delayed GUI admission.
-- Frontend outbox tests require PNG load before confirmation and preserve one
-  intent key across timeout/retry. They recover known tasks outside the recent
-  100-record list and revoke blob URLs across task/account lifetimes.
+- `test_outbox_api.py` checks task versions, retired confirmation endpoints,
+  idempotent receipts including accepted reply intents, and fast busy conflicts.
+- Store tests recover old confirmation states without replay or artifact deletion.
+- Frontend outbox tests cover inline task bubbles, exact-ID merging after CRM
+  synchronization, draft revision protection and one key across timeout recovery.
+  New drafts can repeat the same text. Older unknown tasks outside the recent
+  100-record list continue polling for late evidence.
 
 The tests use synthetic frames and records. They do not validate recognition of
-real contacts, actual Alibaba delivery, or browser layout screenshots. The GUI
-flow deliberately requires the operator to inspect the recipient screenshot;
-the final automated result is only a local matching-message observation.
+real contacts, actual Alibaba delivery, or browser layout screenshots. The final
+automated result is only a local matching-message observation.
 
 ## Stage 4 Coverage
 
@@ -218,7 +220,7 @@ the final automated result is only a local matching-message observation.
   Directory-only messages are excluded from other directories' search, detail,
   AI inputs and ZIP exports. These reads do not mark messages read.
 - Frontend tests cover explicit acknowledgement, filtered paging, deadline
-  crossings, cross-tab revisions and retained details/outbox dialogs when a list
+  crossings, cross-tab revisions and retained details/outbox tasks when a list
   response observes a newer inbox revision before the poll does.
 
 The response contract and initialization limits are documented in

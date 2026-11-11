@@ -7,7 +7,6 @@ def test_default_paths_follow_current_settings():
     assert paths.data_dir() == backend / "data"
     assert paths.log_dir() == backend / "data" / "logs"
     assert paths.cache_dir() == backend / "data" / ".cache"
-    assert paths.outbox_dir() == backend / "data" / "outbox"
     assert paths.debug_dir() == backend / "debug"
     assert paths.assets_dir() == backend / "assets"
     assert paths.deps_bin_dir() == backend / "deps" / "bin"

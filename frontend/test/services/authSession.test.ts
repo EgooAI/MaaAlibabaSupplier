@@ -398,7 +398,7 @@ describe("cross-tab auth storage coordination", () => {
 const transports = [
   ["json", () => httpBackend.getSelfInfo()],
   ["void", () => httpBackend.resetCache()],
-  ["png", () => httpBackend.getOutboxScreenshot("task", "frame", 1)],
+  ["png", () => httpBackend.getMessageImage("42", "message-id")],
 ] as const;
 describe("authenticated business transport", () => {
   beforeEach(async () => {

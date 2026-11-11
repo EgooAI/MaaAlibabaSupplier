@@ -17,6 +17,7 @@ export function useOutbox(sid: string) {
   const [error, setError] = useState<string>();
   const [storageError, setStorageError] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string>();
   const active = useRef(true);
   const locked = useRef(false);
   const polling = useRef(false);
@@ -81,7 +82,7 @@ export function useOutbox(sid: string) {
       const recentIds = new Set(result.filter((task) => String(task.conversation_id) === sid).map((task) => task.id));
       const targets = new Map<string, string>();
       for (const task of knownTasks.current.values()) {
-        if (!recentIds.has(task.id) && (!isTerminal(task) || checkStorage)) targets.set(task.id, task.idempotency_key);
+        if (!recentIds.has(task.id) && (!isTerminal(task) || task.status === "unknown" || checkStorage)) targets.set(task.id, task.idempotency_key);
       }
       for (const intent of saved) {
         if (intent.taskId && !recentIds.has(intent.taskId) && !knownTasks.current.has(intent.taskId)) targets.set(intent.taskId, intent.key);
@@ -110,37 +111,19 @@ export function useOutbox(sid: string) {
     return () => { clearInterval(timer); document.removeEventListener("visibilitychange", visibleRefresh); };
   }, [refresh]);
 
-  async function submit(content: string, action: PendingIntent["action"], fixedIntent?: PendingIntent, intentId?: string) {
+  async function submit(content: string, action: PendingIntent["action"], draftId: string, intentId?: string, fixedIntent?: PendingIntent) {
     if (locked.current || blocked || !snapshot?.capabilities.operate_client || !content.trim()) return false;
     locked.current = true;
     setBusy(true);
+    setNotice(undefined);
     let persisted = false;
     try {
-      readStorage();
-      // A deliberately new send owns one key for the entire dialog lifetime.
-      if (fixedIntent) {
-        if (fixedIntent.content !== content || fixedIntent.action !== action) throw new Error("提交内容与原意图不匹配");
-        try { setIntents(persistIntents(localStorage, storageKey, [fixedIntent])); }
-        catch { setStorageError(true); throw new Error("浏览器无法保存提交记录。已禁止提交，请恢复浏览器存储后刷新任务；草稿仍保留。"); }
-        persisted = true;
-      }
-      // Reconcile before submitting, including after a lost POST response or reload.
-      const current = await backend.listOutbox(sid);
-      if (!active.current) return false;
-      accept(current);
       const saved = readStorage();
-      const matching = current.filter((task) => String(task.conversation_id) === sid && task.content === content && task.action === action).sort((a, b) => b.created_at - a.created_at);
-      const prior = fixedIntent ? saved.find((item) => item.key === fixedIntent.key) ?? fixedIntent : saved.findLast((item) => item.content === content && item.action === action);
-      let existing = prior ? current.find((task) => task.idempotency_key === prior.key && String(task.conversation_id) === sid) : matching[0];
-      if (!existing && prior?.taskId) {
-        existing = await backend.getOutbox(prior.taskId);
-        if (!active.current) return false;
-        if (existing.id !== prior.taskId || existing.idempotency_key !== prior.key || String(existing.conversation_id) !== sid) throw new Error("任务响应不匹配");
-        accept([existing]);
-      }
+      const prior = fixedIntent ?? saved.findLast((item) => item.draftId === draftId && item.action === action);
       const intent: PendingIntent = prior ?? {
-        key: existing ? existing.idempotency_key : crypto.randomUUID(), content, action,
+        key: crypto.randomUUID(), content, action, draftId, ...(intentId ? { intentId } : {}),
       };
+      if (intent.content !== content || intent.action !== action) throw new Error("提交内容与原意图不匹配");
       try {
         setIntents(persistIntents(localStorage, storageKey, [intent]));
         setStorageError(false);
@@ -149,17 +132,32 @@ export function useOutbox(sid: string) {
         throw new Error("浏览器无法保存提交记录。已禁止提交，请恢复浏览器存储后刷新任务；草稿仍保留。");
       }
       persisted = true;
-      if (existing) { accept([existing], true); setError(undefined); return true; }
+      // Reconcile before submitting, including after a lost POST response or reload.
+      const current = await backend.listOutbox(sid);
+      if (!active.current) return false;
+      accept(current);
+      let existing = current.find((task) => task.idempotency_key === intent.key && String(task.conversation_id) === sid);
+      if (!existing && prior?.taskId) {
+        existing = await backend.getOutbox(prior.taskId);
+        if (!active.current) return false;
+        if (existing.id !== prior.taskId || existing.idempotency_key !== prior.key || String(existing.conversation_id) !== sid) throw new Error("任务响应不匹配");
+        accept([existing]);
+      }
+      if (existing) {
+        if (existing.content !== content || existing.action !== action) throw new Error("任务响应不匹配");
+        accept([existing], true); setError(undefined); return existing;
+      }
       const result = await backend.sendMessage({
         conversationId: sid, content: intent.content, action: intent.action,
         idempotency_key: intent.key,
-        ...(intentId ? { intent_id: intentId } : {}),
+        ...(intent.intentId ? { intent_id: intent.intentId } : {}),
       });
       if (!active.current) return false;
-      if (result.outbox.idempotency_key !== intent.key || String(result.outbox.conversation_id) !== sid) throw new Error("任务响应不匹配");
+      if (result.outbox.idempotency_key !== intent.key || String(result.outbox.conversation_id) !== sid
+        || result.outbox.content !== content || result.outbox.action !== action) throw new Error("任务响应不匹配");
       accept([result.outbox], true);
       setError(undefined);
-      return true;
+      return result.outbox;
     } catch (err) {
       if (active.current && !(err instanceof AccountChangedError)) setError(persisted
         ? err instanceof ApiError && err.status === 409
@@ -182,6 +180,7 @@ export function useOutbox(sid: string) {
       accept([task], true);
       const result = action === "cancel" ? await backend.cancelOutbox(task.id, task.version) : await backend.retryOutbox(task.id, task.version);
       accept([result], true);
+      setNotice(action === "cancel" ? "任务已取消" : undefined);
     } catch (err) {
       if (active.current && !(err instanceof AccountChangedError)) setError("任务状态可能已变化，请刷新任务后核对；不会自动重试操作。");
     } finally {
@@ -190,5 +189,5 @@ export function useOutbox(sid: string) {
     }
   }
 
-  return { tasks, intents, error, storageError, busy, submit, mutate, refresh, accept, backend };
+  return { tasks, intents, error, storageError, busy, notice, submit, mutate, refresh, accept, backend };
 }

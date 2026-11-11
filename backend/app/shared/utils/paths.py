@@ -14,7 +14,6 @@ from backend.app.shared.utils import settings
 DATA_DIRNAME = "data"
 LOG_DIRNAME = "logs"
 CACHE_DIRNAME = ".cache"
-OUTBOX_DIRNAME = "outbox"
 DEBUG_DIRNAME = "debug"
 ASSETS_DIRNAME = "assets"
 DEPS_DIRNAME = "deps"
@@ -66,10 +65,6 @@ def log_dir(root: Path | None = None) -> Path:
 
 def cache_dir(root: Path | None = None) -> Path:
     return data_dir(root) / CACHE_DIRNAME
-
-
-def outbox_dir(root: Path | None = None) -> Path:
-    return data_dir(root) / OUTBOX_DIRNAME
 
 
 def debug_dir(root: Path | None = None) -> Path:

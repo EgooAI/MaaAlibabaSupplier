@@ -112,9 +112,8 @@ def run_guarded(token: GuiSessionToken, fn: Callable[[], _Result]) -> _Result | 
 
     Account switching in another thread must use changing_account's nonblocking
     lock. Thread-local authorization does not propagate to spawned work.
-    Results pass through unchanged; exceptions return (False, reason). Release
-    this guard before waiting for the user's screenshot confirmation, then reuse
-    the original token for the fresh-frame comparison, input and send barrier.
+    Results pass through unchanged; exceptions return (False, reason). Navigation,
+    input and the send barrier share one guard using the original task token.
     """
     with account_lock, runner._run_lock:
         previous = getattr(_active_session, "token", None)

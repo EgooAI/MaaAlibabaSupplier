@@ -5,12 +5,10 @@ from threading import Event
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-import numpy as np
 import pytest
 
 from backend.app.api.routers import conversations
 from backend.app.shared.backend import account_context, outbox_service, source_messages
-from backend.app.shared.backend.gui_evidence import frame_from_image
 from backend.app.shared.crm.outbox_store import OutboxStore
 from backend.app.shared.crm.identities import self_sender_id
 from backend.app.shared.utils import app_config
@@ -22,10 +20,9 @@ from backend.tests.test_outbox_service import DeferredQueue
 def outbox(client, chat, monkeypatch, tmp_path):
     queue = DeferredQueue()
     service = outbox_service.OutboxService(OutboxStore(tmp_path / "outbox.sqlite"), queue)
-    frame = frame_from_image(np.zeros((4, 5, 3), dtype=np.uint8))
     monkeypatch.setattr(outbox_service, "_service", service)
     monkeypatch.setattr(outbox_service, "RECONCILE_INTERVAL", 3600)
-    monkeypatch.setattr(outbox_service.runner, "capture_client_frame", lambda: frame)
+    monkeypatch.setattr(outbox_service.runner, "capture_client_frame", lambda: pytest.fail("No confirmation screenshots"))
     context = account_context.get_account_context()
     source = {
         "valid": True, "origin": {"seller": context.self_ali_id, "data_dir": os.path.normcase(context.data_dir),
@@ -34,7 +31,7 @@ def outbox(client, chat, monkeypatch, tmp_path):
     }
     monkeypatch.setattr(source_messages, "read_source_messages", lambda *args: source)
     connect(client)
-    yield SimpleNamespace(service=service, queue=queue, frame=frame, source=source)
+    yield SimpleNamespace(service=service, queue=queue, source=source)
     service.stop()
 
 
@@ -53,14 +50,8 @@ def prepared(client, outbox, **changes):
     return client.get(f"/api/outbox/{task['id']}").json()["data"]
 
 
-def confirm(client, task):
-    return client.post(f"/api/outbox/{task['id']}/confirm", json={
-        "version": task["version"], "screenshot_id": task["screenshot_id"],
-    })
-
-
 @pytest.mark.parametrize("action,final", [("send", "verifying"), ("test", "filled")])
-def test_two_step_contract_png_and_immutable_content(client, outbox, sdk, action, final):
+def test_single_submission_contract_and_immutable_content(client, outbox, sdk, action, final):
     response = submit(client, action=action)
     assert response.status_code == 200, response.text
     assert response.json()["code"] == 0
@@ -71,38 +62,16 @@ def test_two_step_contract_png_and_immutable_content(client, outbox, sdk, action
     assert set(task) == {
         "id", "conversation_id", "contact_ali_id", "login_id", "content", "action",
         "idempotency_key", "status", "version", "attempt", "may_have_sent",
-        "reason", "created_at", "updated_at", "screenshot_id", "screenshot_at",
+        "reason", "created_at", "updated_at",
         "matched_message_id", "evidence",
     }
     assert sdk.calls == []
     assert outbox.queue.run()[0]
-    task = client.get(f"/api/outbox/{task['id']}").json()["data"]
-    assert task["status"] == "awaiting_confirmation"
-    assert task["screenshot_expires_at"] == task["screenshot_at"] + 120
-    assert [entry for entry, _ in sdk.calls] == ["ContactSearch"]
     assert sdk.calls[0][1]["ContactSearch_InputText"]["action"]["param"]["input_text"] == "buyer-login"
-    image = client.get(task["screenshot_url"])
-    assert image.status_code == 200
-    assert image.content == outbox.frame.png_bytes
-    assert image.content.startswith(b"\x89PNG\r\n\x1a\n")
-    assert image.headers["Content-Type"] == "image/png"
-    assert image.headers["Cache-Control"] == "no-store"
-    assert image.headers["X-Account-Epoch"] == client.headers["X-Account-Epoch"]
-    response = client.post(f"/api/outbox/{task['id']}/confirm", json={
-        "version": task["version"], "screenshot_id": task["screenshot_id"], "content": "changed",
-    })
-    assert response.status_code == 422
-    accepted = confirm(client, task)
-    assert accepted.status_code == 200, accepted.text
-    assert accepted.json()["data"]["status"] == "queued_send"
-    assert confirm(client, task).status_code == 409
-    assert len(outbox.queue.jobs) == 1
-    assert client.get(task["screenshot_url"]).status_code == 409
-    assert outbox.queue.run()[0]
+    assert outbox.queue.jobs == []
     result = client.get(f"/api/outbox/{task['id']}").json()["data"]
     assert result["status"] == final
     assert result["may_have_sent"] is (action == "send")
-    assert confirm(client, task).status_code == 409
     assert result["content"] == "hello\r\nworld"
     entries = [entry for entry, _ in sdk.calls]
     assert entries == ["ContactSearch", "ChatInput"] + (["ChatInput_SendOnly"] if action == "send" else [])
@@ -111,24 +80,16 @@ def test_two_step_contract_png_and_immutable_content(client, outbox, sdk, action
     assert "private-source" not in str(result)
 
 
-@pytest.mark.parametrize("already_confirmed", [False, True])
-def test_reconnect_same_window_invalidates_screenshot_session(client, outbox, sdk, already_confirmed):
-    task = prepared(client, outbox)
-    if already_confirmed:
-        assert confirm(client, task).status_code == 200
+def test_reconnect_same_window_invalidates_queued_session(client, outbox, sdk):
+    task = submit(client).json()["data"]["outbox"]
     connect(client)
     assert len(sdk.controllers) == 1
-    if already_confirmed:
-        assert not outbox.queue.run()[0]
-        result = client.get(f"/api/outbox/{task['id']}").json()["data"]
-        assert result["status"] == "failed" and not result["may_have_sent"]
-        assert result["reason"] == "客户端操作会话已失效，请重新连接后重试。"
-    else:
-        response = confirm(client, task)
-        assert response.status_code == 409
-        assert response.json()["msg"] == "原客户端操作授权已失效，请显式重试任务。"
+    assert not outbox.queue.run()[0]
+    result = client.get(f"/api/outbox/{task['id']}").json()["data"]
+    assert result["status"] == "failed" and not result["may_have_sent"]
+    assert result["reason"] == "客户端操作会话已失效，请重新连接后重试。"
     assert outbox.queue.jobs == []
-    assert [entry for entry, _ in sdk.calls] == ["ContactSearch"]
+    assert sdk.calls == []
 
 
 def test_concurrent_duplicate_and_recovery_with_stale_gui(client, outbox):
@@ -146,6 +107,25 @@ def test_concurrent_duplicate_and_recovery_with_stale_gui(client, outbox):
     for changes in ({"content": "changed"}, {"action": "test"}):
         assert submit(client, **changes).status_code == 409
     assert outbox.service.get(account_context.get_account_context(), task["id"])["content"] == "hello\r\nworld"
+
+
+def test_lost_receipt_can_recover_an_already_accepted_reply_intent(client, outbox):
+    from backend.app.shared.crm.intent_store import IntentStore
+
+    context = account_context.get_account_context()
+    intents = IntentStore()
+    scope = {"seller": context.self_ali_id, "data_dir": context.data_dir}
+    intent = intents.create(**scope, apid="suggestion", agent_name="Suggestion", revision_id=None,
+                            conversation_id=1, batch_id="batch", reply="hello", zh="你好", tone="formal")
+    original = submit(client, intent_id=intent["id"])
+    assert original.status_code == 200, original.text
+    assert intents.get(intent["id"], **scope)["status"] == "accepted"
+    repeated = submit(client, intent_id=intent["id"])
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["data"] == original.json()["data"]
+    assert len(outbox.queue.jobs) == 1
+    assert submit(client, intent_id=intent["id"], idempotency_key="new-key").status_code == 409
+    assert submit(client, intent_id=intent["id"], content="changed").status_code == 409
 
 
 @pytest.mark.parametrize("payload", [
@@ -182,39 +162,28 @@ def test_account_ownership_and_stale_epochs(client, outbox, scope):
     config["self_ali_id" if scope == "seller" else "alibaba_data_dir"] += "-other"
     app_config.write_app_config(config)
     current = account_context.get_account_context()
-    for path in (f"/api/outbox/{task['id']}", "/api/conversations/1/outbox", task["screenshot_url"]):
+    for path in (f"/api/outbox/{task['id']}", "/api/conversations/1/outbox"):
         assert client.get(path).status_code == 409
-    for operation in ("confirm", "cancel", "retry"):
+    for operation in ("cancel", "retry"):
         assert client.post(f"/api/outbox/{task['id']}/{operation}", json={"version": task["version"]}).status_code == 409
     client.headers["X-Account-Epoch"] = current.epoch
     assert current.epoch != old_epoch
     assert client.get(f"/api/outbox/{task['id']}").status_code == 404
-    assert client.get(task["screenshot_url"]).status_code == 404
     assert client.get("/api/conversations/1/outbox").json()["data"] == []
     assert client.post(f"/api/outbox/{task['id']}/cancel", json={"version": task["version"]}).status_code == 409
     client.headers.pop("X-Account-Epoch")
-    assert client.get(task["screenshot_url"]).status_code == 404
     assert client.post(f"/api/outbox/{task['id']}/cancel", json={"version": task["version"]}).status_code == 409
 
 
-def test_screenshot_id_version_expiry_and_optional_read_header(client, outbox, monkeypatch):
-    task = prepared(client, outbox)
-    other = prepared(client, outbox, idempotency_key="other")
-    path = f"/api/outbox/{task['id']}/screenshot/"
-    assert client.get(path + task["screenshot_id"]).status_code == 422
-    for invalid in ("not-a-uuid", "C:%5Cprivate.png"):
-        assert client.get(path + invalid, params={"version": task["version"]}).status_code == 404
-    assert client.get(path + other["screenshot_id"], params={"version": task["version"]}).status_code == 409
-    client.headers.pop("X-Account-Epoch")
-    assert client.get(task["screenshot_url"]).status_code == 200
-    monkeypatch.setattr(outbox_service, "time", SimpleNamespace(time=lambda: task["screenshot_at"] + 121, monotonic=time.monotonic))
-    assert client.get(task["screenshot_url"]).status_code == 409
+def test_retired_confirmation_endpoints_cannot_resume_tasks(client, outbox, sdk):
+    task = submit(client).json()["data"]["outbox"]
+    assert client.post(f"/api/outbox/{task['id']}/confirm", json={"version": 1, "screenshot_id": "0" * 32}).status_code == 404
+    assert client.get(f"/api/outbox/{task['id']}/screenshot/{'0' * 32}?version=1").status_code == 404
+    assert len(outbox.queue.jobs) == 1 and sdk.calls == []
 
 
 def test_background_observation_is_not_delivery_confirmation(client, outbox):
     task = prepared(client, outbox)
-    assert confirm(client, task).status_code == 200
-    assert outbox.queue.run()[0]
     context = account_context.get_account_context()
     outbox.source["checked_at"] = time.time()
     outbox.source["messages"] = [{
@@ -267,19 +236,16 @@ def test_observation_only_bounded_list_and_sanitized_evidence(client, outbox, mo
     forbidden.assert_not_called()
 
 
-@pytest.mark.parametrize("operation", ["submit", "duplicate", "confirm", "retry"])
+@pytest.mark.parametrize("operation", ["submit", "duplicate", "retry"])
 def test_busy_outbox_write_rejects_before_release_and_never_executes_later(client, outbox, sdk, monkeypatch, operation):
     target = None
-    if operation == "confirm":
-        target = prepared(client, outbox, idempotency_key="second")
-    elif operation == "retry":
+    if operation == "retry":
         outbox.queue.full = True
         target = submit(client, idempotency_key="second").json()["data"]["outbox"]
         assert target["status"] == "failed"
         outbox.queue.full = False
 
-    running = prepared(client, outbox, idempotency_key="active")
-    assert confirm(client, running).status_code == 200
+    running = submit(client, idempotency_key="active").json()["data"]["outbox"]
     entered, release = Event(), Event()
 
     def input_text(text):
@@ -295,8 +261,6 @@ def test_busy_outbox_write_rejects_before_release_and_never_executes_later(clien
     def request():
         if operation in ("submit", "duplicate"):
             return submit(client, idempotency_key="active" if operation == "duplicate" else "second")
-        if operation == "confirm":
-            return confirm(client, target)
         return client.post(f"/api/outbox/{target['id']}/retry", json={"version": target["version"]})
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -335,15 +299,14 @@ def test_busy_outbox_write_rejects_before_release_and_never_executes_later(clien
     else:
         recovered = response.json()["data"]
         assert recovered["id"] == target["id"]
-        assert recovered["status"] == ("queued_send" if operation == "confirm" else "queued")
+        assert recovered["status"] == "queued"
         assert request().status_code == 409
     assert len(outbox.queue.jobs) == (0 if operation == "duplicate" else 1)
     assert sdk.calls == calls_after
 
 
 def test_get_and_cancel_remain_responsive_during_real_gui_guard(client, outbox, monkeypatch):
-    running = prepared(client, outbox)
-    assert confirm(client, running).status_code == 200
+    running = submit(client).json()["data"]["outbox"]
     queued = submit(client, idempotency_key="cancel-me").json()["data"]["outbox"]
     entered, release = Event(), Event()
 
@@ -373,7 +336,7 @@ def test_get_and_cancel_remain_responsive_during_real_gui_guard(client, outbox, 
     assert not outbox.queue.run()[0]
 
 
-@pytest.mark.parametrize("operation", ["get", "list", "get_screenshot"])
+@pytest.mark.parametrize("operation", ["get", "list"])
 def test_epoch_change_during_read_discards_response_and_binds_original_scope(client, outbox, monkeypatch, operation):
     task = prepared(client, outbox)
     context = account_context.get_account_context()
@@ -385,32 +348,17 @@ def test_epoch_change_during_read_discards_response_and_binds_original_scope(cli
         return original(captured, *args, **kwargs)
 
     monkeypatch.setattr(outbox.service, operation, changed)
-    path = {"get": f"/api/outbox/{task['id']}", "list": "/api/conversations/1/outbox",
-            "get_screenshot": task["screenshot_url"]}[operation]
+    path = {"get": f"/api/outbox/{task['id']}", "list": "/api/conversations/1/outbox"}[operation]
     response = client.get(path)
     assert response.status_code == 409 and response.json()["data"] is None
     monkeypatch.setattr(outbox.service, operation, original)
-
-
-def test_screenshot_version_change_during_read_discards_image(client, outbox, monkeypatch):
-    task = prepared(client, outbox)
-    original = outbox.service.get_screenshot
-
-    def changed(context, task_id, screenshot_id):
-        image = original(context, task_id, screenshot_id)
-        outbox.service.cancel(context, task_id, version=task["version"])
-        return image
-
-    monkeypatch.setattr(outbox.service, "get_screenshot", changed)
-    response = client.get(task["screenshot_url"])
-    assert response.status_code == 409 and response.json()["data"] is None
 
 
 def test_cancel_and_retry_require_versions_and_never_edit_payload(client, outbox):
     outbox.queue.full = True
     task = submit(client).json()["data"]["outbox"]
     assert task["status"] == "failed"
-    for operation in ("retry", "cancel", "confirm"):
+    for operation in ("retry", "cancel"):
         assert client.post(f"/api/outbox/{task['id']}/{operation}", json={}).status_code == 422
     outbox.queue.full = False
     response = client.post(f"/api/outbox/{task['id']}/retry", json={"version": task["version"]})

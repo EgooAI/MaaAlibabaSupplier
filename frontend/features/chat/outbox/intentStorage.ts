@@ -1,6 +1,6 @@
 import type { ConnectionSnapshot } from "@/types/connection";
 
-export type PendingIntent = { key: string; content: string; action: "send" | "test"; taskId?: string };
+export type PendingIntent = { key: string; content: string; action: "send" | "test"; taskId?: string; draftId?: string; intentId?: string };
 
 export function intentKey(account: ConnectionSnapshot["account"], sid: string) {
   return `maa:outbox-intents:${JSON.stringify([account.data_dir, account.self_ali_id, sid])}`;
@@ -10,7 +10,7 @@ export function loadIntents(storage: Storage, key: string): PendingIntent[] {
   const raw = storage.getItem(key);
   if (raw === null) return [];
   const items: unknown = JSON.parse(raw);
-  if (!Array.isArray(items) || items.some((item) => !item || typeof item.key !== "string" || !item.key || typeof item.content !== "string" || !["send", "test"].includes(item.action) || (item.taskId !== undefined && (typeof item.taskId !== "string" || !item.taskId)))) {
+  if (!Array.isArray(items) || items.some((item) => !item || typeof item.key !== "string" || !item.key || typeof item.content !== "string" || !["send", "test"].includes(item.action) || ["taskId", "draftId", "intentId"].some((field) => item[field] !== undefined && (typeof item[field] !== "string" || !item[field])))) {
     throw new Error("提交记录损坏");
   }
   return items;

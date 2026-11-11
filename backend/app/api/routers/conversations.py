@@ -620,10 +620,16 @@ def send_message(conversation_id: int, body: SendMessageInput) -> dict:
         raise AppError("联系人缺少 login_id，无法安全跳转客户端", status_code=503)
 
     intent = None
+    service = get_outbox_service()
     if body.intent_id:
-        intent = _accepted_intent(context, body.intent_id, conversation_id)
+        existing = service.store.get_by_key(body.idempotency_key, seller=context.self_ali_id, data_dir=context.data_dir)
+        if existing is not None and existing.get("origin_request_id") == body.intent_id:
+            # A lost receipt must remain recoverable after this intent was accepted.
+            intent = {"id": body.intent_id}
+        else:
+            intent = _accepted_intent(context, body.intent_id, conversation_id)
 
-    task = get_outbox_service().submit(
+    task = service.submit(
         context, conversation_id, conv.contact_ali_id, login_id,
         content, body.action, body.idempotency_key,
         intent_id=intent["id"] if intent is not None else None,
@@ -654,7 +660,11 @@ def _accepted_intent(context: AccountContext, intent_id: str, conversation_id: i
 
 def _mark_intent_accepted(context: AccountContext, intent_id: str, outbox_id: str) -> None:
     try:
-        IntentStore().transition(
+        store = IntentStore()
+        current = store.get(intent_id, seller=context.self_ali_id, data_dir=context.data_dir)
+        if current is not None and current["status"] == "accepted":
+            return
+        store.transition(
             intent_id, "accepted", seller=context.self_ali_id, data_dir=context.data_dir,
         )
     except Exception as exc:
@@ -712,7 +722,7 @@ def compose_translation(conversation_id: int, body: ComposeTranslationInput) -> 
     """Translate a merchant draft into the buyer's language, using the conversation as context.
 
     The result is only returned: it never touches the translation cache, the
-    outbox or the draft store, so sending stays behind the usual confirmation.
+    outbox or the draft store; the user submits sending separately.
     """
     text = body.text.strip()
     if not text:

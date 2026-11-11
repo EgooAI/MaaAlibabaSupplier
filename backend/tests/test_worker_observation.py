@@ -16,7 +16,7 @@ from backend.app.shared.crm.account_keys import save_key
 from backend.app.shared.crm.sync import CRMAdapter
 from backend.app.shared.mitm.pool import SelfInfo
 from backend.tests.test_im_db_isolation import KEY, committed, encrypted_db, mw, submissions
-from backend.tests.test_outbox_service import env, prepared, confirm
+from backend.tests.test_outbox_service import env, prepared
 
 
 def test_sync_observation_survives_blocked_iteration_and_gui_lifecycle_locks(mw, monkeypatch):
@@ -87,8 +87,6 @@ def test_sync_observation_survives_blocked_iteration_and_gui_lifecycle_locks(mw,
 def test_verifier_observes_blocked_scan_without_gui_locks_or_resend(env, monkeypatch):
     # The normal send flow creates a real temporary outbox record to reconcile.
     task = prepared(env)
-    confirm(env, task)
-    env.queue.run()
     before = env.service.get(env.context, task["id"])
     assert before["status"] == "verifying"
     entered, release, finished, held, unlock = (Event() for _ in range(5))

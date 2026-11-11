@@ -68,7 +68,7 @@ task = runtime.schedule(
 | --- | --- | --- |
 | IM 同步 | schedule + 单 worker CRM pool | 源快照合并、失败退避、提交版本与账号隔离 |
 | GUI / 翻译 | TaskQueue 的受管 Worker | FIFO、容量、任务快照、译文分片 |
-| Outbox | GUI 队列 + verifier schedule | 持久化状态、截图确认、发送前屏障与本地证据 |
+| Outbox | GUI 队列 + verifier schedule | 持久化状态、连续 GUI 操作、发送前屏障与本地证据 |
 | 产品卡补全 | 仅触发的 schedule | 目标选择、GUI 守卫、会话间停止检查 |
 | Agent 实验 | 每个 run 一个 Worker | SDK 内变体并行、回合取消、结果持久化 |
 | 更新器 | schedule + 单次 Worker | 下载校验、安装握手、辅助进程监测 |

@@ -62,7 +62,7 @@ If you want to diagnose a deployed server, you can run the following command to 
 - The *selected seller* comes from settings page.
 - Account-scoped asynchronous work must retain its original context. After an account change, stale results must not affect the new workspace; continuations must not acquire the new account's token to finish old work.
 - Source decryption, task submission and committed CRM synchronization are different milestones. Do not report synchronization as complete or advance the readable revision before the CRM commit.
-- A completed GUI send action, a locally matched message and platform delivery are different evidence. Do not equate GUI success with delivery or automatically resend after an uncertain outcome. Outbox recipient, content and screenshot confirmation remains part of the send flow.
+- A completed GUI send action, a locally matched message and platform delivery are different evidence. Do not equate GUI success with delivery or automatically resend after an uncertain outcome. An explicit send submission runs navigation, input and send under one account/window guard without manual confirmation. Persist send uncertainty before posting the native send action.
 - Translation cache queries distinguish `null` (not cached), an empty string (cached, no translation needed), and a nonempty translation. Truthiness checks must not turn the empty-string sentinel into a cache miss.
 
 ## Style Conventions

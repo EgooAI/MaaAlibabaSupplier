@@ -21,8 +21,6 @@ REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 OUTBOX_PENDING_STATUSES = (
     "queued",
     "navigating",
-    "awaiting_confirmation",
-    "queued_send",
     "running",
     "verifying",
 )

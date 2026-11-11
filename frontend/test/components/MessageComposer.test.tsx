@@ -76,6 +76,26 @@ afterEach(async () => {
 });
 
 describe("message composer", () => {
+  it("sends directly and exposes fill-only as a separate dropdown action", async () => {
+    const onSend = vi.fn();
+    const onFill = vi.fn();
+    await render({ compact: true, value: "reply", onSend, onFill });
+    const send = [...container.querySelectorAll("button")].find((button) => button.textContent?.replaceAll(" ", "") === "发送")!;
+    await act(async () => send.click());
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onFill).not.toHaveBeenCalled();
+    expect(container.querySelector(".ant-modal")).toBeNull();
+    await act(async () => (container.querySelector('[aria-label="更多发送方式"]') as HTMLButtonElement).click());
+    const item = await vi.waitFor(() => {
+      const option = [...document.querySelectorAll('[role="menuitem"]')].find((node) => node.textContent === "仅填入客户端");
+      expect(option).toBeDefined();
+      return option as HTMLElement;
+    });
+    await act(async () => item.click());
+    expect(onFill).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
   it("offers the expand affordance only in compact mode", async () => {
     await render({ compact: true });
     expect(expandButton()).not.toBeNull();

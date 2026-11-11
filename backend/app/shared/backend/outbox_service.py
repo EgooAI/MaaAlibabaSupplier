@@ -1,4 +1,4 @@
-"""Durable GUI attempts with explicit recipient confirmation and local evidence.
+"""Durable, single-pass GUI attempts with local-message evidence.
 
 An observed message is evidence in the local source, never a delivery receipt.
 GUI tokens live only in this process; recovery never replays an attempt.
@@ -9,7 +9,6 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from threading import Condition, Event, RLock
-from uuid import UUID, uuid4
 from types import MappingProxyType
 from collections.abc import Mapping
 
@@ -19,7 +18,6 @@ from backend.app.background import Worker, get_background_runtime
 from backend.app.api.envelope import AppError
 from backend.app.shared.backend import gui_session, maafw_runner as runner
 from backend.app.shared.backend.account_context import AccountContext, get_account_context
-from backend.app.shared.backend.gui_evidence import ClientFrame, compare_frame
 from backend.app.shared.crm.outbox_store import OutboxConflict, OutboxStore
 from backend.app.shared.crm.outbox_state import (
     ACTIVE_COMPENSATABLE_STATUSES,
@@ -27,14 +25,11 @@ from backend.app.shared.crm.outbox_state import (
     is_compensatable,
     is_gui_risk,
 )
-from backend.app.shared.utils import paths
 from backend.app.task_queue import get_task_queue
 from backend.app.shared.utils.log_context import bind_log_context, capture_log_context, failure_report_due, log_event
 
 
-SCREENSHOT_TTL = 120.0
 RECONCILE_INTERVAL = 2.0
-_CLEAR_SCREENSHOT = {"screenshot_id": None, "screenshot_at": None, "screenshot_digest": None}
 
 
 @dataclass(frozen=True)
@@ -43,10 +38,6 @@ class _Attempt:
     token: gui_session.GuiSessionToken
     attempt: int
     log_context: Mapping
-
-
-class ScreenshotExpiredError(AppError):
-    """The stored confirmation screenshot no longer matches the task."""
 
 
 class OutboxService:
@@ -62,7 +53,6 @@ class OutboxService:
         self._thread: Worker | None = None
         self._verification_failures = 0
         self._reconcile_lock = RLock()
-        self._screenshot_dir = paths.outbox_dir()
         self._observation_lock = RLock()
         self._observation = {
             "started_at": None, "heartbeat_at": None, "last_progress_at": None,
@@ -162,33 +152,10 @@ class OutboxService:
                 self._accepting()
                 binding = self._bind_attempt(context, token, record)
                 self._attempts[record["id"]] = binding
-                self._enqueue(record, binding, send=False)
+                self._enqueue(record, binding)
         except Exception as exc:
             self._fail_if_current(context, record, str(exc))
         return self._require(context, record["id"])
-
-    def confirm(
-        self, context: AccountContext, task_id: str, *, screenshot_id: str,
-        version: int, expected_epoch: str | None = None,
-    ) -> dict:
-        self._accepting()
-        if expected_epoch is not None and expected_epoch != context.epoch:
-            raise OutboxConflict("Account context changed")
-        # Never wait for the GUI/account lock while holding the service lock.
-        token = self._capture_token(context)
-        with self._condition:
-            self._accepting()
-            record = self._require(context, task_id)
-            binding = self._attempts.get(task_id)
-            if (binding is None or binding.context != context or binding.token != token
-                    or binding.attempt != record["attempt"]):
-                raise OutboxConflict("Original GUI session expired; explicit retry is required")
-            if (record["status"] != "awaiting_confirmation" or record["version"] != version
-                    or record["screenshot_id"] != screenshot_id):
-                raise OutboxConflict("Screenshot or task version changed")
-            record = self._move(record, "queued_send")
-            self._enqueue(record, binding, send=True)
-            return self._require(context, task_id)
 
     def cancel(self, context: AccountContext, task_id: str, *, version: int | None = None) -> dict:
         with self._condition:
@@ -205,29 +172,8 @@ class OutboxService:
             record = self.store.retry(task_id, version, **self._scope(context))
             binding = self._bind_attempt(context, token, record)
             self._attempts[task_id] = binding
-            self._enqueue(record, binding, send=False)
+            self._enqueue(record, binding)
             return self._require(context, task_id)
-
-    def get_screenshot(self, context: AccountContext, task_id: str, screenshot_id: str) -> bytes:
-        try:
-            if UUID(screenshot_id).hex != screenshot_id:
-                raise ValueError("Noncanonical screenshot ID")
-        except (ValueError, TypeError, AttributeError):
-            raise AppError("Screenshot not found", status_code=404) from None
-        with self._condition:
-            record = self._require(context, task_id)
-            if (record["screenshot_id"] != screenshot_id or self._expired(record)
-                    or record["status"] not in ("awaiting_confirmation", "queued_send")):
-                raise ScreenshotExpiredError("Screenshot expired or replaced", status_code=404)
-            try:
-                return (self._screenshot_dir / f"{screenshot_id}.png").read_bytes()
-            except OSError:
-                raise AppError("Screenshot not found", status_code=404) from None
-
-    @staticmethod
-    def _expired(record: dict) -> bool:
-        stamp = record["screenshot_at"]
-        return stamp is None or not 0 <= time.time() - stamp < SCREENSHOT_TTL
 
     @staticmethod
     def _bind_attempt(context, token, record) -> _Attempt:
@@ -298,7 +244,7 @@ class OutboxService:
                         risky = is_gui_risk(current["status"])
                         self._move(
                             current, "unknown" if risky else "failed", reason=pending["reason"],
-                            evidence={"status": pending["status"], "detail": pending["reason"]}, **_CLEAR_SCREENSHOT,
+                            evidence={"status": pending["status"], "detail": pending["reason"]},
                         )
                 except OutboxConflict:
                     # A newer version/attempt or a durable outcome supersedes this write.
@@ -308,32 +254,23 @@ class OutboxService:
                     continue
                 self._pending_terminal_writes.pop(task_id, None)
 
-    def _enqueue(self, record: dict, binding: _Attempt, *, send: bool) -> None:
+    def _enqueue(self, record: dict, binding: _Attempt) -> None:
         try:
             if self._queue is None:
                 self._queue = get_task_queue()
             with bind_log_context(**binding.log_context):
                 self._queue.enqueue(
-                    lambda: self._execute(record, binding, send=send),
-                    description=f"Outbox {'input/send' if send else 'navigation'} {record['id']}",
+                    lambda: self._execute(record, binding),
+                    description=f"Outbox {record['action']} {record['id']}",
                 )
         except Exception as exc:
             self._fail_if_current(binding.context, record, str(exc))
 
-    def _save_frame(self, record: dict, frame: ClientFrame, *, reason: str | None = None) -> dict:
-        screenshot_id = uuid4().hex
-        self._screenshot_dir.mkdir(parents=True, exist_ok=True)
-        (self._screenshot_dir / f"{screenshot_id}.png").write_bytes(frame.png_bytes)
-        return self._move(
-            record, "awaiting_confirmation", screenshot_id=screenshot_id,
-            screenshot_at=time.time(), screenshot_digest=frame.sha256, reason=reason,
-        )
-
-    def _execute(self, queued: dict, binding: _Attempt, *, send: bool) -> tuple[bool, str]:
+    def _execute(self, queued: dict, binding: _Attempt) -> tuple[bool, str]:
         with bind_log_context(**binding.log_context):
-            return self._execute_attempt(queued, binding, send=send)
+            return self._execute_attempt(queued, binding)
 
-    def _execute_attempt(self, queued: dict, binding: _Attempt, *, send: bool) -> tuple[bool, str]:
+    def _execute_attempt(self, queued: dict, binding: _Attempt) -> tuple[bool, str]:
         context, task_id = binding.context, queued["id"]
         with self._condition:
             if self._stopping.is_set():
@@ -347,7 +284,7 @@ class OutboxService:
         failure = "gui_execution_interrupted"
         try:
             baseline = None
-            if send and queued["action"] == "send":
+            if queued["action"] == "send":
                 from backend.app.shared.backend.source_messages import read_source_messages
 
                 snapshot = read_source_messages(context, queued["contact_ali_id"])
@@ -365,25 +302,12 @@ class OutboxService:
                     record = self._require(context, task_id)
                     if record["version"] != queued["version"]:
                         return False, "Outbox task superseded"
-                    if not send:
-                        record = self._move(record, "navigating")
-                if not send:
-                    ok, reason = runner.goto_contact(record["login_id"])
-                    if not ok:
-                        raise RuntimeError(reason)
-                    frame = runner.capture_client_frame()
-                    with self._condition:
-                        self._accepting()
-                        self._save_frame(record, frame)
-                    return True, "Recipient screenshot requires confirmation"
-
-                # Baseline IO precedes this final frame. No GUI input may intervene.
-                frame = runner.capture_client_frame()
+                    record = self._move(record, "navigating")
+                ok, reason = runner.goto_contact(record["login_id"])
+                if not ok:
+                    raise RuntimeError(reason)
                 with self._condition:
                     self._accepting()
-                    if self._expired(record) or compare_frame(record["screenshot_digest"], frame).needs_reconfirm:
-                        self._save_frame(record, frame, reason="screenshot_expired_or_changed")
-                        return True, "Fresh screenshot requires confirmation"
                     if baseline is not None:
                         baseline["send_started_at"] = time.time()
                         baseline["sent_at"] = baseline["send_started_at"]
@@ -394,7 +318,7 @@ class OutboxService:
                 with self._condition:
                     self._accepting()
                     if record["action"] == "test":
-                        self._move(record, "filled", **_CLEAR_SCREENSHOT)
+                        self._move(record, "filled")
                         return True, "Text filled; no send click requested"
                     # Durable uncertainty barrier: a crash after this point cannot replay.
                     record = self._update(record, may_have_sent=True)
@@ -406,7 +330,7 @@ class OutboxService:
                 if not ok:
                     raise RuntimeError(reason)
                 with self._condition:
-                    self._move(record, "verifying", **_CLEAR_SCREENSHOT)
+                    self._move(record, "verifying")
                 return True, "GUI send completed; awaiting local source evidence"
 
             result = gui_session.run_guarded(binding.token, act)
@@ -424,7 +348,7 @@ class OutboxService:
                 try:
                     if failure is not None:
                         self._fail_if_current(context, current, failure)
-                    elif current["status"] not in ("queued", "awaiting_confirmation", "queued_send"):
+                    else:
                         self._attempts.pop(task_id, None)
                 finally:
                     self._condition.notify_all()
@@ -522,7 +446,7 @@ class OutboxService:
                         if record["status"] in ACTIVE_COMPENSATABLE_STATUSES:
                             risky = is_gui_risk(record["status"])
                             self._move(record, "unknown" if risky else "failed",
-                                       reason="shutdown_execution_uncertain", **_CLEAR_SCREENSHOT)
+                                       reason="shutdown_execution_uncertain")
                     except OutboxConflict:
                         pass
                     except Exception:

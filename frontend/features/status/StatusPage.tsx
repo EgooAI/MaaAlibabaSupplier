@@ -64,7 +64,7 @@ export function StatusPage() {
           <Button disabled={!canDiagnose} loading={testingNode === "ContactSearch_GoToSearch"} onClick={() => void runNodeTest("ContactSearch_GoToSearch")}>检查联系人搜索框</Button>
           <Button disabled={!canDiagnose} loading={sweepingCards} icon={<ScanOutlined />} onClick={() => void sweepCards()}>立即扫描</Button>
         </Space>
-        <Typography.Paragraph type="secondary" className="mt-3 mb-0">界面检查仅需客户端窗口已接入，会排队执行，只读取控件信息。选择卖家且客户端窗口接入后，可以发送、填入测试和跳转联系人，其中发送与填入仍需查看截图并确认联系人与内容。“立即扫描”会导航到未富化产品卡所在的会话，促使客户端请求卡片详情。客户端只在收到新卡片消息时才会请求，历史卡片可能保持未富化状态。</Typography.Paragraph>
+        <Typography.Paragraph type="secondary" className="mt-3 mb-0">界面检查仅需客户端窗口已接入，会排队执行，只读取控件信息。选择卖家且客户端窗口接入后，可以发送、仅填入和跳转联系人。聊天页点击发送后会自动搜索联系人、输入并发送，结果在消息气泡下展示。“立即扫描”会导航到未富化产品卡所在的会话，促使客户端请求卡片详情。客户端只在收到新卡片消息时才会请求，历史卡片可能保持未富化状态。</Typography.Paragraph>
       </Card>
 
         </Space> },

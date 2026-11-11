@@ -78,7 +78,7 @@ function parseJsonPayload(text: string, path: string): unknown {
 
 const IMAGE_TIMEOUT_MS = 30000;
 
-async function request<T>(path: string, mode: "json" | "void" | "png" | "image" | "shutdown", init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
+async function request<T>(path: string, mode: "json" | "void" | "image" | "shutdown", init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const auth = captureAuth();
   const account = prepareAccountRequest(path, init);
   const headers = new Headers(account.init?.headers);
@@ -95,15 +95,10 @@ async function request<T>(path: string, mode: "json" | "void" | "png" | "image" 
       void authSession.unauthorized(auth.generation, requestId);
       auth.assertCurrent();
     }
-    const body = (mode === "png" || mode === "image") && response.ok ? await response.blob() : await response.text();
+    const body = mode === "image" && response.ok ? await response.blob() : await response.text();
     auth.assertCurrent();
     account.ticket?.assertCurrent(response.headers.get("X-Account-Epoch"));
     if (!response.ok) throw new ApiError(envelopeMessage(body as string, path), path, { status: response.status, details: envelopeDetails(body as string) });
-    if (mode === "png") {
-      if (response.headers.get("X-Account-Epoch") !== account.ticket!.epoch) throw new AccountChangedError();
-      if (response.headers.get("Content-Type")?.split(";")[0] !== "image/png") throw new ApiError("截图格式无效", path);
-      return body as T;
-    }
     if (mode === "image") {
       if (response.headers.get("X-Account-Epoch") !== account.ticket!.epoch) throw new AccountChangedError();
       if (!response.headers.get("Content-Type")?.startsWith("image/")) throw new ApiError("图片格式无效", path);
@@ -172,7 +167,7 @@ function prepareAccountRequest(path: string, init?: RequestInit) {
   if (!scoped) return { init };
   const ticket = captureAccount();
   const { capabilities, client } = accountSession.get().snapshot!;
-  const operates = /\/goto-contact$/.test(path) || path.startsWith("/api/remote/") || (/\/conversations\/[^/]+\/messages$/.test(path) && init?.method === "POST") || /\/outbox\/[^/]+\/(confirm|retry)$/.test(path);
+  const operates = /\/goto-contact$/.test(path) || path.startsWith("/api/remote/") || (/\/conversations\/[^/]+\/messages$/.test(path) && init?.method === "POST") || /\/outbox\/[^/]+\/retry$/.test(path);
   const usesAi = /\/(suggestions|analysis|compose-translation)$/.test(path) || (path === "/api/messages/translations" && init?.method === "POST");
   if (operates && !capabilities.operate_client) throw new Error("请先选择卖家账号，并等待客户端窗口自动接入");
   if (path === "/api/status/node-test" && !client.connected) throw new Error("请先等待客户端窗口自动接入，再运行只读界面检查");
@@ -258,13 +253,8 @@ export const httpBackend: OperationsBackend = {
   },
   listOutbox: (id) => requestJson(`/api/conversations/${encodeURIComponent(id)}/outbox`, { cache: "no-store" }),
   getOutbox: (id) => requestJson(`/api/outbox/${encodeURIComponent(id)}`, { cache: "no-store" }),
-  confirmOutbox: (id, version, screenshotId) => requestJson(`/api/outbox/${encodeURIComponent(id)}/confirm`, { method: "POST", body: JSON.stringify({ version, screenshot_id: screenshotId }) }),
   cancelOutbox: (id, version) => requestJson(`/api/outbox/${encodeURIComponent(id)}/cancel`, { method: "POST", body: JSON.stringify({ version }) }),
   retryOutbox: (id, version) => requestJson(`/api/outbox/${encodeURIComponent(id)}/retry`, { method: "POST", body: JSON.stringify({ version }) }),
-  getOutboxScreenshot: async (id, screenshotId, version) => {
-    const path = `/api/outbox/${encodeURIComponent(id)}/screenshot/${encodeURIComponent(screenshotId)}?version=${encodeURIComponent(version)}`;
-    return request<Blob>(path, "png", { cache: "no-store" });
-  },
   getMessageImage: (conversationId, externalMid) =>
     request<Blob>(`/api/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(externalMid)}/image`, "image", undefined, IMAGE_TIMEOUT_MS),
   exportConversations: (input) => requestJson("/api/conversations/export", { method: "POST", body: JSON.stringify(input) }),

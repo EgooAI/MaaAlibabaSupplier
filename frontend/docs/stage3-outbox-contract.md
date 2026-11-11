@@ -1,29 +1,47 @@
-# Stage 3 Outbox
+# Outbox sending contract
 
-The chat workbench uses the outbox contract exclusively. JSON responses use the existing `{ code, msg, data }` envelope; the shapes below describe `data`.
+The chat workbench submits once and automatically navigates, fills and sends. JSON responses use the `{ code, msg, data }` envelope.
 
 | Request | Body | Result |
 | --- | --- | --- |
-| `POST /api/conversations/{sid}/messages` | `{ content, action: 'send' | 'test', idempotency_key }` | `{ outbox: OutboxTask }` |
+| `POST /api/conversations/{sid}/messages` | `{ content, action: 'send' | 'test', idempotency_key, intent_id? }` | `{ outbox: OutboxTask }` |
 | `GET /api/conversations/{sid}/outbox` | none | `OutboxTask[]` |
 | `GET /api/outbox/{id}` | none | `OutboxTask` |
-| `POST /api/outbox/{id}/confirm` | `{ version, screenshot_id }` | `OutboxTask` |
 | `POST /api/outbox/{id}/cancel` | `{ version }` | `OutboxTask` |
 | `POST /api/outbox/{id}/retry` | `{ version }` | `OutboxTask` |
-| `GET /api/outbox/{id}/screenshot/{screenshot_id}?version={version}` | none | PNG bytes, never a JSON envelope |
 
-`OutboxTask` is defined in `types/chatOperations.ts`. Timestamps are Unix seconds. Task versions must increase on state or screenshot changes. Only `observed`, `filled`, `failed`, `unknown`, and `cancelled` are terminal. There is no manual `confirmed` terminal state. `observed` is displayed as local matching-message evidence, never proof of delivery.
+`OutboxTask` is defined in `types/chatOperations.ts`. Timestamps are Unix seconds. Versions increase on state and field updates. The normal send path is `queued → navigating → running → verifying → observed`; `test` ends as `filled` after input. `unknown` can later become `observed` without replaying GUI actions.
 
-The first dialog freezes the draft and asks the user to check seller, recipient name and login ID. Submission starts blind contact search. The backend must stop at `awaiting_confirmation` before input or send. Opening the second dialog reads the current task, then fetches its actual PNG with `X-Account-Epoch` and `cache: no-store`. The response must have an explicit matching epoch and PNG content type. Confirmation stays disabled until the image loads, and binds the exact displayed task version and screenshot ID. A final task GET checks for changes before the confirm POST; the backend remains responsible for atomic version checks and rechecking the actual GUI.
+## Execution
 
-Screenshots expire after 120 seconds. Changed or expired frames require another user review; reads never capture a new frame or confirm automatically. Refresh is read-only. If an expired task remains awaiting confirmation, it can be cancelled and deliberately recreated; only `failed && !may_have_sent` allows retry and fresh capture. Cancel is offered only for `queued`, `awaiting_confirmation`, and `queued_send`. Retry always has its own confirmation dialog. Blob URLs are revoked on close, expiry, replacement, workspace unmount and account suspension/switch.
+The send button directly submits; its adjacent menu offers fill-only. There are no recipient, screenshot or retry confirmation dialogs. One queue callback holds the original account/window guard across navigation, input and send. Contact search still uses login ID and Enter, including the optional dialog-dismissal node.
 
-The account epoch applies to all outbox endpoints. Send, confirm and retry require `operate_client`: a selected seller and a connected client. There is no separate seller-confirmation step. The backend captures seller, directory, epoch and window generation and rechecks them during execution; the outbox screenshot and content confirmation above remains required. Cancel and reads do not require a connected client. A blocked account preserves visible records and suspends requests/actions until account observation recovers. Obsolete responses are discarded by the existing account-scoped backend.
+For `send`, a valid source-message baseline is required before GUI operations. `test` does not require a baseline. Before posting the native send task, the service durably records `may_have_sent=true`. A failed or interrupted possible send is never automatically replayed. The verifier checks local-source evidence approximately every two seconds with the existing 120-second occurrence window. A local match is not platform delivery or read evidence.
 
-Visible workbenches poll the conversation outbox every two seconds, without GUI side effects. The recent list is capped at 100 records ordered by creation time, so known unfinished tasks outside that list also receive `GET /api/outbox/{id}` reads. Partial read failures preserve existing records, and all results merge monotonically by version under the original account scope. Navigating away leaves server tasks running.
+Only `queued` is cancellable. Retry requires `failed && !may_have_sent` and captures a new account/window token. Restart invalidates unfinished work without replay. Old `awaiting_confirmation` and `queued_send` tasks become failed on recovery, or unknown if marked possibly sent. Legacy screenshot files, nullable database columns and audit events are retained; no new confirmation images are captured. Confirmation and screenshot API routes are retired.
 
-Local intent records are stored under `maa:outbox-intents:[data_dir,self_ali_id,sid]`. They retain `{ key, content, action, taskId? }`, including after timeouts and terminal results. Task IDs are added when receipts or matching GET results arrive; retry/cancel also remember the selected task ID before the mutation. Existing records without IDs remain readable. On reload, missing recent-list entries are recovered by saved task ID, including older retried tasks. Unknown IDs are never guessed: the user can explicitly recover an unresolved intent by POSTing its original key, which also handles a lost response outside the recent list. No by-key endpoint is required.
+## Drafts and idempotency
 
-Repeated identical intents reuse the saved key and first reconcile through GET. Only the explicit **New Send** action allocates a new key for identical terminal content. That key is created once when the user opens its confirmation dialog and persisted before the first API call; rerenders, failed lookups, lost POST responses, busy 409 responses, and repeated confirmations all reuse it, even if the corresponding task is already terminal. Recovery buttons bind the specific saved intent rather than selecting another intent with the same text. A busy 409 is shown as a submission conflict and never fabricates a failed task. Storage failures block submission; drafts retain their existing memory fallback. Drafts are never automatically cleared.
+Submission freezes the text. The browser persists a draft revision and an intent before any network lookup or mutation. One draft revision/action owns one idempotency key. Double clicks, timeouts, busy conflicts and reload recovery reuse that key. Editing the draft creates a new revision, so another message may have identical text. Explicit recovery always binds the selected saved intent.
 
-Tests use the existing Vitest/happy-dom setup. A synthetic one-pixel PNG validates binary fetching and image lifecycle, not recognition of a real client contact. Live integration still requires a connected client and backend routes implementing this contract; no automatic test confirms or sends through the real client.
+Local intents live under `maa:outbox-intents:[data_dir,self_ali_id,sid]`, retaining `{ key, content, action, taskId?, draftId?, intentId? }`. Existing records without the newer fields remain recoverable. Draft text retains its existing storage key; `:revision` stores its identity. Storage failures block submission, while draft text retains its memory fallback.
+
+An accepted receipt clears only the original unchanged draft, including its saved text. A newer edit, even if it changes back to the original text, survives the receipt. Timeouts and known failed/cancelled receipts do not clear drafts. Reply-intent acceptance is idempotently recoverable through the same submission key.
+
+## Inline presentation
+
+Send tasks appear as temporary seller bubbles with a compact status. Failure and unknown outcomes retain their full text; details and cancellation are available in a lightweight popover. Safe failures offer direct retry. Fill-only progress/results appear near the composer. Cancellation removes the temporary bubble and displays a short notice without deleting the task.
+
+An observed bubble stays visible until the loaded conversation contains an exact match:
+
+```text
+message.externalMid === `alibaba_icbu:${seller}:${task.matched_message_id}`
+```
+
+Matching is scoped to the current account, directory and conversation. Never merge by body or timestamp. Local observation can precede CRM commit, so `observed` alone cannot remove the bubble. Temporary tasks remain separate from canonical messages and are excluded from translation, AI context, forks and exports.
+
+Visible workspaces poll every two seconds. The recent list is capped at 100, so known unfinished and unknown tasks outside it receive direct reads; persisted task IDs restore older records after reload. Results merge monotonically by version. Failures preserve existing state. Account suspension disables actions, and obsolete account responses are discarded. Navigating away leaves server tasks running.
+
+## Verification boundary
+
+Regression tests use controlled responses, temporary databases and synthetic MaaFW frames. They do not send through a real client or establish browser layout, contact recognition or platform delivery.

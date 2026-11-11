@@ -65,8 +65,8 @@ def test_send_acceptance_is_pending_and_queryable(client, send_setup, blocked_qu
 
     release.set()
     queue.shutdown()
-    assert send_setup == [("goto", "buyer-login")]
-    assert client.get(f"/api/outbox/{snapshot['id']}").json()["data"]["status"] == "awaiting_confirmation"
+    assert send_setup == [("goto", "buyer-login"), ("input", "hello")] + ([("send", None)] if action == "send" else [])
+    assert client.get(f"/api/outbox/{snapshot['id']}").json()["data"]["status"] == ("verifying" if action == "send" else "filled")
 
 
 def test_failed_navigation_never_inputs_or_sends(client, send_setup, monkeypatch):
@@ -79,7 +79,7 @@ def test_failed_navigation_never_inputs_or_sends(client, send_setup, monkeypatch
     assert client.get(f"/api/outbox/{snapshot['id']}").json()["data"]["status"] == "unknown"
 
 
-def test_diagnostics_share_queue_without_bypassing_recipient_confirmation(client, send_setup, blocked_queue, monkeypatch):
+def test_diagnostics_cannot_interleave_navigation_input_and_send(client, send_setup, blocked_queue, monkeypatch):
     queue, release = blocked_queue
 
     def diagnose(entry):
@@ -102,10 +102,12 @@ def test_diagnostics_share_queue_without_bypassing_recipient_confirmation(client
         queue.shutdown()
     assert send_setup == [
         ("goto", "buyer-login"),
+        ("input", "hello"),
+        ("send", None),
         ("diagnostic", "Diagnostics_ContactSearch"),
     ]
     assert status._last_node_result["success"] is True
-    assert client.get(f"/api/outbox/{task_id}").json()["data"]["status"] == "awaiting_confirmation"
+    assert client.get(f"/api/outbox/{task_id}").json()["data"]["status"] == "verifying"
 
 
 def test_diagnostic_failure_updates_last_result(client, monkeypatch):

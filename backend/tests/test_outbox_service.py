@@ -6,13 +6,11 @@ import os
 import sqlite3
 import time
 
-import numpy as np
 import pytest
 
 from backend.app.api.envelope import AppError
 from backend.app.shared.backend import outbox_service as module, source_messages, send_verification
 from backend.app.shared.backend.account_context import AccountContext
-from backend.app.shared.backend.gui_evidence import frame_from_image
 from backend.app.shared.backend.gui_session import GuiSessionToken
 from backend.app.shared.crm.outbox_store import OutboxConflict, OutboxStore
 
@@ -40,7 +38,6 @@ def env(monkeypatch, tmp_path):
     state = SimpleNamespace(
         context=context, token=token, queue=queue, service=service, calls=[], now=1000.0,
         send_job=object(),
-        frame=frame_from_image(np.zeros((4, 5, 3), dtype=np.uint8)),
     )
     state.source = {
         "valid": True, "origin": {"seller": "seller", "data_dir": os.path.normcase(context.data_dir), "source_path": "source"},
@@ -62,7 +59,7 @@ def env(monkeypatch, tmp_path):
 
     monkeypatch.setattr(module.gui_session, "run_guarded", guard)
     monkeypatch.setattr(module.runner, "goto_contact", lambda target: (state.calls.append("goto") is None, "located"))
-    monkeypatch.setattr(module.runner, "capture_client_frame", lambda: state.calls.append("frame") or state.frame)
+    monkeypatch.setattr(module.runner, "capture_client_frame", lambda: pytest.fail("Sending must not capture confirmation screenshots"))
     monkeypatch.setattr(module.runner, "chat_input", lambda text: (state.calls.append("input") is None, "filled"))
     monkeypatch.setattr(module.runner, "submit_send", lambda: state.calls.append("click") or state.send_job)
     monkeypatch.setattr(module.runner, "wait_send", lambda job: (True, "clicked"))
@@ -82,13 +79,6 @@ def prepared(env, **changes):
     task = submit(env, **changes)
     assert env.queue.run()[0]
     return env.service.get(env.context, task["id"])
-
-
-def confirm(env, task):
-    return env.service.confirm(
-        env.context, task["id"], screenshot_id=task["screenshot_id"], version=task["version"],
-        expected_epoch=env.context.epoch,
-    )
 
 
 def race(*calls):
@@ -111,11 +101,10 @@ def test_observers_do_not_initialize_store_or_queue(env):
     assert env.service.list(env.context, 1) == []
     assert env.service.reconcile_once() == []
     assert not env.service.store.database_path.exists()
-    assert not env.service._screenshot_dir.exists()
     assert env.queue.jobs == []
 
 
-def test_attempt_context_retains_origin_across_confirmation_and_changes_on_explicit_retry(env, monkeypatch):
+def test_attempt_context_retains_origin_and_changes_on_explicit_retry(env, monkeypatch):
     from backend.app.shared.utils.log_context import bind_log_context, capture_log_context
 
     contexts = []
@@ -125,9 +114,6 @@ def test_attempt_context_retains_origin_across_confirmation_and_changes_on_expli
         task = prepared(env, action="test")
     assert task["origin_request_id"] == "submit-request"
     assert task["origin_account_epoch"] == env.context.epoch
-    with bind_log_context(request_id="confirm-request", account_epoch="unrelated"):
-        confirm(env, task)
-        env.queue.run()
     assert all(c["request_id"] == "submit-request" and c["account_epoch"] == env.context.epoch for c in contexts)
     assert all(c["outbox_id"] == task["id"] and c["attempt"] == 1 for c in contexts)
 
@@ -144,13 +130,11 @@ def test_attempt_context_retains_origin_across_confirmation_and_changes_on_expli
     assert contexts[-1]["attempt"] == 2
 
 
-def test_navigation_only_then_explicit_confirmation_and_durable_send_barrier(env, monkeypatch):
-    task = prepared(env)
-    assert task["status"] == "awaiting_confirmation"
+def test_single_guard_navigation_input_and_durable_send_barrier(env, monkeypatch):
+    task = submit(env)
+    assert task["status"] == "queued"
     assert task["may_have_sent"] is False
-    assert env.calls == ["guard", "goto", "frame"]
-    assert env.service.get_screenshot(env.context, task["id"], task["screenshot_id"]) == env.frame.png_bytes
-    assert (env.service._screenshot_dir / f"{task['screenshot_id']}.png").is_file()
+    assert env.calls == []
 
     def input_text(text):
         running = env.service.get(env.context, task["id"])
@@ -172,15 +156,12 @@ def test_navigation_only_then_explicit_confirmation_and_durable_send_barrier(env
 
     monkeypatch.setattr(module.runner, "chat_input", input_text)
     monkeypatch.setattr(module.runner, "submit_send", click)
-    queued = confirm(env, task)
-    assert queued["status"] == "queued_send"
-    assert env.calls == ["guard", "goto", "frame"]
     assert env.queue.run()[0]
     result = env.service.get(env.context, task["id"])
     assert result["status"] == "verifying"
     assert result["may_have_sent"] is True
-    assert env.calls == ["guard", "goto", "frame", "baseline", "guard", "frame", "input", "click"]
-    assert result["screenshot_id"] is None
+    assert env.calls == ["baseline", "guard", "goto", "input", "click"]
+    assert env.queue.jobs == []
 
 
 def test_concurrent_idempotency_enqueues_once_and_payload_conflicts(env):
@@ -190,28 +171,13 @@ def test_concurrent_idempotency_enqueues_once_and_payload_conflicts(env):
     with pytest.raises(OutboxConflict):
         submit(env, content="different")
     env.queue.run()
-    assert submit(env)["status"] == "awaiting_confirmation"
+    assert submit(env)["status"] == "verifying"
     assert env.queue.jobs == []
     assert env.calls.count("goto") == 1
 
 
-def test_concurrent_confirmation_enqueues_once(env):
-    task = prepared(env)
-    results = race(*(lambda: confirm(env, task) for _ in range(6)))
-    assert sum(isinstance(result, OutboxConflict) for result in results) == 5
-    assert len(env.queue.jobs) == 1
-    env.queue.run()
-    assert env.calls.count("input") == env.calls.count("click") == 1
-
-
-@pytest.mark.parametrize("state", ["queued", "awaiting_confirmation", "queued_send"])
-def test_cancellation_leaves_queued_callback_noop(env, state):
+def test_cancellation_leaves_queued_callback_noop(env):
     task = submit(env)
-    if state != "queued":
-        env.queue.run()
-        task = env.service.get(env.context, task["id"])
-    if state == "queued_send":
-        task = confirm(env, task)
     result = env.service.cancel(env.context, task["id"], version=task["version"])
     assert result["status"] == "cancelled"
     while env.queue.jobs:
@@ -219,21 +185,8 @@ def test_cancellation_leaves_queued_callback_noop(env, state):
     assert "input" not in env.calls and "click" not in env.calls
 
 
-def test_confirmation_cancel_race_cannot_send_cancelled_task(env):
-    task = prepared(env)
-    results = race(lambda: confirm(env, task), lambda: env.service.cancel(env.context, task["id"], version=task["version"]))
-    assert sum(isinstance(result, OutboxConflict) for result in results) == 1
-    result = env.service.get(env.context, task["id"])
-    if result["status"] == "queued_send":
-        env.service.cancel(env.context, task["id"])
-    while env.queue.jobs:
-        env.queue.run()
-    assert "input" not in env.calls
-
-
 def test_running_cannot_be_cancelled_and_has_no_second_send(env, monkeypatch):
-    task = prepared(env)
-    confirm(env, task)
+    task = submit(env)
     entered, release = Event(), Event()
 
     def input_text(text):
@@ -248,61 +201,28 @@ def test_running_cannot_be_cancelled_and_has_no_second_send(env, monkeypatch):
             assert entered.wait(5)
             with pytest.raises(OutboxConflict):
                 env.service.cancel(env.context, task["id"])
-            with pytest.raises(OutboxConflict):
-                confirm(env, task)
         finally:
             release.set()
         assert future.result(5)[0]
     assert env.calls.count("click") == 1
 
 
-@pytest.mark.parametrize("kind", ["version", "screenshot", "epoch", "window"])
-def test_stale_confirmation_never_enqueues_input(env, kind):
-    task = prepared(env)
-    if kind == "version":
-        task["version"] -= 1
-    elif kind == "screenshot":
-        task["screenshot_id"] = "0" * 32
-    elif kind == "epoch":
+@pytest.mark.parametrize("kind", ["epoch", "window"])
+def test_stale_queued_authorization_never_operates(env, kind):
+    task = submit(env)
+    if kind == "epoch":
         env.context = replace(env.context, epoch="other")
         env.token = replace(env.token, epoch="other")
     else:
         env.token = replace(env.token, window_generation="other")
-    with pytest.raises(OutboxConflict):
-        confirm(env, task)
+    assert not env.queue.run()[0]
     assert env.queue.jobs == []
-    assert "input" not in env.calls
-
-
-@pytest.mark.parametrize("expired", [False, True])
-def test_changed_or_expired_frame_requires_another_confirmation_without_input(env, expired):
-    task = prepared(env)
-    confirm(env, task)
-    if expired:
-        env.now += module.SCREENSHOT_TTL
-    else:
-        env.frame = frame_from_image(np.ones((4, 5, 3), dtype=np.uint8))
-    ok, reason = env.queue.run()
-    assert ok, reason
-    refreshed = env.service.get(env.context, task["id"])
-    assert refreshed["status"] == "awaiting_confirmation"
-    assert refreshed["screenshot_id"] != task["screenshot_id"]
-    assert refreshed["version"] > task["version"]
-    assert refreshed["attempt"] == task["attempt"]
-    assert env.calls[-3:] == ["baseline", "guard", "frame"]
-    assert "input" not in env.calls and "click" not in env.calls
-    with pytest.raises(AppError):
-        env.service.get_screenshot(env.context, task["id"], task["screenshot_id"])
-    with pytest.raises(OutboxConflict):
-        confirm(env, task)
-    confirm(env, refreshed)
-    env.queue.run()
-    assert env.calls.count("input") == env.calls.count("click") == 1
+    assert not {"goto", "input", "click"}.intersection(env.calls)
+    assert env.service.get(env.context, task["id"])["status"] == "failed"
 
 
 def test_cancel_during_source_read_wins_before_any_input(env, monkeypatch):
-    task = prepared(env)
-    confirm(env, task)
+    task = submit(env)
     entered, release = Event(), Event()
 
     def baseline(context, contact):
@@ -322,50 +242,10 @@ def test_cancel_during_source_read_wins_before_any_input(env, monkeypatch):
     assert "input" not in env.calls and "click" not in env.calls
 
 
-def test_navigation_capture_failure_is_unknown_and_not_retryable(env, monkeypatch):
-    task = submit(env)
-
-    def failed_capture():
-        raise RuntimeError("screenshot unavailable")
-
-    monkeypatch.setattr(module.runner, "capture_client_frame", failed_capture)
-    assert not env.queue.run()[0]
-    result = env.service.get(env.context, task["id"])
-    assert result["status"] == "unknown" and not result["may_have_sent"]
-    with pytest.raises(OutboxConflict):
-        env.service.retry(env.context, task["id"])
-
-
-@pytest.mark.parametrize("kind", ["other_seller", "other_directory", "path", "uuid", "expired"])
-def test_screenshot_is_scope_bound_current_uuid_and_unexpired(env, kind):
-    task = prepared(env)
-    context, screenshot_id = env.context, task["screenshot_id"]
-    if kind == "other_seller":
-        context = replace(context, self_ali_id="another")
-    elif kind == "other_directory":
-        context = replace(context, data_dir=context.data_dir + "other")
-    elif kind == "path":
-        screenshot_id = "../crm.sqlite"
-    elif kind == "uuid":
-        screenshot_id = "0" * 32
-    else:
-        env.now += 120
-    with pytest.raises(AppError) as error:
-        env.service.get_screenshot(context, task["id"], screenshot_id)
-    assert error.value.status_code == 404
-
-
-@pytest.mark.parametrize("at_confirm", [False, True])
-def test_queue_full_returns_persisted_safe_failure_and_duplicate_never_requeues(env, at_confirm):
-    if at_confirm:
-        task = prepared(env)
-        env.queue.full = True
-        result = confirm(env, task)
-    else:
-        env.queue.full = True
-        result = submit(env)
+def test_queue_full_returns_persisted_safe_failure_and_duplicate_never_requeues(env):
+    env.queue.full = True
+    result = submit(env)
     assert result["status"] == "failed" and not result["may_have_sent"]
-    assert result["screenshot_id"] is None
     env.queue.full = False
     assert submit(env) == result
     assert env.queue.jobs == []
@@ -407,24 +287,17 @@ def test_initial_guard_capture_failure_retains_id_for_retry(env, monkeypatch):
     assert env.queue.jobs == []
 
 
-@pytest.mark.parametrize("stage", ["navigation_guard", "send_guard", "baseline", "capture"])
+@pytest.mark.parametrize("stage", ["guard", "baseline"])
 def test_preinput_failures_are_safe_and_retry_requires_fresh_token(env, monkeypatch, stage):
     task = submit(env)
-    if stage != "navigation_guard":
-        env.queue.run()
-        task = env.service.get(env.context, task["id"])
-        confirm(env, task)
-    if stage in ("navigation_guard", "send_guard"):
+    if stage == "guard":
         env.token = replace(env.token, window_generation="fresh")
     elif stage == "baseline":
         env.source["valid"] = False
-    else:
-        monkeypatch.setattr(module.runner, "capture_client_frame", lambda: (_ for _ in ()).throw(RuntimeError("capture failed")))
     assert not env.queue.run()[0]
     failed = env.service.get(env.context, task["id"])
     assert failed["status"] == "failed" and not failed["may_have_sent"]
-    assert failed["screenshot_id"] is None
-    assert "input" not in env.calls and "click" not in env.calls
+    assert not {"goto", "input", "click"}.intersection(env.calls)
     env.token = replace(env.token, window_generation="new-attempt")
     retried = env.service.retry(env.context, task["id"], version=failed["version"])
     assert retried["id"] == task["id"] and retried["attempt"] == 2
@@ -442,8 +315,7 @@ def test_gui_failure_is_unknown_without_automatic_retry(env, monkeypatch, stage,
         monkeypatch.setattr(module.runner, "goto_contact", fail)
         task = submit(env)
     else:
-        task = prepared(env)
-        confirm(env, task)
+        task = submit(env)
         monkeypatch.setattr(module.runner, "chat_input" if stage == "input" else "wait_send", fail)
     assert not env.queue.run()[0]
     result = env.service.get(env.context, task["id"])
@@ -457,21 +329,15 @@ def test_gui_failure_is_unknown_without_automatic_retry(env, monkeypatch, stage,
 
 def test_test_action_fills_without_click_or_reconciliation(env):
     task = prepared(env, action="test")
-    confirm(env, task)
-    env.queue.run()
     result = env.service.get(env.context, task["id"])
     assert result["status"] == "filled" and not result["may_have_sent"]
-    assert "click" not in env.calls
+    assert env.calls == ["guard", "goto", "input"]
     assert env.service.reconcile_once() == []
 
 
 def test_reconciliation_claims_local_evidence_once_and_never_calls_gui(env, monkeypatch):
     first = prepared(env)
-    confirm(env, first)
-    env.queue.run()
     second = prepared(env, idempotency_key="second")
-    confirm(env, second)
-    env.queue.run()
     prior_calls = list(env.calls)
     proof = {"status": "observed", "reason": "local_message_observed", "matched_message_id": "message:new", "evidence": {"kind": "local", "source_revision": 2}}
 
@@ -490,8 +356,6 @@ def test_reconciliation_claims_local_evidence_once_and_never_calls_gui(env, monk
 @pytest.mark.parametrize("changed", ["seller", "directory", "during_read"])
 def test_reconciliation_never_uses_unselected_scope(env, monkeypatch, changed):
     task = prepared(env)
-    confirm(env, task)
-    env.queue.run()
     original_context = env.context
     calls = list(env.calls)
 
@@ -515,13 +379,11 @@ def test_reconciliation_never_uses_unselected_scope(env, monkeypatch, changed):
 
 
 def test_unknown_postclick_can_be_observed_but_test_or_preclick_cannot(env, monkeypatch):
-    task = prepared(env)
-    confirm(env, task)
+    task = submit(env)
     monkeypatch.setattr(module.runner, "wait_send", lambda job: (False, "uncertain"))
     env.queue.run()
     assert env.service.get(env.context, task["id"])["status"] == "unknown"
-    test = prepared(env, action="test", idempotency_key="test")
-    confirm(env, test)
+    test = submit(env, action="test", idempotency_key="test")
     monkeypatch.setattr(module.runner, "chat_input", lambda text: (False, "uncertain"))
     env.queue.run()
 
@@ -537,12 +399,8 @@ def test_unknown_postclick_can_be_observed_but_test_or_preclick_cannot(env, monk
 @pytest.mark.parametrize("ambiguous", [False, True])
 def test_real_matching_observes_unique_message_and_rejects_ambiguous_attempts(env, ambiguous):
     task = prepared(env)
-    confirm(env, task)
-    env.queue.run()
     if ambiguous:
-        other = prepared(env, idempotency_key="other")
-        confirm(env, other)
-        env.queue.run()
+        prepared(env, idempotency_key="other")
     env.source["checked_at"] = env.now + 1
     env.source["messages"] = [{
         "id": "message:new", "sender_id": "seller@icbu", "cid": "seller-buyer",
@@ -562,8 +420,6 @@ def test_real_matching_observes_unique_message_and_rejects_ambiguous_attempts(en
 
 def test_real_matching_can_observe_late_ingestion_after_verification_timeout(env):
     task = prepared(env)
-    confirm(env, task)
-    env.queue.run()
     env.source["messages"] = []
     env.source["checked_at"] = env.now + 121
     assert env.service.reconcile_once() == []
@@ -579,10 +435,8 @@ def test_real_matching_can_observe_late_ingestion_after_verification_timeout(env
 
 def test_new_possible_send_during_source_read_is_included_in_ambiguity_check(env, monkeypatch):
     task = prepared(env)
-    confirm(env, task)
-    env.queue.run()
-    other = prepared(env, idempotency_key="other")
-    queued = confirm(env, other)
+    other = submit(env, idempotency_key="other")
+    queued = env.service._move(other, "navigating")
 
     def read(context, contact):
         running = env.service._move(queued, "running", baseline={
@@ -601,17 +455,16 @@ def test_new_possible_send_during_source_read_is_included_in_ambiguity_check(env
     assert result["status"] == "unknown" and result["reason"] == "ambiguous_send_attempts"
 
 
-@pytest.mark.parametrize("state", ["queued", "navigating", "awaiting_confirmation", "queued_send", "running", "click", "verifying"])
+@pytest.mark.parametrize("state", ["queued", "navigating", "running", "click", "verifying"])
 def test_restart_never_replays_and_preserves_pre_post_click_uncertainty(env, state):
     task, _ = env.service.store.create(
         seller=env.context.self_ali_id, data_dir=env.context.data_dir, conversation_id=1,
         contact_ali_id="buyer", login_id="buyer-login", content="text", action="send", idempotency_key="restart",
     )
-    for target in ("navigating", "awaiting_confirmation", "queued_send", "running"):
+    for target in ("navigating", "running"):
         if task["status"] == state:
             break
-        changes = {"screenshot_id": "0" * 32, "screenshot_at": 1000, "screenshot_digest": "digest"} if target == "awaiting_confirmation" else {}
-        task = env.service._move(task, target, **changes)
+        task = env.service._move(task, target)
     if state in ("click", "verifying"):
         task = env.service._update(task, may_have_sent=True)
         if state == "verifying":
@@ -620,7 +473,6 @@ def test_restart_never_replays_and_preserves_pre_post_click_uncertainty(env, sta
     recovered = env.service.get(env.context, task["id"])
     assert recovered["status"] == ("unknown" if state in ("navigating", "running", "click", "verifying") else "failed")
     assert recovered["may_have_sent"] is (state in ("click", "verifying"))
-    assert recovered["screenshot_id"] is None
     assert env.queue.jobs == [] and env.calls == []
     if recovered["status"] == "failed":
         assert env.service.retry(env.context, task["id"])["attempt"] == 2
@@ -628,8 +480,7 @@ def test_restart_never_replays_and_preserves_pre_post_click_uncertainty(env, sta
 
 
 def test_shutdown_invalidates_pending_jobs_and_rejects_new_work(env):
-    first = prepared(env)
-    confirm(env, first)
+    first = submit(env)
     second = submit(env, idempotency_key="second")
     env.service.stop()
     while env.queue.jobs:
@@ -643,8 +494,7 @@ def test_shutdown_invalidates_pending_jobs_and_rejects_new_work(env):
 
 
 def test_shutdown_timeout_marks_running_unknown_and_prevents_later_click(env, monkeypatch):
-    task = prepared(env)
-    confirm(env, task)
+    task = submit(env)
     entered, release = Event(), Event()
 
     def input_text(text):
@@ -667,8 +517,7 @@ def test_shutdown_timeout_marks_running_unknown_and_prevents_later_click(env, mo
 
 @pytest.mark.parametrize("pause", ["during_commit", "after_commit", "before_post"])
 def test_stop_cannot_return_before_send_admission_boundary_exits(env, monkeypatch, pause):
-    task = prepared(env)
-    confirm(env, task)
+    task = submit(env)
     paused, resume, finish_job, stop_returned = Event(), Event(), Event(), Event()
     update = env.service.store.update_fields
 
@@ -728,8 +577,7 @@ def test_stop_cannot_return_before_send_admission_boundary_exits(env, monkeypatc
 
 
 def test_stop_after_post_returns_during_wait_without_another_post(env, monkeypatch):
-    task = prepared(env)
-    confirm(env, task)
+    task = submit(env)
     waiting, finish_job = Event(), Event()
 
     def wait_send(job):
@@ -757,8 +605,7 @@ def test_stop_after_post_returns_during_wait_without_another_post(env, monkeypat
 
 
 def test_send_post_exception_is_unknown_and_never_retried(env, monkeypatch):
-    task = prepared(env)
-    confirm(env, task)
+    task = submit(env)
 
     def post():
         record = env.service.get(env.context, task["id"])
@@ -782,8 +629,7 @@ def test_send_post_exception_is_unknown_and_never_retried(env, monkeypatch):
 
 @pytest.mark.parametrize("restart", [False, True])
 def test_terminal_writes_retry_after_repeated_db_locks_without_replaying_gui(env, monkeypatch, restart):
-    task = prepared(env)
-    confirm(env, task)
+    task = submit(env)
     transition = env.service.store.transition
     failures = []
 
@@ -804,7 +650,6 @@ def test_terminal_writes_retry_after_repeated_db_locks_without_replaying_gui(env
         "id", "seller", "data_dir", "attempt", "version", "status",
     )} | {"reason": "database is locked"}
     assert env.service._active == {} and env.service._attempts == {}
-    assert record["screenshot_id"] == task["screenshot_id"]
     env.source["checked_at"] = env.now + 1
     env.source["messages"] = [{
         "id": "message:new", "sender_id": "seller@icbu", "cid": "seller-buyer",
@@ -838,8 +683,7 @@ def test_terminal_writes_retry_after_repeated_db_locks_without_replaying_gui(env
 
 
 def test_completed_snapshot_survives_failure_to_read_database_after_click(env, monkeypatch):
-    task = prepared(env)
-    confirm(env, task)
+    task = submit(env)
     transition, get = env.service.store.transition, env.service.store.get
 
     def locked_transition(*args, **kwargs):
@@ -866,9 +710,8 @@ def test_completed_snapshot_survives_failure_to_read_database_after_click(env, m
 
 @pytest.mark.parametrize("superseded", ["version", "attempt"])
 def test_terminal_compensation_cannot_overwrite_newer_version_or_attempt(env, monkeypatch, superseded):
-    task = prepared(env) if superseded == "version" else submit(env)
+    task = submit(env)
     if superseded == "version":
-        confirm(env, task)
         monkeypatch.setattr(module.runner, "chat_input", lambda text: (False, "input uncertain"))
     else:
         env.token = replace(env.token, window_generation="revoked")
@@ -897,8 +740,7 @@ def test_terminal_compensation_cannot_overwrite_newer_version_or_attempt(env, mo
 
 @pytest.mark.parametrize("stop", [False, True])
 def test_active_click_is_not_compensated_before_callback_completes(env, monkeypatch, stop):
-    task = prepared(env)
-    confirm(env, task)
+    task = submit(env)
     entered, release = Event(), Event()
     transition = env.service.store.transition
 
@@ -943,7 +785,7 @@ def test_active_click_is_not_compensated_before_callback_completes(env, monkeypa
 
 @pytest.mark.parametrize("operation", ["transition", "get"])
 def test_shutdown_db_errors_still_signal_join_and_never_resume_pending_jobs(env, monkeypatch, operation):
-    first = prepared(env)
+    first = submit(env)
     second = submit(env, idempotency_key="second")
     original = getattr(env.service.store, operation)
 

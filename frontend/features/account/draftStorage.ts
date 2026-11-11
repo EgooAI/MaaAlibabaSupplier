@@ -35,9 +35,24 @@ export function loadDraft(storage: StorageSource, account: ConnectionSnapshot["a
 }
 
 export function saveDraft(storage: StorageSource, account: ConnectionSnapshot["account"], conversation: string, value: string) {
-  const key = draftKey(account, conversation);
+    const key = draftKey(account, conversation);
   drafts.set(key, { value, dirty: true });
+  draftRevision(storage, account, conversation, value);
   persist(storage, key, value);
+}
+
+/** Persists a draft identity so reloads recover submissions while edits start new ones. */
+export function draftRevision(storage: StorageSource, account: ConnectionSnapshot["account"], conversation: string, value: string): string {
+  const target = typeof storage === "function" ? storage() : storage;
+  const key = `${draftKey(account, conversation)}:revision`;
+  const raw = target.getItem(key);
+  const previous = raw ? JSON.parse(raw) as { id: string; value: string } : undefined;
+  const revision = previous?.value === value && typeof previous.id === "string" && previous.id
+    ? previous : { id: crypto.randomUUID(), value };
+  const encoded = JSON.stringify(revision);
+  if (raw !== encoded) target.setItem(key, encoded);
+  if (target.getItem(key) !== encoded) throw new Error("草稿版本无法持久化");
+  return revision.id;
 }
 
 export function flushDrafts(storage: StorageSource) {

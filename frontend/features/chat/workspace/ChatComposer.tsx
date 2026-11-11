@@ -18,6 +18,8 @@ export type ChatComposerProps = {
   onOpenStageAnalysis: () => void;
   loading: boolean;
   onSend: () => void;
+  onFill?: () => void;
+  sendDisabled?: boolean;
 };
 
 export function ChatComposer({
@@ -29,6 +31,8 @@ export function ChatComposer({
   onOpenStageAnalysis,
   loading,
   onSend,
+  onFill,
+  sendDisabled,
 }: ChatComposerProps) {
   const { snapshot, blocked } = useAccount();
   const canOperate = !blocked && Boolean(snapshot?.capabilities.operate_client);
@@ -58,11 +62,12 @@ export function ChatComposer({
         value={value}
         onChange={onChange}
         tools={tools.map((tool) => ({ ...tool, disabled: !canUseAi }))}
-        sendDisabled={!canOperate}
+        sendDisabled={!canOperate || sendDisabled}
         onToolClick={handleToolClick}
         placeholder="输入卖家回复，或插入 AI 建议话术..."
         loading={loading}
         onSend={onSend}
+        onFill={onFill}
       />
       {translateOpen ? <ComposeTranslator conversationId={conversationId} draft={value} onDraftChange={onChange} /> : null}
     </>

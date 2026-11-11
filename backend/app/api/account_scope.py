@@ -44,7 +44,6 @@ class AccountRoute(APIRoute):
             original = endpoint
             reject_busy = ("POST" in (kwargs.get("methods") or ()) and path in {
                 "/api/conversations/{conversation_id}/messages",
-                "/api/outbox/{task_id}/confirm",
                 "/api/outbox/{task_id}/retry",
             })
 

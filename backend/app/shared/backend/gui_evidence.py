@@ -1,4 +1,4 @@
-"""In-memory full-frame evidence; storage, binding and expiry belong to the service."""
+"""Lossless client frames shared by remote preview and PNG downloads."""
 
 from dataclasses import dataclass
 from hashlib import sha256
@@ -16,12 +16,6 @@ class ClientFrame:
     height: int
 
 
-@dataclass(frozen=True)
-class FrameComparison:
-    needs_reconfirm: bool
-    frame: ClientFrame
-
-
 def frame_from_image(image: np.ndarray) -> ClientFrame:
     """Encode the complete MaaFW BGR frame losslessly, without cropping or resizing."""
     if (
@@ -37,12 +31,3 @@ def frame_from_image(image: np.ndarray) -> ClientFrame:
     png = output.getvalue()
     height, width = image.shape[:2]
     return ClientFrame(png, sha256(png).hexdigest(), width, height)
-
-
-def compare_frame(expected_sha256: str, fresh_frame: ClientFrame) -> FrameComparison:
-    """Any full-frame change requires confirmation before input; never guess a ROI.
-
-    The digest covers the deterministic lossless PNG, including its dimensions.
-    The caller must obtain fresh_frame inside the same run_guarded as any input.
-    """
-    return FrameComparison(fresh_frame.sha256 != expected_sha256, fresh_frame)

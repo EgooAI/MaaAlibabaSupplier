@@ -1,6 +1,6 @@
 "use client";
 
-import { ExpandAltOutlined, SendOutlined, ToolOutlined } from "@ant-design/icons";
+import { DownOutlined, ExpandAltOutlined, SendOutlined, ToolOutlined } from "@ant-design/icons";
 import { Button, Dropdown, Input, Modal, Space, Tooltip } from "antd";
 import type { MenuProps } from "antd";
 import { useMemo, useState, type ReactNode } from "react";
@@ -22,6 +22,7 @@ type MessageComposerProps = {
   disabled?: boolean;
   sendDisabled?: boolean;
   onSend: () => void;
+  onFill?: () => void;
   compact?: boolean;
   footer?: ReactNode;
 };
@@ -37,6 +38,7 @@ export function MessageComposer({
   disabled = false,
   sendDisabled = false,
   onSend,
+  onFill,
   compact = false,
   footer,
 }: MessageComposerProps) {
@@ -79,9 +81,10 @@ export function MessageComposer({
           </div>
           <div className="flex items-center gap-3">
             {compact ? <span className="hidden text-[11px] text-slate-400 2xl:inline">Ctrl / ⌘ + Enter</span> : null}
+            <Space.Compact>
             <Button
               type="primary"
-              className={compact ? "!rounded-full" : ""}
+              className={compact && !onFill ? "!rounded-full" : ""}
               icon={<SendOutlined />}
               onClick={onSend}
               loading={loading}
@@ -89,6 +92,10 @@ export function MessageComposer({
             >
               {sendLabel}
             </Button>
+            {onFill ? <Dropdown trigger={["click"]} menu={{ items: [{ key: "fill", label: "仅填入客户端" }], onClick: onFill }} disabled={!canSend}>
+              <Button type="primary" aria-label="更多发送方式" icon={<DownOutlined />} disabled={!canSend} />
+            </Dropdown> : null}
+            </Space.Compact>
           </div>
         </div>
       </Space.Compact>

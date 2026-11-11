@@ -16,7 +16,7 @@ import type { BusinessCard } from "@/types/cards";
 import type { ConversationDetail } from "@/types/chatCanonical";
 import type { ConversationAggregateDto } from "@/types/chatTransport";
 import type { OutboxTask, TranslationJobSnapshot } from "@/types/chatOperations";
-import { canCancel, canRetry, frameFresh } from "@/features/chat/outbox/outboxModel";
+import { canCancel, canRetry } from "@/features/chat/outbox/outboxModel";
 import type { SelfInfo } from "@/types/home";
 import type { AliIdList, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskSnapshot } from "@/types/status";
 import type { OperationsBackend } from "@/services/interfaces";
@@ -372,34 +372,26 @@ export const mockBackend: OperationsBackend = {
       id: crypto.randomUUID(), conversation_id: Number(conversationId), contact_ali_id: conversation.customer.aliId ?? "",
       login_id: conversation.customer.loginId ?? "", content, action, idempotency_key, status: "queued", version: 1,
       attempt: 1, may_have_sent: false, reason: null, created_at: Date.now() / 1000, updated_at: Date.now() / 1000,
-      screenshot_id: null, screenshot_at: null, screenshot_expires_at: null, matched_message_id: null,
+      matched_message_id: null,
     };
     outboxStore.set(task.id, { scope: outboxScope(), task });
     return delay({ outbox: structuredClone(task) });
   },
   listOutbox: (sid) => delay([...outboxStore.values()].filter((record) => record.scope === outboxScope() && String(record.task.conversation_id) === sid).map((record) => structuredClone(record.task))),
   getOutbox: (id) => delay(structuredClone(getMockOutbox(id))),
-  confirmOutbox: async (id, version, screenshotId) => {
-    requireMockClient();
-    const task = getMockOutbox(id, version);
-    if (!frameFresh(task) || task.screenshot_id !== screenshotId) throw new Error("截图已变化或过期");
-    Object.assign(task, { status: "queued_send", version: version + 1, updated_at: Date.now() / 1000 });
-    return delay(structuredClone(task));
-  },
   cancelOutbox: async (id, version) => {
     const task = getMockOutbox(id, version);
     if (!canCancel(task)) throw new Error("任务不可取消");
-    Object.assign(task, { status: "cancelled", version: version + 1, screenshot_id: null, screenshot_at: null, screenshot_expires_at: null, updated_at: Date.now() / 1000 });
+    Object.assign(task, { status: "cancelled", version: version + 1, updated_at: Date.now() / 1000 });
     return delay(structuredClone(task));
   },
   retryOutbox: async (id, version) => {
     requireMockClient();
     const task = getMockOutbox(id, version);
     if (!canRetry(task)) throw new Error("任务不可重试");
-    Object.assign(task, { status: "queued", version: version + 1, attempt: task.attempt + 1, screenshot_id: null, screenshot_at: null, screenshot_expires_at: null, updated_at: Date.now() / 1000 });
+    Object.assign(task, { status: "queued", version: version + 1, attempt: task.attempt + 1, updated_at: Date.now() / 1000 });
     return delay(structuredClone(task));
   },
-  getOutboxScreenshot: async () => { throw new Error("Mock 不提供真实客户端截图"); },
   getMessageImage: async () => { throw new Error("Mock 不提供聊天图片"); },
 
   exportConversations: async ({ conversationIds }) => {

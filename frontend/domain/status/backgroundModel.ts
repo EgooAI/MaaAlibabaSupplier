@@ -107,8 +107,7 @@ export function updateStatus(update: BackgroundUpdateStatus | null | undefined):
 
 function outboxSummary(counts: Record<string, number>): WorkStatus {
   if (counts.navigating > 0 || counts.running > 0 || counts.verifying > 0) return workStatus("running", "执行或核查中");
-  if (counts.awaiting_confirmation > 0) return workStatus("waiting", "等待截图确认");
-  if (counts.queued > 0 || counts.queued_send > 0) return workStatus("queued");
+  if (counts.queued > 0) return workStatus("queued");
   if (counts.unknown > 0) return { ...workStatus("unknown", "有结果未知的任务"), color: "orange" };
   if (counts.failed > 0) return workStatus("failed", "有失败任务");
   if (counts.observed > 0) return workStatus("waiting", "本地已有匹配记录");
@@ -191,7 +190,7 @@ export function serviceSummaries(snapshot: SystemStatusSnapshot): ServiceSummary
     {
       id: "outbox", title: "Outbox 与核查", category: "业务任务", resources: matching("outbox-verifier"), error: outboxError,
       status: outboxCounts ? outboxSummary(outboxCounts) : workStatus("unknown", outboxError ? "读取失败" : undefined),
-      details: outboxCounts ? [`排队 ${(outboxCounts.queued ?? 0) + (outboxCounts.queued_send ?? 0)} · 执行 ${(outboxCounts.navigating ?? 0) + (outboxCounts.running ?? 0)} · 待确认 ${outboxCounts.awaiting_confirmation ?? 0}`, `核查中 ${outboxCounts.verifying ?? 0} · 结果未知 ${outboxCounts.unknown ?? 0} · 失败 ${outboxCounts.failed ?? 0}`, "平台送达结果以核对证据为准。"] : ["Outbox 业务数据未提供"],
+      details: outboxCounts ? [`排队 ${outboxCounts.queued ?? 0} · 执行 ${(outboxCounts.navigating ?? 0) + (outboxCounts.running ?? 0)}`, `核查中 ${outboxCounts.verifying ?? 0} · 结果未知 ${outboxCounts.unknown ?? 0} · 失败 ${outboxCounts.failed ?? 0}`, "本地匹配不代表平台送达。"] : ["Outbox 业务数据未提供"],
     },
     {
       id: "cards", title: "卡片清扫服务", category: "数据处理", resources: matching("card-sweep"), error: card?.last_error || undefined,

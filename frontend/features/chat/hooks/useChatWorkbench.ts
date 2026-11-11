@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ConversationGroupMode } from "@/domain/chat/chatModel";
 import { mergeConversationDetail } from "@/domain/chat/chatModel";
 import { AccountChangedError, useAccount, useAccountBackend } from "@/features/account/AccountProvider";
-import { loadDraft, saveDraft } from "@/features/account/draftStorage";
+import { draftRevision, loadDraft, saveDraft } from "@/features/account/draftStorage";
 import type { AssistantSuggestion, AssistantSuggestionResult, ConversationDetail } from "@/types/chatCanonical";
 import { useConversationSummaries } from "./useConversationSummaries";
 import { useConversationTranslation } from "./useConversationTranslation";
@@ -39,6 +39,7 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
   const [activeConversation, setActiveConversation] = useState<ConversationDetail>();
   const [detailLoading, setDetailLoading] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const draftVersions = useRef<Record<string, number>>({});
   const [suggestions, setSuggestions] = useState<AssistantSuggestion[]>([]);
   const [suggestionReasoning, setSuggestionReasoning] = useState("");
   const [suggestionRestricted, setSuggestionRestricted] = useState(false);
@@ -87,6 +88,7 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
   const setDraft = useCallback((value: string) => {
     const id = activeIdRef.current;
     if (!id) return;
+    draftVersions.current[id] = (draftVersions.current[id] ?? 0) + 1;
     // Editing the inserted suggestion detaches it from its intent: the send is
     // then a plain manual message, not the accepted suggestion.
     if (pendingIntentRef.current && value !== pendingIntentRef.current.content) {
@@ -96,6 +98,19 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
     setDrafts((current) => ({ ...current, [id]: value }));
     try { saveDraft(() => localStorage, account, id, value); } catch { warnStorage(); }
   }, [account, warnStorage]);
+
+  function captureDraft() {
+    const sid = activeConversationId!;
+    const version = draftVersions.current[sid];
+    const selection = selectionRef.current;
+    return {
+      id: draftRevision(() => localStorage, account, sid, draft),
+      content: draft.trim(),
+      clear: () => {
+        if (activeIdRef.current === sid && selectionRef.current === selection && draftVersions.current[sid] === version) setDraft("");
+      },
+    };
+  }
 
   /** Read-and-clear the intent tied to the current draft, if it still matches. */
   const takePendingIntent = useCallback((content: string) => {
@@ -306,6 +321,7 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
     detailLoading,
     draft,
     setDraft,
+    captureDraft,
     selectConversation,
     translateMessages: translation.translateMessages,
     translateMissing: translation.translateMissing,

@@ -12,6 +12,9 @@ import { isTranslatableMessage } from "@/domain/chat/chatModel";
 import { formatFullDateTime } from "@/domain/time";
 import { renderContentHtml } from "@/domain/render/markdown";
 import type { ChatMessage } from "@/types/chatCanonical";
+import type { OutboxTask } from "@/types/chatOperations";
+import type { useOutbox } from "../outbox/useOutbox";
+import { OutboxTaskBubble } from "../outbox/OutboxTaskBubble";
 
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_TOLERANCE_PX = 10;
@@ -30,6 +33,7 @@ export function MessageTimeline({
   onForkFromMessage,
   conversationId,
   loadImage,
+  sending,
 }: {
   messages: ChatMessage[];
   buyerId?: string;
@@ -44,11 +48,16 @@ export function MessageTimeline({
   /** Conversation the messages belong to; image bytes are fetched per message through it. */
   conversationId?: string;
   loadImage?: (conversationId: string, externalMid: string) => Promise<Blob>;
+  sending?: { tasks: OutboxTask[]; outbox: Pick<ReturnType<typeof useOutbox>, "busy" | "mutate"> };
 }) {
   const [sheet, setSheet] = useState<Sheet>();
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const origin = useRef({ x: 0, y: 0 });
   const pressing = useRef(false);
+  const entries = [
+    ...messages.map((message, index) => ({ kind: "message" as const, message, index, time: Date.parse(message.createdAt) || 0 })),
+    ...(sending?.tasks ?? []).map((task) => ({ kind: "task" as const, task, time: task.created_at * 1000 })),
+  ].sort((a, b) => a.time - b.time);
 
   // 行内翻译操作与工具栏一致：任一翻译任务在途时禁用，避免覆盖在途 job。
   const jobBusy = (pendingIds?.size ?? 0) > 0;
@@ -109,7 +118,9 @@ export function MessageTimeline({
       // Android raises contextmenu on a long press; the sheet replaces it.
       onContextMenu={(event) => { if (pressing.current) event.preventDefault(); }}
     >
-      {messages.map((message, index) => {
+      {entries.map((entry) => {
+        if (entry.kind === "task") return <OutboxTaskBubble key={`outbox:${entry.task.id}`} task={entry.task} outbox={sending!.outbox} />;
+        const { message, index } = entry;
         // Auto-reception replies (role "system") are sent by our own account:
         // align them with the seller side so the sender is not misread.
         const isSelfSide = message.role === "seller" || message.role === "system";

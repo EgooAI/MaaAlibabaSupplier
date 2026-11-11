@@ -14,7 +14,6 @@ describe("outbox HTTP contract and account isolation", () => {
   it.each([
     ["/api/conversations/42%2Fspace/outbox", "GET", undefined, () => httpBackend.listOutbox("42/space")],
     ["/api/outbox/task%2Fid", "GET", undefined, () => httpBackend.getOutbox("task/id")],
-    ["/api/outbox/task%2Fid/confirm", "POST", { version: 4, screenshot_id: "frame-a" }, () => httpBackend.confirmOutbox("task/id", 4, "frame-a")],
     ["/api/outbox/task%2Fid/cancel", "POST", { version: 4 }, () => httpBackend.cancelOutbox("task/id", 4)],
     ["/api/outbox/task%2Fid/retry", "POST", { version: 4 }, () => httpBackend.retryOutbox("task/id", 4)],
   ] as const)("encodes and scopes %s", async (path, method, body, call) => {
@@ -30,11 +29,10 @@ describe("outbox HTTP contract and account isolation", () => {
     if (method === "GET") expect(init.cache).toBe("no-store");
   });
 
-  it("requires a connected client for screenshot confirmation and retry but permits disconnected reads and cancel", async () => {
+  it("requires a connected client for retry but permits disconnected reads and cancel", async () => {
     accountSession.accept(structuredClone(connectionSnapshot));
     const fetch = vi.fn().mockImplementation(() => Promise.resolve(response(outboxTask())));
     vi.stubGlobal("fetch", fetch);
-    await expect(httpBackend.confirmOutbox("task", 1, "frame")).rejects.toThrow("客户端窗口");
     await expect(httpBackend.retryOutbox("task", 1)).rejects.toThrow("客户端窗口");
     expect(fetch).not.toHaveBeenCalled();
     await httpBackend.getOutbox("task");
@@ -53,9 +51,9 @@ describe("outbox HTTP contract and account isolation", () => {
     const png = screenshotPng();
     const fetch = vi.fn().mockResolvedValue(new Response(png, { headers: { "Content-Type": "image/png", "X-Account-Epoch": "mock-1", "Cache-Control": "no-store" } }));
     vi.stubGlobal("fetch", fetch);
-    const result = await httpBackend.getOutboxScreenshot("task/id", "frame/id", 4);
+    const result = await httpBackend.getMessageImage("42", "message/id");
     expect(new Uint8Array(await result.arrayBuffer())).toEqual(new Uint8Array(await png.arrayBuffer()));
-    expect(fetch.mock.calls[0][0]).toBe("/api/outbox/task%2Fid/screenshot/frame%2Fid?version=4");
+    expect(fetch.mock.calls[0][0]).toBe("/api/conversations/42/messages/message%2Fid/image");
     expect(fetch.mock.calls[0][1].cache).toBe("no-store");
     expect(new Headers(fetch.mock.calls[0][1].headers).get("X-Account-Epoch")).toBe("mock-1");
   });
@@ -64,25 +62,25 @@ describe("outbox HTTP contract and account isolation", () => {
     const headers = new Headers({ "Content-Type": "image/png" });
     if (epoch) headers.set("X-Account-Epoch", epoch);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(screenshotPng(), { headers })));
-    await expect(httpBackend.getOutboxScreenshot("task", "frame", 1)).rejects.toThrow("账号状态已变化");
+    await expect(httpBackend.getMessageImage("42", "message")).rejects.toThrow("账号状态已变化");
   });
 
-  it("rejects non-PNG responses even with the right account epoch", async () => {
+  it("rejects non-image responses even with the right account epoch", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<html>sign in</html>", { headers: { "Content-Type": "text/html", "X-Account-Epoch": "mock-1" } })));
-    await expect(httpBackend.getOutboxScreenshot("task", "frame", 1)).rejects.toThrow("截图格式无效");
+    await expect(httpBackend.getMessageImage("42", "message")).rejects.toThrow("图片格式无效");
   });
 
   it("rechecks account scope after the PNG body finishes reading", async () => {
     let finish!: (blob: Blob) => void;
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, headers: new Headers({ "Content-Type": "image/png", "X-Account-Epoch": "mock-1" }), blob: () => new Promise<Blob>((resolve) => { finish = resolve; }) }));
-    const pending = httpBackend.getOutboxScreenshot("task", "frame", 1);
+    const pending = httpBackend.getMessageImage("42", "message");
     await Promise.resolve();
     accountSession.invalidate();
     finish(screenshotPng());
     await expect(pending).rejects.toThrow("账号状态已变化");
   });
 
-  it("discards late old-account tasks and prevents an old chain from confirming in a new account", async () => {
+  it("discards late old-account tasks and prevents an old chain from retrying in a new account", async () => {
     let finish!: (result: Response) => void;
     const fetch = vi.fn().mockImplementation(() => new Promise<Response>((resolve) => { finish = resolve; }));
     vi.stubGlobal("fetch", fetch);
@@ -91,14 +89,14 @@ describe("outbox HTTP contract and account isolation", () => {
     accountSession.accept({ ...ready(), account: { ...connectionSnapshot.account, epoch: "b" } });
     finish(response(outboxTask()));
     await expect(pending).rejects.toThrow("账号状态已变化");
-    await expect(scoped.confirmOutbox("task", 1, "frame")).rejects.toThrow("账号状态已变化");
+    await expect(scoped.retryOutbox("task", 1)).rejects.toThrow("账号状态已变化");
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("does not repeat a rejected confirmation or retry request", async () => {
+  it("does not repeat a rejected cancellation or retry request", async () => {
     const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ code: 1, msg: "version changed", data: null }), { status: 409, headers: { "X-Account-Epoch": "mock-1" } })));
     vi.stubGlobal("fetch", fetch);
-    await expect(httpBackend.confirmOutbox("task", 1, "frame")).rejects.toMatchObject({ status: 409 });
+    await expect(httpBackend.cancelOutbox("task", 1)).rejects.toMatchObject({ status: 409 });
     await expect(httpBackend.retryOutbox("task", 1)).rejects.toMatchObject({ status: 409 });
     expect(fetch).toHaveBeenCalledTimes(2);
   });

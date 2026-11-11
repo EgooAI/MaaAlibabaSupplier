@@ -9,7 +9,7 @@ from PIL import Image
 
 from backend.app.api.envelope import AppError
 from backend.app.shared.backend import account_context, gui_session, maafw_runner as runner
-from backend.app.shared.backend.gui_evidence import ClientFrame, compare_frame, frame_from_image
+from backend.app.shared.backend.gui_evidence import ClientFrame, frame_from_image
 from backend.tests.test_maafw_runner import connected_token, native_pipeline, sdk, window
 
 
@@ -139,7 +139,7 @@ def test_window_changed_during_capture_rejects_evidence(capture, sdk, monkeypatc
 
 
 @pytest.mark.parametrize("change", ["same", "corner_pixel", "dimensions"])
-def test_compare_entire_frame_including_dimensions(change):
+def test_digest_covers_entire_frame_including_dimensions(change):
     image = np.zeros((4, 6, 3), dtype=np.uint8)
     expected = frame_from_image(image)
     if change == "corner_pixel":
@@ -147,47 +147,29 @@ def test_compare_entire_frame_including_dimensions(change):
     elif change == "dimensions":
         image = image.reshape((6, 4, 3))
     fresh = frame_from_image(image)
-    comparison = compare_frame(expected.sha256, fresh)
-    assert comparison.needs_reconfirm is (change != "same")
-    assert comparison.frame is fresh
+    assert (expected.sha256 != fresh.sha256) is (change != "same")
 
 
-@pytest.mark.parametrize("changed", [False, True])
-def test_confirmation_stage_contract_and_persistence_barrier(capture, sdk, changed):
-    def search():
-        assert runner.goto_contact("buyer")[0]
-        return runner.capture_client_frame()
-
-    evidence = gui_session.run_guarded(capture.token, search)
-    # The confirmation wait has no account or runner lock held.
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        def acquire_between_stages():
-            with account_context.changing_account(), runner._run_lock:
-                return True
-        assert executor.submit(acquire_between_stages).result(timeout=2)
-    if changed:
-        capture.image[-1, -1, 0] = 1
+def test_continuous_guard_and_persistence_barrier(capture, sdk):
     barrier = []
 
-    def confirm():
-        comparison = compare_frame(evidence.sha256, runner.capture_client_frame())
-        if comparison.needs_reconfirm:
-            return comparison
-        assert runner.chat_input("approved text")[0]
+    def send():
+        assert runner.goto_contact("buyer")[0]
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            def switch():
+                with pytest.raises(AppError):
+                    with account_context.changing_account():
+                        pytest.fail("Navigation must not release the account guard before input")
+            executor.submit(switch).result(timeout=2)
+        assert runner.chat_input("submitted text")[0]
         barrier.append(len(sdk.calls))  # Service persists may_have_sent before submit_send.
         return runner.wait_send(runner.submit_send())
 
-    result = gui_session.run_guarded(capture.token, confirm)
-    if changed:
-        assert result.needs_reconfirm
-        assert result.frame.sha256 != evidence.sha256
-        assert [entry for entry, _ in sdk.calls] == ["ContactSearch"]
-        assert barrier == []
-    else:
-        assert result[0]
-        assert [entry for entry, _ in sdk.calls] == ["ContactSearch", "ChatInput", "ChatInput_SendOnly"]
-        assert sdk.calls[1][1]["ChatInput_InputText"]["next"] == []
-        assert barrier == [2]
+    assert gui_session.run_guarded(capture.token, send)[0]
+    assert [entry for entry, _ in sdk.calls] == ["ContactSearch", "ChatInput", "ChatInput_SendOnly"]
+    assert sdk.calls[1][1]["ChatInput_InputText"]["next"] == []
+    assert barrier == [2]
+    assert capture.events == []
 
 
 @pytest.mark.parametrize("outcome", [False, None, RuntimeError("click outcome unavailable")])
@@ -215,7 +197,7 @@ def test_native_capture_is_fresh_and_read_only_even_after_failure(native_binding
     assert (first.width, first.height) == (1280, 800)
     controller.frame[-1, -1, -1] = 1
     second = gui_session.run_guarded(token, runner.capture_client_frame)
-    assert compare_frame(first.sha256, second).needs_reconfirm
+    assert first.sha256 != second.sha256
     with Image.open(BytesIO(second.png_bytes)) as image:
         np.testing.assert_array_equal(np.array(image), controller.frame[:, :, ::-1])
     controller.screencap_ok = False

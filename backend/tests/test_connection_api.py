@@ -554,6 +554,10 @@ def test_send_rejects_missing_login_and_goto_rejects_unrelated_target(client, sd
 
 @pytest.mark.parametrize("change", ["account", "reconnect", "window"])
 def test_queued_send_fails_when_session_expires(client, sdk, chat, monkeypatch, change):
+    from backend.app.shared.backend import source_messages
+    monkeypatch.setattr(source_messages, "read_source_messages", lambda *args: {
+        "valid": True, "origin": {"source_path": "test"}, "messages": [], "checked_at": 1,
+    })
     connect(client)
     context = account_context.get_account_context()
     queue = TaskQueue()
@@ -778,10 +782,11 @@ def test_queued_diagnostic_cannot_run_for_next_account(client, sdk):
 
 
 def test_running_send_returns_task_id_and_all_observers_remain_responsive(client, sdk, chat, monkeypatch):
-    import numpy as np
-    from backend.app.shared.backend.gui_evidence import frame_from_image
-
-    monkeypatch.setattr(outbox_service.runner, "capture_client_frame", lambda: frame_from_image(np.zeros((4, 5, 3), dtype=np.uint8)))
+    from backend.app.shared.backend import source_messages
+    monkeypatch.setattr(outbox_service, "RECONCILE_INTERVAL", 3600)
+    monkeypatch.setattr(source_messages, "read_source_messages", lambda *args: {
+        "valid": True, "origin": {"source_path": "test"}, "messages": [], "checked_at": 1,
+    })
     connect(client)
     queue = TaskQueue()
     entered, release = Event(), Event()
@@ -837,7 +842,7 @@ def test_running_send_returns_task_id_and_all_observers_remain_responsive(client
         finally:
             release.set()
             queue.shutdown()
-    assert service.get(context, task_id)["status"] == "awaiting_confirmation"
+    assert service.get(context, task_id)["status"] == "verifying"
 
 
 @pytest.mark.parametrize("phase", ["directory", "source", "archive", "client", "model"])

@@ -15,7 +15,7 @@ Callers must pass all possible sends in the scope, including unknown tasks for
 late reconciliation and observed tasks for claims (not a paginated UI listing).
 Persist observed through the store's atomic transition/unique message claim.
 Missing/invalid baselines remain unknown and must not be automatically retried.
-Screenshot confirmation and GUI authorization belong to the sending service.
+GUI authorization belongs to the sending service.
 """
 
 from __future__ import annotations

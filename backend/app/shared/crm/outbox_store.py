@@ -1,15 +1,14 @@
 """Application-owned outbox in the CRM database; never a delivery receipt.
 
-The service owns GUI authorization, screenshot artifacts and local-message matching.
+The service owns GUI authorization and local-message matching.
 It must persist may_have_sent=True BEFORE invoking a send action. Only the service
-may advance awaiting_confirmation after validating its live confirmation token.
+may execute a queued task with its original account and window token.
 Recovery is an explicit startup operation, before workers accept new tasks.
 """
 
 from __future__ import annotations
 
 import json
-import math
 import os
 import sqlite3
 import time
@@ -55,6 +54,9 @@ def _json(value: object) -> str:
 
 def _record(row: sqlite3.Row) -> dict:
     result = dict(row)
+    # Retains legacy artifacts on disk without exposing retired confirmation fields.
+    for name in ("screenshot_id", "screenshot_at", "screenshot_digest"):
+        result.pop(name, None)
     result.setdefault("origin_request_id", None)
     result.setdefault("origin_account_epoch", None)
     result["may_have_sent"] = bool(result["may_have_sent"])
@@ -113,9 +115,6 @@ class OutboxStore:
                     reason TEXT,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
-                    screenshot_id TEXT,
-                    screenshot_at REAL,
-                    screenshot_digest TEXT,
                     baseline TEXT,
                     evidence TEXT,
                     matched_message_id TEXT,
@@ -190,8 +189,7 @@ class OutboxStore:
                 "id": uuid4().hex, "seller": seller, "data_dir": directory, **payload,
                 "idempotency_key": idempotency_key, "status": "queued", "version": 1,
                 "attempt": 1, "may_have_sent": False, "reason": None,
-                "created_at": now, "updated_at": now, "screenshot_id": None,
-                "screenshot_at": None, "screenshot_digest": None, "baseline": None,
+                "created_at": now, "updated_at": now, "baseline": None,
                 "evidence": None, "matched_message_id": None,
                 "origin_request_id": origin_request_id, "origin_account_epoch": origin_account_epoch,
             }
@@ -205,6 +203,11 @@ class OutboxStore:
     def get(self, id: str, *, seller: str, data_dir: str | Path) -> dict | None:
         rows = self._read("SELECT * FROM app_outbox WHERE id=? AND seller=? AND data_dir=?",
                           (id, *_scope(seller, data_dir)))
+        return _record(rows[0]) if rows else None
+
+    def get_by_key(self, key: str, *, seller: str, data_dir: str | Path) -> dict | None:
+        rows = self._read("SELECT * FROM app_outbox WHERE idempotency_key=? AND seller=? AND data_dir=?",
+                          (key, *_scope(seller, data_dir)))
         return _record(rows[0]) if rows else None
 
     def list(
@@ -310,9 +313,6 @@ class OutboxStore:
     def _validate_transition(previous: dict, status: object) -> None:
         if not isinstance(status, str) or status not in TRANSITIONS.get(previous["status"], set()):
             raise OutboxConflict(f"Invalid outbox transition: {previous['status']} -> {status}")
-        if (previous["status"] == "queued_send" and status == "awaiting_confirmation"
-                and previous["may_have_sent"]):
-            raise OutboxConflict("Only a queued task before input can request fresh confirmation")
 
     @staticmethod
     def _validate_editable(previous: dict, changes: dict, *, transition: bool) -> None:
@@ -328,23 +328,16 @@ class OutboxStore:
             if current[name] is not None and not isinstance(current[name], dict):
                 raise ValueError(f"{name} must be a JSON object or None")
             _json(current[name])
-        for name in ("reason", "screenshot_id", "screenshot_digest", "matched_message_id"):
+        for name in ("reason", "matched_message_id"):
             value = current[name]
             if value is not None and (not isinstance(value, str) or not value):
                 raise ValueError(f"{name} must be a nonempty string or None")
-        stamp = current["screenshot_at"]
-        if stamp is not None and (type(stamp) not in (int, float) or not math.isfinite(stamp) or stamp < 0):
-            raise ValueError("screenshot_at must be a nonnegative Unix timestamp")
-        if (current["screenshot_id"] is None) != (stamp is None):
-            raise ValueError("screenshot_id and screenshot_at must be supplied together")
-        if current["status"] in ("awaiting_confirmation", "queued_send") and current["screenshot_id"] is None:
-            raise OutboxConflict("A confirmation screenshot is required")
         if type(current["may_have_sent"]) is not bool:
             raise ValueError("may_have_sent must be boolean")
         if previous["may_have_sent"] and not current["may_have_sent"]:
             raise OutboxConflict("Send uncertainty cannot be cleared")
         if current["may_have_sent"] and (current["action"] != "send" or current["status"] in (
-            "queued", "navigating", "awaiting_confirmation", "queued_send", "filled", "cancelled",
+            "queued", "navigating", "filled", "cancelled",
         )):
             raise OutboxConflict("Send risk is incompatible with this action or status")
         if current["status"] == "verifying" and (current["action"] != "send" or not current["may_have_sent"]):
@@ -364,7 +357,7 @@ class OutboxStore:
     ) -> dict:
         """Pass status=...; claiming matched_message_id is atomic with observed.
 
-        Use expected_version from the screenshot snapshot for user confirmation.
+        Uses expected_version to reject stale workers and concurrent mutations.
         Payload and ownership are immutable. Failed -> queued is only via retry().
         """
         if "status" not in changes:
@@ -395,7 +388,7 @@ class OutboxStore:
                 raise OutboxConflict("A possibly sent task cannot be retried")
             return self._save(conn, previous, {
                 "status": "queued", "attempt": previous["attempt"] + 1,
-                "reason": None, "screenshot_id": None, "screenshot_at": None, "screenshot_digest": None,
+                "reason": None,
                 "baseline": None, "evidence": None, "matched_message_id": None,
             }, "retry")
 
@@ -404,7 +397,7 @@ class OutboxStore:
         reason: str = "cancelled_by_user",
     ) -> dict:
         return self.transition(
-            id, ("queued", "awaiting_confirmation", "queued_send"), expected_version,
+            id, "queued", expected_version,
             seller=seller, data_dir=data_dir, status="cancelled", reason=reason,
         )
 
@@ -421,19 +414,20 @@ class OutboxStore:
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_outbox'",
             ).fetchone():
                 return []
+            # Old confirmation authorizations never become automatic sends on upgrade.
+            recoverable = (*PENDING_STATUSES, "awaiting_confirmation", "queued_send")
             rows = conn.execute(
-                f"SELECT * FROM app_outbox WHERE status IN ({','.join('?' for _ in PENDING_STATUSES)})",
-                PENDING_STATUSES,
+                f"SELECT * FROM app_outbox WHERE status IN ({','.join('?' for _ in recoverable)})",
+                recoverable,
             ).fetchall()
             recovered = []
             for row in rows:
                 previous = _record(row)
                 status = "unknown" if is_recovery_uncertain(previous["status"], previous["may_have_sent"]) else "failed"
                 reason = "restart_execution_uncertain" if status == "unknown" else "restart_before_execution"
-                if previous["status"] == "awaiting_confirmation":
+                if previous["status"] in ("awaiting_confirmation", "queued_send") and not previous["may_have_sent"]:
                     status, reason = "failed", "restart_confirmation_lost"
                 recovered.append(self._save(conn, previous, {
                     "status": status, "reason": reason,
-                    "screenshot_id": None, "screenshot_at": None, "screenshot_digest": None,
                 }, "recover"))
             return recovered

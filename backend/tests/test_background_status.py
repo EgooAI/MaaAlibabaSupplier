@@ -158,20 +158,20 @@ def test_outbox_summary_reads_persisted_states_without_payloads_or_recovery(tmp_
     store = OutboxStore(tmp_path / "crm.sqlite")
     scope = {"seller": "seller", "data_dir": tmp_path / "source"}
     store.initialize()
-    awaiting = advance(store, scope, create(store, scope, "confirm")[0], "awaiting_confirmation")
+    queued = create(store, scope, "queued")[0]
     verifying = advance(store, scope, create(store, scope, "verify")[0], "verifying")
     unknown = move(store, scope, verifying, "unknown")
     observed = advance(store, scope, create(store, scope, "observed")[0], "verifying")
     observed = move(store, scope, observed, "observed", matched_message_id="match", evidence={"sensitive": "evidence"})
     create(store, {**scope, "seller": "other"}, "private", content="PRIVATE_BODY")
     create(store, {**scope, "data_dir": tmp_path / "other"}, "private-dir", content="PRIVATE_DIR_BODY")
-    before = store.events(awaiting["id"], **scope)
+    before = store.events(queued["id"], **scope)
     snapshot = OutboxStore(store.database_path).observation(**scope)
-    assert snapshot["counts"] == {"awaiting_confirmation": 1, "unknown": 1, "observed": 1}
-    assert {task["id"] for task in snapshot["recent"]} == {awaiting["id"], unknown["id"], observed["id"]}
+    assert snapshot["counts"] == {"queued": 1, "unknown": 1, "observed": 1}
+    assert {task["id"] for task in snapshot["recent"]} == {queued["id"], unknown["id"], observed["id"]}
     assert all(set(task) == {"id", "status", "action", "conversationId", "createdAt", "updatedAt", "mayHaveSent"}
                for task in snapshot["recent"])
-    assert store.events(awaiting["id"], **scope) == before
+    assert store.events(queued["id"], **scope) == before
     assert "PRIVATE" not in json.dumps(snapshot) and "content" not in json.dumps(snapshot)
     assert len(store.observation(**scope, limit=1)["recent"]) == 1
 

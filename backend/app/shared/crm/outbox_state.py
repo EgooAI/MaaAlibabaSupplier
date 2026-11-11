@@ -5,34 +5,30 @@ from backend.app.shared import contract
 PENDING_STATUSES = contract.OUTBOX_PENDING_STATUSES
 STATUSES = contract.OUTBOX_STATUSES
 
-NON_EXECUTING_STATUSES = frozenset({"queued", "awaiting_confirmation", "queued_send"})
+NON_EXECUTING_STATUSES = frozenset({"queued"})
 # A GUI action may already have happened (search, input or send).
 GUI_RISK_STATUSES = frozenset({"navigating", "running"})
 EXECUTING_STATUSES = GUI_RISK_STATUSES | {"verifying"}
 
 # The service may still compensate these statuses after a failure or shutdown.
 COMPENSATABLE_STATUSES = NON_EXECUTING_STATUSES | GUI_RISK_STATUSES
-# While an attempt is active, awaiting_confirmation is owned by the confirmation flow.
-ACTIVE_COMPENSATABLE_STATUSES = (NON_EXECUTING_STATUSES - {"awaiting_confirmation"}) | GUI_RISK_STATUSES
+ACTIVE_COMPENSATABLE_STATUSES = COMPENSATABLE_STATUSES
 
 TRANSITIONS = {
     "queued": {"navigating", "failed", "cancelled"},
-    "navigating": {"awaiting_confirmation", "failed", "unknown"},
-    "awaiting_confirmation": {"queued_send", "failed", "cancelled"},
-    "queued_send": {"awaiting_confirmation", "running", "failed", "cancelled"},
+    "navigating": {"running", "failed", "unknown"},
     "running": {"verifying", "filled", "failed", "unknown"},
     "verifying": {"observed", "failed", "unknown"},
     "unknown": {"observed"},
 }
 EDITABLE_FIELDS = frozenset({
-    "may_have_sent", "reason", "screenshot_id", "screenshot_at",
-    "screenshot_digest", "baseline", "evidence",
+    "may_have_sent", "reason", "baseline", "evidence",
 })
 PAYLOAD_FIELDS = ("conversation_id", "contact_ali_id", "login_id", "content", "action")
 
 # Reasons the API may leak verbatim; everything else is replaced by a generic code.
 REASON_CODES = frozenset({
-    "cancelled_by_user", "screenshot_expired_or_changed", "shutdown_before_execution",
+    "cancelled_by_user", "shutdown_before_execution",
     "shutdown_execution_uncertain", "restart_execution_uncertain", "restart_before_execution",
     "restart_confirmation_lost", "baseline_invalid", "task_not_verifiable", "snapshot_invalid",
     "snapshot_scope_or_time_mismatch", "message_not_observed", "multiple_candidate_messages",
