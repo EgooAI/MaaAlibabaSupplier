@@ -154,9 +154,9 @@ class InquiryCard(BaseModel):
 
 
 def _is_empty(val) -> bool:
-    from backend.app.shared.utils.empty import is_empty_value
+    from backend.app.shared.utils.empty import is_unset_value
 
-    return is_empty_value(val)
+    return is_unset_value(val)
 
 
 def _merge_user_info(existing: UserInfo, new: UserInfo) -> UserInfo:

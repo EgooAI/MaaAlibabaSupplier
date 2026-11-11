@@ -644,9 +644,9 @@ def _merge_extra(existing: Any, new: dict[str, Any]) -> dict[str, Any]:
 
 
 def _is_empty(value: Any) -> bool:
-    from backend.app.shared.utils.empty import is_empty_value
+    from backend.app.shared.utils.empty import is_unset_value
 
-    return is_empty_value(value)
+    return is_unset_value(value)
 
 
 def _message_from_self(row: MessageRow, self_info: SelfInfo | None) -> bool:
