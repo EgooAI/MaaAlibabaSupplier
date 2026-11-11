@@ -25,6 +25,8 @@ export interface DbAgentPreset {
   category?: "system" | "regular";
   revision_source?: string;
   revision_note?: string;
+  fingerprint?: string;
+  expected_fingerprint?: string;
 }
 
 export interface AgentPresetRevision {

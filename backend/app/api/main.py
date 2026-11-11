@@ -20,7 +20,7 @@ from backend.app.shared.utils.settings import FRONTEND_DEV_ORIGINS
 from backend.app.shared.utils.log_context import bind_log_context
 from backend.app.updater import stop_update_scheduler
 
-from backend.app.api.routers import agent, app as app_router, auth, cards, conversations, experiments, messages, outbox, portraits, remote, self, settings, status
+from backend.app.api.routers import agent, app as app_router, auth, cards, conversations, experiments, messages, outbox, portraits, remote, self, settings, status, suggestions
 
 
 def create_app() -> FastAPI:
@@ -116,6 +116,7 @@ def create_app() -> FastAPI:
     app.include_router(cards.router, tags=["cards"])
     app.include_router(agent.router, tags=["agent"])
     app.include_router(experiments.router, tags=["experiments"])
+    app.include_router(suggestions.router, tags=["suggestions"])
     app.include_router(app_router.router, tags=["app"])
     app.include_router(settings.router, tags=["settings"])
 

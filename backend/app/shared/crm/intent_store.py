@@ -21,7 +21,7 @@ from contextlib import closing, contextmanager
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from threading import Lock
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from backend.app.shared.crm.paths import default_crm_database_path
 
@@ -169,6 +169,31 @@ class IntentStore:
             (intent_id, *_scope(seller, data_dir)),
         )
         return _record(rows[0]) if rows else None
+
+    def adopt_suggestions(self, *, seller, data_dir, batch_id, apid, agent_name,
+                          conversation_id, revision_id, items):
+        """Materializes all candidates once so later adoption preserves sibling states."""
+        seller, directory = _scope(seller, data_dir)
+        self.initialize()
+        with self._connection(write=True) as conn:
+            existing = conn.execute(
+                "SELECT * FROM app_agent_intent WHERE seller=? AND data_dir=? AND batch_id=? ORDER BY call_id",
+                (seller, directory, batch_id),
+            ).fetchall()
+            if existing:
+                return [_record(row) for row in existing]
+            now = time.time()
+            records = []
+            for index, item in enumerate(items):
+                record = dict(id=uuid5(NAMESPACE_URL, f"{seller}:{directory}:{batch_id}:{index}").hex,
+                              seller=seller, data_dir=directory, apid=apid, agent_name=agent_name,
+                              revision_id=revision_id, conversation_id=conversation_id, batch_id=batch_id,
+                              mode=MODE_LIVE, reply=item["content"], zh=item["zh"], tone=item["tone"],
+                              status=STATUS_REQUESTED, call_id=str(index), created_at=now, updated_at=now)
+                conn.execute(f"INSERT INTO app_agent_intent ({','.join(record)}) VALUES ({','.join('?' for _ in record)})",
+                             tuple(record.values()))
+                records.append(record)
+            return records
 
     def list_batch(self, batch_id: str, *, seller: str, data_dir: str | Path) -> list[dict]:
         return [_record(row) for row in self._read(

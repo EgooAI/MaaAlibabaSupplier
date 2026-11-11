@@ -8,6 +8,8 @@ import type { AccountEpoch, ConnectionSnapshot } from "@/types/connection";
 import type { InstallationNotice, UpdateState } from "@/types/update";
 import type { AliIdList, CreateTestTaskInput, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestEntry, NodeTestSubmission, SystemStatusSnapshot, TaskItem, TaskSnapshot } from "@/types/status";
 import type { CreateExperimentInput, Experiment, ExperimentSummary, ExperimentVariantInput, RunSnapshot, UpdateExperimentInput } from "@/types/experiment";
+import type { SuggestionCatalog, SuggestionRun, SuggestionRunInput } from "@/types/suggestions";
+import type { AssistantSuggestion } from "@/types/chatCanonical";
 
 export interface OperationsBackend {
   createRemoteSession(): Promise<{ session_id: string; expires_in: number }>;
@@ -39,6 +41,11 @@ export interface OperationsBackend {
   getConversationRevision(): Promise<ConversationRevision>;
   getConversation(id: string): Promise<ConversationDetail>;
   getAssistantSuggestions(conversationId: string): Promise<AssistantSuggestionResult>;
+  listSuggestionAgents(): Promise<SuggestionCatalog>;
+  startSuggestionRun(conversationId: string, input: SuggestionRunInput): Promise<SuggestionRun>;
+  listSuggestionRuns(conversationId: string): Promise<SuggestionRun[]>;
+  getSuggestionRun(conversationId: string, runId: string): Promise<SuggestionRun>;
+  adoptSuggestion(conversationId: string, runId: string, index: number): Promise<AssistantSuggestion>;
   analyzeConversation(conversationId: string): Promise<ConversationAnalysis>;
   composeTranslation(conversationId: string, text: string): Promise<ComposeTranslationResult>;
   sendMessage(input: SendMessageInput): Promise<SendMessageResult>;

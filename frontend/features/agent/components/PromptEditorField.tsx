@@ -9,11 +9,14 @@ type PromptEditorFieldProps = {
   value?: string;
   onChange?: (value: string) => void;
   placeholder?: string;
+  initialMode?: "edit" | "preview" | "split";
+  minRows?: number;
+  maxRows?: number;
 };
 
 /** Controlled prompt input with edit / preview / split modes and size hints. */
-export function PromptEditorField({ value, onChange, placeholder }: PromptEditorFieldProps) {
-  const [mode, setMode] = useState<"edit" | "preview" | "split">("split");
+export function PromptEditorField({ value, onChange, placeholder, initialMode = "split", minRows = 12, maxRows = 22 }: PromptEditorFieldProps) {
+  const [mode, setMode] = useState<"edit" | "preview" | "split">(initialMode);
   const text = value ?? "";
   const preview = useMemo(() => renderContentHtml(text, "markdown"), [text]);
   const showEditor = mode !== "preview";
@@ -38,7 +41,8 @@ export function PromptEditorField({ value, onChange, placeholder }: PromptEditor
             value={text}
             onChange={(event) => onChange?.(event.target.value)}
             placeholder={placeholder}
-            autoSize={{ minRows: 12, maxRows: 22 }}
+            autoSize={{ minRows, maxRows }}
+            aria-label="Agent 提示词"
             className="font-mono text-xs"
           />
         ) : null}

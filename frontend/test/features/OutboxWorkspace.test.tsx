@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({ backend: {
   getConnection: vi.fn(), listOutbox: vi.fn(), getOutbox: vi.fn(), sendMessage: vi.fn(), cancelOutbox: vi.fn(), retryOutbox: vi.fn(),
   listConversations: vi.fn(), getConversation: vi.fn(), getConversationRevision: vi.fn(), markConversationRead: vi.fn(),
   queryTranslations: vi.fn(), requestTranslations: vi.fn(), getTranslationJob: vi.fn(), listPortraitTags: vi.fn(),
+  listSuggestionAgents: vi.fn(), listSuggestionRuns: vi.fn(), listAgentTools: vi.fn(),
 } }));
 vi.mock("@/services/client", () => ({ backend: mocks.backend }));
 vi.mock("antd", () => {
@@ -31,6 +32,7 @@ vi.mock("antd", () => {
   return {
     App: { useApp: () => ({ message: { warning: vi.fn(), error: vi.fn(), success: vi.fn() } }) },
     Space: Text, Tag: Text, Avatar: Text, Typography: { Text, Paragraph: Text }, Button, Popover, Popconfirm: Text, Tooltip: Text, Spin: Text,
+    Select: () => null,
     Empty: Object.assign(({ description }: { description: string }) => <div>{description}</div>, { PRESENTED_IMAGE_SIMPLE: null }),
     Drawer: ({ open, children }: { open: boolean; children: ReactNode }) => open ? <aside>{children}</aside> : null,
     Alert: ({ title, action }: { title: ReactNode; action: ReactNode }) => <div role="alert">{title}{action}</div>,
@@ -85,6 +87,9 @@ beforeEach(async () => {
   mocks.backend.getConversation.mockImplementation(async (id: string) => ({ ...detail, id }));
   mocks.backend.getConversationRevision.mockResolvedValue({ ready: true, revision: 1, inbox_revision: 1 });
   mocks.backend.listPortraitTags.mockResolvedValue({ tags: [] });
+  mocks.backend.listSuggestionAgents.mockResolvedValue({ defaultAgentId: "suggestion", agents: [] });
+  mocks.backend.listSuggestionRuns.mockResolvedValue([]);
+  mocks.backend.listAgentTools.mockResolvedValue([]);
   mocks.backend.queryTranslations.mockResolvedValue({ translations: {} });
   mocks.backend.listOutbox.mockImplementation(async (sid: string) => structuredClone(store.filter((task) => String(task.conversation_id) === sid)));
   mocks.backend.getOutbox.mockImplementation(async (id: string) => structuredClone(store.find((task) => task.id === id)!));
@@ -117,6 +122,16 @@ afterEach(async () => {
 });
 
 describe("inline outbox workflow", () => {
+  it.each([false, true])("carries adopted candidate provenance only while the inserted reply is unchanged (edited=%s)", async (edited) => {
+    await start();
+    await act(async () => chat.insertSuggestion({ id: "preview", intentId: "preview-intent", title: "交期", content: "When do you need them?", tone: "friendly" }));
+    expect(mocks.backend.sendMessage).not.toHaveBeenCalled();
+    if (edited) await edit("Please confirm your deadline.");
+    await click("发送");
+    expect(mocks.backend.sendMessage.mock.calls[0][0]).toMatchObject({ content: edited ? "Please confirm your deadline." : "When do you need them?" });
+    expect(mocks.backend.sendMessage.mock.calls[0][0].intent_id).toBe(edited ? undefined : "preview-intent");
+  });
+
   it.each(["send", "test"] as const)("submits %s once without confirmation and clears only after acceptance", async (action) => {
     await start();
     let finish!: (value: { outbox: OutboxTask }) => void;

@@ -124,6 +124,7 @@ def run_chat_agent(
     conversation_id: int | None = None,
     revision_id: int | None = None,
     cancel_token: Any = None,
+    purpose: str | None = None,
 ) -> ChatAgentTurn:
     """Run one agent turn and return its structured result.
 
@@ -190,7 +191,7 @@ def run_chat_agent(
         raise AgentRunError("上下文超过限制", status_code=422, kind="context_limited")
 
     restricted = result.status is AgentPipelineResultStatus.TOOL_ROUNDS_LIMITED
-    if restricted and agent_role(apid) != ROLE_COMPOSER:
+    if restricted and purpose != "reply_suggestions" and agent_role(apid) != ROLE_COMPOSER:
         # Analysis agents must not present a partial answer as a success.
         raise AgentRunError(_limit_message(result), status_code=409, kind="tool_rounds_limited")
 

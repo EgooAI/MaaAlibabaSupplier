@@ -76,7 +76,8 @@ describe("http adapter contract", () => {
     await httpBackend.regenerateAgentTestSessionReply("session");
     await httpBackend.getSystemStatus();
     await httpBackend.requestTranslations({ texts: ["hello"] });
-    expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([75000, 75000, 75000, 75000, 8000, 8000]);
+    await httpBackend.startSuggestionRun("42", { runId: "one-request", agentId: "regular", draft: null, contextRunId: null });
+    expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([75000, 75000, 75000, 75000, 8000, 8000, 8000]);
   });
 
   it("binds Agent requests to the current account epoch", async () => {

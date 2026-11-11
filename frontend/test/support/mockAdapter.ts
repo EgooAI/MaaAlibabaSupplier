@@ -20,6 +20,7 @@ import { canCancel, canRetry } from "@/features/chat/outbox/outboxModel";
 import type { SelfInfo } from "@/types/home";
 import type { AliIdList, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskSnapshot } from "@/types/status";
 import type { OperationsBackend } from "@/services/interfaces";
+import type { SuggestionRun } from "@/types/suggestions";
 import { connectionSnapshot } from "@/mock/connectionData";
 import { ApiError, ExperimentRunConflict } from "@/services/httpAdapter";
 import { isRunFinished } from "@/types/experiment";
@@ -91,6 +92,7 @@ const translationJobs = new Map<string, TranslationJobSnapshot>();
 const TRANSLATION_JOB_DELAY_MS = 400;
 let connectionStore = structuredClone(connectionSnapshot);
 const outboxStore = new Map<string, { scope: string; task: OutboxTask }>();
+const suggestionRuns = new Map<string, SuggestionRun>();
 const outboxScope = () => JSON.stringify([connectionStore.account.data_dir, connectionStore.account.self_ali_id]);
 const inboxSettings = new Map<string, { inbox_revision: number }>();
 const portraitTags = new Map<string, PortraitTag>();
@@ -221,6 +223,7 @@ export const mockBackend: OperationsBackend = {
     translationStore.clear();
     translationJobs.clear();
     outboxStore.clear();
+    suggestionRuns.clear();
     inboxSettings.clear();
     portraitTags.clear();
     portraits.clear();
@@ -343,6 +346,45 @@ export const mockBackend: OperationsBackend = {
       reasoning: "买家在确认样品与证书，先给出可执行的下一步。",
       restricted: false,
     });
+  },
+
+  listSuggestionAgents: async () => delay({ defaultAgentId: SYSTEM_AGENT_APIDS.replySuggestion,
+    agents: agentPresetStore.filter((agent) => agent.category === "regular" || agent.id === SYSTEM_AGENT_APIDS.replySuggestion).map((agent) => agentPresetToDbPreset(agent)) }),
+  startSuggestionRun: async (conversationId, input) => {
+    const key = `${outboxScope()}:${input.runId}`;
+    const existing = suggestionRuns.get(key);
+    if (existing) {
+      if (JSON.stringify(existing.request) !== JSON.stringify(input)) throw new Error("生成请求冲突");
+      return delay(structuredClone(existing));
+    }
+    const agent = agentPresetStore.find((item) => item.id === input.agentId);
+    if (!agent?.enabled) throw new Error("Agent 不可用");
+    const detail = buildConversationDetail(conversationId);
+    const previous = input.contextRunId ? suggestionRuns.get(`${outboxScope()}:${input.contextRunId}`) : undefined;
+    const draft = input.draft;
+    const run: SuggestionRun = {
+      id: input.runId, conversationId, agentId: input.agentId, agentName: agent.name,
+      status: "completed", createdAt: Date.now() / 1000, error: null, request: structuredClone(input),
+      pinned: { kind: draft ? "draft" : "preset", prompt: draft?.prompt ?? agent.prompt, name: agent.name,
+        llm_level: draft?.level ?? agent.level, tools: draft?.tools ?? agent.tools, requires_tool: draft?.requires_tool ?? agent.requiresTool },
+      context: previous?.context ?? { id: input.runId, messageCount: detail.messages.length, capturedAt: Date.now() / 1000,
+        lastMessageId: detail.messages.at(-1)?.externalMid ?? "", lastMessageAt: detail.messages.at(-1)?.createdAt ?? "" },
+      result: { items: structuredClone(assistantSuggestions), reasoning: "根据当前对话给出回复。", restricted: false, toolCalls: [] },
+    };
+    suggestionRuns.set(key, run);
+    return delay(structuredClone(run));
+  },
+  listSuggestionRuns: async (id) => delay([...suggestionRuns.entries()].filter(([key, run]) => key.startsWith(`${outboxScope()}:`) && run.conversationId === id).map(([, run]) => structuredClone(run)).sort((a, b) => b.createdAt - a.createdAt).slice(0, 2)),
+  getSuggestionRun: async (id, runId) => {
+    const run = suggestionRuns.get(`${outboxScope()}:${runId}`);
+    if (!run || run.conversationId !== id) throw new ApiError("建议运行不存在", "suggestion-runs", { status: 404 });
+    return delay(structuredClone(run));
+  },
+  adoptSuggestion: async (id, runId, index) => {
+    const run = suggestionRuns.get(`${outboxScope()}:${runId}`);
+    const item = run?.result?.items[index];
+    if (!run || run.conversationId !== id || !item) throw new Error("建议不存在");
+    return delay({ ...structuredClone(item), intentId: `${runId}:${index}`, status: "requested" });
   },
 
   analyzeConversation: async (conversationId) => {

@@ -11,6 +11,8 @@ import type { useChatWorkbench } from "./hooks/useChatWorkbench";
 import { OutboxWorkspace } from "./outbox/OutboxWorkspace";
 import { pendingBubbles } from "./outbox/outboxModel";
 import { useOutbox } from "./outbox/useOutbox";
+import { useSuggestions } from "./suggestions/useSuggestions";
+import { SuggestionAgentSelect, SuggestionPanel } from "./suggestions/SuggestionPanel";
 
 export function ChatConversation({ active, workbench, onFork, onAnalysis }: {
   active: ConversationDetail;
@@ -21,6 +23,7 @@ export function ChatConversation({ active, workbench, onFork, onAnalysis }: {
   const { snapshot, blocked } = useAccount();
   const canUseAi = !blocked && Boolean(snapshot?.capabilities.use_ai);
   const outbox = useOutbox(active.id);
+  const suggestions = useSuggestions(active, workbench.captureDraft, workbench.insertSuggestion);
   const tasks = pendingBubbles(outbox.tasks, active.messages, snapshot!.account.self_ali_id, active.id);
   const { scrollRef, showJumpButton, handleScroll, scrollToBottom } = useStickToBottom({
     sessionKey: active.id, followKey: active.messages.length + tasks.length,
@@ -34,7 +37,8 @@ export function ChatConversation({ active, workbench, onFork, onAnalysis }: {
       pendingCount={workbench.translationStats.pending} canTranslate={canUseAi}
       onTranslateMissing={workbench.translateMissing} onRetranslateAll={workbench.retranslateConversation}
     /> : null}
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div className={`grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_auto_auto] ${suggestions.open ? "2xl:grid-cols-[minmax(0,1fr)_420px] 2xl:grid-rows-[minmax(0,1fr)_auto]" : ""}`}>
+    <div className="relative row-start-1 flex min-h-0 min-w-0 flex-col">
       {workbench.detailLoading ? <div className="flex flex-1 items-center justify-center"><Spin /></div> :
         <div ref={scrollRef} onScroll={handleScroll} className="app-scroll min-h-0 flex-1 overflow-y-auto bg-slate-50/60 p-3 sm:p-5">
           {!active.messages.length && !tasks.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无聊天消息" /> : null}
@@ -49,11 +53,16 @@ export function ChatConversation({ active, workbench, onFork, onAnalysis }: {
         <Button shape="circle" aria-label="回到底部" icon={<ArrowDownOutlined />} className="shadow-md" onClick={() => scrollToBottom(true)} />
       </Tooltip></div> : null}
     </div>
-    <div className="shrink-0 border-t border-slate-100 px-3 pb-3 sm:px-4">
+    {suggestions.open ? <aside className="app-scroll row-start-2 max-h-[50dvh] min-h-0 min-w-0 overflow-y-auto border-t border-slate-100 bg-white 2xl:col-start-2 2xl:row-span-2 2xl:row-start-1 2xl:max-h-none 2xl:border-t-0 2xl:border-l">
+      <SuggestionPanel workspace={suggestions} canUseAi={canUseAi} blocked={blocked} />
+    </aside> : null}
+    <div className="row-start-3 min-w-0 border-t border-slate-100 px-3 pb-3 sm:px-4 2xl:col-start-1 2xl:row-start-2">
       <OutboxWorkspace conversation={active} outbox={outbox} value={workbench.draft} onChange={workbench.setDraft}
         captureDraft={workbench.captureDraft} takePendingIntent={workbench.takePendingIntent}
-        onOpenSuggestions={workbench.openSuggestions} onOpenIntentAnalysis={() => onAnalysis("intent")}
+        onOpenSuggestions={() => void suggestions.show(true)} onOpenIntentAnalysis={() => onAnalysis("intent")}
+        suggestionAgent={<SuggestionAgentSelect workspace={suggestions} disabled={blocked || suggestions.saving} />}
         onOpenStageAnalysis={() => onAnalysis("stage")} />
+    </div>
     </div>
   </div>;
 }

@@ -71,6 +71,7 @@ task = runtime.schedule(
 | Outbox | GUI 队列 + verifier schedule | 持久化状态、连续 GUI 操作、发送前屏障与本地证据 |
 | 产品卡补全 | 仅触发的 schedule | 目标选择、GUI 守卫、会话间停止检查 |
 | Agent 实验 | 每个 run 一个 Worker | SDK 内变体并行、回合取消、结果持久化 |
+| 聊天建议预览 | 双 worker pool | 请求幂等、提示词与会话快照、可恢复结果、插入时建立采纳意图 |
 | 更新器 | schedule + 单次 Worker | 下载校验、安装握手、辅助进程监测 |
 | receiver / 子进程日志 / Maa Agent 等待 | Worker + 资源清理回调 | 网络与原生资源自身的关闭协议 |
 

@@ -72,8 +72,8 @@ export function MessageComposer({
           placeholder={placeholder}
           disabled={disabled}
         />
-        <div className={compact ? "flex items-center justify-between gap-2 px-2 pb-2" : "flex justify-between rounded-b-lg border border-t-0 border-slate-200 bg-slate-50 p-3"}>
-          <div className="flex items-center gap-1">
+        <div className={compact ? "flex flex-wrap items-center justify-between gap-2 px-2 pb-2" : "flex justify-between rounded-b-lg border border-t-0 border-slate-200 bg-slate-50 p-3"}>
+          <div className="flex min-w-0 flex-wrap items-center gap-1">
             {footer}
             {tools.length ? (
               <Dropdown menu={{ items: menuItems, onClick: ({ key }) => onToolClick?.(key) }} trigger={["click"]}>
@@ -81,7 +81,7 @@ export function MessageComposer({
               </Dropdown>
             ) : <span />}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="ml-auto flex shrink-0 items-center gap-3">
             {compact ? <span className="hidden text-[11px] text-slate-400 2xl:inline">Ctrl / ⌘ + Enter</span> : null}
             <Space.Compact>
             <Button

@@ -3,7 +3,7 @@
 import { MessageComposer } from "@/components/MessageComposer";
 import { BulbOutlined, TranslationOutlined } from "@ant-design/icons";
 import { Button } from "antd";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useAccount } from "@/features/account/AccountProvider";
 import { ComposeTranslator } from "./ComposeTranslator";
 
@@ -14,6 +14,7 @@ export type ChatComposerProps = {
   value: string;
   onChange: (value: string) => void;
   onOpenSuggestions: () => void;
+  suggestionAgent?: ReactNode;
   onOpenIntentAnalysis: () => void;
   onOpenStageAnalysis: () => void;
   loading: boolean;
@@ -27,6 +28,7 @@ export function ChatComposer({
   value,
   onChange,
   onOpenSuggestions,
+  suggestionAgent,
   onOpenIntentAnalysis,
   onOpenStageAnalysis,
   loading,
@@ -57,6 +59,7 @@ export function ChatComposer({
         compact
         footer={<>
           <Button type="text" size="small" icon={<BulbOutlined />} disabled={!canUseAi} onClick={onOpenSuggestions}>AI 建议</Button>
+          {suggestionAgent}
           <Button type="text" size="small" aria-label="发信翻译" aria-pressed={translateOpen} icon={<TranslationOutlined />} disabled={!canUseAi} onClick={() => setTranslateOpen((open) => !open)}>翻译</Button>
         </>}
         value={value}

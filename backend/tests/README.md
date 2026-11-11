@@ -180,6 +180,13 @@ that message time or source row IDs are reliable insertion/update cursors.
 
 ## Stage 3 Coverage
 
+- `test_suggestion_runs.py` uses the real Agent pipeline with a static LLM client
+  and temporary CRM stores to verify ordinary-Agent previews, immutable prompt
+  and context snapshots, idempotent recovery, repeatable tests, partial tool-limit
+  results, atomic candidate adoption, account isolation and stale preset saves.
+  Frontend `Suggestions` and outbox interaction tests cover inline iteration,
+  timeout/reload recovery, prompt persistence and protection of newer reply edits.
+
 - `test_outbox_store.py` checks concurrent idempotency, immutable payloads,
   versioned state transitions, cancellation/claim races, restart recovery,
   conservative retry and unique local-message evidence claims.

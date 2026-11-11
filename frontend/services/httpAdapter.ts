@@ -168,7 +168,7 @@ function prepareAccountRequest(path: string, init?: RequestInit) {
   const ticket = captureAccount();
   const { capabilities, client } = accountSession.get().snapshot!;
   const operates = /\/goto-contact$/.test(path) || path.startsWith("/api/remote/") || (/\/conversations\/[^/]+\/messages$/.test(path) && init?.method === "POST") || /\/outbox\/[^/]+\/retry$/.test(path);
-  const usesAi = /\/(suggestions|analysis|compose-translation)$/.test(path) || (path === "/api/messages/translations" && init?.method === "POST");
+  const usesAi = /\/(suggestions|analysis|compose-translation)$/.test(path) || (/\/suggestion-runs$/.test(path) && init?.method === "POST") || (path === "/api/messages/translations" && init?.method === "POST");
   if (operates && !capabilities.operate_client) throw new Error("请先选择卖家账号，并等待客户端窗口自动接入");
   if (path === "/api/status/node-test" && !client.connected) throw new Error("请先等待客户端窗口自动接入，再运行只读界面检查");
   if (usesAi && !capabilities.use_ai) throw new Error("AI 暂不可用，请检查账号数据和模型配置");
@@ -245,6 +245,11 @@ export const httpBackend: OperationsBackend = {
     return adaptConversationDetail(aggregate);
   },
   getAssistantSuggestions: (conversationId) => requestAi(`/api/conversations/${encodeURIComponent(conversationId)}/suggestions`),
+  listSuggestionAgents: () => requestJson("/api/agent/suggestion-agents"),
+  startSuggestionRun: (id, input) => requestJson(`/api/conversations/${encodeURIComponent(id)}/suggestion-runs`, { method: "POST", body: JSON.stringify(input) }),
+  listSuggestionRuns: (id) => requestJson(`/api/conversations/${encodeURIComponent(id)}/suggestion-runs`),
+  getSuggestionRun: (id, runId) => requestJson(`/api/conversations/${encodeURIComponent(id)}/suggestion-runs/${encodeURIComponent(runId)}`),
+  adoptSuggestion: (id, runId, index) => requestJson(`/api/conversations/${encodeURIComponent(id)}/suggestion-runs/${encodeURIComponent(runId)}/adopt`, { method: "POST", body: JSON.stringify({ index }) }),
   analyzeConversation: (conversationId) => requestAi(`/api/conversations/${encodeURIComponent(conversationId)}/analysis`),
   composeTranslation: (conversationId, text) => requestAi(`/api/conversations/${encodeURIComponent(conversationId)}/compose-translation`, { method: "POST", body: JSON.stringify({ text }) }),
   sendMessage: async ({ conversationId, ...input }) => {

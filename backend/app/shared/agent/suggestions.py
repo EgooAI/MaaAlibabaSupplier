@@ -14,6 +14,13 @@ from backend.app.shared.agent.inputs import build_reply_suggestion_input
 from backend.app.shared.agent.reply_tool import ReplyScope
 from backend.app.shared.agent.runner import ChatAgentTurn, run_chat_agent
 from backend.app.shared.agent.system_agents import CHAT_REPLY_SUGGESTION_AGENT_APID
+from backend.app.shared.crm.sdk import AgentPreset
+
+REPLY_OUTPUT_RULES = (
+    "请通过 reply_customer 工具提出最多 3 条可供商家选择的回复，按推荐顺序排列。"
+    "reply 使用买家语言，zh 提供中文参考，tone 为 formal、friendly 或 urgent。"
+    "不要填写收件人或账号。工具调用后的最终文本只说明判断理由，不重复回复正文。"
+)
 
 
 class NoReplyIntentError(RuntimeError):
@@ -62,6 +69,8 @@ def generate_reply_suggestions(
     scope: ReplyScope,
     prior_replies: tuple[str, ...] = (),
     mode: str = "live",
+    agent_id: str = CHAT_REPLY_SUGGESTION_AGENT_APID,
+    preset_override: AgentPreset | None = None,
 ) -> ReplySuggestionResult:
     """Run the suggestion agent and return the intents it recorded."""
     run_scope = ReplyScope(
@@ -74,14 +83,18 @@ def generate_reply_suggestions(
         prior_replies=tuple(prior_replies) or scope.prior_replies,
     )
     turn = run_chat_agent(
-        CHAT_REPLY_SUGGESTION_AGENT_APID,
-        build_reply_suggestion_input(transcript),
+        agent_id,
+        build_reply_suggestion_input(transcript) + (
+            f"\n\n## 回复输出要求\n\n{REPLY_OUTPUT_RULES}" if preset_override is not None else ""
+        ),
+        preset_override=preset_override,
         # The scope is host data: the model never sees it and cannot supply it.
         tool_context=ToolContext(mode=mode, scope=run_scope),
         tool_choice="required",
         mode=mode,
         conversation_id=scope.conversation_id,
         revision_id=scope.revision_id,
+        purpose="reply_suggestions",
     )
     suggestions = [
         ReplySuggestion(

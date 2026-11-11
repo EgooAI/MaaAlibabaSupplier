@@ -82,12 +82,12 @@ async function mount() {
 }
 
 describe("translation flow", () => {
-  it.each(["analysis", "suggestions"])("retains uncertain %s results without claiming a recoverable history", async (operation) => {
+  it("retains uncertain analysis results without claiming a recoverable history", async () => {
     await mount();
-    const request = operation === "analysis" ? mocks.backend.analyzeConversation : mocks.backend.getAssistantSuggestions;
+    const request = mocks.backend.analyzeConversation;
     request.mockRejectedValue(new ApiError("timeout", "/api/conversations/42/ai", { kind: "timeout", requestId: "ai-lost" }));
-    await act(async () => { if (operation === "analysis") await workbench.analyzeConversation(); else await workbench.openSuggestions(); });
-    const text = operation === "analysis" ? workbench.analysisError : workbench.suggestionError;
+    await act(async () => { await workbench.analyzeConversation(); });
+    const text = workbench.analysisError;
     expect(text).toContain("结果未知");
     expect(text).toContain("无法重新读取");
     expect(text).toContain("ai-lost");

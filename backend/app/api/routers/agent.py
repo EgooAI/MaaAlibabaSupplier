@@ -110,6 +110,7 @@ class PresetInput(BaseModel):
     category: str | None = None
     revision_source: str = "manual"
     revision_note: str = ""
+    expected_fingerprint: str | None = None
 
 
 class DraftPresetInput(BaseModel):
@@ -161,6 +162,8 @@ def _refresh_llm_runtime() -> None:
 
 
 def _db_preset_to_dict(preset: AgentPreset, *, updated_at: str = "") -> dict:
+    from backend.app.shared.agent.versions import preset_fingerprint
+
     category = "system" if preset.apid in SYSTEM_AGENT_APIDS else "regular"
     return {
         "apid": preset.apid,
@@ -173,6 +176,7 @@ def _db_preset_to_dict(preset: AgentPreset, *, updated_at: str = "") -> dict:
         "requires_tool": bool(getattr(preset, "requires_tool", False)),
         "updated_at": updated_at,
         "category": category,
+        "fingerprint": preset_fingerprint(preset),
     }
 
 
@@ -451,6 +455,12 @@ def save_llm_config(body: LlmConfigInput) -> dict:
 @router.post("/api/agent/presets")
 def save_preset(body: PresetInput) -> dict:
     apid = (body.apid or "").strip() or f"agent-{uuid.uuid4().hex}"
+    if body.expected_fingerprint is not None:
+        from backend.app.shared.agent.versions import preset_fingerprint
+
+        current = AgentPresetManager().get_agent_preset(apid)
+        if current is None or preset_fingerprint(current) != body.expected_fingerprint:
+            raise AppError("Agent 已被修改，请重新读取配置后再保存；当前草稿仍可试用。", status_code=409)
     try:
         level = max(0, min(LLM_MAX_LEVEL, int(body.intelevel)))
     except (TypeError, ValueError):

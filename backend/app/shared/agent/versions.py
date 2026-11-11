@@ -13,6 +13,8 @@ them directly.
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
+import json
 
 from backend.app.api.envelope import AppError
 from backend.app.shared.agent.chat_history_content import (
@@ -77,6 +79,14 @@ def adopt_scope(content: ChatHistoryContent) -> bool:
 
 # ---------------------------------------------------------------------------
 # Pinned versions
+
+
+def preset_fingerprint(preset: AgentPreset) -> str:
+    """Identifies the editable configuration for optimistic saves."""
+    value = {key: getattr(preset, key) for key in (
+        "name", "description", "prompt", "llm_level", "tools", "enabled", "requires_tool",
+    )}
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
 def pinned_from_preset(preset: AgentPreset) -> ChatHistoryPin:
@@ -240,6 +250,7 @@ __all__ = [
     "pinned_from_revision",
     "pinned_override",
     "pinned_to_preset",
+    "preset_fingerprint",
     "require_runnable_preset",
     "scope_allows",
 ]

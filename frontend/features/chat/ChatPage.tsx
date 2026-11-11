@@ -18,7 +18,6 @@ import { CustomerInfo } from "./conversation/CustomerInfo";
 import { useChatWorkbench } from "./hooks/useChatWorkbench";
 import { useLocalTime } from "./hooks/useLocalTime";
 import { DataDirBanner } from "@/features/settings/DataDirBanner";
-import { AssistantSuggestionModal } from "./modals/AssistantSuggestionModal";
 import { ForkSessionDrawer } from "./modals/ForkSessionDrawer";
 import { ChatAnalysisModal } from "./modals/ChatAnalysisModal";
 import { ChatConversation } from "./ChatConversation";
@@ -161,7 +160,6 @@ function ChatWorkspace() {
         </div>
       </div>
 
-      <AssistantSuggestionModal open={workbench.suggestionOpen} suggestions={workbench.suggestions} reasoning={workbench.suggestionReasoning} restricted={workbench.suggestionRestricted} error={workbench.suggestionError} onClose={() => workbench.setSuggestionOpen(false)} onInsert={workbench.insertSuggestion} />
       <ForkSessionDrawer
         conversation={active}
         open={forkIndex !== undefined}
