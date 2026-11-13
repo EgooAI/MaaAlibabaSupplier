@@ -67,10 +67,12 @@ export function useSuggestions(conversation: ConversationDetail, captureDraft: (
     if (init.current) return init.current;
     setLoading(true);
     init.current = (async () => {
-      const [next, recent, availableTools] = await Promise.all([
+      const [catalogResult, recent, availableTools] = await Promise.all([
         backend.listSuggestionAgents(), backend.listSuggestionRuns(sid), backend.listAgentTools(),
       ]);
       if (!alive.current) throw new AccountChangedError();
+      const agents = catalogResult.agents.filter((agent) => agent.category === "regular" && agent.enabled && agent.tools?.includes("reply_customer"));
+      const next = { ...catalogResult, agents, defaultAgentId: agents.find((agent) => agent.apid === catalogResult.defaultAgentId)?.apid ?? agents[0]?.apid ?? "" };
       let selected = next.defaultAgentId;
       const recovered: Record<string, PromptDraft> = {};
       let request: SuggestionRunInput | undefined;
@@ -132,7 +134,7 @@ export function useSuggestions(conversation: ConversationDetail, captureDraft: (
   async function generate(refreshContext = false) {
     if (blocked || admission.current || state.current.pending) return;
     const agent = state.current.catalog?.agents.find((item) => item.apid === state.current.agentId);
-    if (!agent) return;
+    if (!agent?.enabled || !agent.tools?.includes("reply_customer")) return;
     admission.current = true;
     try {
       const draft = state.current.drafts[agent.apid] ?? draftOf(agent);
@@ -192,8 +194,8 @@ export function useSuggestions(conversation: ConversationDetail, captureDraft: (
   async function save(copyDefault = false) {
     if (blocked || configBusy.current) return;
     const current = state.current;
-    const agent = current.catalog?.agents.find((item) => item.apid === (copyDefault ? current.catalog?.defaultAgentId : current.agentId));
-    if (!agent) return;
+    const agent = copyDefault ? current.catalog?.template : current.catalog?.agents.find((item) => item.apid === current.agentId);
+    if (!agent || !current.catalog) return;
     const draft = copyDefault ? draftOf(agent) : current.drafts[agent.apid] ?? draftOf(agent);
     const id = copyDefault ? `agent-${crypto.randomUUID().replaceAll("-", "")}` : agent.apid;
     configBusy.current = true;
@@ -208,10 +210,15 @@ export function useSuggestions(conversation: ConversationDetail, captureDraft: (
         revision_note: "在聊天建议面板中调整",
       });
       if (!alive.current) return;
-      setCatalog((value) => value && ({ ...value, agents: [...value.agents.filter((item) => item.apid !== id), saved] }));
+      const agents = [...current.catalog.agents.filter((item) => item.apid !== id), saved]
+        .filter((item) => item.category === "regular" && item.enabled && item.tools?.includes("reply_customer"));
+      const next = { ...current.catalog, agents, defaultAgentId: agents[0]?.apid ?? "" };
+      setCatalog(next);
+      state.current.catalog = next;
       const latest = state.current.drafts[id];
       changeDraft(latest && !sameDraft(latest, draft) ? { ...latest, baseFingerprint: saved.fingerprint } : draftOf(saved), id);
       if (copyDefault) { selectAgent(id); setEditing(true); }
+      else if (!next.agents.some((item) => item.apid === id)) selectAgent(next.defaultAgentId);
       setNotice(copyDefault ? "已创建并选中回复助手，可直接修改提示词。" : "提示词已保存，之后使用该 Agent 的建议将采用新版本。");
     } catch (caught) { report(caught); }
     finally { configBusy.current = false; if (alive.current) setSaving(false); }
@@ -234,6 +241,7 @@ export function useSuggestions(conversation: ConversationDetail, captureDraft: (
       setCatalog(next);
       const saved = next.agents.find((agent) => agent.apid === id);
       if (saved && state.current.drafts[id] === original) changeDraft(draftOf(saved), id);
+      if (!next.agents.some((agent) => agent.apid === state.current.agentId)) selectAgent(next.defaultAgentId);
     } catch (caught) { report(caught); }
   }
 

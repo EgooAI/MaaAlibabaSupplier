@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
-from backend.app.shared.agent.system_agents import CHAT_TRANSLATION_AGENT_APID
+from backend.app.shared.agent.system_agents import CHAT_TRANSLATION_AGENT_APID, CHAT_REPLY_SUGGESTION_AGENT_APID
 from backend.app.shared.agent.system_presets import (
     apply_system_agent_default,
     ensure_system_agents_seeded,
@@ -59,6 +59,40 @@ class SystemAgentSeedTestCase(unittest.TestCase):
         ensure_system_agents_seeded()
 
         self.assertEqual(self._preset().prompt, "用户改写的提示词")
+
+    def test_reply_agent_initialization_preserves_edits_and_never_resurrects_deletions(self):
+        manager = AgentPresetManager()
+        ensure_system_agents_seeded()
+        reply = manager.get_agent_preset(CHAT_REPLY_SUGGESTION_AGENT_APID)
+        self.assertIn("reply_customer", reply.tools)
+        reply.prompt = "Merchant reply instructions"
+        reply.enabled = False
+        manager.upsert_agent_preset(reply)
+        ensure_system_agents_seeded()
+        saved = manager.get_agent_preset(reply.apid)
+        self.assertEqual(saved.prompt, reply.prompt)
+        self.assertFalse(saved.enabled)
+        manager.delete_agent_preset(reply.apid)
+        ensure_system_agents_seeded()
+        self.assertIsNone(manager.get_agent_preset(reply.apid))
+
+    def test_existing_system_reply_becomes_ordinary_without_rewriting_history(self):
+        from backend.app.shared.agent.preset_history import record_preset_revision, list_preset_revisions
+        from backend.app.shared.agent.system_agents import SYSTEM_AGENT_APIDS
+
+        reply = AgentPreset(apid=CHAT_REPLY_SUGGESTION_AGENT_APID, name="My reply agent", description="custom",
+                            prompt="Existing merchant prompt", llm_level=2, tools=["reply_customer"], enabled=False)
+        manager = AgentPresetManager()
+        manager.upsert_agent_preset(reply)
+        record_preset_revision(reply, source="save")
+        history = list_preset_revisions(reply.apid)
+        ensure_system_agents_seeded()
+        saved = manager.get_agent_preset(reply.apid)
+        self.assertEqual(preset_fingerprint_of(saved), preset_fingerprint_of(reply))
+        self.assertFalse(saved.enabled)
+        self.assertEqual(list_preset_revisions(reply.apid), history)
+        self.assertNotIn(reply.apid, SYSTEM_AGENT_APIDS)
+        self.assertIsNone(apply_system_agent_default(reply.apid))
 
     def test_pristine_previous_default_is_upgraded(self) -> None:
         ensure_system_agents_seeded()

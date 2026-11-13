@@ -244,7 +244,6 @@ export const httpBackend: OperationsBackend = {
     const aggregate = await requestJson<ConversationAggregateDto>(`/api/conversations/${encodeURIComponent(id)}`);
     return adaptConversationDetail(aggregate);
   },
-  getAssistantSuggestions: (conversationId) => requestAi(`/api/conversations/${encodeURIComponent(conversationId)}/suggestions`),
   listSuggestionAgents: () => requestJson("/api/agent/suggestion-agents"),
   startSuggestionRun: (id, input) => requestJson(`/api/conversations/${encodeURIComponent(id)}/suggestion-runs`, { method: "POST", body: JSON.stringify(input) }),
   listSuggestionRuns: (id) => requestJson(`/api/conversations/${encodeURIComponent(id)}/suggestion-runs`),

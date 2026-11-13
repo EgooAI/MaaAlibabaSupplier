@@ -22,13 +22,10 @@ from backend.app.shared.backend.image_fetch import ImageFetchError, ImageUnavail
 from backend.app.shared.backend.outbox_service import get_outbox_service
 from backend.app.shared.backend.gui_session import capture_gui_session, run_guarded
 from backend.app.shared.agent.inputs import build_analysis_input, build_compose_translation_input
-from backend.app.shared.agent.reply_tool import ReplyScope
 from backend.app.shared.agent.runner import AgentRunError, run_chat_tool_agent
-from backend.app.shared.agent.suggestions import NoReplyIntentError, generate_reply_suggestions
 from backend.app.shared.agent.system_agents import (
     CHAT_COMPOSE_TRANSLATION_AGENT_APID,
     CHAT_CUSTOMER_STAGE_AGENT_APID,
-    CHAT_REPLY_SUGGESTION_AGENT_APID,
 )
 from backend.app.shared.crm.intent_store import IntentStore, STATUS_REQUESTED
 from backend.app.shared.utils.log_context import log_event
@@ -674,47 +671,6 @@ def _mark_intent_accepted(context: AccountContext, intent_id: str, outbox_id: st
             "agent.intent_accept_failed", outbox_id=outbox_id,
             intent_id=intent_id, error_type=type(exc).__name__,
         )
-
-
-@router.get("/api/conversations/{conversation_id}/suggestions")
-def suggestions(conversation_id: int) -> dict:
-    store, context = _inbox_store()
-    conv = _scoped_conversation(store, context, conversation_id, CRMAdapter())
-    if conv is None:
-        raise AppError("会话不存在", status_code=404)
-    transcript = transcript_markdown(
-        conv.messages, resolver=CrmResolver(context.self_ali_id), options=AGENT_OPTIONS, limit=None,
-    )
-    # Prior replies feed the prompt so the model does not repeat them, and the
-    # returned batch is sent as one group when the merchant accepts one.
-    prior = IntentStore().list_conversation(
-        conversation_id, seller=context.self_ali_id, data_dir=context.data_dir, limit=6,
-    )
-    scope = ReplyScope(
-        seller=context.self_ali_id,
-        data_dir=context.data_dir,
-        apid=CHAT_REPLY_SUGGESTION_AGENT_APID,
-        agent_name="建议",
-        conversation_id=conversation_id,
-        prior_replies=tuple(str(item["reply"]) for item in prior),
-    )
-    try:
-        result = generate_reply_suggestions(transcript, scope=scope)
-    except NoReplyIntentError as exc:
-        raise AppError(str(exc), status_code=409)
-    except AgentRunError as exc:
-        raise AppError(exc.message, status_code=exc.status_code)
-    except AppError:
-        raise
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
-    return ok({
-        "items": [item.to_payload(index) for index, item in enumerate(result.suggestions[:3])],
-        "batchId": result.batch_id,
-        "reasoning": result.reasoning,
-        "restricted": result.restricted,
-    })
 
 
 @router.post("/api/conversations/{conversation_id}/compose-translation")

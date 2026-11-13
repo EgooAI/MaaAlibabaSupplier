@@ -47,13 +47,7 @@ export function SuggestionPanel({ workspace: w, canUseAi, blocked }: { workspace
       <Button disabled={!selected} onClick={() => w.setEditing(!w.editing)}>{w.editing ? "收起提示词" : "编辑提示词"}</Button>
       {w.editing ? <Button disabled={blocked || !w.dirty || w.saving} loading={w.saving} onClick={() => void w.save()}>保存提示词</Button> : null}
     </div>
-    {draft && selected && !draft.tools.includes("reply_customer") ? <div className="text-xs text-amber-700">
-      当前 Agent 尚未配置回复工具。
-      <Button type="link" size="small" disabled={blocked} onClick={() => {
-        w.changeDraft({ ...draft, tools: [...draft.tools, "reply_customer"], requires_tool: true });
-        w.setEditing(true);
-      }}>添加回复能力</Button>
-    </div> : null}
+    {!w.loading && w.catalog && !w.catalog.agents.length ? <p className="text-xs text-slate-500">暂无已启用且具备回复能力的 Agent，请创建回复 Agent。</p> : null}
     {w.editing && draft && selected ? <div className="space-y-3 rounded-lg border border-slate-200 p-3">
       <div className="text-xs text-slate-500">{w.dirty ? "未保存修改 · 可直接试用" : "与已保存配置一致"}</div>
       <PromptEditorField value={draft.prompt} onChange={(prompt) => w.changeDraft({ ...draft, prompt })} initialMode="edit" minRows={6} maxRows={14} />
@@ -83,7 +77,7 @@ export function SuggestionPanel({ workspace: w, canUseAi, blocked }: { workspace
     {w.runs[1]?.result ? <details><summary className="cursor-pointer text-slate-500">对比上一轮 · {w.runs[1].agentName}</summary>
       <RunResult run={w.runs[1]} workspace={w} disabled={blocked} />
     </details> : null}
-    <Button size="small" type="link" className="self-start" disabled={blocked || !w.catalog || w.saving} onClick={() => void w.save(true)}>从默认建议创建 Agent</Button>
+    <Button size="small" type="link" className="self-start" disabled={blocked || !w.catalog || w.saving} onClick={() => void w.save(true)}>创建回复 Agent</Button>
   </section>;
 }
 

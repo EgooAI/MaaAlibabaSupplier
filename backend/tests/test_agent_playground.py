@@ -7,7 +7,6 @@ import pytest
 
 from backend.app.api.routers import agent as agent_router
 from backend.app.shared.agent.chat_history_content import build_history_content
-from backend.app.shared.agent.inputs import build_reply_suggestion_input
 from backend.app.shared.agent.reply_tool import TOOL_SPEC, reply_customer
 from backend.app.shared.agent.runner import ChatAgentTurn
 from backend.app.shared.agent.system_agents import CHAT_REPLY_SUGGESTION_AGENT_APID
@@ -100,9 +99,7 @@ def test_two_forks_from_one_message_receive_identical_frozen_input(client, archi
         conv.messages[: index + 1],
         resolver=CrmResolver(context.self_ali_id), options=AGENT_OPTIONS, limit=None,
     )
-    expected = build_reply_suggestion_input(
-        f"{frozen}\n\n## 继续对话\n\n**User**\n\n买家追问交期"
-    )
+    expected = f"{frozen}\n\n## 继续对话\n\n**User**\n\n买家追问交期"
     assert calls[0]["user_input"] == expected
 
 

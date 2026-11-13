@@ -15,7 +15,7 @@ import { ApiError } from "@/services/httpAdapter";
 
 const mocks = vi.hoisted(() => ({
   message: { warning: vi.fn(), error: vi.fn(), success: vi.fn(), info: vi.fn() },
-  backend: { getConnection: vi.fn(), getConversationRevision: vi.fn(), listConversations: vi.fn(), getConversation: vi.fn(), markConversationRead: vi.fn(), requestTranslations: vi.fn(), queryTranslations: vi.fn(), getTranslationJob: vi.fn(), analyzeConversation: vi.fn(), getAssistantSuggestions: vi.fn() },
+  backend: { getConnection: vi.fn(), getConversationRevision: vi.fn(), listConversations: vi.fn(), getConversation: vi.fn(), markConversationRead: vi.fn(), requestTranslations: vi.fn(), queryTranslations: vi.fn(), getTranslationJob: vi.fn(), analyzeConversation: vi.fn() },
 }));
 vi.mock("antd", () => ({
   App: { useApp: () => ({ message: mocks.message }) },

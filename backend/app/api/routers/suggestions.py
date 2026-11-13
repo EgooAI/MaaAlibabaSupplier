@@ -9,7 +9,9 @@ from backend.app.api.routers.agent import _db_preset_to_dict
 from backend.app.shared import contract
 from backend.app.shared.agent.reply_tool import MAX_REPLIES_PER_RUN
 from backend.app.shared.agent.suggestion_runs import get_suggestion_runs, public_run
-from backend.app.shared.agent.system_agents import CHAT_REPLY_SUGGESTION_AGENT_APID, SYSTEM_AGENT_APIDS
+from backend.app.shared.agent.system_agents import SYSTEM_AGENT_APIDS
+from backend.app.shared.agent.system_presets import reply_agent_template
+from backend.app.shared.crm.sdk import AgentPreset
 from backend.app.shared.backend.account_context import get_account_context
 from backend.app.shared.crm.sdk import AgentPresetManager
 
@@ -39,11 +41,11 @@ class AdoptInput(BaseModel):
 
 @router.get("/api/agent/suggestion-agents")
 def catalog():
-    presets = AgentPresetManager().list_agent_preset()
-    return ok({"defaultAgentId": CHAT_REPLY_SUGGESTION_AGENT_APID, "agents": [
+    presets = [preset for preset in AgentPresetManager().list_agent_preset()
+               if preset.apid not in SYSTEM_AGENT_APIDS and preset.enabled and "reply_customer" in (preset.tools or [])]
+    return ok({"defaultAgentId": presets[0].apid if presets else "", "agents": [
         _db_preset_to_dict(preset) for preset in presets
-        if preset.apid == CHAT_REPLY_SUGGESTION_AGENT_APID or preset.apid not in SYSTEM_AGENT_APIDS
-    ]})
+    ], "template": _db_preset_to_dict(AgentPreset(**reply_agent_template(), enabled=True))})
 
 
 @router.post("/api/conversations/{conversation_id}/suggestion-runs")

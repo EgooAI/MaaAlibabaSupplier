@@ -13,7 +13,6 @@ from agent_pipeline.tools import ToolContext
 from backend.app.shared.agent.inputs import build_reply_suggestion_input
 from backend.app.shared.agent.reply_tool import ReplyScope
 from backend.app.shared.agent.runner import ChatAgentTurn, run_chat_agent
-from backend.app.shared.agent.system_agents import CHAT_REPLY_SUGGESTION_AGENT_APID
 from backend.app.shared.crm.sdk import AgentPreset
 
 REPLY_OUTPUT_RULES = (
@@ -69,7 +68,7 @@ def generate_reply_suggestions(
     scope: ReplyScope,
     prior_replies: tuple[str, ...] = (),
     mode: str = "live",
-    agent_id: str = CHAT_REPLY_SUGGESTION_AGENT_APID,
+    agent_id: str,
     preset_override: AgentPreset | None = None,
 ) -> ReplySuggestionResult:
     """Run the suggestion agent and return the intents it recorded."""

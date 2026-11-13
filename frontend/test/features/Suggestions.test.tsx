@@ -59,12 +59,13 @@ beforeEach(async () => {
   accountSession.clear();
   await authenticatedSession();
   draftId = "original-draft";
-  agents = ["default", "custom"].map((id) => ({ apid: id, name: `${id} Agent`, description: "", prompt: `${id} prompt`, intelevel: 0, tools: ["reply_customer"], enabled: true, requires_tool: true, updated_at: "", fingerprint: `${id}-v1` }));
+  agents = ["default", "custom"].map((id) => ({ apid: id, category: "regular", name: `${id} Agent`, description: "", prompt: `${id} prompt`, intelevel: 0, tools: ["reply_customer"], enabled: true, requires_tool: true, updated_at: "", fingerprint: `${id}-v1` }));
   detail = adaptConversationDetail({ sid: 42, name: "Buyer", participants: [], messages: [], latest: { content: "", updated_at: null }, unread_count: 0, reply_state: "waiting_customer", pending_since: null, history_pending: false, uncertain: false, read_snapshot: "snapshot" });
   detail.messages = [{ id: "one", externalMid: "external:one", content: "Need 500 tents", role: "buyer", createdAt: "2026-11-11 14:32:00" }];
   runs = new Map();
   mocks.backend.getConnection.mockResolvedValue({ ...structuredClone(connectionSnapshot), capabilities: { read_chat: true, use_ai: true, operate_client: true }, client: { ...connectionSnapshot.client, connected: true } });
-  mocks.backend.listSuggestionAgents.mockImplementation(async () => structuredClone({ defaultAgentId: "default", agents }));
+  const template = { ...agents[0], prompt: "Built-in reply template" };
+  mocks.backend.listSuggestionAgents.mockImplementation(async () => structuredClone({ defaultAgentId: "default", agents, template }));
   mocks.backend.listAgentTools.mockResolvedValue([{ name: "reply_customer", title: "回复客户" }]);
   mocks.backend.listAgentPresetRevisions.mockResolvedValue([]);
   mocks.backend.listSuggestionRuns.mockImplementation(async (sid) => structuredClone([...runs.values()].filter((run) => run.conversationId === sid).reverse().slice(0, 2)));
@@ -105,6 +106,17 @@ afterEach(async () => {
 });
 
 describe("inline suggestion iteration", () => {
+  it("replaces an unavailable remembered selection with an eligible ordinary Agent", async () => {
+    agents[0].enabled = false;
+    agents.push({ ...agents[1], apid: "system", category: "system" }, { ...agents[1], apid: "no-reply", tools: [] });
+    localStorage.setItem(suggestionKey(connectionSnapshot.account, "agent"), "default");
+    await mount();
+    await act(async () => work.show(true));
+    expect(work.catalog?.agents.map((agent) => agent.apid)).toEqual(["custom"]);
+    expect(work.agentId).toBe("custom");
+    expect(mocks.backend.startSuggestionRun.mock.calls[0][1].agentId).toBe("custom");
+  });
+
   it("runs a selected ordinary agent, tests unsaved edits on fixed context, saves and inserts", async () => {
     await mount();
     await act(async () => work.show());
@@ -245,14 +257,17 @@ describe("inline suggestion iteration", () => {
     expect(runs.size).toBe(1);
   });
 
-  it("creates a reply-capable ordinary Agent from the default and loads fresh saved configuration", async () => {
+  it("creates a reply Agent from the template even with an empty catalog and loads fresh configuration", async () => {
+    agents = [];
     await mount();
     await act(async () => work.show());
+    expect(container.textContent).toContain("暂无已启用且具备回复能力");
     await act(async () => work.save(true));
     expect(work.selected).toMatchObject({ category: "regular", enabled: true, tools: ["reply_customer"], requires_tool: true });
     expect(work.agentId).not.toBe("default");
     expect(work.editing).toBe(true);
     const created = agents.find((agent) => agent.apid === work.agentId)!;
+    expect(created.prompt).toBe("Built-in reply template");
     created.prompt = "Changed on another page";
     created.fingerprint = "external-v3";
     await act(async () => work.loadSaved());

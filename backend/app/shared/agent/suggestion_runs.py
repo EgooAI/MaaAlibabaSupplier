@@ -14,6 +14,7 @@ from backend.app.shared.agent.freezing import MAX_FROZEN_INPUT_CHARS
 from backend.app.shared.agent.reply_tool import ReplyScope, TOOL_NAME
 from backend.app.shared.agent.runner import AgentRunError
 from backend.app.shared.agent.suggestions import NoReplyIntentError, generate_reply_suggestions
+from backend.app.shared.agent.system_agents import SYSTEM_AGENT_APIDS
 from backend.app.shared.agent.versions import (
     draft_matches_preset, parse_draft, pinned_from_draft, pinned_from_preset,
     pinned_to_preset, require_runnable_preset,
@@ -82,6 +83,8 @@ class SuggestionRuns:
             preset = AgentPresetManager().get_agent_preset(request["agentId"])
             if preset is None:
                 raise AppError("Agent 不存在", status_code=404)
+            if preset.apid in SYSTEM_AGENT_APIDS or not preset.enabled or TOOL_NAME not in (preset.tools or []):
+                raise AppError("请选择已启用且具备回复能力的普通 Agent", status_code=409)
             draft = parse_draft(**request["draft"]) if request.get("draft") is not None else None
             pinned = pinned_from_draft(draft) if draft and not draft_matches_preset(draft, preset) else pinned_from_preset(preset)
             pinned.name = preset.name

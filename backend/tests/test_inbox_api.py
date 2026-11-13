@@ -11,7 +11,7 @@ from zipfile import ZipFile
 import pytest
 
 from backend.app.api.routers import conversations
-from backend.app.shared.agent.suggestions import ReplySuggestion, ReplySuggestionResult
+from backend.app.api.envelope import AppError
 from backend.app.shared.agent.system_agents import CHAT_COMPOSE_TRANSLATION_AGENT_APID
 from backend.app.shared.backend import account_context
 from backend.app.shared.backend.im_chat_db import ContactConv, MessageRow
@@ -463,31 +463,28 @@ def test_ai_and_export_use_the_visible_ledger_without_marking_read(client, archi
     sid, = before[context.data_dir][0]
     b_only_sid, = set(before[directory_b][0]) - {sid}
     assert before[context.data_dir][0][sid]["unread_count"] == 1
-    suggest = Mock(return_value=ReplySuggestionResult(
-        suggestions=[ReplySuggestion(intent_id="intent-1", reply="reply", zh="suggestion", tone="formal", status="requested")],
-        batch_id="batch-1",
-    ))
     analyze = Mock(return_value='{"stage":"new","confidence":0.5}')
     mark_read = Mock(side_effect=AssertionError("AI/export must not mark read"))
     snapshot = Mock(side_effect=AssertionError("AI/export must not capture read snapshots"))
-    monkeypatch.setattr(conversations, "generate_reply_suggestions", suggest)
     monkeypatch.setattr(conversations, "run_chat_tool_agent", analyze)
     monkeypatch.setattr(InboxStore, "mark_read", mark_read)
     monkeypatch.setattr(InboxStore, "snapshot", snapshot)
 
-    suggestions = data(client, f"/api/conversations/{sid}/suggestions")
-    assert suggestions["items"][0]["content"] == "reply"
-    suggest.assert_called_once()
-    assert "A_VISIBLE_BODY" in suggest.call_args.args[0]
+    from backend.app.shared.agent.suggestion_runs import freeze_latest
+
+    transcript, _ = freeze_latest(sid, "preview")
+    assert "A_VISIBLE_BODY" in transcript
+    assert "B_SHARED_SID_SECRET" not in transcript and "B_ONLY_CONVERSATION_SECRET" not in transcript
+    with pytest.raises(AppError):
+        freeze_latest(b_only_sid, "preview")
     data(client, f"/api/conversations/{sid}/analysis")
     analyze.assert_called_once()
     prompt = analyze.call_args.args[1]
     assert "A_VISIBLE_BODY" in prompt
     assert "B_SHARED_SID_SECRET" not in prompt and "B_ONLY_CONVERSATION_SECRET" not in prompt
-    for endpoint in ("suggestions", "analysis"):
+    for endpoint in ("analysis",):
         assert client.get(f"/api/conversations/{b_only_sid}/{endpoint}").status_code == 404
-    assert suggest.call_count == analyze.call_count == 1
-    assert suggest.call_args.kwargs["scope"].conversation_id == sid
+    assert analyze.call_count == 1
 
     response = client.post("/api/conversations/export", json={"conversationIds": [sid, b_only_sid]})
     assert response.status_code == 200, response.text

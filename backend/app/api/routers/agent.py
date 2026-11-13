@@ -592,14 +592,7 @@ def _frozen_input(
     apid: str, conversation_id: int | None, frozen: str, messages: list[dict[str, Any]],
 ) -> str:
     """Input for a forked session: the frozen live projection, then new turns."""
-    from backend.app.shared.agent.inputs import build_reply_suggestion_input
-    from backend.app.shared.agent.system_agents import CHAT_REPLY_SUGGESTION_AGENT_APID
-
     body = frozen if not messages else f"{frozen}\n\n{_new_turns_input(messages)}"
-    if apid == CHAT_REPLY_SUGGESTION_AGENT_APID:
-        # Same wrapper as the live suggestion endpoint, so the first forked turn
-        # receives a byte-identical string.
-        return build_reply_suggestion_input(body)
     return body
 
 

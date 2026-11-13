@@ -333,23 +333,11 @@ export const mockBackend: OperationsBackend = {
 
   getConversation: async (id) => delay(buildConversationDetail(id)),
 
-  getAssistantSuggestions: async (conversationId) => {
-    requireSystemAgent(SYSTEM_AGENT_APIDS.replySuggestion);
-    buildConversationDetail(conversationId);
-    return delay({
-      items: structuredClone(assistantSuggestions).map((item, index) => ({
-        ...item,
-        intentId: `intent-mock-${index + 1}`,
-        status: "requested",
-      })),
-      batchId: "batch-mock",
-      reasoning: "买家在确认样品与证书，先给出可执行的下一步。",
-      restricted: false,
-    });
+  listSuggestionAgents: async () => {
+    const agents = agentPresetStore.filter((agent) => agent.category === "regular" && agent.enabled && agent.tools?.includes("reply_customer")).map((agent) => agentPresetToDbPreset(agent));
+    const template = agentPresetToDbPreset(agentPresets.find((agent) => agent.tools?.includes("reply_customer"))!);
+    return delay({ defaultAgentId: agents[0]?.apid ?? "", agents, template });
   },
-
-  listSuggestionAgents: async () => delay({ defaultAgentId: SYSTEM_AGENT_APIDS.replySuggestion,
-    agents: agentPresetStore.filter((agent) => agent.category === "regular" || agent.id === SYSTEM_AGENT_APIDS.replySuggestion).map((agent) => agentPresetToDbPreset(agent)) }),
   startSuggestionRun: async (conversationId, input) => {
     const key = `${outboxScope()}:${input.runId}`;
     const existing = suggestionRuns.get(key);
@@ -740,7 +728,7 @@ export const mockBackend: OperationsBackend = {
     const agent = consoleStore.agents.find((item) => item.id === agentId);
     if (!canRunAgentExecution(agent)) throw new Error("Agent 不存在或未启用");
     const now = nowText();
-    const trace = agent.id === SYSTEM_AGENT_APIDS.replySuggestion
+    const trace = agentPresetStore.find((preset) => preset.id === agentId)?.tools?.includes("reply_customer")
       ? {
           toolCalls: [{
             callId: `call-${crypto.randomUUID()}`, name: "reply_customer",

@@ -112,12 +112,3 @@ export interface AssistantSuggestion {
   intentId?: string | null;
   status?: "requested" | "accepted" | "discarded" | "simulated" | string;
 }
-
-export interface AssistantSuggestionResult {
-  items: AssistantSuggestion[];
-  batchId?: string;
-  /** The Agent's own reasoning; replies live in ``items``, not in this text. */
-  reasoning?: string;
-  /** True when the run hit its tool budget and the result may be incomplete. */
-  restricted?: boolean;
-}

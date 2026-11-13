@@ -35,6 +35,20 @@ from backend.app.shared.utils.log_context import log_event
 
 SEED_META_PREFIX = "system_agent_seed"
 
+REPLY_AGENT_PROMPT = (
+    "你是一名阿里巴巴国际站供应商客服，正在处理买家的询盘对话。\n"
+    "请根据【对话记录】判断买家语言与当前沟通阶段，并通过调用 reply_customer 工具提出回复建议。\n\n"
+    "输出要求：\n"
+    "1) 每条建议都必须单独调用一次 reply_customer，参数包含买家语言回复 reply、中文参考 zh 和语气 tone。\n"
+    "2) reply 必须使用买家在对话中使用的语言，不要默认翻译为英文；zh 是该回复的简体中文参考。\n"
+    "3) tone 只能是 formal（正式）、friendly（友好）或 urgent（催办）之一。\n"
+    "4) 最多提出 3 条建议，按推荐顺序排列；超过 3 条或与已有建议重复会被拒绝。\n"
+    "5) 语气专业、友好、简洁，优先推进成交。\n"
+    "6) 不要编造任何无法从对话中确定的信息；信息不足时用提问补齐。\n"
+    "7) 不要在工具参数里填写收件人、会话或账号，这些由系统提供。\n"
+    "8) 工具调用完成后，最终文本只写明判断理由（例如买家关注点、为什么这样回复），不要重复回复正文。"
+)
+
 _SYSTEM_AGENT_PROMPTS: dict[str, str] = {
     CHAT_TRANSLATION_AGENT_APID: (
         "你是跨境电商询盘对话的聊天消息翻译引擎，把外文消息翻译成简体中文。\n\n"
@@ -48,19 +62,6 @@ _SYSTEM_AGENT_PROMPTS: dict[str, str] = {
             for index, rule in enumerate(TRANSLATION_PROTOCOL_RULES, start=2)
         )
         + f"{len(TRANSLATION_PROTOCOL_RULES) + 2}) 结合对话上下文理解指代与行业术语，但不要编造原文不存在的信息。"
-    ),
-    CHAT_REPLY_SUGGESTION_AGENT_APID: (
-        "你是一名阿里巴巴国际站供应商客服，正在处理买家的询盘对话。\n"
-        "请根据【对话记录】判断买家语言与当前沟通阶段，并通过调用 reply_customer 工具提出回复建议。\n\n"
-        "输出要求：\n"
-        "1) 每条建议都必须单独调用一次 reply_customer，参数包含买家语言回复 reply、中文参考 zh 和语气 tone。\n"
-        "2) reply 必须使用买家在对话中使用的语言，不要默认翻译为英文；zh 是该回复的简体中文参考。\n"
-        "3) tone 只能是 formal（正式）、friendly（友好）或 urgent（催办）之一。\n"
-        "4) 最多提出 3 条建议，按推荐顺序排列；超过 3 条或与已有建议重复会被拒绝。\n"
-        "5) 语气专业、友好、简洁，优先推进成交。\n"
-        "6) 不要编造任何无法从对话中确定的信息；信息不足时用提问补齐。\n"
-        "7) 不要在工具参数里填写收件人、会话或账号，这些由系统提供。\n"
-        "8) 工具调用完成后，最终文本只写明判断理由（例如买家关注点、为什么这样回复），不要重复回复正文。"
     ),
     CHAT_CUSTOMER_INTENT_AGENT_APID: (
         "你是客户意图分析助手。\n\n"
@@ -99,13 +100,10 @@ _SYSTEM_AGENT_PROMPTS: dict[str, str] = {
 }
 
 
-_SYSTEM_AGENT_TOOLS: dict[str, list[str]] = {
-    CHAT_REPLY_SUGGESTION_AGENT_APID: ["reply_customer"],
-}
-# Agents that must call a tool to produce their result (seeded into the preset).
-_SYSTEM_AGENT_REQUIRES_TOOL: dict[str, bool] = {
-    CHAT_REPLY_SUGGESTION_AGENT_APID: True,
-}
+def reply_agent_template() -> dict[str, object]:
+    """Returns the ordinary reply-agent template independently of saved presets."""
+    return dict(apid=CHAT_REPLY_SUGGESTION_AGENT_APID, name="回复助手", description="根据客户对话生成回复建议。",
+                prompt=REPLY_AGENT_PROMPT, llm_level=0, tools=["reply_customer"], requires_tool=True)
 
 
 def system_agent_presets() -> list[dict[str, object]]:
@@ -124,8 +122,8 @@ def system_agent_presets() -> list[dict[str, object]]:
                 "description": description,
                 "prompt": prompt,
                 "llm_level": 0,
-                "tools": list(_SYSTEM_AGENT_TOOLS.get(apid, [])),
-                "requires_tool": _SYSTEM_AGENT_REQUIRES_TOOL.get(apid, False),
+                "tools": [],
+                "requires_tool": False,
             }
         )
     return presets
@@ -193,6 +191,12 @@ def ensure_system_agents_seeded() -> None:
     """
     manager = AgentPresetManager()
     meta = MetaManager()
+    # Keep the legacy identity and user edits, but never resurrect a deleted ordinary agent.
+    initialized_key = "reply_agent_initialized:v1"
+    if meta.get_meta(initialized_key) is None:
+        if manager.get_agent_preset(CHAT_REPLY_SUGGESTION_AGENT_APID) is None:
+            _write_default(reply_agent_template(), manager, meta, source="seed")
+        meta.upsert_meta(Meta(key=initialized_key, value="1"))
     written = 0
     for payload in system_agent_presets():
         apid = str(payload["apid"])

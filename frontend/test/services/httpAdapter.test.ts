@@ -70,14 +70,13 @@ describe("http adapter contract", () => {
   it("uses 75 seconds only for synchronous AI operations", async () => {
     const timeout = vi.spyOn(AbortSignal, "timeout");
     globalThis.fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ code: 0, msg: "ok", data: [] }))));
-    await httpBackend.getAssistantSuggestions("42");
     await httpBackend.analyzeConversation("42");
     await httpBackend.runAgentTest({ agentId: "test" });
     await httpBackend.regenerateAgentTestSessionReply("session");
     await httpBackend.getSystemStatus();
     await httpBackend.requestTranslations({ texts: ["hello"] });
     await httpBackend.startSuggestionRun("42", { runId: "one-request", agentId: "regular", draft: null, contextRunId: null });
-    expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([75000, 75000, 75000, 75000, 8000, 8000, 8000]);
+    expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([75000, 75000, 75000, 8000, 8000, 8000]);
   });
 
   it("binds Agent requests to the current account epoch", async () => {
@@ -350,7 +349,7 @@ describe("http adapter contract", () => {
   it("keeps AI availability independent of client operation", async () => {
     accountSession.accept(structuredClone(connectionSnapshot));
     globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: [] })));
-    await expect(httpBackend.getAssistantSuggestions("42")).resolves.toEqual([]);
+    await expect(httpBackend.startSuggestionRun("42", { runId: "preview-request", agentId: "reply", draft: null, contextRunId: null })).resolves.toEqual([]);
     accountSession.accept({ ...connectionSnapshot, client: { ...connectionSnapshot.client, connected: true }, capabilities: { read_chat: true, use_ai: false, operate_client: true } });
     await expect(httpBackend.analyzeConversation("42")).rejects.toThrow("AI 暂不可用");
   });
@@ -438,12 +437,12 @@ describe("http adapter contract", () => {
     globalThis.fetch = fetchMock;
 
     await httpBackend.getConversation("sid/42 with space");
-    await httpBackend.getAssistantSuggestions("sid/42 with space");
+    await httpBackend.listSuggestionRuns("sid/42 with space");
     await httpBackend.restoreSystemAgentDefault("agent/id with space");
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "/api/conversations/sid%2F42%20with%20space",
-      "/api/conversations/sid%2F42%20with%20space/suggestions",
+      "/api/conversations/sid%2F42%20with%20space/suggestion-runs",
       "/api/agent/system/agent%2Fid%20with%20space/restore",
     ]);
   });

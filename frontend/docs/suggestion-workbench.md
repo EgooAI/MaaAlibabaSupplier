@@ -1,13 +1,15 @@
 # Inline suggestion workbench
 
-The chat composer selects the system suggestion Agent or an enabled ordinary
-Agent. AI suggestions open an inline panel: beside the conversation on wide
+The chat composer selects an enabled ordinary Agent with the saved `reply_customer`
+tool. The former system suggestion Agent is now ordinary, retaining its ID,
+configuration and history. New installations seed one reply Agent once; deleting
+it does not recreate it on startup. AI suggestions open an inline panel: beside the conversation on wide
 screens and above the composer on narrower screens. The first opening generates
 when there is no previous or pending run. Reopening preserves existing results.
 
 The panel supports editing prompts without saving, explicit retesting, saving,
-loading saved/historical configurations, adding the reply tool and creating an
-ordinary Agent from the current default suggestion preset. Prompt drafts and
+loading saved/historical configurations and creating an ordinary Agent from the
+built-in reply template, including when no eligible Agents remain. Prompt drafts and
 the selected Agent are stored per seller/data-directory workspace. Drafts remain
 available after collapsing or reloading the panel.
 
@@ -23,7 +25,7 @@ All operations use the existing authentication and account epoch contract.
 
 | Request | Purpose |
 | --- | --- |
-| `GET /api/agent/suggestion-agents` | Preset catalog and default Agent ID, without model credentials or session histories |
+| `GET /api/agent/suggestion-agents` | Eligible ordinary presets, first available default ID (empty if none), and built-in `template` |
 | `POST /api/conversations/{sid}/suggestion-runs` | Submit `{runId, agentId, draft, contextRunId}` and return a persisted receipt |
 | `GET /api/conversations/{sid}/suggestion-runs` | Read the latest two runs |
 | `GET /api/conversations/{sid}/suggestion-runs/{runId}` | Recover or poll an exact run |
@@ -45,8 +47,10 @@ admission. Read requests do not hold the account lock during model work.
 
 Results expose the run ID, original request, pinned configuration, context summary,
 candidate replies, reasoning, tool calls and any error. Full frozen transcripts
-remain in the host store. The existing synchronous `GET .../suggestions` remains
-available to older clients; the new panel uses the recoverable API.
+remain in the host store. The synchronous `GET .../suggestions` endpoint has been
+removed. All suggestion generation uses the recoverable API, with an explicit
+Agent ID. Tool-budget handling depends on the reply-suggestion run purpose rather
+than a special Agent identity. Drafts cannot bypass saved Agent eligibility.
 
 ## Editing and adoption
 

@@ -187,13 +187,19 @@ def test_restart_observes_interrupted_work_and_never_replays_it(client, preview)
     assert preview.clients == []
 
 
-def test_regular_agent_keeps_partial_candidates_at_tool_limit(client, preview):
+@pytest.mark.parametrize("agent_id", ["custom-reply", CHAT_REPLY_SUGGESTION_AGENT_APID])
+def test_tool_limit_policy_depends_on_suggestion_purpose_not_agent_identity(client, preview, agent_id):
+    from backend.app.shared.agent.runner import AgentRunError, run_chat_agent
+
     register_llm(0, LLMConfig(base_url="https://example.invalid/v1", api_key="synthetic", model_name="fixture", max_tool_rounds=1))
-    run = submit(client, preview, request())
+    run = submit(client, preview, request(agentId=agent_id))
     preview.pool.run()
     result = observe(client, preview, run["id"])
     assert result["status"] == "completed" and result["result"]["restricted"]
     assert result["result"]["items"][0]["content"] == "When do you need them?"
+    with pytest.raises(AgentRunError) as error:
+        run_chat_agent(agent_id, "Generic task", mode="simulated")
+    assert error.value.kind == "tool_rounds_limited"
 
 
 def test_prompt_save_rejects_stale_base_and_retains_history(client, preview):
@@ -215,6 +221,30 @@ def test_unavailable_agents_cannot_start_model_work(client, preview, change):
     response = client.post(f"/api/conversations/{preview.sid}/suggestion-runs", json=request())
     assert response.status_code == 409
     assert preview.pool.jobs == [] and preview.clients == []
+
+
+def test_catalog_and_submission_enforce_saved_reply_capability(client, preview):
+    from backend.app.shared.agent.system_agents import CHAT_TRANSLATION_AGENT_APID
+
+    manager = AgentPresetManager()
+    for apid, enabled, tools in [("disabled", False, ["reply_customer"]), ("no-reply", True, []),
+                                 (CHAT_TRANSLATION_AGENT_APID, True, ["reply_customer"])]:
+        manager.upsert_agent_preset(AgentPreset(apid=apid, name=apid, description="", prompt="test",
+                                                llm_level=0, tools=tools, enabled=enabled))
+    catalog = data(client, "/api/agent/suggestion-agents")
+    assert {item["apid"] for item in catalog["agents"]} == {"custom-reply", CHAT_REPLY_SUGGESTION_AGENT_APID}
+    assert all(item["category"] == "regular" for item in catalog["agents"])
+    for apid in ("disabled", "no-reply", CHAT_TRANSLATION_AGENT_APID):
+        response = client.post(f"/api/conversations/{preview.sid}/suggestion-runs", json=request(
+            agentId=apid, draft={"prompt": "draft", "level": 0, "tools": ["reply_customer"], "requires_tool": True}))
+        assert response.status_code == 409
+    assert not preview.pool.jobs
+    for item in catalog["agents"]:
+        assert client.delete(f"/api/agent/presets/{item['apid']}").status_code == 200
+    empty = data(client, "/api/agent/suggestion-agents")
+    assert empty["agents"] == [] and empty["defaultAgentId"] == ""
+    assert empty["template"]["tools"] == ["reply_customer"]
+    assert client.get(f"/api/conversations/{preview.sid}/suggestions").status_code == 404
 
 
 def test_context_cannot_be_reused_by_a_different_conversation(client, preview):

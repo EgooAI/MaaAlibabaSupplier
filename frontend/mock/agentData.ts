@@ -22,29 +22,6 @@ const systemAgentSources = [
     tools: [],
   },
   {
-    apid: SYSTEM_AGENT_APIDS.replySuggestion,
-    name: "建议",
-    description: "建议",
-    prompt: `你是一名阿里巴巴国际站供应商客服，正在处理买家的询盘对话。
-请根据【对话记录】生成可直接发送给买家的回复建议。
-
-输出要求：
-1) 只输出 JSON，字段见 schema。
-2) 为每条建议同时给出中文 zh 和买家语言 content。
-3) content 必须使用买家在对话中使用的语言，不要默认翻译为英文。
-4) 最多给出 3 条建议，按推荐顺序排列。
-5) 语气专业、友好、简洁，优先推进成交。
-6) 不要编造任何无法从对话中确定的信息；信息不足时用提问补齐。
-7) 不要提及你是 AI，也不要输出解释性文字。
-8) tone 只能使用 formal、friendly、urgent 之一。
-
-只输出 JSON 数组，每项必须包含 id、title、content、tone、zh 字段，例如：
-[{"id":"sug-1","title":"正式报价回复","content":"buyer language reply","tone":"formal","zh":"中文建议"}]
-不要输出未定义字段或顶层对象。`,
-    level: 0,
-    tools: [],
-  },
-  {
     apid: SYSTEM_AGENT_APIDS.intentAnalysis,
     name: "客户意图分析",
     description: "客户意图分析",
@@ -97,6 +74,15 @@ const systemAgentSources = [
 ] as const;
 
 const regularAgentSources = [
+  {
+    apid: "agent-5a43bda9e1304108a1a78a3575a44e27",
+    name: "回复助手",
+    description: "根据客户对话生成回复建议。",
+    prompt: "根据对话记录调用 reply_customer 提出最多三条买家语言回复，附中文参考和语气。不要编造信息，最终文本说明判断理由。",
+    level: 0,
+    tools: ["reply_customer"],
+    updatedAt: "2026-11-13T00:00:00+08:00",
+  },
   {
     apid: "agent-quote",
     name: "报价跟进助手",

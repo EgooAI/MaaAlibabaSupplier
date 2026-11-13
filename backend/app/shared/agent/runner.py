@@ -15,9 +15,6 @@ from agent_pipeline.types import EffectIntent
 from backend.app.shared.crm.sdk import AgentPreset, AgentPresetManager, ensure_sdk_path
 
 
-ROLE_SYSTEM = "system"
-ROLE_ANALYSIS = "analysis"
-ROLE_COMPOSER = "composer"
 
 
 class AgentRunError(RuntimeError):
@@ -92,22 +89,6 @@ def register_business_tools() -> list[str]:
     return [TOOL_NAME, PRODUCT_TOOL_NAME]
 
 
-def agent_role(apid: str) -> str:
-    """Business role of an agent, used for limit semantics."""
-    from backend.app.shared.agent.system_agents import (
-        CHAT_CUSTOMER_INTENT_AGENT_APID,
-        CHAT_CUSTOMER_STAGE_AGENT_APID,
-        CHAT_REPLY_SUGGESTION_AGENT_APID,
-        CHAT_TRANSLATION_AGENT_APID,
-    )
-
-    if apid == CHAT_REPLY_SUGGESTION_AGENT_APID:
-        return ROLE_COMPOSER
-    if apid in (CHAT_CUSTOMER_INTENT_AGENT_APID, CHAT_CUSTOMER_STAGE_AGENT_APID):
-        return ROLE_ANALYSIS
-    return ROLE_SYSTEM
-
-
 # ---------------------------------------------------------------------------
 # Public entry points
 
@@ -129,8 +110,8 @@ def run_chat_agent(
     """Run one agent turn and return its structured result.
 
     Raises :class:`AgentRunError` for configuration errors, context limits and
-    (for non-composer agents) exhausted tool budgets. Composer agents return a
-    restricted turn instead so collected intents survive.
+    exhausted tool budgets. Reply-suggestion runs return a restricted turn
+    instead so collected candidates survive.
     """
     from agent_pipeline import (
         AgentPipeline,
@@ -191,7 +172,7 @@ def run_chat_agent(
         raise AgentRunError("上下文超过限制", status_code=422, kind="context_limited")
 
     restricted = result.status is AgentPipelineResultStatus.TOOL_ROUNDS_LIMITED
-    if restricted and purpose != "reply_suggestions" and agent_role(apid) != ROLE_COMPOSER:
+    if restricted and purpose != "reply_suggestions":
         # Analysis agents must not present a partial answer as a success.
         raise AgentRunError(_limit_message(result), status_code=409, kind="tool_rounds_limited")
 
@@ -334,10 +315,6 @@ def _register_default_llms() -> None:
 __all__ = [
     "AgentRunError",
     "ChatAgentTurn",
-    "ROLE_ANALYSIS",
-    "ROLE_COMPOSER",
-    "ROLE_SYSTEM",
-    "agent_role",
     "register_business_tools",
     "run_chat_agent",
     "run_chat_tool_agent",

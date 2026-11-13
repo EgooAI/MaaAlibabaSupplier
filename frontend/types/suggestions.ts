@@ -34,4 +34,4 @@ export type SuggestionRun = {
   } | null;
 };
 
-export type SuggestionCatalog = { defaultAgentId: string; agents: DbAgentPreset[] };
+export type SuggestionCatalog = { defaultAgentId: string; agents: DbAgentPreset[]; template: DbAgentPreset };
