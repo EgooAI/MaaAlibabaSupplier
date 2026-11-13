@@ -1,8 +1,9 @@
-"""Bounded, metadata-only diagnostic exports; never traverse application data."""
+"""Exports bounded log metadata and saved Maa error screenshots from fixed sources."""
 
 from __future__ import annotations
 
 import itertools
+import io
 import json
 import os
 import re
@@ -11,6 +12,7 @@ import sys
 import tempfile
 import threading
 import time
+import warnings
 import zipfile
 from collections import Counter
 from dataclasses import dataclass
@@ -30,6 +32,9 @@ MAX_FILES = 24  # Includes the two generated records.
 MAX_FILE_BYTES = 4 * 1024**2
 MAX_TOTAL_BYTES = 32 * 1024**2
 MAX_ARCHIVE_BYTES = 34 * 1024**2
+MAX_SCREENSHOTS = 4
+MAX_SCREENSHOT_TOTAL_BYTES = 8 * 1024**2
+MAX_SCREENSHOT_PIXELS = 16 * 1024**2
 MAX_DIRECTORY_ENTRIES = 256
 MAX_SCAN_ENTRIES = 4096
 MAX_LINE_BYTES = 64 * 1024
@@ -49,6 +54,7 @@ class Source:
     current: tuple[str, ...]
     kind: str
     session_state: str | None = None
+    session_id: str | None = None
 
 
 def _correlation(fields: dict) -> dict:
@@ -338,6 +344,8 @@ def _sources() -> tuple[list[Source], Path | None]:
                 pattern = rf"{prefix}(?:[._-][0-9A-Za-z_.-]{{1,80}})?\.log(?:\.\d{{1,3}})?"
                 current = (f"{prefix}.log",)
             sources.append(Source(f"native-{label}-{prefix}", directory, pattern, current, "native"))
+        sources.append(Source("native-error-screenshot", directory / "on_error",
+                              r"(?i)[^/\\]{1,240}\.png", (), "screenshot"))
     # Match the updater's fixed per-install identity without resolving away reparse points.
     try:
         stage = updater_paths.staging_root(repo)
@@ -592,6 +600,72 @@ def _skip_reason(exc: OSError) -> str:
     return "unavailable"
 
 
+def _read_error_screenshot(path, info, budget, deadline):
+    """Reads a stable PNG and exports its pixels without embedded file metadata."""
+    from PIL import Image
+
+    details = {"read_bytes": 0, "snapshot_bytes": info.st_size, "snapshot_changed": False,
+               "deadline_exceeded": False, "status": "omitted_size_limit"}
+    expired = lambda: time.monotonic() >= deadline
+    if expired():
+        return b"", dict(details, status="omitted_deadline", deadline_exceeded=True)
+    if info.st_size > budget:
+        return b"", details
+    raw = bytearray()
+    with _open_checked(path, info) as stream:
+        while len(raw) < info.st_size:
+            if expired():
+                return b"", dict(details, status="omitted_deadline", deadline_exceeded=True)
+            chunk = stream.read(min(64 * 1024, info.st_size - len(raw)))
+            if not chunk:
+                break
+            raw.extend(chunk)
+            details["read_bytes"] += len(chunk)
+        after = os.fstat(stream.fileno())
+        current = _safe_stat(path)
+        details["snapshot_changed"] = (
+            len(raw) != info.st_size or after.st_size != info.st_size or after.st_mtime_ns != info.st_mtime_ns
+            or (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns)
+            != (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+        )
+    if details["snapshot_changed"]:
+        return b"", dict(details, status="unavailable_or_rotated")
+    if expired():
+        return b"", dict(details, status="omitted_deadline", deadline_exceeded=True)
+
+    class BoundedImage(io.BytesIO):
+        def write(self, data):
+            if self.tell() + len(data) > budget:
+                raise OverflowError("Diagnostic screenshot exceeds its budget")
+            return super().write(data)
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(raw), formats=("PNG",)) as image:
+                if image.width * image.height > MAX_SCREENSHOT_PIXELS:
+                    return b"", dict(details, status="omitted_pixel_limit")
+                if image.n_frames != 1:
+                    return b"", dict(details, status="invalid_image")
+                image.verify()
+            with Image.open(io.BytesIO(raw), formats=("PNG",)) as image:
+                mode = "RGBA" if "A" in image.getbands() or "transparency" in image.info else "RGB"
+                with image.convert(mode) as pixels, BoundedImage() as output:
+                    pixels.info.clear()
+                    details.update(width=pixels.width, height=pixels.height, media_type="image/png")
+                    if expired():
+                        return b"", dict(details, status="omitted_deadline", deadline_exceeded=True)
+                    pixels.save(output, format="PNG")
+                    data = output.getvalue()
+    except OverflowError:
+        return b"", details
+    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError, Image.DecompressionBombWarning):
+        return b"", dict(details, status="invalid_image")
+    if expired():
+        return b"", dict(details, status="omitted_deadline", deadline_exceeded=True)
+    return data, dict(details, status="included")
+
+
 def build_bundle() -> bytes:
     deadline = time.monotonic() + COLLECTION_SECONDS
     expired = lambda: time.monotonic() >= deadline
@@ -671,7 +745,9 @@ def build_bundle() -> bytes:
             for prefix in ("maa", "maafw"):
                 sources.append(Source(f"native-session-{prefix}", directory,
                                       rf"{prefix}(?:[._-][0-9A-Za-z_.-]{{1,80}})?\.log(?:\.\d{{1,3}})?",
-                                      (f"{prefix}.log",), "native", state))
+                                      (f"{prefix}.log",), "native", state, session.name))
+            sources.append(Source("native-error-screenshot", directory / "on_error",
+                                  r"(?i)[^/\\]{1,240}\.png", (), "screenshot", state, session.name))
 
     by_source = {}
     for source in sources:
@@ -695,48 +771,77 @@ def build_bundle() -> bytes:
                      item[0].session_state == "open_or_unclosed", item[2].st_mtime_ns), reverse=True)
               for group in by_source.values()]
     source_status = [{"source": name, "candidates": len(group)} for name, group in by_source.items()]
-    # One recent file per source precedes every source's rotations and optional dev output.
-    primary = [group for group in groups if group and not group[0][0].name.startswith("dev-")]
+    # Keep core logs, then recent error images, before rotations and optional dev output.
+    primary = [group for group in groups if group and group[0][0].kind != "screenshot"
+               and not group[0][0].name.startswith("dev-")]
     optional = [group for group in groups if group and group[0][0].name.startswith("dev-")]
+    screenshots = sorted(by_source.get("native-error-screenshot", []),
+                         key=lambda item: item[2].st_mtime_ns, reverse=True)
     selected = [group[0] for group in primary]
+    selected += screenshots[:MAX_SCREENSHOTS]
     selected += sorted((item for group in primary for item in group[1:]), key=lambda item: item[2].st_mtime_ns, reverse=True)
     selected += [item for group in optional for item in group]
     file_limit_omitted = max(0, len(selected) - (MAX_FILES - 2))
     selected = selected[:MAX_FILES - 2]
     remaining = MAX_TOTAL_BYTES - 64 * 1024
-    manifest = {"schema_version": 1, "policy": "recent-metadata-only", "sources": source_status,
+    screenshot_remaining = min(MAX_SCREENSHOT_TOTAL_BYTES, remaining // 2) if any(
+        source.kind == "screenshot" for source, _, _ in selected) else 0
+    logs_remaining = sum(source.kind != "screenshot" for source, _, _ in selected)
+    manifest = {"schema_version": 1, "policy": "recent-logs-and-error-screenshots", "sources": source_status,
                 "scan_limited": scan_limited, "discovery_incomplete": expired() or scan_limited,
                 "omitted_files_file_limit": file_limit_omitted,
                 "unavailable_or_unsafe_candidates": sum(skipped_reasons.values()),
                 "unavailable_or_unsafe_categories": dict(sorted(skipped_reasons.items())),
                 "omitted_installer_stages": installer_omitted,
                 "omitted_native_sessions": max(0, len(sessions) - len(chosen_sessions)),
+                "omitted_screenshots_file_limit": len(screenshots) - sum(
+                    source.kind == "screenshot" for source, _, _ in selected),
                 "files": [], "limits": {"collection_seconds": COLLECTION_SECONDS,
                     "files": MAX_FILES, "per_file_bytes": MAX_FILE_BYTES,
+                    "screenshots": MAX_SCREENSHOTS, "screenshot_total_bytes": MAX_SCREENSHOT_TOTAL_BYTES,
+                    "screenshot_pixels": MAX_SCREENSHOT_PIXELS,
                     "total_bytes": MAX_TOTAL_BYTES, "archive_bytes": MAX_ARCHIVE_BYTES}}
     with tempfile.TemporaryFile() as output:
         with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for index, (source, path, info) in enumerate(selected):
-                budget = min(MAX_FILE_BYTES, remaining // (len(selected) - index))
-                entry = {"source": source.name, "file": f"logs/{index + 1:02d}-{source.name}.jsonl"}
+                screenshot = source.kind == "screenshot"
+                if screenshot:
+                    budget = min(MAX_FILE_BYTES, screenshot_remaining)
+                    entry = {"source": source.name, "file": f"screenshots/{index + 1:02d}-native-error.png",
+                             "modified_at": info.st_mtime, "media_type": "image/png"}
+                    for node in NATIVE_ENTRIES:
+                        if path.stem.endswith("_" + node):
+                            entry["node"] = node
+                            break
+                else:
+                    budget = min(MAX_FILE_BYTES, (remaining - screenshot_remaining) // logs_remaining)
+                    logs_remaining -= 1
+                    entry = {"source": source.name, "file": f"logs/{index + 1:02d}-{source.name}.jsonl"}
                 if source.session_state:
                     entry["session_state"] = source.session_state
                     entry["live_snapshot"] = source.session_state != "closed"
+                    entry["native_log_session_id"] = source.session_id
                 if expired():
                     entry["status"] = "omitted_deadline"
                     manifest["files"].append(entry)
                     continue
                 try:
-                    data, details = _read_recent(path, info, source.kind, budget, deadline)
+                    if screenshot:
+                        data, details = _read_error_screenshot(path, info, budget, deadline)
+                    else:
+                        data, details = _read_recent(path, info, source.kind, budget, deadline)
                 except OSError:
-                    remaining -= budget  # A failed read may already have consumed its whole allowance.
+                    consumed = budget  # A failed read may already have consumed its whole allowance.
                     entry["status"] = "unavailable_or_rotated"
                 else:
-                    remaining -= max(details["read_bytes"], len(data))
+                    consumed = max(details["read_bytes"], len(data))
                     if data:
                         archive.writestr(entry["file"], data)
-                    entry.update(details, status="included", exported_bytes=len(data))
+                    entry.update(details, status=details.get("status", "included"), exported_bytes=len(data))
                     del data
+                remaining -= consumed
+                if screenshot:
+                    screenshot_remaining -= consumed
                 manifest["files"].append(entry)
             manifest["deadline_exceeded"] = expired() or any(item.get("deadline_exceeded") for item in manifest["files"])
             runtime["native_retention"] = {
@@ -746,7 +851,8 @@ def build_bundle() -> bytes:
                 "open_or_unclosed_sessions_observed": sum(item[4] != "closed" for item in sessions),
                 "active_session_known": bool(active), "session_limit": 4,
                 "log_bytes_observed": sum(info.st_size for group in groups for source, _, info in group
-                                          if source.session_state is not None),
+                                          if source.session_state is not None and source.kind == "native"),
+                "error_screenshot_bytes_observed": sum(info.st_size for _, _, info in screenshots),
                 "scan_limited": scan_limited, "deadline_exceeded": manifest["deadline_exceeded"],
                 "rotated_or_pruned": False,
             }

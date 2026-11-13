@@ -50,7 +50,7 @@ def fixture_sources():
     sources, stage = diag._sources()
     expected = set()
     for source in sources:
-        if source.name.startswith("dev-"):
+        if source.name.startswith("dev-") or source.kind == "screenshot":
             continue
         filename = source.current[0] if source.current else "maafw.2026-09-20.log"
         text = {"application": APPLICATION, "native": NATIVE,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import ipaddress
+import io
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,9 @@ import zipfile
 MAX_ARCHIVE_BYTES = 34 * 1024**2
 MAX_TOTAL_BYTES = 32 * 1024**2
 MAX_FILE_BYTES = 4 * 1024**2
+MAX_SCREENSHOTS = 4
+MAX_SCREENSHOT_TOTAL_BYTES = 8 * 1024**2
+MAX_SCREENSHOT_PIXELS = 16 * 1024**2
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -52,8 +56,11 @@ def validate_archive(path: Path) -> None:
         for entry in entries:
             if (entry.file_size > MAX_FILE_BYTES or entry.flag_bits & 1 or entry.is_dir()
                     or (entry.filename not in ("manifest.json", "runtime.json")
-                        and re.fullmatch(r"logs/\d{2}-[a-z-]+\.jsonl", entry.filename) is None)):
+                        and re.fullmatch(r"logs/\d{2}-[a-z-]+\.jsonl|screenshots/\d{2}-native-error\.png", entry.filename) is None)):
                 raise ValueError("Invalid diagnostic ZIP entry")
+        images = [entry for entry in entries if entry.filename.startswith("screenshots/")]
+        if len(images) > MAX_SCREENSHOTS or sum(entry.file_size for entry in images) > MAX_SCREENSHOT_TOTAL_BYTES:
+            raise ValueError("Diagnostic screenshots exceed their limits")
         if archive.testzip() is not None:
             raise ValueError("Diagnostic ZIP integrity check failed")
         manifest = json.loads(archive.read("manifest.json"))
@@ -61,6 +68,28 @@ def validate_archive(path: Path) -> None:
         if (not isinstance(manifest, dict) or manifest.get("schema_version") != 1
                 or not isinstance(runtime, dict) or runtime.get("schema_version") != 1):
             raise ValueError("Unsupported diagnostic ZIP")
+        if images:
+            from PIL import Image
+
+            files = manifest.get("files")
+            if not isinstance(files, list):
+                raise ValueError("Missing screenshot manifest")
+            for entry in images:
+                records = [item for item in files if isinstance(item, dict) and item.get("file") == entry.filename]
+                if (len(records) != 1 or records[0].get("status") != "included"
+                        or records[0].get("source") != "native-error-screenshot"
+                        or records[0].get("media_type") != "image/png"):
+                    raise ValueError("Invalid screenshot manifest")
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", Image.DecompressionBombWarning)
+                    data = archive.read(entry)
+                    with Image.open(io.BytesIO(data), formats=("PNG",)) as image:
+                        if (image.width * image.height > MAX_SCREENSHOT_PIXELS or image.n_frames != 1
+                                or (image.width, image.height) != (records[0].get("width"), records[0].get("height"))):
+                            raise ValueError("Invalid screenshot dimensions")
+                        image.verify()
+                    with Image.open(io.BytesIO(data), formats=("PNG",)) as image:
+                        image.load()
 
 
 def download(base_url: str, token: str, destination: Path) -> None:

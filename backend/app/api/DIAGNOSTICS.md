@@ -22,6 +22,10 @@ open/unclosed sessions, then closed sessions. A missing closure marker alone doe
 prove the writer is still active; the manifest calls this `open_or_unclosed`. The
 collector never rotates, prunes, waits for GUI work or asks native writers to stop.
 Ownership markers are required, read with a fixed bound, and never exported.
+Saved Maa failure screenshots are collected from the direct `on_error/*.png`
+children of those selected session roots and their `debug` directories, and the
+five fixed legacy native log directories listed above. Other image directories,
+including recognition drawings and arbitrary screenshots, are not scanned.
 Recognized timestamp, numbered and `.bak.log` rotations are included. The updater's per-install staging
 contributes `last-result.json` at the staging root and `installer.log` from up to
 four recent UUID stage directories. Only those exact updater filenames are
@@ -32,8 +36,9 @@ beside its stage for local inspection but is never exported. Development preview
 backend/frontend `.log` and `.log.err` files under the repository's `debug` directory
 are optional.
 
-One newest available file from each key source precedes additional rotations; optional
-development output comes last. Files use their latest bounded tail, with a partial
+One newest available log from each key source precedes up to four newest error
+screenshots, then additional rotations; optional development output comes last.
+Log files use their latest bounded tail, with a partial
 first line discarded. Each read freezes its end offset to the discovered file size:
 later appends are excluded, incomplete final records are omitted, and observed changes
 are reported. UTF-8 and BOM-marked UTF-16 LE/BE are supported, including aligned UTF-16
@@ -44,6 +49,9 @@ the newest rotation beyond a capped scan may be omitted.
 
 - At most 24 ZIP entries, including generated `manifest.json` and `runtime.json`.
 - At most 4 MiB read/exported per source file, 32 MiB total, and 34 MiB ZIP size.
+- At most four saved error screenshots, 8 MiB total read/export budget and
+  16 megapixels per image. Images share the existing ZIP entry and byte ceilings.
+  Their reservation is at most half the total data budget so logs remain available.
 - The total read budget is shared across selected sources; tails can be smaller than
   4 MiB so one large source cannot consume the entire bundle.
 - Lines over 64 KiB and unrecognized records are omitted. Archive filenames are
@@ -65,6 +73,37 @@ unexamined records remain; the reported count covers only records actually rejec
 and omission counts never claim to describe files beyond the scan/deadline bounds.
 Missing or rotated files do not fail the whole download.
 
+## Saved Error Screenshots
+
+The existing authenticated download automatically includes eligible saved error
+screenshots. PNGs are read in full through the same checked-file boundary as logs.
+Files changed during collection, invalid/incomplete or animated PNGs, and images
+exceeding the byte/pixel limits are omitted without failing the bundle. Image
+decoding and encoding are bounded by byte/pixel limits; the cooperative deadline
+is checked around these operations, not inside the image codec.
+
+Screenshots preserve the client pixels, which can include visible conversations.
+Embedded PNG metadata and original filenames are removed by re-encoding to PNG.
+ZIP names are `screenshots/NN-native-error.png`. The manifest policy is
+`recent-logs-and-error-screenshots`; the additive manifest/runtime schema remains
+version 1. Each image entry records its modification time (`modified_at`, Unix
+seconds), dimensions, media type, exported bytes and collection status. Modification
+time is not asserted to be capture time. A known pipeline node suffix contributes
+`node`, which is the node Maa supplied to `save_on_error` and can be the predecessor
+whose next-list timed out rather than the recognition target.
+
+Owned-session log and image entries include `native_log_session_id`, matching the
+application's `maa.submitted` / `maa.failed` telemetry. Images are not assigned a
+task ID by guessing from timestamps. Legacy-directory images have no session ID.
+`omitted_screenshots_file_limit`, source candidate counts and per-image statuses
+distinguish selection limits, missing files, changed files, invalid images and
+budget/deadline omissions. Discovery is still bounded, so zero candidates does not
+prove Maa never saved a screenshot. Existing native-session retention also applies
+to its images.
+
+Collection only reads already-saved files. It does not enable native screenshot
+options, capture a new desktop frame or rerun a failed task.
+
 The runtime summary includes generation time, Python/platform, and validated build
 version, commit SHA and Actions numeric identity from fixed `build-info.json` (16 KiB
 maximum). Other build fields are omitted. Passive observations report loaded modules,
@@ -75,7 +114,8 @@ context and free-form worker errors are excluded. Native retention includes boun
 session/log counts, active-session knowledge, available cached retention policy/state,
 and explicit `inventory_complete=false`; it is not an exhaustive disk inventory.
 The collector does not initialize services or inspect account state, settings,
-databases, desktop windows, clipboard, screenshots or network services.
+databases, desktop windows, clipboard or network services. Saved error PNGs are
+the sole image source, as described above.
 
 `diagnostics.runtime_observations()` is the integration hook for other components'
 noninitializing, nonblocking cached getters. Accepted values are booleans named
@@ -108,7 +148,7 @@ INFO-level Yak records carry no body and are dropped; warning and error records 
 retained as `yak.record`.
 Installer headers contribute timestamps and fixed event labels. Updater results
 contribute a recognized status and a validated version. Unknown
-bodies, exception messages, stack locals, paths, payloads and IPC are never copied raw.
+log bodies, exception messages, stack locals, paths, payloads and IPC are never copied raw.
 Structured application telemetry and sanitized stack frame metadata remain useful for
 correlation. This deliberately omits detail that may exist in the original logs.
 
@@ -180,6 +220,11 @@ without overwriting an existing file. Failure removes only the partial file it c
 The destination filesystem must support hard links for atomic, no-overwrite publication.
 Errors never print HTTP bodies, credentials or exception details. Downloads are explicit;
 the tool performs no automatic upload or external reporting.
+
+Use the updated `tools/pull_diagnostics.py` for image-bearing bundles. It validates
+image entry names, counts, total bytes, manifest association, PNG integrity and
+dimensions before publication, using the repository's Pillow dependency. It also
+accepts older log-only bundles. Older clients reject the new PNG entries.
 
 Restart the backend to register this endpoint and its collector. No frontend build is
 needed for API or CLI use. Tests use synthetic files, temporary authentication stores

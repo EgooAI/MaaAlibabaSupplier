@@ -90,6 +90,12 @@ layout, client recognition or update installation.
 
 ## GUI Regression Coverage
 
+`test_diagnostic_screenshots.py` exercises authenticated exports of saved native
+error PNGs with synthetic images and temporary log directories. It covers pixel
+fidelity, metadata removal, session correlation, selection/budget limits, partial
+and changing files, path boundaries and downloader validation. It does not capture
+the desktop or establish that a production native task saved its error image.
+
 - `test_gui_tasks.py` checks acceptance snapshots, response preparation failures,
   queue capacity, failed navigation and diagnostic ordering relative to sending.
 - `test_maafw_runner.py` checks initialization recovery, window ambiguity and
