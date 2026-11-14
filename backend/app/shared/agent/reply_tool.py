@@ -17,8 +17,8 @@ from agent_pipeline.tools import CATEGORY_EFFECT, ToolContext, ToolSpec
 TOOL_NAME = "reply_customer"
 INTENT_KIND = "reply_customer"
 TONE_VALUES = ("formal", "friendly", "urgent")
-MAX_REPLIES_PER_RUN = 3
 MAX_REPLY_LENGTH = 4000
+MAX_REASONING_LENGTH = 500
 
 _PLACEHOLDER_PATTERNS = (
     re.compile(r"\{\{[^{}]{1,80}\}\}"),
@@ -42,11 +42,6 @@ class ReplyScope:
 
 def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip()).lower()
-
-
-def _content_of(intent, key: str) -> str:
-    content = intent.content if hasattr(intent, "content") else intent
-    return str((content or {}).get(key) or "")
 
 
 def validate_reply(reply: str, *, prior_replies: tuple[str, ...]) -> str | None:
@@ -73,6 +68,7 @@ def reply_customer(
     ctx: ToolContext,
     reply: Annotated[str, "用买家语言撰写的、可直接发送给买家的回复正文。"],
     zh: Annotated[str, "这条回复的简体中文参考译文，供商家核对。"],
+    reasoning: Annotated[str, "简短说明买家关注点及回复依据，最多 500 字。"],
     tone: Annotated[str, "语气，只能是 formal（正式）、friendly（友好）或 urgent（催办）。"] = "formal",
 ) -> dict[str, Any]:
     """向当前会话的买家提出一条回复建议；只记录意图，不会自动发送。"""
@@ -84,17 +80,17 @@ def reply_customer(
     if normalized_tone not in TONE_VALUES:
         raise ValueError(f"tone 只能是 {'、'.join(TONE_VALUES)} 之一。")
 
-    emitted = list(ctx.recorded)
-    if len(emitted) >= MAX_REPLIES_PER_RUN:
-        raise ValueError(f"本次运行最多提出 {MAX_REPLIES_PER_RUN} 条回复，请停止调用。")
+    if ctx.recorded:
+        raise ValueError("本次运行已经提出一条回复，请停止调用。")
 
     reason = validate_reply(reply, prior_replies=scope.prior_replies)
     if reason is not None:
         raise ValueError(reason)
 
     reference = (zh or "").strip() or (reply or "").strip()
-    if _normalize(reference) in {_normalize(_content_of(item, "zh")) for item in emitted}:
-        raise ValueError("这条回复与本次运行中已提出的回复重复，请给出不同内容。")
+    rationale = (reasoning or "").strip()
+    if not rationale or len(rationale) > MAX_REASONING_LENGTH:
+        raise ValueError(f"reasoning 必须是 1 至 {MAX_REASONING_LENGTH} 字的简短回复理由，请修正后重新调用。")
 
     ctx.emit(
         INTENT_KIND,
@@ -102,6 +98,7 @@ def reply_customer(
             "reply": (reply or "").strip(),
             "zh": reference,
             "tone": normalized_tone,
+            "reasoning": rationale,
             "scope": scope,
         },
         # Sequence numbers count the run, not the call or the round.
@@ -110,8 +107,7 @@ def reply_customer(
     ctx.recorded.append(dict(ctx.intents[-1].content))
     return {
         "recorded": True,
-        "index": len(emitted) + 1,
-        "remaining": MAX_REPLIES_PER_RUN - len(emitted) - 1,
+        "reasoning": rationale,
     }
 
 
@@ -119,18 +115,17 @@ TOOL_SPEC = ToolSpec(
     name=TOOL_NAME,
     title="回复客户",
     description=(
-        "向当前会话的买家提出一条回复建议。每次调用代表一条候选回复；"
-        "回复只会等待商家确认，不会自动发送。"
+        "向当前会话的买家提出一条回复建议，并附简短 reasoning。每次运行最多成功一次，"
+        "校验失败后可修正重试。回复只会等待商家确认，不会自动发送。"
     ),
     category=CATEGORY_EFFECT,
     repeatable=True,
-    max_calls=MAX_REPLIES_PER_RUN,
 )
 
 
 __all__ = [
     "INTENT_KIND",
-    "MAX_REPLIES_PER_RUN",
+    "MAX_REASONING_LENGTH",
     "MAX_REPLY_LENGTH",
     "ReplyScope",
     "TOOL_NAME",

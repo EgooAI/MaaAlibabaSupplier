@@ -111,7 +111,7 @@ def run_chat_agent(
 
     Raises :class:`AgentRunError` for configuration errors, context limits and
     exhausted tool budgets. Reply-suggestion runs return a restricted turn
-    instead so collected candidates survive.
+    instead so collected intents survive.
     """
     from agent_pipeline import (
         AgentPipeline,
@@ -141,6 +141,7 @@ def run_chat_agent(
         tool_context=context,
         tool_choice=tool_choice,
         cancel_token=cancel_token,
+        stop_on_tool_success=("reply_customer",) if purpose == "reply_suggestions" else (),
     )
 
     batch_id = uuid4().hex

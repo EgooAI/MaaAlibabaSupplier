@@ -9,7 +9,7 @@ import type { SuggestionCatalog, SuggestionRun, SuggestionRunInput } from "@/typ
 import type { DraftSubmission } from "../outbox/OutboxWorkspace";
 import { draftOf, readDraft, readPending, runDraft, sameDraft, suggestionKey, type PromptDraft } from "./suggestionStorage";
 
-const terminal = (run: SuggestionRun) => run.status === "completed" || run.status === "failed";
+const terminal = (run: SuggestionRun) => run.legacy || run.status === "completed" || run.status === "failed";
 
 export function useSuggestions(conversation: ConversationDetail, captureDraft: () => DraftSubmission, insert: (item: AssistantSuggestion) => void) {
   const backend = useAccountBackend();
@@ -245,14 +245,14 @@ export function useSuggestions(conversation: ConversationDetail, captureDraft: (
     } catch (caught) { report(caught); }
   }
 
-  async function adopt(run: SuggestionRun, index: number) {
-    if (blocked || adoptionBusy.current) return;
+  async function adopt(run: SuggestionRun) {
+    if (blocked || adoptionBusy.current || run.legacy || run.status !== "completed" || !run.result) return;
     const original = state.current.captureDraft().id;
     adoptionBusy.current = true;
     setAdopting(true);
     setError(undefined);
     try {
-      const item = await backend.adoptSuggestion(sid, run.id, index);
+      const item = await backend.adoptSuggestion(sid, run.id);
       if (!alive.current) return;
       if (state.current.captureDraft().id !== original) {
         setNotice("等待期间回复草稿已更新，已保留新编辑；需要替换时请再次点击插入。");

@@ -170,30 +170,29 @@ class IntentStore:
         )
         return _record(rows[0]) if rows else None
 
-    def adopt_suggestions(self, *, seller, data_dir, batch_id, apid, agent_name,
-                          conversation_id, revision_id, items):
-        """Materializes all candidates once so later adoption preserves sibling states."""
+    def adopt_suggestion(self, *, seller, data_dir, batch_id, apid, agent_name,
+                         conversation_id, revision_id, reply):
+        """Materializes one reply per run, preserving its identity across retries."""
         seller, directory = _scope(seller, data_dir)
+        identity = uuid5(NAMESPACE_URL, f"single-reply:{seller}:{directory}:{batch_id}").hex
+        expected = dict(id=identity, seller=seller, data_dir=directory, apid=apid, agent_name=agent_name,
+                        revision_id=revision_id, conversation_id=conversation_id, batch_id=batch_id,
+                        mode=MODE_LIVE, reply=reply["content"], zh=reply["zh"], tone=reply["tone"], call_id=None)
         self.initialize()
         with self._connection(write=True) as conn:
             existing = conn.execute(
-                "SELECT * FROM app_agent_intent WHERE seller=? AND data_dir=? AND batch_id=? ORDER BY call_id",
+                "SELECT * FROM app_agent_intent WHERE seller=? AND data_dir=? AND batch_id=?",
                 (seller, directory, batch_id),
             ).fetchall()
             if existing:
-                return [_record(row) for row in existing]
+                if len(existing) != 1 or any(existing[0][key] != value for key, value in expected.items()):
+                    raise IntentConflict("建议意图与运行记录不一致")
+                return _record(existing[0])
             now = time.time()
-            records = []
-            for index, item in enumerate(items):
-                record = dict(id=uuid5(NAMESPACE_URL, f"{seller}:{directory}:{batch_id}:{index}").hex,
-                              seller=seller, data_dir=directory, apid=apid, agent_name=agent_name,
-                              revision_id=revision_id, conversation_id=conversation_id, batch_id=batch_id,
-                              mode=MODE_LIVE, reply=item["content"], zh=item["zh"], tone=item["tone"],
-                              status=STATUS_REQUESTED, call_id=str(index), created_at=now, updated_at=now)
-                conn.execute(f"INSERT INTO app_agent_intent ({','.join(record)}) VALUES ({','.join('?' for _ in record)})",
-                             tuple(record.values()))
-                records.append(record)
-            return records
+            record = dict(expected, status=STATUS_REQUESTED, created_at=now, updated_at=now)
+            conn.execute(f"INSERT INTO app_agent_intent ({','.join(record)}) VALUES ({','.join('?' for _ in record)})",
+                         tuple(record.values()))
+            return record
 
     def list_batch(self, batch_id: str, *, seller: str, data_dir: str | Path) -> list[dict]:
         return [_record(row) for row in self._read(

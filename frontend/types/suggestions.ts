@@ -1,5 +1,5 @@
 import type { AgentSessionPin, AgentToolCallRecord, DbAgentPreset } from "./agent";
-import type { AssistantSuggestion } from "./chatCanonical";
+import type { SuggestionReply } from "./chatCanonical";
 
 export type SuggestionDraft = {
   prompt: string;
@@ -21,15 +21,15 @@ export type SuggestionRun = {
   agentId: string;
   agentName: string;
   status: "queued" | "running" | "completed" | "failed";
+  legacy: boolean;
   createdAt: number;
   error: string | null;
   request: SuggestionRunInput;
   pinned: AgentSessionPin;
   context: { id: string; messageCount: number; capturedAt: number; lastMessageId: string; lastMessageAt: string };
   result: {
-    items: AssistantSuggestion[];
+    reply: SuggestionReply;
     reasoning: string;
-    restricted: boolean;
     toolCalls: AgentToolCallRecord[];
   } | null;
 };

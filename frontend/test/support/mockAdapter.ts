@@ -1,6 +1,6 @@
 import { agentConsole, agentPresets, agentTools, llmLevels, systemAgents } from "@/mock/agentData";
 import { businessCards } from "@/mock/cardData";
-import { assistantSuggestions, conversationAggregates } from "@/mock/conversationData";
+import { assistantReply, conversationAggregates } from "@/mock/conversationData";
 import { mockSelfInfo } from "@/mock/selfData";
 import { dataDirStatus, keyStatus, nodeResult, proxyStatus, receiverStatus, systemStatus, taskSnapshots } from "@/mock/statusData";
 import { buildConversationExport } from "@/domain/chat/chatModel";
@@ -352,12 +352,12 @@ export const mockBackend: OperationsBackend = {
     const draft = input.draft;
     const run: SuggestionRun = {
       id: input.runId, conversationId, agentId: input.agentId, agentName: agent.name,
-      status: "completed", createdAt: Date.now() / 1000, error: null, request: structuredClone(input),
+      status: "completed", legacy: false, createdAt: Date.now() / 1000, error: null, request: structuredClone(input),
       pinned: { kind: draft ? "draft" : "preset", prompt: draft?.prompt ?? agent.prompt, name: agent.name,
         llm_level: draft?.level ?? agent.level, tools: draft?.tools ?? agent.tools, requires_tool: draft?.requires_tool ?? agent.requiresTool },
       context: previous?.context ?? { id: input.runId, messageCount: detail.messages.length, capturedAt: Date.now() / 1000,
         lastMessageId: detail.messages.at(-1)?.externalMid ?? "", lastMessageAt: detail.messages.at(-1)?.createdAt ?? "" },
-      result: { items: structuredClone(assistantSuggestions), reasoning: "根据当前对话给出回复。", restricted: false, toolCalls: [] },
+      result: { reply: structuredClone(assistantReply), reasoning: "确认数量与包装要求，便于准备报价。", toolCalls: [] },
     };
     suggestionRuns.set(key, run);
     return delay(structuredClone(run));
@@ -368,11 +368,12 @@ export const mockBackend: OperationsBackend = {
     if (!run || run.conversationId !== id) throw new ApiError("建议运行不存在", "suggestion-runs", { status: 404 });
     return delay(structuredClone(run));
   },
-  adoptSuggestion: async (id, runId, index) => {
+  adoptSuggestion: async (id, runId) => {
     const run = suggestionRuns.get(`${outboxScope()}:${runId}`);
-    const item = run?.result?.items[index];
-    if (!run || run.conversationId !== id || !item) throw new Error("建议不存在");
-    return delay({ ...structuredClone(item), intentId: `${runId}:${index}`, status: "requested" });
+    const reply = run?.result?.reply;
+    if (!run || run.legacy || run.status !== "completed" || run.conversationId !== id || !reply) throw new Error("建议不存在");
+    const intentId = `intent-${runId}`;
+    return delay({ ...structuredClone(reply), id: intentId, intentId, status: "requested" });
   },
 
   analyzeConversation: async (conversationId) => {

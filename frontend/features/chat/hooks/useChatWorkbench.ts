@@ -67,7 +67,7 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
   }, []);
 
   // Suggestion drafts remember which intent they came from, so the eventual
-  // submission can accept that intent and discard its siblings.
+  // submission can associate the exact intent with the outbox task.
   const pendingIntentRef = useRef<{ content: string; intentId: string } | null>(null);
 
   const translation = useConversationTranslation(

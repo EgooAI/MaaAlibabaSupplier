@@ -21,12 +21,13 @@ from backend.app.shared.agent.versions import (
 )
 from backend.app.shared.backend.account_context import account_lock, bind_account_context, get_account_context
 from backend.app.shared.crm.identities import message_external_id
-from backend.app.shared.crm.intent_store import IntentStore
+from backend.app.shared.crm.intent_store import IntentConflict, IntentStore
 from backend.app.shared.crm.message_markdown import AGENT_OPTIONS, transcript_markdown
 from backend.app.shared.crm.sdk import AgentPresetManager
 from backend.app.shared.crm.suggestion_store import SuggestionStore
 from backend.app.shared.crm.views import CrmResolver, format_created_at
 
+OUTPUT_PROTOCOL = "single-reply-v1"
 
 def freeze_latest(conversation_id, run_id):
     from backend.app.api.routers.conversations import _inbox_store, _scoped_conversation
@@ -49,12 +50,13 @@ def freeze_latest(conversation_id, run_id):
 
 def public_run(record):
     snapshot = record["snapshot"]
+    legacy = snapshot.get("outputProtocol") != OUTPUT_PROTOCOL
     return {
         "id": record["id"], "conversationId": str(record["conversation_id"]),
         "agentId": snapshot["agentId"], "agentName": snapshot["pinned"]["name"],
         "status": record["status"], "createdAt": record["created_at"], "error": record["error"],
         "pinned": snapshot["pinned"], "context": snapshot["context"],
-        "result": record["result"],
+        "result": None if legacy else record["result"], "legacy": legacy,
         "request": record["request"],
     }
 
@@ -99,7 +101,8 @@ class SuggestionRuns:
                 transcript, frozen_context = source["transcript"], source["context"]
             else:
                 transcript, frozen_context = freeze_latest(conversation_id, run_id)
-            snapshot = dict(agentId=preset.apid, pinned=pinned.model_dump(), transcript=transcript, context=frozen_context)
+            snapshot = dict(agentId=preset.apid, pinned=pinned.model_dump(), transcript=transcript,
+                            context=frozen_context, outputProtocol=OUTPUT_PROTOCOL)
             record = self.store.create(context, conversation_id, run_id, request, snapshot)
             try:
                 self.pool.submit(self.execute, context, record, effective)
@@ -123,8 +126,7 @@ class SuggestionRuns:
                     scope=ReplyScope(context.self_ali_id, context.data_dir, preset.apid, preset.name, cid),
                     mode="simulated",
                 )
-            payload = dict(items=[item.to_payload(index) for index, item in enumerate(result.suggestions)],
-                           reasoning=result.reasoning, restricted=result.restricted,
+            payload = dict(reply=result.reply.to_payload(), reasoning=result.reasoning,
                            toolCalls=result.turn.tool_calls if result.turn else [])
             self.store.finish(context, cid, run_id, "completed", result=payload)
         except Exception as exc:
@@ -133,23 +135,26 @@ class SuggestionRuns:
                        if isinstance(exc, NoReplyIntentError) else "建议生成失败，请检查模型配置后重试。")
             self.store.finish(context, cid, run_id, "failed", error=message)
 
-    def adopt(self, context, conversation_id, run_id, index):
+    def adopt(self, context, conversation_id, run_id):
         record = self.require(context, conversation_id, run_id)
+        if record["snapshot"].get("outputProtocol") != OUTPUT_PROTOCOL:
+            raise AppError("旧版建议仅供历史保留，请重新生成后插入。", status_code=409)
         if record["status"] != "completed":
             raise AppError("建议尚未生成完成", status_code=409)
-        items = record["result"]["items"]
-        if not 0 <= index < len(items):
-            raise AppError("建议不存在", status_code=404)
+        reply = record["result"]["reply"]
         pinned = ChatHistoryPin.model_validate(record["snapshot"]["pinned"])
-        records = IntentStore(self.store.database_path).adopt_suggestions(
-            seller=context.self_ali_id, data_dir=context.data_dir, batch_id=run_id,
-            apid=record["snapshot"]["agentId"], agent_name=pinned.name, revision_id=pinned.revision_id,
-            conversation_id=conversation_id, items=items,
-        )
-        intent = records[index]
+        try:
+            intent = IntentStore(self.store.database_path).adopt_suggestion(
+                seller=context.self_ali_id, data_dir=context.data_dir, batch_id=run_id,
+                apid=record["snapshot"]["agentId"], agent_name=pinned.name, revision_id=pinned.revision_id,
+                conversation_id=conversation_id, reply=reply,
+            )
+        except IntentConflict as exc:
+            raise AppError(str(exc), status_code=409) from exc
         if intent["status"] != "requested":
-            raise AppError("这批建议已被采纳，请重新生成。", status_code=409)
-        return {**items[index], "id": intent["id"], "intentId": intent["id"], "status": intent["status"]}
+            raise AppError("这条建议已被采纳，请重新生成。", status_code=409)
+        return {"content": intent["reply"], "zh": intent["zh"], "tone": intent["tone"],
+                "id": intent["id"], "intentId": intent["id"], "status": intent["status"]}
 
 
 _service = None

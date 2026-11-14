@@ -105,6 +105,52 @@ def test_recent_images_and_core_logs_precede_rotations_with_shared_limits(monkey
     assert any(name.startswith("logs/") for name in content)
 
 
+@pytest.mark.parametrize("image_count", [1, 6])
+def test_old_session_images_are_discovered_outside_the_four_text_sessions(tmp_path, monkeypatch, image_count):
+    native = diag.resolve_backend_root() / "data/logs/native"
+    sessions = []
+    images = []
+    for index in range(36):
+        root = native / f"session-{index:032x}"
+        write(root / ".owner", "maa-native-session-v1\n")
+        write(root / "maa.log", NATIVE)
+        if index != 35:
+            write(root / ".closed", "")
+        if index < image_count:
+            directory = root / "debug" if index % 2 else root
+            image = screenshot(directory / "on_error/failure_ChatInput.png", color=(index, 0, 0, 255))
+            # Image recency is independent of the session directory's age.
+            os.utime(image, (1000 - index, 1000 - index))
+            images.append(image)
+        os.utime(root, (100 + index, 100 + index))
+        sessions.append(root)
+    screenshot(native / ("session-" + "f" * 32) / "on_error/unowned.png")
+    monkeypatch.setattr(diag, "runtime_observations", lambda: {"native_active_session": sessions[-1].name})
+
+    bundle = diag.build_bundle()
+    content = unpack(bundle)
+    manifest = json.loads(content["manifest.json"])
+    entries = image_entries(content)
+    text_sessions = {item["native_log_session_id"] for item in manifest["files"]
+                     if item["source"] == "native-session-maa"}
+    assert text_sessions == {root.name for root in sessions[-4:]}
+    assert [item["native_log_session_id"] for item in entries] == [root.name for root in sessions[:min(image_count, 4)]]
+    assert all(item["status"] == "included" and item["session_state"] == "closed" for item in entries)
+    for index, item in enumerate(entries):
+        with Image.open(io.BytesIO(content[item["file"]])) as image:
+            assert image.getpixel((0, 0)) == (index, 0, 0, 255)
+    assert manifest["omitted_native_sessions"] == 32
+    assert manifest["omitted_screenshots_file_limit"] == max(0, image_count - 4)
+    assert manifest["screenshot_scope"] == "discovered-owned-sessions-and-legacy"
+    assert not manifest["discovery_incomplete"]
+    retention = json.loads(content["runtime.json"])["native_retention"]
+    assert retention["error_screenshot_sessions_eligible"] == 36
+    assert retention["error_screenshot_bytes_observed"] == sum(image.stat().st_size for image in images)
+    target = tmp_path / "historical-errors.zip"
+    target.write_bytes(bundle)
+    pull.validate_archive(target)
+
+
 @pytest.mark.parametrize("failure", ["truncated", "non_png", "oversized", "pixels", "reencoded_size", "changed", "deadline"])
 def test_bad_or_incomplete_images_are_omitted_without_losing_logs(monkeypatch, failure):
     root = session()

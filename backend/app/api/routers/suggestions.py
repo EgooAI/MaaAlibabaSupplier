@@ -7,7 +7,6 @@ from backend.app.api.account_scope import AccountRoute, OutboxObservationRoute, 
 from backend.app.api.envelope import ok
 from backend.app.api.routers.agent import _db_preset_to_dict
 from backend.app.shared import contract
-from backend.app.shared.agent.reply_tool import MAX_REPLIES_PER_RUN
 from backend.app.shared.agent.suggestion_runs import get_suggestion_runs, public_run
 from backend.app.shared.agent.system_agents import SYSTEM_AGENT_APIDS
 from backend.app.shared.agent.system_presets import reply_agent_template
@@ -36,7 +35,7 @@ class RunInput(BaseModel):
 
 
 class AdoptInput(BaseModel):
-    index: int = Field(ge=0, le=MAX_REPLIES_PER_RUN - 1)
+    model_config = ConfigDict(extra="forbid")
 
 
 @router.get("/api/agent/suggestion-agents")
@@ -66,7 +65,7 @@ def observe(conversation_id: int, run_id: str):
 
 @router.post("/api/conversations/{conversation_id}/suggestion-runs/{run_id}/adopt")
 def adopt(conversation_id: int, run_id: str, body: AdoptInput):
-    return ok(get_suggestion_runs().adopt(get_account_context(), conversation_id, run_id, body.index))
+    return ok(get_suggestion_runs().adopt(get_account_context(), conversation_id, run_id))
 
 
 router.include_router(observations)

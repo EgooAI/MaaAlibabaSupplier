@@ -46,9 +46,9 @@ def preview(client, archive, monkeypatch):
     def factory(*args, **kwargs):
         llm = StaticLLMClient([
             LLMResponse(text="", needs_tool=True, tool_call=LLMToolCall(name="reply_customer", call_id="one",
-                        tool_input={"reply": "When do you need them?", "zh": "您何时需要？", "tone": "friendly"})),
+                        tool_input={"reply": "When do you need them?", "zh": "您何时需要？", "tone": "friendly", "reasoning": "The quantity is known; ask about delivery."})),
             LLMResponse(text="", needs_tool=True, tool_call=LLMToolCall(name="reply_customer", call_id="two",
-                        tool_input={"reply": "Please confirm your delivery date.", "zh": "请确认交期。", "tone": "formal"})),
+                        tool_input={"reply": "Please confirm your delivery date.", "zh": "请确认交期。", "tone": "formal", "reasoning": "Ask about delivery."})),
             LLMResponse(text="The quantity is known; ask about delivery."),
         ])
         clients.append(llm)
@@ -90,8 +90,10 @@ def test_receipt_recovery_pins_prompt_and_preserves_results_without_reexecution(
     assert result["pinned"]["prompt"] == "Ask about delivery"
     assert "Ask about delivery" in preview.clients[0].requests[0].system_prompt
     assert "Need 500 tents" in preview.clients[0].requests[0].user_input
-    assert len(result["result"]["items"]) == 2
-    assert result["result"]["items"][0]["intentId"] is None
+    assert result["result"]["reply"]["content"] == "When do you need them?"
+    assert "items" not in result["result"] and not result["legacy"]
+    assert result["result"]["reasoning"] == "The quantity is known; ask about delivery."
+    assert len(preview.clients[0].requests) == 1
     assert not {"owner", "seller", "data_dir", "snapshot"}.intersection(result)
     context = get_account_context()
     assert IntentStore().list_conversation(preview.sid, seller=context.self_ali_id, data_dir=context.data_dir) == []
@@ -115,7 +117,7 @@ def test_draft_retests_reuse_context_without_blacklisting_previous_candidates(cl
     assert result["context"] == first["context"]
     assert preview.clients[0].requests[0].user_input == preview.clients[1].requests[0].user_input
     assert "When do you need them?" not in preview.clients[1].requests[0].user_input
-    assert result["result"]["items"][0]["content"] == "When do you need them?"
+    assert result["result"]["reply"]["content"] == "When do you need them?"
     assert AgentPresetManager().get_agent_preset("custom-reply").prompt == "Ask about delivery"
     fresh = submit(client, preview, request())
     preview.pool.run()
@@ -128,7 +130,7 @@ def test_adoption_is_idempotent_and_batch_acceptance_survives_later_inserts(clie
     preview.pool.run()
     url = f"/api/conversations/{preview.sid}/suggestion-runs/{run['id']}/adopt"
     with ThreadPoolExecutor(max_workers=2) as pool:
-        responses = [future.result(5) for future in [pool.submit(client.post, url, json={"index": 0}) for _ in range(2)]]
+        responses = [future.result(5) for future in [pool.submit(client.post, url, json={}) for _ in range(2)]]
     assert all(response.status_code == 200 for response in responses)
     first = responses[0].json()["data"]
     assert first == responses[1].json()["data"]
@@ -136,11 +138,12 @@ def test_adoption_is_idempotent_and_batch_acceptance_survives_later_inserts(clie
     store = IntentStore()
     scope = dict(seller=context.self_ali_id, data_dir=context.data_dir)
     records = store.list_batch(run["id"], **scope)
-    assert len(records) == 2
+    assert len(records) == 1
     assert all(record["apid"] == "custom-reply" for record in records)
     store.transition(first["intentId"], "accepted", **scope)
-    assert client.post(url, json={"index": 1}).status_code == 409
-    assert len(store.list_batch(run["id"], **scope)) == 2
+    assert client.post(url, json={}).status_code == 409
+    assert client.post(url, json={"index": 0}).status_code == 422
+    assert len(store.list_batch(run["id"], **scope)) == 1
 
 
 @pytest.mark.parametrize("phase", ["queued", "running"])
@@ -167,7 +170,7 @@ def test_account_switch_never_moves_old_work_to_new_account(client, preview, mon
             app_config.write_app_config({**config, "self_ali_id": "seller-b"})
             client.headers["X-Account-Epoch"] = get_account_context().epoch
             assert client.get(f"/api/conversations/{preview.sid}/suggestion-runs/{run['id']}").status_code == 404
-            assert client.post(f"/api/conversations/{preview.sid}/suggestion-runs/{run['id']}/adopt", json={"index": 0}).status_code == 404
+            assert client.post(f"/api/conversations/{preview.sid}/suggestion-runs/{run['id']}/adopt", json={}).status_code == 404
         finally:
             release.set()
         if future:
@@ -195,8 +198,9 @@ def test_tool_limit_policy_depends_on_suggestion_purpose_not_agent_identity(clie
     run = submit(client, preview, request(agentId=agent_id))
     preview.pool.run()
     result = observe(client, preview, run["id"])
-    assert result["status"] == "completed" and result["result"]["restricted"]
-    assert result["result"]["items"][0]["content"] == "When do you need them?"
+    assert result["status"] == "completed"
+    assert result["result"]["reply"]["content"] == "When do you need them?"
+    assert len(preview.clients[0].requests) == 1
     with pytest.raises(AgentRunError) as error:
         run_chat_agent(agent_id, "Generic task", mode="simulated")
     assert error.value.kind == "tool_rounds_limited"
@@ -255,6 +259,69 @@ def test_context_cannot_be_reused_by_a_different_conversation(client, preview):
     assert len(preview.pool.jobs) == 1
 
 
+@pytest.mark.parametrize("accepted_index", [None, 1, 2])
+def test_legacy_runs_are_read_only_without_changing_existing_intents(client, preview, accepted_index):
+    context = get_account_context()
+    payload = request()
+    transcript, frozen = module.freeze_latest(preview.sid, payload["runId"])
+    from backend.app.shared.agent.versions import pinned_from_preset
+
+    preset = AgentPresetManager().get_agent_preset("custom-reply")
+    snapshot = dict(agentId=preset.apid, pinned=pinned_from_preset(preset).model_dump(), transcript=transcript, context=frozen)
+    store = preview.service.store
+    store.create(context, preview.sid, payload["runId"], payload, snapshot)
+    items = [dict(content=f"Legacy reply {i}", zh=f"旧回复 {i}", tone="formal") for i in range(3)]
+    old_result = dict(items=items, reasoning="Old reasoning", restricted=False, toolCalls=[])
+    store.finish(context, preview.sid, payload["runId"], "completed", result=old_result)
+    intents = IntentStore()
+    scope = dict(seller=context.self_ali_id, data_dir=context.data_dir)
+    if accepted_index is not None:
+        records = [intents.create(**scope, apid=preset.apid, agent_name=preset.name, revision_id=None,
+                   conversation_id=preview.sid, batch_id=payload["runId"], reply=item["content"], zh=item["zh"],
+                   tone=item["tone"], call_id=str(i)) for i, item in enumerate(items)]
+        intents.transition(records[accepted_index]["id"], "accepted", **scope)
+    before = intents.list_batch(payload["runId"], **scope)
+    exposed = observe(client, preview, payload["runId"])
+    assert exposed["legacy"] and exposed["result"] is None and exposed["status"] == "completed"
+    assert submit(client, preview, payload) == exposed
+    assert not preview.pool.jobs
+    assert client.post(f"/api/conversations/{preview.sid}/suggestion-runs/{payload['runId']}/adopt", json={}).status_code == 409
+    assert store.get(context, preview.sid, payload["runId"])["result"] == old_result
+    assert intents.list_batch(payload["runId"], **scope) == before
+    rerun = submit(client, preview, request(contextRunId=payload["runId"]))
+    assert not rerun["legacy"] and rerun["context"] == frozen
+    preview.pool.run()
+    assert observe(client, preview, rerun["id"])["result"]["reply"]["content"] == "When do you need them?"
+
+
+def test_adoption_rejects_an_inconsistent_existing_intent_without_creating_another(client, preview):
+    run = submit(client, preview, request())
+    preview.pool.run()
+    context = get_account_context()
+    scope = dict(seller=context.self_ali_id, data_dir=context.data_dir)
+    store = IntentStore()
+    old = store.create(**scope, apid="custom-reply", agent_name="custom-reply", revision_id=None,
+                       conversation_id=preview.sid, batch_id=run["id"], reply="Different reply", zh="不同正文", tone="formal")
+    assert client.post(f"/api/conversations/{preview.sid}/suggestion-runs/{run['id']}/adopt", json={}).status_code == 409
+    assert store.list_batch(run["id"], **scope) == [old]
+
+
+def test_legacy_pending_receipt_survives_restart_without_replaying_or_changing_request(client, preview):
+    from backend.app.shared.agent.versions import pinned_from_preset
+
+    context = get_account_context()
+    payload = request(draft={"prompt": "Original pending prompt", "level": 0, "tools": ["reply_customer"], "requires_tool": True})
+    transcript, frozen = module.freeze_latest(preview.sid, payload["runId"])
+    old_store = SuggestionStore(preview.service.store.database_path, owner="previous-process")
+    old_store.create(context, preview.sid, payload["runId"], payload, dict(
+        agentId="custom-reply", pinned=pinned_from_preset(AgentPresetManager().get_agent_preset("custom-reply")).model_dump(),
+        transcript=transcript, context=frozen))
+    receipt = submit(client, preview, payload)
+    assert receipt["legacy"] and receipt["status"] == "failed" and receipt["request"] == payload
+    assert observe(client, preview, payload["runId"]) == receipt
+    assert not preview.pool.jobs and not preview.clients
+
+
 def test_inserted_preview_submission_links_outbox_to_the_exact_run(client, preview, monkeypatch, sdk):
     from backend.app.api.routers import conversations
     from backend.app.shared.backend import outbox_service
@@ -267,7 +334,7 @@ def test_inserted_preview_submission_links_outbox_to_the_exact_run(client, previ
     }))
     preview.pool.run()
     url = f"/api/conversations/{preview.sid}/suggestion-runs/{run['id']}/adopt"
-    item = client.post(url, json={"index": 0}).json()["data"]
+    item = client.post(url, json={}).json()["data"]
     context = get_account_context()
     queue = DeferredQueue()
     service = outbox_service.OutboxService(OutboxStore(), queue)
@@ -288,7 +355,7 @@ def test_inserted_preview_submission_links_outbox_to_the_exact_run(client, previ
         intent = IntentStore().get(item["intentId"], seller=context.self_ali_id, data_dir=context.data_dir)
         assert intent["status"] == "accepted" and intent["batch_id"] == run["id"]
         assert preview.service.require(context, preview.sid, intent["batch_id"])["snapshot"]["pinned"]["prompt"] == "Tested prompt"
-        assert client.post(url, json={"index": 1}).status_code == 409
+        assert client.post(url, json={}).status_code == 409
         assert client.post(f"/api/conversations/{preview.sid}/messages", json=payload).json()["data"]["outbox"] == task
         assert len(queue.jobs) == 1 and sdk.calls == []
     finally:

@@ -44,7 +44,7 @@ export interface OperationsBackend {
   startSuggestionRun(conversationId: string, input: SuggestionRunInput): Promise<SuggestionRun>;
   listSuggestionRuns(conversationId: string): Promise<SuggestionRun[]>;
   getSuggestionRun(conversationId: string, runId: string): Promise<SuggestionRun>;
-  adoptSuggestion(conversationId: string, runId: string, index: number): Promise<AssistantSuggestion>;
+  adoptSuggestion(conversationId: string, runId: string): Promise<AssistantSuggestion>;
   analyzeConversation(conversationId: string): Promise<ConversationAnalysis>;
   composeTranslation(conversationId: string, text: string): Promise<ComposeTranslationResult>;
   sendMessage(input: SendMessageInput): Promise<SendMessageResult>;

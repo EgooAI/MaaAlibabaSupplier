@@ -78,7 +78,7 @@ const regularAgentSources = [
     apid: "agent-5a43bda9e1304108a1a78a3575a44e27",
     name: "回复助手",
     description: "根据客户对话生成回复建议。",
-    prompt: "根据对话记录调用 reply_customer 提出最多三条买家语言回复，附中文参考和语气。不要编造信息，最终文本说明判断理由。",
+    prompt: "根据对话记录调用 reply_customer 提出一条买家语言回复，附中文参考、语气和简短 reasoning。不要编造信息，也不要在正文中列出多个备选方案。",
     level: 0,
     tools: ["reply_customer"],
     updatedAt: "2026-11-13T00:00:00+08:00",

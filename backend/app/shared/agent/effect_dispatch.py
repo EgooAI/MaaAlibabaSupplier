@@ -67,6 +67,8 @@ class IntentDispatcher:
         return scope
 
     def dispatch(self, intents: list[EffectIntent], *, mode: str, batch_id: str) -> DispatchResult:
+        if sum(intent.kind == INTENT_KIND for intent in intents) > 1:
+            raise ValueError("A run cannot dispatch multiple reply intents")
         result = DispatchResult(batch_id=batch_id)
         for intent in intents:
             if intent.kind != INTENT_KIND:
@@ -126,6 +128,7 @@ class IntentDispatcher:
             "reply": reply,
             "zh": str(intent.content.get("zh") or "").strip() or reply,
             "tone": tone,
+            "reasoning": str(intent.content.get("reasoning") or "").strip(),
             "conversationId": scope.conversation_id,
             "apid": scope.apid,
             "agentName": scope.agent_name,

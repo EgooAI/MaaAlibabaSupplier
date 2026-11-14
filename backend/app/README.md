@@ -105,7 +105,7 @@ APP -> 127.0.0.1:8084 Yak/Yakit MITM -> 127.0.0.1:8085 Python receiver -> parser
 
 - SDK 的 `AgentPipeline` 返回完整调用记录（`tool_call_records`）与按轮次分组的 `tool_exchanges`；同一轮可执行多个调用，轮次上限按 LLM 调用次数计算，触顶时用 `tool_choice: none` 收尾，已有调用与意图不丢。工具失败（未知工具、非法参数、异常、超时）回传给模型继续运行；供应商拒绝强制 `tool_choice` 时自动降级为 `auto` 重试一次。
 - 工具元数据（`ToolSpec`：中文名、分类、可重复次数、参数说明、超时）由宿主注册；`requires_tool` 存在 preset 与 revision 中，经追加式迁移添加，旧库默认关闭。
-- `reply_customer` 是唯一的效果类工具：参数只有买家语言回复、中文参考与语气，没有收件人；会话作用域由宿主注入的 `ToolContext` 提供，模型看不到。工具内校验空内容、重复、超过 3 条与占位符，拒绝原因回传给模型改写。
+- `reply_customer` 是唯一的效果类工具：参数包含买家语言回复、中文参考、语气与简短理由，没有收件人；会话作用域由宿主注入的 `ToolContext` 提供。每次运行最多成功记录一条回复，参数校验失败仍允许在工具预算内修正。普通 Agent、模拟会话和实验共享这一数量约束。
 - `intent_store.py` 在应用 CRM 中保存 `app_agent_intent`：live 运行写 `requested`，采纳一条时同批其余变 `discarded`；模拟只写进会话记录。提交发送时经 `origin_request_id` 关联意图并把该意图标记为 `accepted`。没有自动发送路径。
 - 会话内容 schema 升到 v3：assistant 消息携带 `toolCalls` 与 `intents`，会话记录所有者（卖家 + 数据目录）、钉定版本（preset 或草稿快照）与分叉来源（会话、消息序号、冻结输入）。旧会话缺少字段时按空列表处理，首次写入补上归属。
 - `POST /api/agent/fork` 用与正式运行相同的 Markdown 投影冻结截至该消息的对话，模拟会话首个输入与该时刻的正式输入逐字符一致；后续轮次 = 冻结前缀 + 本会话新增对话。模拟会话固定 `simulated` 模式，从不创建 outbox。
@@ -119,7 +119,9 @@ APP -> 127.0.0.1:8084 Yak/Yakit MITM -> 127.0.0.1:8085 Python receiver -> parser
 - 原系统“建议”保留 ID、配置和历史，转为可停用、删除的普通 Agent。新安装只初始化一次回复助手，删除后不会补种。聊天页可以从内置模板创建回复 Agent，模板不依赖现有 Agent 是否存在。
 - `suggestion_runs.py` 使用受管双 worker pool 执行，`suggestion_store.py` 在宿主 CRM 的 `app_suggestion_run` 中保存请求、提示词快照、冻结会话与结果。同一请求 ID 仅执行一次，超时可读取原任务；重启中的旧任务显示中断，不自动调用模型。
 - 复测沿用同一会话快照，新增消息由用户显式更新上下文。每轮预览独立运行，之前的预览既不加入聊天记录，也不进入去重黑名单。工具上限处理由回复建议这一运行用途决定，不再按 Agent ID 特判。旧同步建议接口已移除。
-- 预览使用模拟意图。插入时才幂等建立该轮整批回复意图，`batch_id` 关联运行快照；发送继续使用原 outbox 采纳链路。保存提示词校验配置指纹，迟到的插入或保存不覆盖新草稿。接口和恢复规则见 `frontend/docs/suggestion-workbench.md`。
+- 建议任务取得有效回复及简短理由后立即结束，不再请求模型收尾。必要的查询和参数修正仍可使用多个模型回合。SDK 的成功工具终止策略按运行启用，普通 Agent 独立任务保留完整收尾流程。
+- 预览使用模拟意图，结果为单个 `reply`。插入接口接收空对象，不再接受候选索引，只幂等建立一个回复意图，`batch_id` 关联运行快照；发送继续使用原 outbox 采纳链路。保存提示词校验配置指纹，迟到的插入或保存不覆盖新草稿。
+- 新运行快照标记 `outputProtocol=single-reply-v1`。旧运行在接口上标记 `legacy=true`、隐藏结果并禁止插入，允许显式复用冻结上下文重新生成。原始记录、旧意图和发送恢复身份保留，旧批次接受时丢弃兄弟意图的规则仍有效。提交请求及本地 pending 身份不变。接口和恢复规则见 `frontend/docs/suggestion-workbench.md`。
 
 ### 对比实验（Experiment）
 

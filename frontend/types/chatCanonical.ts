@@ -102,13 +102,15 @@ export interface ConversationDetail extends Conversation {
   analysis?: ConversationAnalysis;
 }
 
-export interface AssistantSuggestion {
-  id: ID;
-  title: string;
+export interface SuggestionReply {
   content: string;
   tone: "formal" | "friendly" | "urgent" | string;
-  zh?: string;
+  zh: string;
+}
+
+export interface AssistantSuggestion extends SuggestionReply {
+  id: ID;
   /** The stored reply intent this suggestion came from. */
-  intentId?: string | null;
-  status?: "requested" | "accepted" | "discarded" | "simulated" | string;
+  intentId: string;
+  status: "requested" | "accepted" | "discarded" | string;
 }

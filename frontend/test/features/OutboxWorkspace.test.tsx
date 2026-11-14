@@ -122,9 +122,9 @@ afterEach(async () => {
 });
 
 describe("inline outbox workflow", () => {
-  it.each([false, true])("carries adopted candidate provenance only while the inserted reply is unchanged (edited=%s)", async (edited) => {
+  it.each([false, true])("carries adopted reply provenance only while the inserted reply is unchanged (edited=%s)", async (edited) => {
     await start();
-    await act(async () => chat.insertSuggestion({ id: "preview", intentId: "preview-intent", title: "交期", content: "When do you need them?", tone: "friendly" }));
+    await act(async () => chat.insertSuggestion({ id: "preview-intent", intentId: "preview-intent", content: "When do you need them?", zh: "您何时需要？", tone: "friendly", status: "requested" }));
     expect(mocks.backend.sendMessage).not.toHaveBeenCalled();
     if (edited) await edit("Please confirm your deadline.");
     await click("发送");

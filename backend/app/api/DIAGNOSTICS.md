@@ -23,7 +23,8 @@ prove the writer is still active; the manifest calls this `open_or_unclosed`. Th
 collector never rotates, prunes, waits for GUI work or asks native writers to stop.
 Ownership markers are required, read with a fixed bound, and never exported.
 Saved Maa failure screenshots are collected from the direct `on_error/*.png`
-children of those selected session roots and their `debug` directories, and the
+children of every owned session discovered within the scan budget and their
+`debug` directories, independently of the four-session text-log window, and the
 five fixed legacy native log directories listed above. Other image directories,
 including recognition drawings and arbitrary screenshots, are not scanned.
 Recognized timestamp, numbered and `.bak.log` rotations are included. The updater's per-install staging
@@ -95,6 +96,11 @@ whose next-list timed out rather than the recognition target.
 Owned-session log and image entries include `native_log_session_id`, matching the
 application's `maa.submitted` / `maa.failed` telemetry. Images are not assigned a
 task ID by guessing from timestamps. Legacy-directory images have no session ID.
+The manifest's `screenshot_scope` is `discovered-owned-sessions-and-legacy`.
+`omitted_native_sessions` refers only to the text-log selection window; it does
+not exclude those sessions' images. Runtime `error_screenshot_sessions_eligible`
+counts discovered owned sessions eligible for image scanning, not completed scans.
+The existing directory-entry, overall scan and deadline budgets still apply.
 `omitted_screenshots_file_limit`, source candidate counts and per-image statuses
 distinguish selection limits, missing files, changed files, invalid images and
 budget/deadline omissions. Discovery is still bounded, so zero candidates does not

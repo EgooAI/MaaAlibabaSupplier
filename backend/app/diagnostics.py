@@ -739,13 +739,17 @@ def build_bundle() -> bytes:
             except OSError as exc:
                 skipped_reasons[_skip_reason(exc)] += 1
                 continue
-    chosen_sessions = sorted(sessions, reverse=True)[:4]
+    sessions.sort(reverse=True)
+    chosen_sessions = sessions[:4]
     for _, _, _, session, state in chosen_sessions:
         for directory in (session, session / "debug"):
             for prefix in ("maa", "maafw"):
                 sources.append(Source(f"native-session-{prefix}", directory,
                                       rf"{prefix}(?:[._-][0-9A-Za-z_.-]{{1,80}})?\.log(?:\.\d{{1,3}})?",
                                       (f"{prefix}.log",), "native", state, session.name))
+    # Historical failures can outlive the recent text-log window.
+    for _, _, _, session, state in sessions:
+        for directory in (session, session / "debug"):
             sources.append(Source("native-error-screenshot", directory / "on_error",
                                   r"(?i)[^/\\]{1,240}\.png", (), "screenshot", state, session.name))
 
@@ -788,6 +792,7 @@ def build_bundle() -> bytes:
         source.kind == "screenshot" for source, _, _ in selected) else 0
     logs_remaining = sum(source.kind != "screenshot" for source, _, _ in selected)
     manifest = {"schema_version": 1, "policy": "recent-logs-and-error-screenshots", "sources": source_status,
+                "screenshot_scope": "discovered-owned-sessions-and-legacy",
                 "scan_limited": scan_limited, "discovery_incomplete": expired() or scan_limited,
                 "omitted_files_file_limit": file_limit_omitted,
                 "unavailable_or_unsafe_candidates": sum(skipped_reasons.values()),
@@ -853,6 +858,7 @@ def build_bundle() -> bytes:
                 "log_bytes_observed": sum(info.st_size for group in groups for source, _, info in group
                                           if source.session_state is not None and source.kind == "native"),
                 "error_screenshot_bytes_observed": sum(info.st_size for _, _, info in screenshots),
+                "error_screenshot_sessions_eligible": len(sessions),
                 "scan_limited": scan_limited, "deadline_exceeded": manifest["deadline_exceeded"],
                 "rotated_or_pruned": False,
             }

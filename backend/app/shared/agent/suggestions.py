@@ -1,12 +1,11 @@
 """Reply suggestions through the ``reply_customer`` effect tool.
 
-Each suggestion is an intent the Agent asked for, not text parsed out of a JSON
-blob. The Agent's final text is only the reasoning shown to the merchant.
+The reply and its short rationale come from the successful effect tool call.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from agent_pipeline.tools import ToolContext
 
@@ -16,9 +15,9 @@ from backend.app.shared.agent.runner import ChatAgentTurn, run_chat_agent
 from backend.app.shared.crm.sdk import AgentPreset
 
 REPLY_OUTPUT_RULES = (
-    "请通过 reply_customer 工具提出最多 3 条可供商家选择的回复，按推荐顺序排列。"
+    "请通过 reply_customer 工具提出一条回复，并在 reasoning 中简短说明回复理由。"
     "reply 使用买家语言，zh 提供中文参考，tone 为 formal、friendly 或 urgent。"
-    "不要填写收件人或账号。工具调用后的最终文本只说明判断理由，不重复回复正文。"
+    "不要填写收件人或账号。校验失败后可修正重试，成功后本次运行立即结束。"
 )
 
 
@@ -28,89 +27,66 @@ class NoReplyIntentError(RuntimeError):
 
 @dataclass(frozen=True)
 class ReplySuggestion:
-    intent_id: str | None
     reply: str
     zh: str
     tone: str
-    status: str
 
-    def to_payload(self, index: int) -> dict:
-        title = (self.zh or self.reply).strip()
+    def to_payload(self) -> dict:
         return {
-            "id": self.intent_id or f"sug-{index}",
-            "intentId": self.intent_id,
-            "title": title[:16] if len(title) > 16 else title,
             "content": self.reply,
             "tone": self.tone,
             "zh": self.zh,
-            "status": self.status,
         }
 
 
 @dataclass(frozen=True)
 class ReplySuggestionResult:
-    suggestions: list[ReplySuggestion] = field(default_factory=list)
+    reply: ReplySuggestion
+    reasoning: str = ""
     turn: ChatAgentTurn | None = None
-    batch_id: str = ""
-
-    @property
-    def restricted(self) -> bool:
-        return bool(self.turn and self.turn.restricted)
-
-    @property
-    def reasoning(self) -> str:
-        return self.turn.text if self.turn is not None else ""
-
 
 def generate_reply_suggestions(
     transcript: str,
     *,
     scope: ReplyScope,
-    prior_replies: tuple[str, ...] = (),
-    mode: str = "live",
+    mode: str = "simulated",
     agent_id: str,
     preset_override: AgentPreset | None = None,
 ) -> ReplySuggestionResult:
-    """Run the suggestion agent and return the intents it recorded."""
-    run_scope = ReplyScope(
-        seller=scope.seller,
-        data_dir=scope.data_dir,
-        apid=scope.apid,
-        agent_name=scope.agent_name,
-        conversation_id=scope.conversation_id,
-        revision_id=scope.revision_id,
-        prior_replies=tuple(prior_replies) or scope.prior_replies,
-    )
+    """Runs the suggestion agent and returns its single recorded reply."""
     turn = run_chat_agent(
         agent_id,
-        build_reply_suggestion_input(transcript) + (
-            f"\n\n## 回复输出要求\n\n{REPLY_OUTPUT_RULES}" if preset_override is not None else ""
-        ),
+        build_reply_suggestion_input(transcript) + f"\n\n## 回复输出要求\n\n{REPLY_OUTPUT_RULES}",
         preset_override=preset_override,
         # The scope is host data: the model never sees it and cannot supply it.
-        tool_context=ToolContext(mode=mode, scope=run_scope),
+        tool_context=ToolContext(mode=mode, scope=scope),
         tool_choice="required",
         mode=mode,
         conversation_id=scope.conversation_id,
         revision_id=scope.revision_id,
         purpose="reply_suggestions",
     )
-    suggestions = [
-        ReplySuggestion(
-            intent_id=item.get("intentId"),
-            reply=str(item.get("reply") or "").strip(),
-            zh=str(item.get("zh") or "").strip(),
-            tone=str(item.get("tone") or "formal"),
-            status=str(item.get("status") or "requested"),
-        )
+    replies = [
+        item
         for item in turn.intents
-        if str(item.get("reply") or "").strip()
+        if item.get("kind") == "reply_customer" and str(item.get("reply") or "").strip()
     ]
-    if not suggestions:
+    if not replies:
         raise NoReplyIntentError(
             "Agent 没有调用回复客户工具，无法生成建议。请检查工具配置或恢复默认提示词。"
         )
-    return ReplySuggestionResult(suggestions=suggestions, turn=turn, batch_id=turn.batch_id)
+    if len(replies) != 1:
+        raise NoReplyIntentError("Agent 返回了多个回复，违反单条建议协议。")
+    item, = replies
+    return ReplySuggestionResult(
+        reply=ReplySuggestion(
+            reply=str(item["reply"]).strip(),
+            zh=str(item.get("zh") or "").strip(),
+            tone=str(item.get("tone") or "formal"),
+        ),
+        reasoning=str(item.get("reasoning") or "").strip(),
+        turn=turn,
+    )
 
 
 __all__ = [

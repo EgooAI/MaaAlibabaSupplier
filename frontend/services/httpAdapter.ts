@@ -1,6 +1,7 @@
 import type { DbAgentPreset, DocumentLlmConfig, AgentToolDefinition } from "@/types/agent";
 import { adaptConversationDetail, adaptConversationSummary } from "@/services/chatAdapter";
 import type { ConversationAggregateDto } from "@/types/chatTransport";
+import type { AssistantSuggestion } from "@/types/chatCanonical";
 import type { ConversationRevision, TranslationJobSnapshot } from "@/types/chatOperations";
 import type { ConversationPage } from "@/types/inbox";
 import type {
@@ -248,7 +249,10 @@ export const httpBackend: OperationsBackend = {
   startSuggestionRun: (id, input) => requestJson(`/api/conversations/${encodeURIComponent(id)}/suggestion-runs`, { method: "POST", body: JSON.stringify(input) }),
   listSuggestionRuns: (id) => requestJson(`/api/conversations/${encodeURIComponent(id)}/suggestion-runs`),
   getSuggestionRun: (id, runId) => requestJson(`/api/conversations/${encodeURIComponent(id)}/suggestion-runs/${encodeURIComponent(runId)}`),
-  adoptSuggestion: (id, runId, index) => requestJson(`/api/conversations/${encodeURIComponent(id)}/suggestion-runs/${encodeURIComponent(runId)}/adopt`, { method: "POST", body: JSON.stringify({ index }) }),
+  adoptSuggestion: async (id, runId) => {
+    const reply = await requestJson<Omit<AssistantSuggestion, "id">>(`/api/conversations/${encodeURIComponent(id)}/suggestion-runs/${encodeURIComponent(runId)}/adopt`, { method: "POST", body: JSON.stringify({}) });
+    return { ...reply, id: reply.intentId };
+  },
   analyzeConversation: (conversationId) => requestAi(`/api/conversations/${encodeURIComponent(conversationId)}/analysis`),
   composeTranslation: (conversationId, text) => requestAi(`/api/conversations/${encodeURIComponent(conversationId)}/compose-translation`, { method: "POST", body: JSON.stringify({ text }) }),
   sendMessage: async ({ conversationId, ...input }) => {

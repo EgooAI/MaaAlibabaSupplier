@@ -429,6 +429,19 @@ describe("http adapter contract", () => {
     await expect(httpBackend.deleteAgentPreset("agent-1")).rejects.toThrow("API response body is empty: /api/agent/presets/agent-1");
   });
 
+  it("adopts one reply with an empty body and uses the persisted intent as its insertion ID", async () => {
+    const reply = { content: "When do you need them?", zh: "您何时需要？", tone: "friendly", intentId: "stored-intent", status: "requested" };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: reply }), { status: 200 }));
+    globalThis.fetch = fetchMock;
+
+    await expect(httpBackend.adoptSuggestion("sid/42", "run/id")).resolves.toEqual({ ...reply, id: reply.intentId });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/conversations/sid%2F42/suggestion-runs/run%2Fid/adopt");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({});
+    expect(new Headers(init.headers).get("X-Account-Epoch")).toBe("mock-1");
+  });
+
   it("encodes conversation and agent path parameters", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, msg: "ok", data: aggregate }), { status: 200, headers: { "Content-Type": "application/json" } }))

@@ -73,8 +73,8 @@ export function SuggestionPanel({ workspace: w, canUseAi, blocked }: { workspace
     </div> : null}
     {waiting ? <div role="status" className="flex items-center gap-2 text-slate-500"><Spin size="small" />正在生成建议，可继续修改提示词</div> : null}
     {current?.status === "failed" ? <p role="alert" className="text-amber-700">{current.error}</p> : null}
-    {current?.result ? <RunResult run={current} workspace={w} disabled={blocked} /> : null}
-    {w.runs[1]?.result ? <details><summary className="cursor-pointer text-slate-500">对比上一轮 · {w.runs[1].agentName}</summary>
+    {current ? <RunResult run={current} workspace={w} disabled={blocked} /> : null}
+    {w.runs[1] && (w.runs[1].legacy || w.runs[1].result) ? <details><summary className="cursor-pointer text-slate-500">对比上一轮 · {w.runs[1].agentName}</summary>
       <RunResult run={w.runs[1]} workspace={w} disabled={blocked} />
     </details> : null}
     <Button size="small" type="link" className="self-start" disabled={blocked || !w.catalog || w.saving} onClick={() => void w.save(true)}>创建回复 Agent</Button>
@@ -82,17 +82,19 @@ export function SuggestionPanel({ workspace: w, canUseAi, blocked }: { workspace
 }
 
 function RunResult({ run, workspace: w, disabled }: { run: SuggestionRun; workspace: Workspace; disabled: boolean }) {
-  const result = run.result!;
+  if (run.legacy) return <p className="text-xs text-slate-500">旧版运行仅供只读参考，不展示旧版候选回复。请重新生成，可复用本轮上下文。</p>;
+  const result = run.result;
+  if (!result) return null;
+  const { reply } = result;
   return <div className="space-y-3">
-    {result.restricted ? <p className="text-xs text-amber-700">工具调用达到上限，已保留生成的候选。</p> : null}
-    {result.items.map((item, index) => <article key={index} className="space-y-2 rounded-xl border border-blue-100 bg-blue-50/50 p-3">
-      <div className="whitespace-pre-wrap break-words">{item.content}</div>
-      {item.zh && item.zh !== item.content ? <p className="whitespace-pre-wrap text-xs text-slate-500">{item.zh}</p> : null}
-      <Button size="small" disabled={disabled || w.adopting} onClick={() => void w.adopt(run, index)}>插入回复</Button>
-    </article>)}
+    <article className="space-y-2 rounded-xl border border-blue-100 bg-blue-50/50 p-3">
+      <div className="whitespace-pre-wrap break-words">{reply.content}</div>
+      {reply.zh && reply.zh !== reply.content ? <p className="whitespace-pre-wrap text-xs text-slate-500">中文参考：{reply.zh}</p> : null}
+      <Button size="small" disabled={disabled || w.adopting || run.status !== "completed"} onClick={() => void w.adopt(run)}>插入回复</Button>
+    </article>
     <details>
-      <summary className="cursor-pointer text-xs text-slate-500">判断理由、运行提示词与工具调用</summary>
-      <p className="my-2 whitespace-pre-wrap text-xs">{result.reasoning}</p>
+      <summary className="cursor-pointer text-xs text-slate-500">建议理由、运行提示词与工具调用</summary>
+      {result.reasoning ? <p className="my-2 whitespace-pre-wrap text-xs text-slate-500">建议理由：{result.reasoning}</p> : null}
       <details><summary className="cursor-pointer text-xs">本轮提示词快照</summary><pre className="my-2 whitespace-pre-wrap break-words text-xs">{run.pinned.prompt}</pre></details>
       {result.toolCalls.map((call, index) => <ToolCallCard key={call.callId ?? index} call={call} simulated />)}
     </details>

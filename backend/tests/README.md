@@ -255,9 +255,13 @@ archives, synthetic messages and mocked model calls, not real customer data.
   starting points, variant caps, asynchronous runs with per-variant status,
   cancellation, checkpoint-based retries (one buyer message per step), promote
   to the current preset, and invisibility across accounts.
-- `test_reply_tool.py` covers the effect tool's validation (empty, duplicate,
-  count, placeholders), the dispatcher's re-validation of directly built
+- `test_reply_tool.py` covers single successful reply emission, correction after
+  invalid arguments, and the dispatcher's re-validation of directly built
   intents, and simulated runs producing no persisted rows.
+- `test_suggestion_runs.py` covers single-reply completion with a static model,
+  concurrent idempotent insertion, exact outbox association, unchanged pending
+  requests, and read-only legacy results whose second or third reply was accepted.
+  Legacy records and intent identities are retained in isolated temporary databases.
 - `test_intent_store.py` covers the legal state edges, batch discard on
   acceptance, and seller/data-directory isolation.
 - `test_chat_history_content.py` covers schema compatibility: old sessions load

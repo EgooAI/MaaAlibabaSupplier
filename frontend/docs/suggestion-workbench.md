@@ -29,7 +29,7 @@ All operations use the existing authentication and account epoch contract.
 | `POST /api/conversations/{sid}/suggestion-runs` | Submit `{runId, agentId, draft, contextRunId}` and return a persisted receipt |
 | `GET /api/conversations/{sid}/suggestion-runs` | Read the latest two runs |
 | `GET /api/conversations/{sid}/suggestion-runs/{runId}` | Recover or poll an exact run |
-| `POST /api/conversations/{sid}/suggestion-runs/{runId}/adopt` | Materialize the run's candidate batch idempotently and return candidate `{index}` with its intent ID |
+| `POST /api/conversations/{sid}/suggestion-runs/{runId}/adopt` | Submit `{}` to materialize the single reply idempotently and return `{content, zh, tone, intentId, status}` |
 
 `draft` is null or `{prompt, level, tools, requires_tool}`. `contextRunId` is null
 for current committed messages, otherwise an earlier run in the same workspace
@@ -45,12 +45,22 @@ work finishes in its original account context and writes only its captured store
 The runtime owns a two-worker pool and includes its work in shutdown/update
 admission. Read requests do not hold the account lock during model work.
 
-Results expose the run ID, original request, pinned configuration, context summary,
-candidate replies, reasoning, tool calls and any error. Full frozen transcripts
+Each run exposes `legacy`, its ID, original request, pinned configuration, context
+summary and any error. New runs have `legacy: false` and a nullable `result` shaped
+as `{reply: {content, zh, tone}, reasoning, toolCalls}`. Each successful run contains
+one reply and a brief explanation. The backend ends generation after a successful
+reply tool call; the frontend displays the persisted result and tool trace. Full frozen transcripts
 remain in the host store. The synchronous `GET .../suggestions` endpoint has been
 removed. All suggestion generation uses the recoverable API, with an explicit
 Agent ID. Tool-budget handling depends on the reply-suggestion run purpose rather
 than a special Agent identity. Drafts cannot bypass saved Agent eligibility.
+
+Older runs retain their original status and expose `legacy: true, result: null`.
+The panel marks them read-only, hides their old candidate lists and invites the
+user to regenerate. They are not polled or resubmitted, even if their original
+status was queued or running. A retained pending receipt is cleared after lookup
+identifies a legacy run. Regeneration can still reuse its context with
+`contextRunId`. The previous run stays collapsed, including legacy runs.
 
 ## Editing and adoption
 
@@ -60,14 +70,18 @@ Preset responses contain a configuration fingerprint. The panel passes it as
 Saving during editing cannot overwrite newer local changes. Preset history uses
 the existing append-only revision implementation.
 
-Preview generation creates no reply-intent or outbox rows. Inserting materializes
-the entire candidate batch once, with `batch_id` equal to the persisted run ID.
-This links each intent back to its exact prompt/context snapshot and ensures
-accepting one candidate still discards its siblings. Insertion never sends.
+Preview generation creates no reply-intent or outbox rows. The main card shows one
+reply and its Chinese reference, with one insert button. Brief reasoning, prompt
+snapshots and tool calls remain in expandable details. Inserting materializes one reply
+intent idempotently, linked to its exact run and prompt/context snapshot. The HTTP
+adapter uses `intentId` as the insertion object's `id`; previews have no IDs,
+titles or candidate indexes. Insertion never sends. Ordinary Agent history retains
+its audit `intents` arrays.
 The existing outbox submission marks an unchanged inserted suggestion accepted.
 Editing the reply detaches that association. Delayed insertion cannot overwrite a
 newer reply draft or a different conversation/account.
 
-Tests use temporary databases, a real tool pipeline with a static model client,
-controlled futures and mocked frontend HTTP boundaries. They do not establish
+Frontend tests use controlled promises, mocked HTTP/account boundaries and a DOM
+test environment to cover the single reply contract, legacy read-only runs,
+pending recovery, account switches and delayed insertion. They do not establish
 production model quality, platform delivery or browser layout.

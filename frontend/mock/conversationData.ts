@@ -1,6 +1,6 @@
 import { mockSelfInfo } from "@/mock/selfData";
 import type { Account, AccountMapping, ConversationAggregateDto, Customer, Platform } from "@/types/chatTransport";
-import type { AssistantSuggestion } from "@/types/chatCanonical";
+import type { SuggestionReply } from "@/types/chatCanonical";
 
 const customers: Customer[] = [
   { cid: 1001, name: "Sofia Martinez", region: "Spain", extra: { company: "Luma Retail Group" } },
@@ -193,26 +193,8 @@ export const conversationAggregates: ConversationAggregateDto[] = [
   },
 ];
 
-export const assistantSuggestions: AssistantSuggestion[] = [
-  {
-    id: "sug-1",
-    title: "正式报价回复",
-    content: "Thanks for your interest. We can provide the sample cost, CE certificate, and lead time today. May I confirm your target quantity and preferred packaging?",
-    tone: "formal",
-    zh: "正式报价回复",
-  },
-  {
-    id: "sug-2",
-    title: "友好推进样品",
-    content: "Happy to help. I will send the CE certificate first, then prepare a sample quote with shipping options for your review.",
-    tone: "friendly",
-    zh: "友好推进样品",
-  },
-  {
-    id: "sug-3",
-    title: "紧急高意向跟进",
-    content: "We have sample stock available this week. If the certificate meets your requirement, I can reserve samples and arrange dispatch quickly.",
-    tone: "urgent",
-    zh: "紧急高意向跟进",
-  },
-];
+export const assistantReply: SuggestionReply = {
+  content: "Thanks for your interest. We can provide the sample cost, CE certificate, and lead time today. May I confirm your target quantity and preferred packaging?",
+  tone: "formal",
+  zh: "感谢您的关注。我们今天可以提供样品费用、CE 证书和交期。请问您需要多少数量，有什么包装要求？",
+};
