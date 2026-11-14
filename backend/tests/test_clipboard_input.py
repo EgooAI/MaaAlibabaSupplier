@@ -155,9 +155,9 @@ def test_replaces_old_draft_preserving_text_and_blank_lines(desktop, text, copy_
 
 
 @pytest.mark.parametrize("fault,reason", [
-    ("copy_missing", "did not publish"), ("external_copy", "outside the bound client"),
-    ("lost_newlines", "does not match"), ("select_ignored", "does not match"),
-    ("focus_changed", "focus changed"),
+    ("copy_missing", "copied_text_not_published"), ("external_copy", "clipboard_owner_mismatch"),
+    ("lost_newlines", "pasted_text_mismatch"), ("select_ignored", "pasted_text_mismatch"),
+    ("focus_changed", "focus_changed_during_paste"),
 ])
 def test_failed_paste_or_copy_cannot_report_success(desktop, fault, reason):
     desktop.fault = fault
@@ -206,7 +206,7 @@ def test_invalid_payload_is_rejected_before_native_access(monkeypatch, hwnd, tex
 
 def test_concurrent_clipboard_operation_is_rejected_before_destructive_input(desktop):
     with clip._clipboard_lock:
-        with pytest.raises(RuntimeError, match="Another clipboard"):
+        with pytest.raises(RuntimeError, match="clipboard_operation_active"):
             clip.replace_text(42, "new draft")
     assert desktop.events == []
     assert desktop.user.EmptyClipboard.call_count == 0
@@ -214,7 +214,8 @@ def test_concurrent_clipboard_operation_is_rejected_before_destructive_input(des
 
 def test_action_uses_its_controller_and_reports_failed_verification(desktop):
     context = SimpleNamespace(tasker=SimpleNamespace(controller=SimpleNamespace(info={"type": "win32", "hwnd": 42})))
-    argv = SimpleNamespace(custom_action_param=json.dumps({"text": "one\n\ntwo"}))
+    argv = SimpleNamespace(custom_action_param=json.dumps({"text": "one\n\ntwo"}),
+                           node_name="ChatInput_PasteText", task_detail=SimpleNamespace(task_id=42))
     action = paste_text_action.PasteChatText()
     assert action.run(context, argv)
     desktop.fault = "lost_newlines"

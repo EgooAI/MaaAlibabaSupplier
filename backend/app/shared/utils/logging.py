@@ -73,7 +73,7 @@ _RUNTIME_MESSAGES = (
     "Failed to create Yak MITM proxy process", "Yak MITM proxy exited during startup",
     "MaaPiCli termination not confirmed", "MaaPiCli output drain is still pending",
     "MaaFW runner init failed", "MaaFW node execution failed", "MaaFW send wait failed",
-    "MaaFW remote control action failed",
+    "MaaFW remote control action failed", "Clipboard text replacement failed",
     "Failed to start MaaFW", "Card sweep iteration failed", "Task queue",
     "Background worker", "Scheduled activity", "Readiness check for", "Background shutdown failed",
     "Authentication storage unavailable", "Unhandled authentication middleware error",

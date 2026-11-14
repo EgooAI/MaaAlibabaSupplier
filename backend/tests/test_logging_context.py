@@ -6,6 +6,7 @@ import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -14,6 +15,7 @@ from loguru import logger
 
 from backend.app.shared.utils import logging as transport
 from backend.app.shared.utils.log_context import bind_log_context, capture_log_context, log_event
+from backend.tests.test_clipboard_input import desktop
 
 
 @pytest.fixture
@@ -64,6 +66,48 @@ def test_file_stderr_export_keep_events_without_payloads_or_exception_values(log
     assert failure["frames"][-1]["function"] == "test_file_stderr_export_keep_events_without_payloads_or_exception_values"
     assert all(set(frame) == {"file", "function", "line"} for frame in failure["frames"])
     assert capture_log_context()["request_id"] is None
+
+
+@pytest.mark.parametrize("fault,reason,function", [
+    ("background", "client_not_foreground", "focus"),
+    ("busy", "clipboard_busy", "clipboard"),
+    ("partial", "keyboard_input_incomplete", "keys"),
+    ("lost_newlines", "pasted_text_mismatch", "replace_text"),
+    ("unexpected", "unexpected_exception", "load"),
+])
+def test_clipboard_failure_survives_runtime_and_zip_without_text(logs, desktop, monkeypatch, fault, reason, function):
+    from backend.app import diagnostics
+    from backend.app.shared.backend import clipboard_input, paste_text_action
+    from backend.tests.test_diagnostics import unpack
+
+    desktop.fault = fault
+    if fault == "background":
+        desktop.foreground = 99
+    if fault == "unexpected":
+        def load():
+            raise ValueError("PRIVATE_EXCEPTION_VALUE")
+        monkeypatch.setattr(clipboard_input, "_load_win32", load)
+    context = SimpleNamespace(tasker=SimpleNamespace(controller=SimpleNamespace(info={"type": "win32", "hwnd": 42})))
+    argv = SimpleNamespace(custom_action_param=json.dumps({"text": "PRIVATE_BODY\n\nPRIVATE_CLIPBOARD"}),
+                           node_name="ChatInput_PasteText", task_detail=SimpleNamespace(task_id=200000006))
+    with bind_log_context(request_id="submitter"), ThreadPoolExecutor(max_workers=1) as pool:
+        assert not pool.submit(paste_text_action.PasteChatText().run, context, argv).result(timeout=3)
+    logger.complete()
+    runtime = (logs[2] / "api.log").read_text(encoding="utf-8")
+    monkeypatch.setattr(diagnostics, "resolve_backend_root", lambda: logs[2].parent.parent)
+    bundle = unpack(diagnostics.build_bundle())
+    exported = next(value.decode() for name, value in bundle.items() if name.endswith("-api.jsonl"))
+    for output in (runtime, exported, logs[1].getvalue()):
+        assert "PRIVATE" not in output
+    for record in (json.loads(runtime), json.loads(exported)):
+        assert record["event"] == "gui.clipboard_failed" and record["level"] == "ERROR"
+        assert record["context"]["reason"] == reason
+        assert record["context"]["node"] == "ChatInput_PasteText"
+        assert record["context"]["native_job_id"] == 200000006
+        assert record["context"]["request_id"] is None
+        assert record["exception"]["type"] == ("ValueError" if fault == "unexpected" else "ClipboardInputError")
+        assert record["exception"]["frames"][-1]["function"] == function
+        assert record["exception"]["frames"][-1]["line"] > 0
 
 
 @pytest.mark.parametrize("line", [

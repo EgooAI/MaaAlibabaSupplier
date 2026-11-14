@@ -21,7 +21,11 @@ class PasteChatText(CustomAction):
             replace_text(controller.get("hwnd"), params["text"])
             return True
         except Exception as exc:
-            # Neither parameters nor copied business text belong in ordinary logs.
-            reason = str(exc) if isinstance(exc, ClipboardInputError) else type(exc).__name__
-            logger.error("Clipboard text replacement failed: {}", reason)
+            # Keeps codes and safe stack metadata through both log sanitizers.
+            # Native callbacks do not inherit the submitting thread's ContextVars.
+            reason = str(exc) if isinstance(exc, ClipboardInputError) else "unexpected_exception"
+            logger.bind(event="gui.clipboard_failed", context={
+                "reason": reason, "node": argv.node_name,
+                "native_job_id": argv.task_detail.task_id,
+            }).opt(exception=True).error("Clipboard text replacement failed")
             return False

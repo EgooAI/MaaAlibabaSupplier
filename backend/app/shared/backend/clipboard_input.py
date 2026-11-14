@@ -17,7 +17,7 @@ _clipboard_lock = Lock()
 
 
 class ClipboardInputError(RuntimeError):
-    """Reports a fixed input failure without including clipboard or message text."""
+    """Reports a fixed reason code without including clipboard or message text."""
 
 
 class _KeyboardInput(ctypes.Structure):
@@ -95,12 +95,12 @@ class _Desktop:
 
     def focus(self, hwnd: int) -> tuple[int, int]:
         if not self.is_window(hwnd) or self.foreground() != hwnd:
-            raise ClipboardInputError("The bound client must remain in the foreground")
+            raise ClipboardInputError("client_not_foreground")
         pid = wintypes.DWORD()
         thread = self.thread(hwnd, ctypes.byref(pid))
         info = _GuiThreadInfo(size=ctypes.sizeof(_GuiThreadInfo))
         if not thread or not self.gui_info(thread, ctypes.byref(info)) or info.active != hwnd or not info.focus:
-            raise ClipboardInputError("The bound client has no focused control")
+            raise ClipboardInputError("client_focus_unavailable")
         return pid.value, info.focus
 
     @contextmanager
@@ -108,7 +108,7 @@ class _Desktop:
         deadline = time.monotonic() + 1.0
         while not self.open_clipboard(owner):
             if time.monotonic() >= deadline:
-                raise ClipboardInputError("Clipboard is busy")
+                raise ClipboardInputError("clipboard_busy")
             time.sleep(0.01)
         try:
             yield
@@ -118,18 +118,18 @@ class _Desktop:
     def write(self, owner, data: bytes) -> int:
         handle = self.alloc(0x0002, len(data))  # GMEM_MOVEABLE; ownership transfers on success.
         if not handle:
-            raise ClipboardInputError("Clipboard allocation failed")
+            raise ClipboardInputError("clipboard_allocation_failed")
         try:
             pointer = self.lock(handle)
             if not pointer:
-                raise ClipboardInputError("Clipboard memory unavailable")
+                raise ClipboardInputError("clipboard_memory_unavailable")
             try:
                 ctypes.memmove(pointer, data, len(data))
             finally:
                 self.unlock(handle)
             with self.clipboard(owner):
                 if not self.empty_clipboard() or not self.set_clipboard(CF_UNICODETEXT, handle):
-                    raise ClipboardInputError("Clipboard write failed")
+                    raise ClipboardInputError("clipboard_write_failed")
                 handle = None
                 return self.sequence()
         finally:
@@ -148,28 +148,28 @@ class _Desktop:
                 item.type = 1
                 item.value.keyboard = _KeyboardInput(vk=key, flags=KEYEVENTF_KEYUP)
             self.send(len(release), release, ctypes.sizeof(_Input))
-            raise ClipboardInputError("Keyboard input was incomplete")
+            raise ClipboardInputError("keyboard_input_incomplete")
 
     def copied_text(self, owner, pid: int, max_bytes: int) -> str:
         with self.clipboard(owner):
             source_pid = wintypes.DWORD()
             source = self.clipboard_owner()
             if not source or not self.thread(source, ctypes.byref(source_pid)) or source_pid.value != pid:
-                raise ClipboardInputError("Clipboard changed outside the bound client")
+                raise ClipboardInputError("clipboard_owner_mismatch")
             handle = self.get_clipboard(CF_UNICODETEXT)
             size = self.size(handle) if handle else 0
             if not size or size > max_bytes or size % 2:
-                raise ClipboardInputError("Copied text is unavailable or exceeds the expected size")
+                raise ClipboardInputError("copied_text_invalid_size")
             pointer = self.lock(handle)
             if not pointer:
-                raise ClipboardInputError("Copied text memory unavailable")
+                raise ClipboardInputError("copied_text_memory_unavailable")
             try:
                 data = ctypes.string_at(pointer, size)
             finally:
                 self.unlock(handle)
             end = next((index for index in range(0, len(data), 2) if data[index:index + 2] == b"\0\0"), None)
             if end is None:
-                raise ClipboardInputError("Copied text is not terminated")
+                raise ClipboardInputError("copied_text_unterminated")
             return data[:end].decode("utf-16-le")
 
 
@@ -180,20 +180,20 @@ def replace_text(hwnd: int, text: str) -> None:
     expected = _newlines(text)
     data = (expected.replace("\n", "\r\n") + "\0").encode("utf-16-le")
     if not _clipboard_lock.acquire(blocking=False):
-        raise ClipboardInputError("Another clipboard input operation is active")
+        raise ClipboardInputError("clipboard_operation_active")
     owner = None
     try:
         desktop = _Desktop()
         target = desktop.focus(hwnd)
         if any(desktop.key_state(key) & 0x8000 for key in (0x10, 0x11, 0x12, 0x5B, 0x5C)):
-            raise ClipboardInputError("Release modifier keys before clipboard input")
+            raise ClipboardInputError("modifier_key_held")
         # OpenClipboard(NULL) cannot safely own EmptyClipboard/SetClipboardData.
         owner = desktop.create_window(0, "STATIC", "MaaClipboardInput", 0, 0, 0, 0, 0, -3, None, None, None)
         if not owner:
-            raise ClipboardInputError("Clipboard owner window unavailable")
+            raise ClipboardInputError("clipboard_owner_window_unavailable")
         sequence = desktop.write(owner, data)
         if desktop.focus(hwnd) != target or desktop.sequence() != sequence:
-            raise ClipboardInputError("Input focus or clipboard changed before paste")
+            raise ClipboardInputError("focus_or_clipboard_changed_before_paste")
         # One ordered input batch prevents injected keys from interleaving. Copy
         # follows paste in the same queue; it must publish a NEW clipboard value.
         desktop.keys(_chord(VK_A) + [(VK_BACK, False), (VK_BACK, True)] + _chord(VK_V)
@@ -201,18 +201,18 @@ def replace_text(hwnd: int, text: str) -> None:
         deadline = time.monotonic() + 2.0
         while True:
             if desktop.focus(hwnd) != target:
-                raise ClipboardInputError("Input focus changed during paste")
+                raise ClipboardInputError("focus_changed_during_paste")
             if desktop.sequence() != sequence:
                 # Allows allocator padding, not arbitrary preexisting clipboard data.
                 actual = desktop.copied_text(owner, target[0], len(data) + 4096)
                 if _newlines(actual) != expected:
-                    raise ClipboardInputError("Pasted text does not match the requested text")
+                    raise ClipboardInputError("pasted_text_mismatch")
                 if desktop.focus(hwnd) != target:
-                    raise ClipboardInputError("Input focus changed after paste")
+                    raise ClipboardInputError("focus_changed_after_paste")
                 desktop.keys([(VK_RIGHT, False), (VK_RIGHT, True)])
                 return
             if time.monotonic() >= deadline:
-                raise ClipboardInputError("The client did not publish copied text after paste")
+                raise ClipboardInputError("copied_text_not_published")
             time.sleep(0.01)
     finally:
         try:

@@ -158,6 +158,14 @@ log bodies, exception messages, stack locals, paths, payloads and IPC are never 
 Structured application telemetry and sanitized stack frame metadata remain useful for
 correlation. This deliberately omits detail that may exist in the original logs.
 
+Clipboard input failures use `gui.clipboard_failed` with a fixed `reason` code,
+the pipeline `node` and `native_job_id` from the custom-action callback. Exception
+types and source frames survive runtime sanitization and ZIP export; exception
+values, action parameters and clipboard text do not. Callback threads do not inherit
+the submitting request's context, so correlate the native job with `maa.submitted`.
+Older free-form clipboard failures were already replaced with `Log message omitted`
+in the runtime file; their specific reasons cannot be recovered by exporting again.
+
 All ancestors and opened files are checked for symlinks/reparse points, non-regular
 files and hard links. Opened identities are checked to detect rotation; Windows final
 handle paths and POSIX directory handles guard parent replacement races.
