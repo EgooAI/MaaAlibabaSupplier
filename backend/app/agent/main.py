@@ -18,6 +18,7 @@ from maa.agent.agent_server import AgentServer
 import backend.app.agent.nodes.customer.goto_contact
 import backend.app.agent.nodes.auxi.chat_send
 import backend.app.agent.nodes.auxi.copy_text
+import backend.app.agent.nodes.auxi.paste_text
 import backend.app.agent.nodes.auxi.read_clipboard
 import backend.app.agent.nodes.auxi.send_message
 from backend.app.shared.utils.env import load_workdir_env

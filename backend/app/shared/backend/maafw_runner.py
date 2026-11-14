@@ -23,6 +23,7 @@ from maa.toolkit import Toolkit
 from backend.app.shared.backend.account_context import account_lock
 from backend.app.shared.backend.gui_evidence import ClientFrame, frame_from_image
 from backend.app.shared.backend.maafw_nodes import DIAGNOSTIC_NODE_NAMES
+from backend.app.shared.backend.paste_text_action import PasteChatText
 from backend.app.shared.utils import paths
 from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.utils.native_logs import NativeLogSessions, NATIVE_MAX_BYTES
@@ -212,6 +213,8 @@ def _ensure_init() -> tuple[Tasker | None, str | None]:
         resource = Resource()
         if not _wait_native(_post_native(resource.post_bundle, paths.maafw_resource_dir(backend_root))).succeeded:
             raise RuntimeError("MaaFW 资源加载失败")
+        if not resource.register_custom_action("PasteChatText", PasteChatText()):
+            raise RuntimeError("MaaFW clipboard action registration failed")
 
         tasker = Tasker()
         if not tasker.bind(resource, controller) or not tasker.inited:
@@ -353,10 +356,10 @@ def goto_contact(contact_ref: str) -> tuple[bool, str]:
 def chat_input_override(text: str, *, send: bool) -> dict:
     """Specify both branches on every call, including nested Agent tasks."""
     return {
-        "ChatInput_InputText": {
+        "ChatInput_PasteText": {
             "action": {
                 "param": {
-                    "input_text": text
+                    "custom_action_param": {"text": text}
                 }
             },
             "next": ["ChatInput_SendMessage"] if send else [],
@@ -366,7 +369,7 @@ def chat_input_override(text: str, *, send: bool) -> dict:
 
 
 def chat_input(text: str) -> tuple[bool, str]:
-    """Type text into the chat input box via MaaFW ChatInput pipeline (no send)."""
+    """Replaces chat text through the clipboard and verifies it without sending."""
     return run_node("ChatInput", chat_input_override(text, send=False))
 
 

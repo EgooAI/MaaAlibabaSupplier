@@ -3,11 +3,7 @@
 PIPELINE_NODE_NAMES = frozenset({
     "ChatInput",
     "ChatInput_GoToInput",
-    "ChatInput_SelectAll",
-    "ChatInput_SelectAll_A",
-    "ChatInput_SelectAll_ReleaseCtrl",
-    "ChatInput_ClearText",
-    "ChatInput_InputText",
+    "ChatInput_PasteText",
     "ChatInput_SendOnly",
     "ChatInput_SendMessage",
     "Common_DismissLowQualityDialog",

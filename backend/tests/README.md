@@ -100,9 +100,15 @@ the desktop or establish that a production native task saved its error image.
   queue capacity, failed navigation and diagnostic ordering relative to sending.
 - `test_maafw_runner.py` checks initialization recovery, window ambiguity and
   rebinding, resource configuration and failures without automatic replay.
+- `test_clipboard_input.py` simulates Win32 clipboard memory, focus, keyboard events
+  and a controlled clock. It checks whole-text replacement, Unicode/blank-line
+  preservation, fresh copied evidence, clipboard contention, partial injection
+  cleanup and focus changes. The isolation fixture blocks native clipboard access.
 - Its native Maa tests use a custom controller with synthetic images built from
   repository button templates. They verify enabled/disabled/missing send buttons,
   action failure, repeated send/input/send operations and read-only diagnostics.
+  The real custom-action adapter runs against a mocked OS input boundary; native
+  callback tests also verify that the outer account/window locks remain held.
   They never discover or control a real desktop window. Native tests explicitly
   skip if the Maa library is unavailable; a skip is not GUI validation.
 

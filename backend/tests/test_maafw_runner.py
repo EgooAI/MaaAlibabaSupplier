@@ -8,6 +8,7 @@ import pytest
 from backend.app.shared.backend import maafw_runner as runner
 from backend.app.api.envelope import AppError
 from backend.app.shared.backend import account_context, gui_session
+from backend.app.shared.backend import paste_text_action
 from backend.app.shared.utils import settings
 from tools.validate_schema import load_jsonc
 
@@ -41,7 +42,7 @@ def sdk(monkeypatch):
     state = SimpleNamespace(
         windows=[window()], fail=None, controllers=[], taskers=[], bundles=[],
         options=[], calls=[], outcome=True,
-        native_dirs=[],
+        native_dirs=[], actions=[],
         config={"self_ali_id": "seller-a", "alibaba_data_dir": "test-data"},
     )
 
@@ -73,6 +74,10 @@ def sdk(monkeypatch):
             return FakeJob(self.connected)
 
     class FakeResource:
+        def register_custom_action(self, name, action):
+            state.actions.append((name, action))
+            return state.fail != "custom_action"
+
         def post_bundle(self, path):
             state.bundles.append(path)
             return FakeJob(state.fail != "resource")
@@ -129,7 +134,7 @@ def run_connected(fn):
 
 @pytest.mark.parametrize("failure", [
     "options", "discovery_exception", "screenshot_size", "connection",
-    "resource", "bind", "inited",
+    "resource", "custom_action", "bind", "inited",
 ])
 def test_initialization_failure_can_recover(sdk, failure):
     sdk.fail = failure
@@ -172,6 +177,8 @@ def test_resource_path_and_controller_match_interface(sdk):
     for field, method in (("screencap", "screencap_method"), ("mouse", "mouse_method"), ("keyboard", "keyboard_method")):
         assert controller.methods[method].name == config["win32"][field]
     assert sdk.calls[0][1]["ContactSearch_InputText"]["action"]["param"]["input_text"] == "buyer-test"
+    assert sdk.actions[0][0] == "PasteChatText"
+    assert isinstance(sdk.actions[0][1], paste_text_action.PasteChatText)
 
 
 @pytest.mark.parametrize("change", ["new_hwnd", "disconnected", "not_inited"])
@@ -228,8 +235,8 @@ def assert_chat_calls(calls):
     assert len(calls) == 3
     for (entry, override), text, send in zip(calls, ("first", "test", "last"), (True, False, True)):
         assert entry == "ChatInput"
-        node = override["ChatInput_InputText"]
-        assert node["action"]["param"]["input_text"] == text
+        node = override["ChatInput_PasteText"]
+        assert node["action"]["param"]["custom_action_param"] == {"text": text}
         assert node["next"] == (["ChatInput_SendMessage"] if send else [])
         assert override["ChatInput_SendMessage"]["enabled"] is send
 
@@ -437,11 +444,11 @@ def test_agent_failure_stops_without_replay(actions, failed_entry):
 
 
 @pytest.fixture
-def native_pipeline(tmp_path):
+def native_pipeline(tmp_path, monkeypatch):
     """Use only repository button templates and in-memory synthetic frames."""
     import numpy as np
     from PIL import Image
-    from maa.controller import CustomController
+    from maa.controller import Controller, CustomController
     from maa.resource import Resource
     from maa.tasker import Tasker
 
@@ -451,6 +458,8 @@ def native_pipeline(tmp_path):
             self.clicks = []
             self.texts = []
             self.keys = []
+            self.pastes = []
+            self.paste_ok = True
             self.click_ok = True
             self.screencap_ok = True
             self.screencaps = 0
@@ -511,6 +520,18 @@ def native_pipeline(tmp_path):
     assert controller.set_screenshot_use_raw_size(True)
     assert controller.post_connection().wait().succeeded
     resource = Resource()
+    # Exercises the real native Custom callback with a synthetic Win32 identity;
+    # only the OS input boundary is replaced, never the pipeline or action adapter.
+    monkeypatch.setattr(Controller, "info", property(lambda self: {"type": "win32", "hwnd": 42}))
+
+    def paste(hwnd, text):
+        assert hwnd == 42
+        controller.pastes.append(text)
+        if not controller.paste_ok:
+            raise RuntimeError("Synthetic clipboard input failed")
+
+    monkeypatch.setattr(paste_text_action, "replace_text", paste)
+    assert resource.register_custom_action("PasteChatText", paste_text_action.PasteChatText())
     pipeline = {}
     for filename in ("ChatInput.json", "Common.json", "ContactSearch.json", "Diagnostics.json"):
         path = ASSETS / "resource" / "pipeline" / filename
@@ -592,8 +613,8 @@ def test_native_send_requires_enabled_button(native_pipeline, button):
     controller.click_ok = button != "click_failed"
     # Start just before recognition to isolate the send guard and its outcome.
     override = runner.chat_input_override("test", send=True)
-    override["ChatInput_InputText"]["timeout"] = 0
-    detail = native.tasker.post_task("ChatInput_InputText", override).wait().get()
+    override["ChatInput_PasteText"]["timeout"] = 0
+    detail = native.tasker.post_task("ChatInput_PasteText", override).wait().get()
     assert detail is not None
     assert detail.status.succeeded is (button == "enabled")
     assert len(controller.clicks) == (1 if button in ("enabled", "click_failed") else 0)
@@ -614,7 +635,23 @@ def test_native_send_test_send_with_persisted_overrides(native_pipeline):
         detail = native.tasker.post_task("ChatInput").wait().get()
         assert detail is not None and detail.status.succeeded
         assert len(controller.clicks) == count
-    assert controller.texts == ["first", "test", "last"]
+    assert controller.pastes == ["first", "test", "last"]
+    assert controller.texts == controller.keys == []
+
+
+def test_native_paste_failure_stops_before_send_without_replay(native_pipeline):
+    native = native_pipeline
+    controller = native.controller
+    pixels = native.images[1]
+    height, width = pixels.shape[:2]
+    controller.frame[620:620 + height, 650:650 + width] = pixels
+    controller.paste_ok = False
+    text = "First line\n\n第二段 🙂"
+    detail = native.tasker.post_task("ChatInput", runner.chat_input_override(text, send=True)).wait().get()
+    assert detail is not None and not detail.status.succeeded
+    assert controller.pastes == [text]
+    assert len(controller.clicks) == 1  # Only focuses the input box.
+    assert controller.texts == controller.keys == []
 
 
 @pytest.mark.parametrize("entry,node,index", [
@@ -660,5 +697,5 @@ def test_native_diagnostics_are_read_only_and_preserve_sending(native_pipeline, 
     ).wait().get()
     assert detail is not None and detail.status.succeeded
     assert len(controller.clicks) == 2
-    assert controller.texts == ["after diagnostic"]
-    assert controller.keys == [("down", 17), ("click", 65), ("up", 17), ("click", 8)]
+    assert controller.pastes == ["after diagnostic"]
+    assert controller.texts == controller.keys == []

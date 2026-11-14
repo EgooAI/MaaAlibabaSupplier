@@ -46,12 +46,13 @@ def test_isolation_fixture(request):
     assert updater._instance is None
     assert account_context._context is None
     from backend.app.shared.utils import env, im_db_decryptor
+    from backend.app.shared.backend import clipboard_input
     from maa.toolkit import Toolkit
     import socket
     import subprocess
     assert env.load_workdir_env() == Path.cwd() / ".env"
     for call in (im_db_decryptor.retrieve_db_key, Toolkit.find_desktop_windows,
-                 socket.create_connection, subprocess.Popen):
+                  socket.create_connection, subprocess.Popen, clipboard_input._load_win32):
         with pytest.raises(pytest.fail.Exception, match="External access must be mocked"):
             call()
 '''
@@ -104,6 +105,7 @@ def main():
                 "backend/app/shared/__init__.py": "",
                 "backend/app/shared/backend/__init__.py": "",
                 "backend/app/shared/backend/account_context.py": "_context = object()\n",
+                "backend/app/shared/backend/clipboard_input.py": "def _load_win32():\n    raise AssertionError('clipboard accessed')\n",
                 "backend/app/shared/utils/__init__.py": "",
                 "backend/app/shared/utils/settings.py": "REPO_ROOT = None\nBACKEND_ROOT = None\n",
                 "backend/app/shared/utils/env.py": "def load_dotenv(*args, **kwargs):\n    raise AssertionError('dotenv accessed')\ndef load_workdir_env(*args, **kwargs):\n    raise AssertionError('dotenv accessed')\n",

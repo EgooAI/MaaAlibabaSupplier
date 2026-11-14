@@ -54,12 +54,14 @@ def pytest_configure(config):
     import dotenv
     from maa.toolkit import Toolkit
     from backend.app.shared.utils import env, im_db_decryptor
+    from backend.app.shared.backend import clipboard_input
 
     patch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: False)
     patch.setattr(env, "load_dotenv", dotenv.load_dotenv)
     patch.setattr(env, "load_workdir_env", lambda env_filename=".env": Path.cwd() / env_filename)
     patch.setattr(im_db_decryptor, "retrieve_db_key", _unexpected_external_access)
     patch.setattr(Toolkit, "find_desktop_windows", _unexpected_external_access)
+    patch.setattr(clipboard_input, "_load_win32", _unexpected_external_access)
     patch.setattr(socket, "create_connection", _unexpected_external_access)
     patch.setattr(subprocess, "Popen", _unexpected_external_access)
     config.add_cleanup(_cleanup_runtime)

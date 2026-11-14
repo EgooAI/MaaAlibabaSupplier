@@ -37,68 +37,17 @@
             }
         },
         "next": [
-            "ChatInput_SelectAll"
+            "ChatInput_PasteText"
         ]
     },
-    "ChatInput_SelectAll": {
-        "desc": "全选，按下 Ctrl 键",
+    "ChatInput_PasteText": {
+        "desc": "原生组合键全选、清空、粘贴并读回核对正文",
         "recognition": "DirectHit",
         "action": {
-            "type": "KeyDown",
+            "type": "Custom",
             "param": {
-                "key": 17
-            }
-        },
-        "next": [
-            "ChatInput_SelectAll_A"
-        ]
-    },
-    "ChatInput_SelectAll_A": {
-        "desc": "按下 A 键完成全选",
-        "recognition": "DirectHit",
-        "action": {
-            "type": "ClickKey",
-            "param": {
-                "key": 65
-            }
-        },
-        "next": [
-            "ChatInput_SelectAll_ReleaseCtrl"
-        ]
-    },
-    "ChatInput_SelectAll_ReleaseCtrl": {
-        "desc": "释放 Ctrl 键",
-        "recognition": "DirectHit",
-        "action": {
-            "type": "KeyUp",
-            "param": {
-                "key": 17
-            }
-        },
-        "next": [
-            "ChatInput_ClearText"
-        ]
-    },
-    "ChatInput_ClearText": {
-        "desc": "Backspace 清空已选文本",
-        "recognition": "DirectHit",
-        "action": {
-            "type": "ClickKey",
-            "param": {
-                "key": 8
-            }
-        },
-        "next": [
-            "ChatInput_InputText"
-        ]
-    },
-    "ChatInput_InputText": {
-        "desc": "输入新文本（调用方需通过 pipeline_override 设置 input_text）",
-        "recognition": "DirectHit",
-        "action": {
-            "type": "InputText",
-            "param": {
-                "input_text": ""
+                "custom_action": "PasteChatText",
+                "custom_action_param": {"text": ""}
             }
         },
         "next": []

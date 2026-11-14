@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 from io import BytesIO
 from types import SimpleNamespace
+from threading import get_ident
 
 import numpy as np
 import pytest
@@ -167,7 +168,7 @@ def test_continuous_guard_and_persistence_barrier(capture, sdk):
 
     assert gui_session.run_guarded(capture.token, send)[0]
     assert [entry for entry, _ in sdk.calls] == ["ContactSearch", "ChatInput", "ChatInput_SendOnly"]
-    assert sdk.calls[1][1]["ChatInput_InputText"]["next"] == []
+    assert sdk.calls[1][1]["ChatInput_PasteText"]["next"] == []
     assert barrier == [2]
     assert capture.events == []
 
@@ -204,6 +205,33 @@ def test_native_capture_is_fresh_and_read_only_even_after_failure(native_binding
     assert gui_session.run_guarded(token, runner.capture_client_frame)[0] is False
     assert controller.screencaps >= 3
     assert controller.clicks == controller.texts == controller.keys == []
+
+
+def test_native_paste_callback_retains_outer_guard_without_reacquiring_locks(native_binding, monkeypatch):
+    from backend.app.shared.backend import paste_text_action
+
+    token, native = native_binding
+    pixels = native.images[1]
+    height, width = pixels.shape[:2]
+    native.controller.frame[620:620 + height, 650:650 + width] = pixels
+    caller = get_ident()
+    copied = []
+
+    def paste(hwnd, text):
+        assert get_ident() != caller
+        assert hwnd == 42
+        for lock in (account_context.account_lock, runner._run_lock):
+            acquired = lock.acquire(blocking=False)
+            if acquired:
+                lock.release()
+            assert not acquired
+        copied.append(text)
+
+    monkeypatch.setattr(paste_text_action, "replace_text", paste)
+    assert gui_session.run_guarded(token, lambda: runner.chat_input("First\n\n第二段 🙂"))[0]
+    assert copied == ["First\n\n第二段 🙂"]
+    assert len(native.controller.clicks) == 1
+    assert native.controller.texts == native.controller.keys == []
 
 
 @pytest.mark.parametrize("button", ["enabled", "disabled", "missing", "click_failed"])
