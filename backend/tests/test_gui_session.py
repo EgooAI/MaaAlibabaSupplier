@@ -223,8 +223,38 @@ def test_token_is_immutable_and_all_binding_fields_are_checked(sdk):
         token.epoch = "changed"
     for field in ("self_ali_id", "data_dir", "epoch", "window_generation"):
         altered = replace(token, **{field: "changed"})
-        assert not gui_session.run_guarded(altered, lambda: runner.chat_input("forged"))[0]
+        assert not gui_session.run_guarded(altered, lambda: runner.chat_input("forged"), activity="goto-contact")[0]
+        assert gui_session.observe_gui_activity(account_context.get_account_context()) is None
     assert not sdk.calls
+
+
+def test_gui_activity_is_observed_only_for_its_account_and_window(sdk, monkeypatch):
+    context = account_context.get_account_context()
+    assert gui_session.observe_gui_activity(context) is None
+    assert not sdk.controllers
+    token = connected_token()
+    entered, release = Event(), Event()
+
+    def navigate():
+        entered.set()
+        assert release.wait(5)
+        return True, "located"
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(gui_session.run_guarded, token, navigate, activity="goto-contact")
+        try:
+            assert entered.wait(2)
+            assert gui_session.observe_gui_activity(context) == "goto-contact"
+            for field in ("self_ali_id", "data_dir", "epoch"):
+                assert gui_session.observe_gui_activity(replace(context, **{field: "other"})) is None
+            with monkeypatch.context() as changed:
+                changed.setattr(runner, "_window_generation", "other-window")
+                assert gui_session.observe_gui_activity(context) is None
+            assert gui_session.observe_gui_activity(context) == "goto-contact"
+        finally:
+            release.set()
+        assert future.result(timeout=2) == (True, "located")
+    assert gui_session.observe_gui_activity(context) is None
 
 
 def test_account_switch_is_rejected_for_the_entire_guarded_task(sdk):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from threading import local
+from threading import Lock, local
 from typing import TypeVar, TypedDict
 from uuid import uuid4
 
@@ -28,6 +28,8 @@ class GuiSessionToken:
 
 
 _active_session = local()
+_activity_lock = Lock()
+_observed_activity: tuple[GuiSessionToken, str] | None = None
 _Result = TypeVar("_Result")
 
 
@@ -107,7 +109,22 @@ def _validate_token(token: GuiSessionToken) -> None:
         raise AppError(status["detail"], status_code=503)
 
 
-def run_guarded(token: GuiSessionToken, fn: Callable[[], _Result]) -> _Result | tuple[bool, str]:
+def observe_gui_activity(context: AccountContext) -> str | None:
+    """Observes a labeled operation without waiting for the GUI or account locks."""
+    with _activity_lock:
+        activity = _observed_activity
+    if activity is None:
+        return None
+    token, name = activity
+    if ((token.self_ali_id, token.data_dir, token.epoch)
+            == (context.self_ali_id, context.data_dir, context.epoch)
+            and token.window_generation == runner._window_generation):
+        return name
+    return None
+
+
+def run_guarded(token: GuiSessionToken, fn: Callable[[], _Result], *,
+                activity: str | None = None) -> _Result | tuple[bool, str]:
     """Hold the account and runner locks for the complete synchronous GUI task.
 
     Account switching in another thread must use changing_account's nonblocking
@@ -115,15 +132,23 @@ def run_guarded(token: GuiSessionToken, fn: Callable[[], _Result]) -> _Result | 
     Results pass through unchanged; exceptions return (False, reason). Navigation,
     input and the send barrier share one guard using the original task token.
     """
+    global _observed_activity
     with account_lock, runner._run_lock:
         previous = getattr(_active_session, "token", None)
+        with _activity_lock:
+            previous_activity = _observed_activity
         try:
             _validate_token(token)
             if previous is None:
                 runner._prepare_native_logs()
             _active_session.token = token
+            if activity is not None:
+                with _activity_lock:
+                    _observed_activity = (token, activity)
             return fn()
         except Exception as exc:
             return False, str(exc)
         finally:
             _active_session.token = previous
+            with _activity_lock:
+                _observed_activity = previous_activity

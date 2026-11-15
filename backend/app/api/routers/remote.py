@@ -1,4 +1,4 @@
-"""Provides read-only client frames and lightweight send activity observations."""
+"""Provides read-only client frames and lightweight GUI activity observations."""
 
 import io
 import time
@@ -9,6 +9,7 @@ from PIL import Image
 from backend.app.api.account_scope import OutboxObservationRoute, outbox_context
 from backend.app.api.envelope import ok
 from backend.app.shared.backend.client_preview import capture_preview
+from backend.app.shared.backend.gui_session import observe_gui_activity
 from backend.app.shared.backend.outbox_service import observe_active_send
 
 router = APIRouter(route_class=OutboxObservationRoute)
@@ -16,7 +17,9 @@ router = APIRouter(route_class=OutboxObservationRoute)
 
 @router.get("/api/remote/activity")
 def get_activity() -> dict:
-    return ok({"sending": observe_active_send(outbox_context.get())})
+    context = outbox_context.get()
+    return ok({"sending": observe_active_send(context),
+               "navigating": observe_gui_activity(context) == "goto-contact"})
 
 
 @router.get("/api/remote/frame")

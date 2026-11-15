@@ -13,14 +13,15 @@ vi.mock("@/features/account/AccountProvider", () => ({ useAccountBackend: () => 
 vi.mock("next/image", () => ({ default: ({ src, alt }: { src: string; alt: string }) => <img src={src} alt={alt} /> }));
 vi.mock("antd", () => ({
   Button: ({ icon, loading, children, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { icon?: ReactNode; loading?: boolean }) => <button {...props} disabled={props.disabled || loading}>{icon}{children}</button>,
-  Popover: ({ open, content, children, onOpenChange }: { open: boolean; content: ReactNode; children: ReactNode; onOpenChange: (open: boolean) => void }) =>
-    <div data-preview-trigger onMouseEnter={() => onOpenChange(true)} onMouseLeave={() => onOpenChange(false)}>{children}{open ? content : null}</div>,
+  Popover: ({ open, title, content, children, onOpenChange }: { open: boolean; title: ReactNode; content: ReactNode; children: ReactNode; onOpenChange: (open: boolean) => void }) =>
+    <div data-preview-trigger onMouseEnter={() => onOpenChange(true)} onMouseLeave={() => onOpenChange(false)}>{children}{open ? <>{title}{content}</> : null}</div>,
   Spin: () => <span>加载中</span>,
   Alert: ({ title }: { title: ReactNode }) => <div role="alert">{title}</div>,
 }));
 
 let root: Root;
 let container: HTMLDivElement;
+const idleActivity = { sending: false, navigating: false };
 const frame = () => ({ blob: new Blob(["frame"], { type: "image/jpeg" }), etag: "frame-1", width: 1280, height: 720 });
 const render = async (key = "account-a") => { await act(async () => root.render(<ClientLiveView key={key} />)); };
 const advance = async (ms: number) => { await act(async () => vi.advanceTimersByTimeAsync(ms)); };
@@ -39,7 +40,7 @@ beforeEach(() => {
   Object.defineProperty(document, "hidden", { configurable: true, value: false });
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:live-frame");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-  mocks.backend.getRemoteActivity.mockResolvedValue({ sending: false });
+  mocks.backend.getRemoteActivity.mockResolvedValue(idleActivity);
   mocks.backend.getRemoteFrame.mockResolvedValue(frame());
   container = document.createElement("div");
   document.body.append(container);
@@ -80,7 +81,7 @@ it("requests frames only while hovered or pinned, and stops transfers in a backg
   expect(mocks.backend.getRemoteActivity).toHaveBeenCalledTimes(activityRequests + 1);
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:live-frame");
   await hidden(true);
-  mocks.backend.getRemoteActivity.mockResolvedValue({ sending: true });
+  mocks.backend.getRemoteActivity.mockResolvedValue({ ...idleActivity, sending: true });
   await advance(2000);
   expect(mocks.backend.getRemoteActivity).toHaveBeenCalledTimes(activityRequests + 1);
   expect(panel()).toBeNull();
@@ -89,35 +90,46 @@ it("requests frames only while hovered or pinned, and stops transfers in a backg
   expect(panel()).not.toBeNull();
 });
 
-it("opens for active sending, closes at completion, and preserves an explicitly pinned view", async () => {
+it.each([
+  { activity: { sending: true, navigating: false }, label: "正在发送消息" },
+  { activity: { sending: false, navigating: true }, label: "正在跳转联系人" },
+])("opens for $label, closes at completion, and preserves an explicitly pinned view", async ({ activity, label }) => {
   await render();
-  mocks.backend.getRemoteActivity.mockResolvedValue({ sending: true });
+  mocks.backend.getRemoteActivity.mockResolvedValue(activity);
   await advance(999);
   expect(panel()).toBeNull();
   expect(mocks.backend.getRemoteActivity).toHaveBeenCalledTimes(1);
   await advance(1);
   expect(panel()).not.toBeNull();
-  mocks.backend.getRemoteActivity.mockResolvedValue({ sending: false });
+  expect(container.textContent).toContain(label);
+  expect(mocks.backend.getRemoteFrame).toHaveBeenCalled();
+  mocks.backend.getRemoteActivity.mockResolvedValue(idleActivity);
   await advance(1000);
   expect(panel()).toBeNull();
-  await toggle();
-  mocks.backend.getRemoteActivity.mockResolvedValue({ sending: true });
+  const frames = mocks.backend.getRemoteFrame.mock.calls.length;
   await advance(1000);
-  mocks.backend.getRemoteActivity.mockResolvedValue({ sending: false });
+  expect(mocks.backend.getRemoteFrame).toHaveBeenCalledTimes(frames);
+  await toggle();
+  mocks.backend.getRemoteActivity.mockResolvedValue(activity);
+  await advance(1000);
+  mocks.backend.getRemoteActivity.mockResolvedValue(idleActivity);
   await advance(1000);
   expect(panel()).not.toBeNull();
   await toggle();
   expect(panel()).toBeNull();
 });
 
-it("serializes activity reads and discards a late result after switching to pinned mode", async () => {
-  let finish!: (activity: { sending: boolean }) => void;
+it.each([
+  { sending: true, navigating: false },
+  { sending: false, navigating: true },
+])("discards late activity (sending=$sending, navigating=$navigating) after pinning without overlapping reads", async (activity) => {
+  let finish!: (activity: typeof idleActivity) => void;
   mocks.backend.getRemoteActivity.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
   await render();
   await advance(5000);
   expect(mocks.backend.getRemoteActivity).toHaveBeenCalledTimes(1);
   await toggle();
-  await act(async () => finish({ sending: true }));
+  await act(async () => finish(activity));
   await advance(2000);
   expect(mocks.backend.getRemoteActivity).toHaveBeenCalledTimes(1);
   mocks.backend.getRemoteActivity.mockReturnValue(new Promise(() => {}));

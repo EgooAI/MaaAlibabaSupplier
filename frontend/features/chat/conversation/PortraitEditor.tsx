@@ -1,12 +1,11 @@
 "use client";
 
+import { SaveOutlined } from "@ant-design/icons";
 import { App, Button, Card, Input, Select, Space, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
-import { PORTRAIT_LOST_NOTE_MAX, PORTRAIT_TAG_NAME_MAX } from "@/domain/contract.generated";
+import { PORTRAIT_TAG_NAME_MAX } from "@/domain/contract.generated";
 import { AccountChangedError, useAccountBackend } from "@/features/account/AccountProvider";
 import {
-  LOST_REASON_OPTIONS,
-  PORTRAIT_STAGE_OPTIONS,
   operationSummary,
   portraitRequestId,
   portraitTagLabel,
@@ -16,10 +15,8 @@ import { ApiError } from "@/services/httpAdapter";
 import { TagManagerModal } from "@/features/chat/portrait/TagManagerModal";
 import type { ConversationDetail } from "@/types/chatCanonical";
 import type {
-  LostReason,
   PortraitChangesInput,
   PortraitOperationEntry,
-  PortraitStage,
   PortraitTag,
 } from "@/types/portrait";
 
@@ -35,10 +32,7 @@ export function PortraitEditor({ conversation, tags, onTagCreated, onSaved, onTa
   const { customer } = conversation;
   const editable = Boolean(customer.portraitEditable && customer.cid);
   const version = customer.businessVersion;
-  const [stage, setStage] = useState<PortraitStage>(customer.businessStage);
   const [selectedTags, setSelectedTags] = useState<string[]>(() => customer.businessTags.map((tag) => tag.tag_id));
-  const [lostReason, setLostReason] = useState<LostReason | undefined>(customer.lostReason ?? undefined);
-  const [lostNote, setLostNote] = useState(customer.lostNote ?? "");
   const [newTagName, setNewTagName] = useState("");
   const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -50,10 +44,7 @@ export function PortraitEditor({ conversation, tags, onTagCreated, onSaved, onTa
   const [syncedKey, setSyncedKey] = useState(syncKey);
   if (syncedKey !== syncKey) {
     setSyncedKey(syncKey);
-    setStage(customer.businessStage);
     setSelectedTags(customer.businessTags.map((tag) => tag.tag_id));
-    setLostReason(customer.lostReason ?? undefined);
-    setLostNote(customer.lostNote ?? "");
     setNewTagName("");
     setOperations([]);
   }
@@ -111,17 +102,10 @@ export function PortraitEditor({ conversation, tags, onTagCreated, onSaved, onTa
     if (!editable || saving || !customer.cid) return;
     const currentTags = customer.businessTags.map((tag) => tag.tag_id);
     const changes: PortraitChangesInput = {};
-    if (stage !== customer.businessStage) changes.stage = stage;
     const add = selectedTags.filter((tagId) => !currentTags.includes(tagId));
     const remove = currentTags.filter((tagId) => !selectedTags.includes(tagId));
     if (add.length) changes.add_tag_ids = add;
     if (remove.length) changes.remove_tag_ids = remove;
-    if (stage === "lost") {
-      const reason = lostReason ?? "unclear";
-      if (reason !== customer.lostReason) changes.lost_reason = reason;
-      const note = lostNote.trim();
-      if (note !== (customer.lostNote ?? "")) changes.lost_note = note;
-    }
     if (!Object.keys(changes).length) {
       message.info("没有需要保存的修改");
       return;
@@ -137,11 +121,11 @@ export function PortraitEditor({ conversation, tags, onTagCreated, onSaved, onTa
         }],
         changes,
       });
-      message.success("客户画像已保存");
+      message.success("画像标签已保存");
       onSaved?.();
     } catch (error) {
       if (!(error instanceof AccountChangedError)) {
-        message.error(error instanceof Error ? error.message : "画像保存失败");
+        message.error(error instanceof Error ? error.message : "标签保存失败");
         // A conflict means the displayed version is stale; re-read before retrying.
         if (error instanceof ApiError && error.status === 409) onSaved?.();
       }
@@ -152,96 +136,67 @@ export function PortraitEditor({ conversation, tags, onTagCreated, onSaved, onTa
 
   if (!editable) {
     return (
-      <Card title="客户经营画像" size="small">
+      <Card title="画像标签">
         <Typography.Text type="secondary">
-          客户身份无法确定，暂不能维护阶段和标签；聊天与导出不受影响。
+          客户身份无法确定，暂不能维护标签。
         </Typography.Text>
       </Card>
     );
   }
 
   return (
-    <Card title="客户经营画像" size="small">
-      <Space orientation="vertical" className="w-full" size="middle">
-        <div className="flex flex-wrap items-center gap-2">
-          <Typography.Text type="secondary">阶段</Typography.Text>
-          <Select
-            aria-label="客户阶段"
-            size="small"
-            value={stage}
-            onChange={setStage}
-            options={PORTRAIT_STAGE_OPTIONS}
-            className="min-w-[140px]"
-          />
-          {stage === "lost" ? (
-            <Select
-              aria-label="失败原因"
-              size="small"
-              value={lostReason ?? "unclear"}
-              onChange={setLostReason}
-              options={LOST_REASON_OPTIONS}
-              className="min-w-[120px]"
-            />
-          ) : null}
-        </div>
-        {stage === "lost" ? (
-          <Input
-            aria-label="失败备注"
-            size="small"
-            maxLength={PORTRAIT_LOST_NOTE_MAX}
-            placeholder="失败备注（可选）"
-            value={lostNote}
-            onChange={(event) => setLostNote(event.target.value)}
-          />
-        ) : null}
-        <div>
-          <div className="flex items-center justify-between">
-            <Typography.Text type="secondary">业务标签</Typography.Text>
-            <Button size="small" type="text" onClick={() => setManageOpen(true)}>管理标签</Button>
-          </div>
-          <Select
-            aria-label="业务标签"
-            mode="multiple"
-            className="mt-1 w-full"
-            placeholder="选择业务标签"
-            value={selectedTags}
-            onChange={setSelectedTags}
-            options={tagOptions}
-            optionFilterProp="label"
-          />
-        </div>
-        <TagManagerModal
-          open={manageOpen}
-          onClose={() => setManageOpen(false)}
-          tags={tags}
-          onChanged={onTagsChanged}
+    <Card
+      title="画像标签"
+      extra={<Button type="primary" size="small" icon={<SaveOutlined />} loading={saving} onClick={() => void save()}>保存标签</Button>}
+    >
+      <div className="flex flex-col gap-2">
+        <Select
+          aria-label="画像标签"
+          mode="multiple"
+          className="w-full"
+          placeholder="选择画像标签"
+          value={selectedTags}
+          onChange={setSelectedTags}
+          options={tagOptions}
+          optionFilterProp="label"
         />
-        <Space.Compact className="w-full">
-          <Input
-            aria-label="新标签名称"
-            size="small"
-            maxLength={PORTRAIT_TAG_NAME_MAX}
-            placeholder="新标签名称"
-            value={newTagName}
-            onChange={(event) => setNewTagName(event.target.value)}
-            onPressEnter={() => void createTag()}
-          />
-          <Button size="small" loading={creating} onClick={() => void createTag()}>创建并选中</Button>
-        </Space.Compact>
-        <Button type="primary" size="small" loading={saving} onClick={() => void save()}>保存画像</Button>
-        {operations.length ? (
-          <div>
-            <Typography.Text type="secondary">最近变更</Typography.Text>
-            <div className="mt-1 flex flex-col gap-1">
-              {operations.slice(0, 5).map((entry) => (
-                <Typography.Text key={entry.request_id} className="text-xs" type="secondary">
-                  {formatDateTime(entry.created_at)} · {operationSummary(entry, tagOptions)}
-                </Typography.Text>
-              ))}
-            </div>
+        <div className="flex items-center justify-between gap-2">
+          <Typography.Text type="secondary" className="!text-xs">保存后生效</Typography.Text>
+          <Button size="small" type="text" onClick={() => setManageOpen(true)}>管理标签</Button>
+        </div>
+        <details key={syncKey}>
+          <summary className="cursor-pointer text-xs text-slate-500">新建标签</summary>
+          <Space.Compact className="mt-2 w-full">
+            <Input
+              aria-label="新标签名称"
+              maxLength={PORTRAIT_TAG_NAME_MAX}
+              placeholder="新标签名称"
+              value={newTagName}
+              onChange={(event) => setNewTagName(event.target.value)}
+              onPressEnter={() => void createTag()}
+            />
+            <Button loading={creating} onClick={() => void createTag()}>创建并选中</Button>
+          </Space.Compact>
+        </details>
+      </div>
+      <TagManagerModal
+        open={manageOpen}
+        onClose={() => setManageOpen(false)}
+        tags={tags}
+        onChanged={onTagsChanged}
+      />
+      {operations.length ? (
+        <details key={syncKey} className="mt-4 border-t border-slate-100 pt-3">
+          <summary className="cursor-pointer text-xs text-slate-500">最近变更</summary>
+          <div className="mt-2 flex flex-col gap-1">
+            {operations.slice(0, 5).map((entry) => (
+              <Typography.Text key={entry.request_id} className="!text-xs" type="secondary">
+                {formatDateTime(entry.created_at)} · {operationSummary(entry, tagOptions)}
+              </Typography.Text>
+            ))}
           </div>
-        ) : null}
-      </Space>
+        </details>
+      ) : null}
     </Card>
   );
 }

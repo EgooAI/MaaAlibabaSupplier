@@ -79,6 +79,38 @@ def test_failed_navigation_never_inputs_or_sends(client, send_setup, monkeypatch
     assert client.get(f"/api/outbox/{snapshot['id']}").json()["data"]["status"] == "unknown"
 
 
+@pytest.mark.parametrize("outcome", ["success", "failure", "exception"])
+def test_contact_navigation_activity_covers_execution_and_clears_on_completion(client, chat, blocked_queue, monkeypatch, outcome):
+    queue, release_queue = blocked_queue
+    entered, finish = Event(), Event()
+
+    def navigate(login_id):
+        assert login_id == "buyer-login"
+        entered.set()
+        assert finish.wait(10)
+        if outcome == "exception":
+            raise RuntimeError("navigation interrupted")
+        return outcome == "success", "navigation finished"
+
+    monkeypatch.setattr(conversations, "goto_contact", navigate)
+    try:
+        response = client.post("/api/conversations/1/goto-contact", json={"login_id": "buyer-login"})
+        assert response.status_code == 200
+        task = response.json()["data"]["task_snapshot"]
+        assert task["status"] == "pending"
+        assert client.get("/api/remote/activity").json()["data"] == {"sending": False, "navigating": False}
+        release_queue.set()
+        assert entered.wait(5)
+        assert client.get("/api/remote/activity").json()["data"] == {"sending": False, "navigating": True}
+        assert not finish.is_set()
+    finally:
+        finish.set()
+        release_queue.set()
+        queue.shutdown()
+    assert queue.get(task["task_id"]).status == (TaskStatus.SUCCEEDED if outcome == "success" else TaskStatus.FAILED)
+    assert client.get("/api/remote/activity").json()["data"] == {"sending": False, "navigating": False}
+
+
 def test_diagnostics_cannot_interleave_navigation_input_and_send(client, send_setup, blocked_queue, monkeypatch):
     queue, release = blocked_queue
 

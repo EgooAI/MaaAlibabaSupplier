@@ -13,7 +13,7 @@ import type { AssistantSuggestion } from "@/types/chatCanonical";
 import type { ExecutionRunDetail, ExecutionRunInput, ExecutionRunSummary, ExecutionState } from "@/types/execution";
 
 export interface OperationsBackend {
-  getRemoteActivity(): Promise<{ sending: boolean }>;
+  getRemoteActivity(): Promise<{ sending: boolean; navigating: boolean }>;
   getRemoteFrame(etag?: string, signal?: AbortSignal): Promise<{ blob: Blob | null; etag: string | null; width: number; height: number }>;
   downloadRemoteOriginal(signal?: AbortSignal): Promise<Blob>;
   getConnection(): Promise<ConnectionSnapshot>;

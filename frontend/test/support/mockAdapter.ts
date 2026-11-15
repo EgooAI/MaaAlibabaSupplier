@@ -195,7 +195,7 @@ function requireMockClient() {
 }
 
 export const mockBackend: OperationsBackend = {
-  getRemoteActivity: async () => ({ sending: false }),
+  getRemoteActivity: async () => ({ sending: false, navigating: false }),
   getRemoteFrame: async () => { throw new Error("Mock 不提供真实客户端截图"); },
   downloadRemoteOriginal: async () => { throw new Error("Mock 不提供真实客户端截图"); },
   getConnection: () => delay(structuredClone(connectionStore)),

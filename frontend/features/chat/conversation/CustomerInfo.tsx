@@ -1,6 +1,7 @@
 "use client";
 
-import { Button, Card, Descriptions, Drawer, Space, Tag } from "antd";
+import { ExportOutlined } from "@ant-design/icons";
+import { Button, Card, Descriptions, Drawer, Space } from "antd";
 import type { ConversationDetail } from "@/types/chatCanonical";
 import type { PortraitTag } from "@/types/portrait";
 import { useAccount } from "@/features/account/AccountProvider";
@@ -54,7 +55,7 @@ function CustomerInfoContent({ conversation, onGotoContact, onSaved, portraitTag
         onSaved={onSaved}
         onTagsChanged={onPortraitTagsChanged}
       />
-      <Card title="身份" extra={onGotoContact ? <Button size="small" disabled={blocked || !snapshot?.capabilities.operate_client} onClick={onGotoContact}>跳转到该联系人</Button> : null}>
+      <Card title="身份" extra={onGotoContact ? <Button type="primary" size="small" icon={<ExportOutlined />} disabled={blocked || !snapshot?.capabilities.operate_client} onClick={onGotoContact}>在被控客户端中跳转</Button> : null}>
         <Descriptions size="small" column={1} items={[
           { key: "ali", label: "Ali ID", children: value(customer.aliId) },
           { key: "member", label: "会员 ID", children: value(customer.memberId) },
@@ -73,10 +74,6 @@ function CustomerInfoContent({ conversation, onGotoContact, onSaved, portraitTag
           { key: "phone", label: "电话", children: value(customer.phone) },
           { key: "availability", label: "在线时间", children: value(customer.availability) },
         ]} />
-        <div className="mt-3">
-          <div className="mb-1 text-xs text-slate-500">平台资料标签</div>
-          {customer.tags.map((tag) => <Tag key={tag} color="blue">{tag}</Tag>)}
-        </div>
       </Card>
       <Card title="近 90 天行为">
         <Descriptions size="small" column={1} items={[

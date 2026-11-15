@@ -15,6 +15,7 @@ import { SessionListPanel } from "@/components/SessionListPanel";
 import { useSplitSessionMobile } from "@/components/SplitSessionLayout";
 import { ConversationList } from "./conversation/ConversationList";
 import { CustomerInfo } from "./conversation/CustomerInfo";
+import { CustomerStageControl } from "./conversation/CustomerStageControl";
 import { useChatWorkbench } from "./hooks/useChatWorkbench";
 import { useLocalTime } from "./hooks/useLocalTime";
 import { DataDirBanner } from "@/features/settings/DataDirBanner";
@@ -68,6 +69,11 @@ function ChatWorkspace() {
     setAnalysisFocus(focus);
     workbench.setAnalysisOpen(true);
     void workbench.analyzeConversation();
+  }
+
+  function refreshPortrait() {
+    void workbench.refreshActiveDetail();
+    void workbench.reload();
   }
 
   const sessionList = (
@@ -132,6 +138,7 @@ function ChatWorkspace() {
               {active.unreadCount > 0 ? <span className="h-1.5 w-1.5 rounded-full bg-blue-500" aria-label={`本工作台未读 ${active.unreadCount}`} /> : null}
             </Button>
           </Popover> : null}
+          {active ? <CustomerStageControl conversation={active} onSaved={refreshPortrait} /> : null}
           <Button type="text" icon={<UserOutlined />} aria-label="客户信息" onClick={() => setCustomerInfoOpen(true)} disabled={!active}><span className="hidden sm:inline">客户信息</span></Button>
         </div>
       }
@@ -172,7 +179,7 @@ function ChatWorkspace() {
         open={customerInfoOpen}
         onClose={() => setCustomerInfoOpen(false)}
         onGotoContact={() => void workbench.gotoContact()}
-        onSaved={() => { void workbench.refreshActiveDetail(); void workbench.reload(); }}
+        onSaved={refreshPortrait}
         portraitTags={workbench.portraitTags}
         onTagCreated={workbench.addPortraitTag}
         onPortraitTagsChanged={() => void workbench.reloadPortraitTags()}

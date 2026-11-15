@@ -7,18 +7,19 @@ import { useEffect, useRef, useState } from "react";
 import { useAccountBackend } from "@/features/account/AccountProvider";
 
 const ACTIVITY_POLL_MS = 1000;
+const IDLE_ACTIVITY = { sending: false, navigating: false };
 
 export function ClientLiveView() {
   const backend = useAccountBackend();
   const [pinned, setPinned] = useState(false);
   const [hovered, setHovered] = useState(false);
-  const [sending, setSending] = useState(false);
+  const [activity, setActivity] = useState(IDLE_ACTIVITY);
   const [visible, setVisible] = useState(true);
 
   useEffect(() => {
     const update = () => {
       setVisible(!document.hidden);
-      if (document.hidden) { setHovered(false); setSending(false); }
+      if (document.hidden) { setHovered(false); setActivity(IDLE_ACTIVITY); }
     };
     update();
     document.addEventListener("visibilitychange", update);
@@ -32,9 +33,9 @@ export function ClientLiveView() {
     const poll = async () => {
       try {
         const activity = await backend.getRemoteActivity();
-        if (active) setSending(activity.sending);
+        if (active) setActivity(activity);
       } catch {
-        if (active) setSending(false);
+        if (active) setActivity(IDLE_ACTIVITY);
       } finally {
         if (active) timer = setTimeout(() => void poll(), ACTIVITY_POLL_MS);
       }
@@ -43,13 +44,13 @@ export function ClientLiveView() {
     return () => { active = false; clearTimeout(timer); };
   }, [backend, visible, pinned]);
 
-  const open = visible && (pinned || hovered || sending);
+  const open = visible && (pinned || hovered || activity.sending || activity.navigating);
   return <Popover placement="bottomRight" trigger="hover" open={open} onOpenChange={setHovered}
     mouseEnterDelay={0.1} mouseLeaveDelay={0.2} destroyOnHidden
     content={open ? <LiveFrames /> : null}
     title={<div className="flex items-center justify-between gap-4">
       <span>客户端实况</span>
-      <span className="text-xs font-normal text-slate-500">{pinned ? "常驻显示" : sending ? "正在发送消息" : "悬浮预览"}</span>
+      <span className="text-xs font-normal text-slate-500">{pinned ? "常驻显示" : activity.sending ? "正在发送消息" : activity.navigating ? "正在跳转联系人" : "悬浮预览"}</span>
     </div>}>
     <Button icon={pinned ? <PushpinFilled /> : <DesktopOutlined />} type={pinned ? "primary" : "default"}
       aria-label="客户端实况" aria-pressed={pinned} aria-expanded={open}

@@ -51,7 +51,7 @@ def test_live_frames_and_activity_do_not_wait_for_gui_lock(client, capture):
             with Image.open(BytesIO(original.content)) as image:
                 assert image.format == "PNG"
                 assert image.getpixel((0, 0)) == (127, 64, 32)
-            assert client.get("/api/remote/activity").json()["data"] == {"sending": False}
+            assert client.get("/api/remote/activity").json()["data"] == {"sending": False, "navigating": False}
             assert not release.is_set()
         finally:
             release.set()

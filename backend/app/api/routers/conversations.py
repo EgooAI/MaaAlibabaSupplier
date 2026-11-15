@@ -807,7 +807,8 @@ def goto_contact_api(conversation_id: int, body: GotoContactInput) -> dict:
     if body.login_id.strip() != login_id:
         raise AppError("跳转目标与当前会话联系人不一致", status_code=409)
     snap = get_task_queue().enqueue(
-        lambda: run_guarded(token, lambda: goto_contact(login_id)), description=f"goto-contact {login_id}"
+        lambda: run_guarded(token, lambda: goto_contact(login_id), activity="goto-contact"),
+        description=f"goto-contact {login_id}"
     )
     current = get_task_queue().get(snap.task_id)
     status = str(current.status) if current else str(TaskStatus.PENDING)

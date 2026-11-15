@@ -51,6 +51,12 @@ platform. Session work state (unread, reply state, deadline) is unchanged.
 `lost` maintenance requires `lost_reason` and optional `lost_note`; leaving the
 lost stage clears those fields. History remains available through operations.
 
+The chat header shows the current customer stage beside the customer-info button.
+Its popover edits the stage and optional failure details, with an explicit save.
+The customer-info drawer's portrait-tag card edits tag associations separately;
+each editor submits only its own changed fields with the displayed portrait version.
+Both refresh the detail and conversation list after a successful save or version conflict.
+
 ## Endpoints
 
 | Method | Path | Purpose |

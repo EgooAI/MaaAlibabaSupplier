@@ -104,6 +104,9 @@ the desktop or establish that a production native task saved its error image.
 
 - `test_gui_tasks.py` checks acceptance snapshots, response preparation failures,
   queue capacity, failed navigation and diagnostic ordering relative to sending.
+  Contact-navigation activity is observed during guarded execution, excludes queued
+  work, and clears on success, failure or exception. GUI session tests check that
+  activity observations match the account and window without waiting on GUI locks.
 - `test_maafw_runner.py` checks initialization recovery, window ambiguity and
   rebinding, resource configuration and failures without automatic replay.
 - `test_remote_api.py` checks live JPEG/PNG responses while GUI locks are held,
