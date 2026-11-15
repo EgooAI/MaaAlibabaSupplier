@@ -130,11 +130,11 @@ it("keeps queue completion, cooperative cancellation and local Outbox evidence s
   await click("Outbox", "[role=tab]");
   expect(container.textContent).toContain("全部 Outbox 记录，列表仅显示最近 20 条");
   const observed = [...container.querySelectorAll("tbody tr")].find((row) => row.textContent?.includes("observed-send"))!;
-  expect(observed.textContent).toContain("本地发现匹配消息");
+  expect(observed.textContent).toContain("正在等待数据同步");
   expect(observed.textContent).toContain("本地匹配，平台送达待确认");
   expect(observed.querySelector(".ant-tag-green")).toBeNull();
   const uncertain = [...container.querySelectorAll("tbody tr")].find((row) => row.textContent?.includes("unknown-send"))!;
-  expect(uncertain.textContent).toContain("结果未知");
+  expect(uncertain.textContent).toContain("任务可能失败");
   expect(uncertain.textContent).toContain("可能已发送，勿直接重发");
   expect(container.textContent).toContain("仅填入，未发送");
 });

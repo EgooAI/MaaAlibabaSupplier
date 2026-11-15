@@ -180,29 +180,30 @@ function prepareAccountRequest(path: string, init?: RequestInit) {
 }
 
 export const httpBackend: OperationsBackend = {
-  createRemoteSession: () => requestJson("/api/remote/session", { method: "POST", body: JSON.stringify({}) }),
-  getRemoteFrame: async (sessionId, etag) => {
-    const path = `/api/remote/session/${encodeURIComponent(sessionId)}/frame`;
+  getRemoteActivity: () => requestJson("/api/remote/activity"),
+  getRemoteFrame: async (etag, signal) => {
+    const path = "/api/remote/frame";
     const auth = captureAuth();
     const account = prepareAccountRequest(path);
     const headers = new Headers(account.init?.headers);
     headers.set("Authorization", `Bearer ${auth.token}`);
     if (etag) headers.set("If-None-Match", etag);
-    const response = await fetch(path, requestInit({ headers, cache: "no-store", credentials: "omit", signal: AbortSignal.any([auth.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]) }));
+    const response = await fetch(path, requestInit({ headers, cache: "no-store", credentials: "omit", signal: AbortSignal.any([auth.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS), ...(signal ? [signal] : [])]) }));
     auth.assertCurrent();
     if (response.status === 401) { void authSession.unauthorized(auth.generation, response.headers.get("X-Request-ID") ?? undefined); auth.assertCurrent(); }
     account.ticket?.assertCurrent(response.headers.get("X-Account-Epoch"));
     if (response.status === 304) return { blob: null, etag: etag ?? null, width: 0, height: 0 };
     if (!response.ok) throw new ApiError(envelopeMessage(await response.text(), path), path, { status: response.status });
-    if (response.headers.get("X-Account-Epoch") !== account.ticket!.epoch || response.headers.get("Content-Type")?.split(";")[0] !== "image/jpeg") throw new ApiError("远控截图响应无效", path);
+    if (response.headers.get("X-Account-Epoch") !== account.ticket!.epoch || response.headers.get("Content-Type")?.split(";")[0] !== "image/jpeg") throw new ApiError("客户端截图响应无效", path);
+    const blob = await response.blob();
+    auth.assertCurrent();
+    account.ticket?.assertCurrent(response.headers.get("X-Account-Epoch"));
     return {
-      blob: await response.blob(), etag: response.headers.get("ETag"),
+      blob, etag: response.headers.get("ETag"),
       width: Number(response.headers.get("X-Frame-Width")), height: Number(response.headers.get("X-Frame-Height")),
     };
   },
-  downloadRemoteOriginal: (sessionId) => request<Blob>(`/api/remote/session/${encodeURIComponent(sessionId)}/download`, "image"),
-  remoteAction: async (input) => { await requestJson("/api/remote/action", { method: "POST", body: JSON.stringify(input) }); },
-  closeRemoteSession: async (sessionId) => { await requestVoid(`/api/remote/session/${encodeURIComponent(sessionId)}`, { method: "DELETE" }); },
+  downloadRemoteOriginal: (signal) => request<Blob>("/api/remote/download", "image", { signal }),
   getConnection: () => requestJson("/api/settings/connection"),
   connectClient: (epoch) => requestJson("/api/settings/connection/connect", { method: "POST", body: JSON.stringify({ epoch }) }),
   retryConnection: async (epoch) => {

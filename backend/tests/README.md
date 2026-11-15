@@ -106,6 +106,11 @@ the desktop or establish that a production native task saved its error image.
   queue capacity, failed navigation and diagnostic ordering relative to sending.
 - `test_maafw_runner.py` checks initialization recovery, window ambiguity and
   rebinding, resource configuration and failures without automatic replay.
+- `test_remote_api.py` checks live JPEG/PNG responses while GUI locks are held,
+  unchanged-frame caching, stale account/window rejection and removal of input
+  actions. Window capture uses synthetic images; the isolation fixture blocks
+  native ImageGrab access. Outbox service tests cover scoped send activity from
+  navigation through execution, excluding fill-only work and later verification.
 - `test_clipboard_input.py` simulates Win32 clipboard memory, focus, keyboard events
   and a controlled clock. It checks whole-text replacement, Unicode/blank-line
   preservation, fresh copied evidence, clipboard contention, partial injection

@@ -1,6 +1,6 @@
 "use client";
 
-import { LoadingOutlined, MoreOutlined, ShopOutlined } from "@ant-design/icons";
+import { InfoCircleOutlined, LoadingOutlined, ShopOutlined } from "@ant-design/icons";
 import { Avatar, Button, Popover } from "antd";
 import { TimeText } from "@/components/TimeText";
 import { useAccount } from "@/features/account/AccountProvider";
@@ -31,15 +31,13 @@ export function OutboxTaskStatus({ task, outbox }: Props) {
   const { snapshot, blocked } = useAccount();
   const canOperate = !blocked && Boolean(snapshot?.capabilities.operate_client);
   const exceptional = task.status === "failed" || task.status === "unknown";
-  const label = task.status === "observed" ? "本地已匹配，等待同步"
-    : task.status === "unknown" ? "结果未知，请核对消息"
-    : task.action === "test" && task.status === "queued" ? "等待填入" : outboxLabels[task.status];
+  const label = outboxLabels[task.status];
   return <div className={`flex flex-wrap items-center justify-end gap-1 text-xs ${exceptional ? "text-amber-700" : "text-slate-400"}`}>
     {!isTerminal(task) ? <LoadingOutlined aria-hidden /> : null}
     <span role="status">{label}</span>
     {canRetry(task) ? <Button type="text" size="small" disabled={!canOperate} loading={outbox.busy} onClick={() => void outbox.mutate(task, "retry")}>重试</Button> : null}
     <Popover trigger="click" placement="topRight" content={<div className="max-w-80 space-y-2 text-xs">
-      <div>{task.login_id} · 第 {task.attempt} 次</div>
+      <div>第 {task.attempt} 次尝试</div>
       <TimeText value={task.created_at} />
       {task.action === "test" ? <div className="max-h-40 overflow-auto whitespace-pre-wrap break-words">{task.content}</div> : null}
       {task.reason ? <p>{reasons[task.reason] ?? task.reason}</p> : null}
@@ -47,7 +45,7 @@ export function OutboxTaskStatus({ task, outbox }: Props) {
       {task.status === "observed" ? <p>本地匹配不代表平台送达或对方已读。</p> : null}
       {canCancel(task) ? <Button size="small" disabled={blocked} loading={outbox.busy} onClick={() => void outbox.mutate(task, "cancel")}>取消任务</Button> : null}
     </div>}>
-      <Button type="text" size="small" aria-label="发送任务详情" icon={<MoreOutlined />} />
+      <Button type="text" size="small" aria-label="发送任务详情" icon={<InfoCircleOutlined />} />
     </Popover>
   </div>;
 }

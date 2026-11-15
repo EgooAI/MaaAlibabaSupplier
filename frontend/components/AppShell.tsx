@@ -12,12 +12,12 @@ import { useSelfInfo } from "./useSelfInfo";
 import { getDisplayName } from "@/domain/user";
 import { useAccount } from "@/features/account/AccountProvider";
 import { useAuth } from "@/features/auth/AuthProvider";
+import { ClientLiveView } from "@/features/remote/ClientLiveView";
 
 const { Header, Sider, Content } = Layout;
 
 const navItems = [
   { key: "/", icon: <DashboardOutlined />, label: <Link href="/">首页</Link> },
-  { key: "/remote", icon: <SwapOutlined />, label: <Link href="/remote">客户端远控</Link> },
   {
     key: "/chat",
     icon: <CommentOutlined />,
@@ -155,6 +155,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </Typography.Title>
           <div className="flex min-w-0 items-center gap-2">
             {!blocked && snapshot?.capabilities.read_chat ? <AccountProfile key={`${snapshot.account.epoch}:${generation}`} /> : <Typography.Text type="secondary" className="inline-block max-w-24 truncate align-middle sm:max-w-48">{snapshot?.account.self_ali_id || "尚未选择账号"}</Typography.Text>}
+            {!blocked && snapshot?.capabilities.operate_client ? <ClientLiveView key={`${snapshot.account.epoch}:${generation}:${snapshot.client.window_generation}`} /> : null}
             {temporary ? <Tooltip title="临时登录，刷新后需重新登录">{logoutButton}</Tooltip> : logoutButton}
           </div>
         </Header>

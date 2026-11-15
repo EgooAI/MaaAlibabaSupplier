@@ -476,6 +476,19 @@ def observe_outbox_verifier():
     return service.verifier_observation() if service is not None else None
 
 
+def observe_active_send(context: AccountContext) -> bool:
+    """Observes current GUI send work without initializing services or reading CRM."""
+    service = _service
+    if service is None:
+        return False
+    with service._condition:
+        return any(
+            record["action"] == "send" and record["status"] in ("navigating", "running")
+            and service._attempts[task_id].context == context
+            for task_id, record in service._active.items()
+        )
+
+
 def get_outbox_service() -> OutboxService:
     global _service
     with _service_lock:

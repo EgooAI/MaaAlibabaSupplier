@@ -13,11 +13,9 @@ import type { AssistantSuggestion } from "@/types/chatCanonical";
 import type { ExecutionRunDetail, ExecutionRunInput, ExecutionRunSummary, ExecutionState } from "@/types/execution";
 
 export interface OperationsBackend {
-  createRemoteSession(): Promise<{ session_id: string; expires_in: number }>;
-  getRemoteFrame(sessionId: string, etag?: string): Promise<{ blob: Blob | null; etag: string | null; width: number; height: number }>;
-  downloadRemoteOriginal(sessionId: string): Promise<Blob>;
-  remoteAction(input: { session_id: string; action: "click" | "long_press" | "drag" | "type"; x?: number; y?: number; x1?: number; y1?: number; x2?: number; y2?: number; duration?: number; text?: string }): Promise<void>;
-  closeRemoteSession(sessionId: string): Promise<void>;
+  getRemoteActivity(): Promise<{ sending: boolean }>;
+  getRemoteFrame(etag?: string, signal?: AbortSignal): Promise<{ blob: Blob | null; etag: string | null; width: number; height: number }>;
+  downloadRemoteOriginal(signal?: AbortSignal): Promise<Blob>;
   getConnection(): Promise<ConnectionSnapshot>;
   connectClient(epoch: AccountEpoch): Promise<ConnectionSnapshot>;
   // Submission receipt; completion is observed through committed revisions.

@@ -104,6 +104,31 @@ def test_observers_do_not_initialize_store_or_queue(env):
     assert env.queue.jobs == []
 
 
+@pytest.mark.parametrize("action,success", [("send", True), ("send", False), ("test", True)])
+def test_live_activity_tracks_only_scoped_gui_send_until_execution_finishes(env, monkeypatch, action, success):
+    monkeypatch.setattr(module, "_service", env.service)
+    assert not module.observe_active_send(env.context)
+    assert not env.service.store.database_path.exists()
+    task = submit(env, action=action)
+    assert not module.observe_active_send(env.context)
+    observed = []
+
+    def observe(*args):
+        observed.append(module.observe_active_send(env.context))
+        assert not module.observe_active_send(replace(env.context, epoch="other"))
+        assert not module.observe_active_send(replace(env.context, self_ali_id="other"))
+        return success, "controlled outcome"
+
+    monkeypatch.setattr(module.runner, "goto_contact", observe)
+    monkeypatch.setattr(module.runner, "chat_input", observe)
+    assert env.queue.run()[0] is success
+    assert observed == [action == "send"] * (2 if success else 1)
+    assert not module.observe_active_send(env.context)
+    assert env.service.get(env.context, task["id"])["status"] == (
+        "unknown" if not success else "verifying" if action == "send" else "filled"
+    )
+
+
 def test_attempt_context_retains_origin_and_changes_on_explicit_retry(env, monkeypatch):
     from backend.app.shared.utils.log_context import bind_log_context, capture_log_context
 

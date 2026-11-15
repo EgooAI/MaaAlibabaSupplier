@@ -52,6 +52,7 @@ def pytest_configure(config):
     _set_test_paths(patch, Path(temporary.name))
 
     import dotenv
+    from PIL import ImageGrab
     from maa.toolkit import Toolkit
     from backend.app.shared.utils import env, im_db_decryptor
     from backend.app.shared.backend import clipboard_input
@@ -62,6 +63,7 @@ def pytest_configure(config):
     patch.setattr(im_db_decryptor, "retrieve_db_key", _unexpected_external_access)
     patch.setattr(Toolkit, "find_desktop_windows", _unexpected_external_access)
     patch.setattr(clipboard_input, "_load_win32", _unexpected_external_access)
+    patch.setattr(ImageGrab, "grab", _unexpected_external_access)
     patch.setattr(socket, "create_connection", _unexpected_external_access)
     patch.setattr(subprocess, "Popen", _unexpected_external_access)
     config.add_cleanup(_cleanup_runtime)

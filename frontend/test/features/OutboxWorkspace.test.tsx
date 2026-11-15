@@ -148,7 +148,8 @@ describe("inline outbox workflow", () => {
     await act(async () => finish({ outbox: outboxTask({ action, idempotency_key: input.idempotency_key }) }));
     expect(chat.draft).toBe("");
     expect(Boolean(taskBubble())).toBe(action === "send");
-    expect(container.textContent).toContain(action === "send" ? "等待发送" : "等待填入");
+    if (action === "send") expect(container.textContent).toContain("正在排队中");
+    else expect(container.querySelector('[aria-label="发送状态"]')).toBeNull();
     expect(container.textContent).not.toContain("发送记录");
   });
 
@@ -236,7 +237,7 @@ describe("inline outbox workflow", () => {
     await start();
     store[0] = { ...store[0], status: "observed", version: 2, matched_message_id: "messages:7" };
     await tick();
-    expect(taskBubble()?.textContent).toContain("本地已匹配，等待同步");
+    expect(taskBubble()?.textContent).toContain("正在等待数据同步");
     detail.messages = [{ id: "other", role: "seller", content: "submitted text", createdAt: new Date().toISOString(), externalMid: "alibaba_icbu:other:messages:7" }];
     await act(async () => chat.refreshActiveDetail());
     expect(taskBubble()).not.toBeNull();
@@ -264,11 +265,11 @@ describe("inline outbox workflow", () => {
     }
   });
 
-  it("shows filled tasks outside the timeline and removes cancelled bubbles", async () => {
+  it("hides filled task status and removes cancelled bubbles", async () => {
     store = [outboxTask({ action: "test", status: "filled" }), outboxTask({ id: "cancel-me", idempotency_key: "cancel-key" })];
     await mount();
     expect(taskBubble()).toBeNull();
-    expect(container.textContent).toContain("已填入（未发送）");
+    expect(container.querySelector('[aria-label="发送状态"]')).toBeNull();
     await showDetails("cancel-me");
     await click("取消任务");
     expect(taskBubble("cancel-me")).toBeNull();
@@ -339,12 +340,12 @@ describe("inline outbox workflow", () => {
     addRecentTasks();
     store[0] = { ...store[0], status: "unknown", version: 3, may_have_sent: true };
     await tick();
-    expect(taskBubble()?.textContent).toContain("结果未知");
+    expect(taskBubble()?.textContent).toContain("任务可能失败");
     await reload();
-    expect(taskBubble()?.textContent).toContain("结果未知");
+    expect(taskBubble()?.textContent).toContain("任务可能失败");
     store[0] = { ...store[0], status: "observed", version: 4, matched_message_id: "messages:late" };
     await tick();
-    expect(taskBubble()?.textContent).toContain("本地已匹配");
+    expect(taskBubble()?.textContent).toContain("正在等待数据同步");
     expect(mocks.backend.getOutbox).toHaveBeenCalledWith("outbox-1");
     expect(mocks.backend.sendMessage).not.toHaveBeenCalled();
   });
