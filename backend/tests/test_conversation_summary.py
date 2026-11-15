@@ -125,6 +125,13 @@ class ConversationSummaryTestCase(unittest.TestCase):
         self.assertEqual(set(_minimal_customer_view("ghost")), set(full["customer_view"]))
         self.assertIsNone(_assemble_customer_view("ghost", [], [], None, public_portrait_fields(None, None)))
 
+    def test_missing_contact_does_not_inherit_a_seller_avatar(self) -> None:
+        view = _assemble_customer_view("ghost", [{
+            "aid": 1, "cid": 1, "avatar": "https://img.example/seller.png",
+            "extra": {"ali_id": SELF_ALI_ID, "is_self": True},
+        }], [], None, public_portrait_fields(None, None))
+        self.assertIsNone(view["avatar_url"])
+
 
 if __name__ == "__main__":
     unittest.main()

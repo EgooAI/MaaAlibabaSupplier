@@ -25,6 +25,7 @@ export function MessageTimeline({
   messages,
   buyerId = "buyer",
   buyerName = "",
+  buyerAvatarUrl,
   showTranslations = true,
   pendingIds,
   failedIds,
@@ -38,6 +39,7 @@ export function MessageTimeline({
   messages: ChatMessage[];
   buyerId?: string;
   buyerName?: string;
+  buyerAvatarUrl?: string;
   showTranslations?: boolean;
   pendingIds?: ReadonlySet<string>;
   failedIds?: ReadonlySet<string>;
@@ -143,7 +145,7 @@ export function MessageTimeline({
               ) : message.role === "card" ? (
                 <Avatar icon={<RobotOutlined />} style={{ backgroundColor: "#64748b" }} />
               ) : (
-                <Avatar style={{ backgroundColor: avatarColorOf(buyerId) }}>{avatarInitialOf(buyerName)}</Avatar>
+                <Avatar src={buyerAvatarUrl} alt={`${buyerName}的头像`} style={{ backgroundColor: avatarColorOf(buyerId) }}>{avatarInitialOf(buyerName)}</Avatar>
               )}
               </div>
               <div className="group/message min-w-0 [@media(hover:none)]:select-none [@media(hover:none)]:[-webkit-touch-callout:none]">

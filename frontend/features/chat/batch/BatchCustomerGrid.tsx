@@ -212,7 +212,7 @@ function CustomerCell({ group }: { group: CustomerGroup }) {
   const sub = unresolved ? "无法关联平台客户" : [customer.aliId, customer.company].filter(Boolean).join(" · ");
   return (
     <div className="flex min-w-0 items-center gap-2">
-      <Avatar size={28} className="shrink-0" style={{ backgroundColor: unresolved ? "#cbd5e1" : avatarColorOf(customer.id) }}>
+      <Avatar size={28} src={unresolved ? undefined : customer.avatarUrl} alt={`${customer.name}的头像`} className="shrink-0" style={{ backgroundColor: unresolved ? "#cbd5e1" : avatarColorOf(customer.id) }}>
         {unresolved ? "?" : avatarInitialOf(customer.name)}
       </Avatar>
       <div className="min-w-0">

@@ -20,3 +20,16 @@ export function avatarInitialOf(name?: string | null) {
   const first = Array.from(text)[0];
   return /[a-z]/.test(first) ? first.toUpperCase() : first;
 }
+
+/** Resolves platform avatar URLs without treating missing or relative paths as local resources. */
+export function avatarUrlOf(value?: string | null): string | undefined {
+  if (!value?.trim()) return undefined;
+  const source = value.trim();
+  try {
+    const url = new URL(source.startsWith("//") ? `https:${source}` : source);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return undefined;
+    return url.href;
+  } catch {
+    return undefined;
+  }
+}

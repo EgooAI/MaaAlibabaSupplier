@@ -1,5 +1,6 @@
 import type { BusinessCard } from "@/types/cards";
 import { formatFullDateTime } from "@/domain/time";
+import { avatarUrlOf } from "@/domain/chat/avatarModel";
 import { stringField } from "@/domain/guards";
 import type { ConversationAnalysis, ConversationDetail, Conversation, ChatMessage, CustomerProfile } from "@/types/chatCanonical";
 import type { ConversationAggregateDto, ConversationAnalysisDto, ConversationMessageDto, CustomerViewDto } from "@/types/chatTransport";
@@ -53,6 +54,7 @@ function adaptCustomer(aggregate: ConversationAggregateDto): CustomerProfile {
     encryptAccountId: view.encrypt_account_id ?? undefined,
     memberId: view.member_id ?? undefined,
     name: view.name,
+    avatarUrl: avatarUrlOf(view.avatar_url),
     firstName: view.first_name ?? undefined,
     lastName: view.last_name ?? undefined,
     company: view.company,
@@ -105,6 +107,7 @@ function deriveCustomerView(aggregate: ConversationAggregateDto): CustomerViewDt
     id: String(customer?.cid ?? account?.cid ?? aggregate.sid),
     ali_id: account?.account ?? null,
     name: customer?.name ?? account?.nickname ?? account?.account ?? "未知客户",
+    avatar_url: account?.avatar ?? null,
     company: stringField(extra.company) ?? "",
     country: customer?.region ?? "",
     email: stringField(accountExtra.email) ?? "",

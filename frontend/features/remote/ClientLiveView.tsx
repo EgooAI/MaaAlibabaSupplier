@@ -6,6 +6,8 @@ import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { useAccountBackend } from "@/features/account/AccountProvider";
 
+const ACTIVITY_POLL_MS = 1000;
+
 export function ClientLiveView() {
   const backend = useAccountBackend();
   const [pinned, setPinned] = useState(false);
@@ -24,7 +26,7 @@ export function ClientLiveView() {
   }, []);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || pinned) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -34,12 +36,12 @@ export function ClientLiveView() {
       } catch {
         if (active) setSending(false);
       } finally {
-        if (active) timer = setTimeout(() => void poll(), 250);
+        if (active) timer = setTimeout(() => void poll(), ACTIVITY_POLL_MS);
       }
     };
     void poll();
     return () => { active = false; clearTimeout(timer); };
-  }, [backend, visible]);
+  }, [backend, visible, pinned]);
 
   const open = visible && (pinned || hovered || sending);
   return <Popover placement="bottomRight" trigger="hover" open={open} onOpenChange={setHovered}

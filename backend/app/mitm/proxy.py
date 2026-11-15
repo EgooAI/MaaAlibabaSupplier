@@ -189,6 +189,7 @@ class TrafficRouter:
                 encrypt_account_id=account.encrypt_account_id,
                 first_name=account.first_name,
                 last_name=account.last_name,
+                avatar_url=account.avatar_url,
                 country_code=account.country,
                 company_name=account.company_name,
             )

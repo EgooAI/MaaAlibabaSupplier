@@ -141,6 +141,28 @@ describe("chat adapter", () => {
     expect(detail.customer.name).toBe("未知客户");
   });
 
+  it.each([
+    ["https://img.example/buyer.png", "https://img.example/buyer.png"],
+    [" //img.example/buyer.png ", "https://img.example/buyer.png"],
+    [null, undefined],
+    ["", undefined],
+    ["/api/private", undefined],
+    ["data:image/png;base64,AAAA", undefined],
+    ["https://user:password@img.example/buyer.png", undefined],
+  ])("maps usable avatar URLs and leaves unusable sources as placeholders: %s", (input, expected) => {
+    const dto = { ...aggregate, customer_view: { ...aggregate.customer_view!, avatar_url: input } };
+    expect(adaptConversationSummary(dto).customer.avatarUrl).toBe(expected);
+    expect(adaptConversationDetail(dto).customer.avatarUrl).toBe(expected);
+  });
+
+  it("uses only the resolved buyer's avatar when deriving a customer from SDK accounts", () => {
+    const dto = { ...aggregate, customer_view: undefined, accounts: aggregate.accounts!.map((account) => ({
+      ...account, avatar: `https://img.example/${account.aid}.png`,
+    })) };
+    expect(adaptConversationDetail(dto).customer.avatarUrl).toBe("https://img.example/101.png");
+    expect(adaptConversationSummary({ ...dto, messages: [] }).customer.avatarUrl).toBeUndefined();
+  });
+
   it("maps portrait fields and defaults them when the backend omits them", () => {
     const mapped = adaptConversationSummary({
       ...aggregate,

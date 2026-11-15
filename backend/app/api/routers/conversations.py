@@ -309,6 +309,7 @@ def _minimal_customer_view(contact_ali_id: str) -> dict:
         "encrypt_account_id": None,
         "member_id": None,
         "name": contact_ali_id,
+        "avatar_url": None,
         "first_name": None,
         "last_name": None,
         "company": "",
@@ -438,6 +439,9 @@ def _assemble_customer_view(
         }
     else:
         name = str(extra.get("account") or account.get("nickname") or contact_ali_id)
+    # Resolve the contact explicitly; a missing buyer must not inherit the seller's avatar.
+    avatar = next((a.get("avatar") for a in accounts
+                   if str((a.get("extra") or {}).get("ali_id") or "") == contact_ali_id), None)
     return {
         "id": str((customer or {}).get("cid") or (account or {}).get("cid") or contact_ali_id),
         "ali_id": (user.ali_id if user else None) or str(extra.get("ali_id") or "") or None,
@@ -445,6 +449,7 @@ def _assemble_customer_view(
         "encrypt_account_id": (user.encrypt_account_id if user else "") or None,
         "member_id": (user.ali_member_id if user else "") or None,
         "name": name,
+        "avatar_url": avatar or (user.avatar_url if user is not None else None) or None,
         "first_name": first_name or None,
         "last_name": last_name or None,
         "company": company,

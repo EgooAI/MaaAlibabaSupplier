@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 from base64 import b64decode
@@ -11,6 +12,7 @@ from zipfile import ZipFile
 import pytest
 
 from backend.app.api.routers import conversations
+from backend.app.mitm import proxy
 from backend.app.api.envelope import AppError
 from backend.app.shared.agent.system_agents import CHAT_COMPOSE_TRANSLATION_AGENT_APID
 from backend.app.shared.backend import account_context
@@ -20,7 +22,7 @@ from backend.app.shared.crm import inbox_queries, sync
 from backend.app.shared.crm.identities import message_external_id
 from backend.app.shared.crm.inbox_store import InboxStore
 from backend.app.shared.crm.sdk import AccountMapping, TranslateManager
-from backend.app.shared.mitm.pool import SelfInfo, UserInfo
+from backend.app.shared.mitm.pool import SelfInfo, UserInfo, UserInfoPool, get_user_info_pool
 from backend.tests.test_connection_api import client, sdk
 from sqlmodel import Session
 
@@ -161,6 +163,55 @@ def test_profile_resolution_country_priority_casefold_and_exact_tags(client, arc
         conn.commit()
     assert data(client, country="TR")["total"] == 0
     assert data(client, country="US")["total"] == 1
+
+
+def test_contact_avatars_reach_list_and_detail_and_survive_profile_and_im_updates(client, archive, monkeypatch):
+    adapter, apply = archive
+    adapter.ensure_platform()
+    adapter.upsert_self_info(SelfInfo(ali_id="seller-a", avatar_url="https://img.example/seller.png"))
+    groups = (("20002", [row(1, "20002")]), ("30003", [row(2, "30003")]), ("missing", [row(3, "missing")]))
+    apply(*groups)
+    # Wait for real CRM commits; only the intercepted network payload is synthetic.
+    monkeypatch.setattr(proxy, "sync_user_infos", lambda infos: sync.sync_user_infos(infos).result(timeout=5))
+    router = proxy.TrafficRouter()
+
+    def receive(api, payload):
+        router.process({
+            "url": f"https://acs.m.alibaba.com/gw/mtop.alibaba.icbu.{api}/1.0/",
+            "response_body": json.dumps({"ret": ["SUCCESS::ok"], "data": payload}).encode(),
+        })
+
+    for incoming, expected in [
+        ("https://img.example/buyer-v1.png", "https://img.example/buyer-v1.png"),
+        (None, "https://img.example/buyer-v1.png"),
+        ("https://img.example/buyer-v2.png", "https://img.example/buyer-v2.png"),
+        ("", "https://img.example/buyer-v2.png"),
+    ]:
+        if incoming is None:
+            receive("im.getuserinfobyparams", {"object": [{"aliId": "20002", "countryCode": "DE"}]})
+        else:
+            receive("contact.extinfo.get", {"data": {"accountInfoList": [
+                {"aliId": "20002", "loginId": "buyer", "avatarUrl": incoming},
+                {"aliId": "30003", "avatarUrl": "https://img.example/other.png"},
+            ]}})
+        assert adapter._account_by_mapping("ali_id", "20002").avatar == expected
+        UserInfoPool.reset_for_tests()
+        assert get_user_info_pool().get("20002").avatar_url == expected
+        apply(*groups)
+        assert adapter._account_by_mapping("ali_id", "20002").avatar == expected
+        listing = data(client)["items"]
+        assert {item["customer_view"]["ali_id"]: item["customer_view"]["avatar_url"] for item in listing} == {
+            "20002": expected, "30003": "https://img.example/other.png", "missing": None,
+        }
+        for item in listing:
+            detail = data(client, f'/api/conversations/{item["sid"]}')
+            assert detail["customer_view"]["avatar_url"] == item["customer_view"]["avatar_url"]
+
+    # A later source-only sync also retains avatars when no profile pool entry exists.
+    get_user_info_pool().clear()
+    apply(*groups)
+    assert adapter._account_by_mapping("ali_id", "20002").avatar == expected
+    assert adapter._account_by_mapping("ali_id", "seller-a").avatar == "https://img.example/seller.png"
 
 
 def test_stable_pagination_order_and_only_page_dtos(client, archive, monkeypatch):

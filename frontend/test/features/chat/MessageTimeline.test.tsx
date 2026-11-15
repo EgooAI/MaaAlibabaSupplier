@@ -41,6 +41,21 @@ afterEach(async () => {
 });
 
 describe("message timeline", () => {
+  it("shows the contact avatar only on buyer messages and falls back on image failure", async () => {
+    await render({
+      messages: [message({ id: "buyer" }), message({ id: "seller", role: "seller" }), message({ id: "system", role: "system" })],
+      buyerId: "buyer", buyerName: "Alice", buyerAvatarUrl: "https://img.example/alice.png",
+      onOpenCard: vi.fn(),
+    });
+    const images = container.querySelectorAll<HTMLImageElement>(".ant-avatar img");
+    expect(images).toHaveLength(1);
+    expect(images[0].closest("[data-message-id]")?.getAttribute("data-message-id")).toBe("buyer");
+    expect(images[0].getAttribute("src")).toBe("https://img.example/alice.png");
+    await act(async () => images[0].dispatchEvent(new Event("error")));
+    expect(container.querySelector('[data-message-id="buyer"] .ant-avatar')?.textContent).toBe("A");
+    expect(container.querySelector(".ant-avatar img")).toBeNull();
+  });
+
   it("aligns auto-reception (system) replies on the seller side", async () => {
     await render({
       messages: [

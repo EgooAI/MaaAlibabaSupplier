@@ -96,20 +96,26 @@ afterEach(async () => {
 
 describe("batch customer grid", () => {
   it("renders one row per customer, merges unresolved sessions and shows portrait state", async () => {
+    const withAvatar = fixture.map((item) => ({ ...item, customer: {
+      ...item.customer, avatarUrl: item.customer.cid === 1002 ? undefined : "https://img.example/buyer.png",
+    } }));
     await act(async () => root.render(
-      <BatchCustomerGrid conversations={fixture} selectedIds={[]} onToggleSessions={vi.fn()} onToggleAll={vi.fn()} onOpenCustomer={vi.fn()} />,
+      <BatchCustomerGrid conversations={withAvatar} selectedIds={[]} onToggleSessions={vi.fn()} onToggleAll={vi.fn()} onOpenCustomer={vi.fn()} />,
     ));
     const rows = [...container.querySelectorAll<HTMLTableRowElement>("tr[data-row-key]")];
     expect(rows.map((row) => row.getAttribute("data-row-key"))).toEqual(["c:1001", "c:1002", "na"]);
     expect(rows[0].textContent).toContain("Ahmed");
+    expect(rows[0].querySelector(".ant-avatar img")?.getAttribute("src")).toBe("https://img.example/buyer.png");
     expect(rows[0].textContent).toContain("报价/洽谈");
     expect(rows[0].textContent).toContain("长期合作");
     expect(rows[0].textContent).toContain("v3");
     expect(rows[0].textContent).toContain("未读 3");
     expect(rows[0].textContent).toContain("待回复 1");
     expect(rows[1].textContent).toContain("Maria");
+    expect(rows[1].querySelector(".ant-avatar")?.textContent).toBe("M");
     expect(rows[1].textContent).toContain("未维护");
     expect(rows[2].textContent).toContain("未识别客户");
+    expect(rows[2].querySelector(".ant-avatar img")).toBeNull();
     expect(rows[2].textContent).toContain("不可维护");
     expect(rows[2].textContent).toContain("无法关联平台客户");
   });

@@ -64,6 +64,7 @@ class UserInfo(BaseModel):
     # Profile
     first_name: str = ""
     last_name: str = ""
+    avatar_url: str = ""
     country_code: str = ""
     company_name: str = ""
     register_date: int = 0  # unix seconds
@@ -160,7 +161,7 @@ def _is_empty(val) -> bool:
 
 
 def _merge_user_info(existing: UserInfo, new: UserInfo) -> UserInfo:
-    """Merge new fields into existing, preferring non-empty/non-zero values."""
+    """Fills missing profile fields and refreshes a nonempty avatar URL."""
     merged = existing.model_dump()
     for field_name, new_val in new:
         if _is_empty(new_val):
@@ -171,7 +172,7 @@ def _merge_user_info(existing: UserInfo, new: UserInfo) -> UserInfo:
             if not old_val or not str(old_val).isdigit():
                 merged[field_name] = new_val
             continue
-        if not _is_empty(old_val):
+        if field_name != "avatar_url" and not _is_empty(old_val):
             continue
         merged[field_name] = new_val
     return UserInfo.model_validate(merged)

@@ -112,7 +112,7 @@ class CRMAdapter:
             login_id=info.login_id,
             encrypt_account_id=info.encrypt_account_id,
             display_name=_display_name(info),
-            avatar="",
+            avatar=info.avatar_url,
             is_self=False,
             extra=info.model_dump(),
             session=session,
@@ -243,7 +243,7 @@ class CRMAdapter:
             pid=PLATFORM_PID,
             account=login_id or ali_id or encrypt_account_id,
             nickname=display_name or login_id or ali_id or encrypt_account_id,
-            avatar=avatar or None,
+            avatar=avatar or (account.avatar if account is not None else None),
             sids=account.sids if account is not None else None,
             extra={**_merge_extra(account.extra if account is not None else None, extra), "is_self": is_self},
         )

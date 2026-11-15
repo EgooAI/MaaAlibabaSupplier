@@ -75,6 +75,25 @@ const render = async (item: Conversation) => {
   await act(async () => root.render(<ConversationList conversations={[item]} />));
 };
 
+it("falls back to initials for missing or failed avatars and retries a changed URL", async () => {
+  const item = conversation();
+  await render(item);
+  expect(container.querySelector(".ant-avatar")?.textContent).toBe("T");
+  item.customer.avatarUrl = "https://img.example/buyer-v1.png";
+  await render(item);
+  const image = container.querySelector<HTMLImageElement>(".ant-avatar img")!;
+  expect(image.getAttribute("src")).toBe(item.customer.avatarUrl);
+  await act(async () => image.dispatchEvent(new Event("error")));
+  expect(container.querySelector(".ant-avatar img")).toBeNull();
+  expect(container.querySelector(".ant-avatar")?.textContent).toBe("T");
+  item.customer.avatarUrl = "https://img.example/buyer-v2.png";
+  await render(item);
+  expect(container.querySelector(".ant-avatar img")?.getAttribute("src")).toBe(item.customer.avatarUrl);
+  await render(conversation({ customer: { ...item.customer, avatarUrl: undefined, name: "Maria" } }));
+  expect(container.querySelector(".ant-avatar img")).toBeNull();
+  expect(container.querySelector(".ant-avatar")?.textContent).toBe("M");
+});
+
 describe("ConversationList country marker", () => {
   it("shows only the flag before the latest message, without the ISO code", async () => {
     await render(conversation());

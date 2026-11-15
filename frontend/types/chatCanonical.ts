@@ -23,6 +23,7 @@ export interface CustomerProfile {
   encryptAccountId?: string;
   memberId?: string;
   name: string;
+  avatarUrl?: string;
   firstName?: string;
   lastName?: string;
   company: string;

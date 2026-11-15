@@ -82,7 +82,7 @@ export function ConversationList({
                 >
                   <div className="flex w-full gap-2">
                     {selectable ? <Checkbox checked={selectedIds.includes(item.id)} onClick={(event) => event.stopPropagation()} onChange={() => onToggleSelected?.(item.id)} /> : null}
-                    <Avatar size={36} className="shrink-0" style={{ backgroundColor: avatarColorOf(item.customer.id) }}>
+                    <Avatar size={36} src={item.customer.avatarUrl} alt={`${item.customer.name}的头像`} className="shrink-0" style={{ backgroundColor: avatarColorOf(item.customer.id) }}>
                       {avatarInitialOf(item.customer.name)}
                     </Avatar>
                     <div className="min-w-0 flex-1">

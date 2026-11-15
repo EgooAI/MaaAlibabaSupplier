@@ -80,6 +80,7 @@ export interface CustomerViewDto {
   encrypt_account_id?: string | null;
   member_id?: string | null;
   name: string;
+  avatar_url?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   company: string;
