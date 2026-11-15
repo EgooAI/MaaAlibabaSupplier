@@ -209,6 +209,11 @@ def runtime_observations() -> dict:
             workers[name] = queues.TaskQueue.observations(name)
     result["workers"] = workers
     result["updater"] = _updater_observation()
+    execution = sys.modules.get("backend.app.shared.backend.execution_service")
+    if execution is not None:
+        state = execution.observe_execution()
+        if isinstance(state, dict):
+            result["execution"] = state
     auth = sys.modules.get("backend.app.api.auth")
     if auth is not None:
         result["http"] = auth.http_observations()
@@ -284,6 +289,15 @@ def _runtime_summary(deadline: float) -> dict:
             observed_at = http.get("observed_at")
             if type(observed_at) in (int, float) and 0 <= observed_at < 2**63:
                 result["observations"]["http_observed_at"] = observed_at
+        execution = values.get("execution")
+        result["execution"] = {"initialized": isinstance(execution, dict)}
+        if isinstance(execution, dict):
+            for key in ("enabled", "active"):
+                if type(execution.get(key)) is bool:
+                    result["execution"][key] = execution[key]
+            for key in ("runs", "succeeded", "failed", "interrupted"):
+                if type(execution.get(key)) is int and 0 <= execution[key] < 2**63:
+                    result["execution"][key] = execution[key]
     except Exception:
         result["observations_status"] = "unavailable"
     path = paths.build_info_path(resolve_repo_root())

@@ -71,6 +71,11 @@ def pytest_configure(config):
 
 
 def _cleanup_runtime():
+    execution = sys.modules.get("backend.app.shared.backend.execution_service")
+    if execution is not None:
+        if execution._INSTANCE is not None:
+            execution._INSTANCE.shutdown()
+            execution._INSTANCE = None
     background = sys.modules.get("backend.app.background")
     if background is not None:
         background.shutdown_background()

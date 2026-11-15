@@ -11,6 +11,7 @@ import type {
   PortraitTag,
 } from "@/types/portrait";
 import type { ApiResponse } from "@/types/common";
+import type { ExecutionRunSummary } from "@/types/execution";
 import type { OperationsBackend } from "./interfaces";
 import { accountSession, AccountChangedError, captureAccount } from "./accountSession";
 import { authSession, captureAuth } from "./authSession";
@@ -283,6 +284,19 @@ export const httpBackend: OperationsBackend = {
   listTaskSnapshots: () => requestJson("/api/status/tasks"),
   getSystemStatus: () => requestJson("/api/status"),
   createTestTask: (input) => requestJson("/api/status/test-tasks", { method: "POST", body: JSON.stringify(input) }),
+
+  getExecutionState: () => requestJson("/api/app/diagnostics/execution"),
+  setExecutionEnabled: (enabled, generation) => requestJson("/api/app/diagnostics/execution", { method: "PUT", body: JSON.stringify({ enabled, generation }) }),
+  submitExecutionRun: (input) => requestJson("/api/app/diagnostics/execution/runs", { method: "POST", body: JSON.stringify(input) }),
+  listExecutionRuns: (limit) => requestJson<{ runs: ExecutionRunSummary[] }>(`/api/app/diagnostics/execution/runs${limit ? `?limit=${limit}` : ""}`).then((data) => data.runs),
+  getExecutionRun: (id, offsets) => {
+    const params = new URLSearchParams();
+    if (offsets?.stdoutOffset) params.set("stdout_offset", String(offsets.stdoutOffset));
+    if (offsets?.stderrOffset) params.set("stderr_offset", String(offsets.stderrOffset));
+    const query = params.toString();
+    return requestJson(`/api/app/diagnostics/execution/runs/${encodeURIComponent(id)}${query ? `?${query}` : ""}`);
+  },
+  cancelExecutionRun: (id) => requestJson(`/api/app/diagnostics/execution/runs/${encodeURIComponent(id)}/cancel`, { method: "POST", body: JSON.stringify({}) }),
 
   getDataDirStatus: () => requestJson("/api/settings/alibaba-data-dir"),
   saveDataDirPath: (path, epoch) => requestJson("/api/settings/alibaba-data-dir", { method: "PUT", headers: { "X-Account-Epoch": epoch }, body: JSON.stringify({ path }) }),

@@ -39,6 +39,7 @@ from backend.app.shared.utils.process_logs import (
     attach_process_log, colorless_child_env, finish_process_log, report_startup_failure,
 )
 from backend.app.shared.backend.card_sweep_service import start_card_sweep_service
+from backend.app.shared.backend.execution_service import get_execution_service
 from backend.app.shared.backend.sync_coordinator import start_sync_service
 from backend.app.shared.backend.outbox_service import start_outbox_service
 from backend.app.updater import register_update_runtime
@@ -205,6 +206,11 @@ def _main() -> None:
     maafw = MaaFWProcess(backend_root)
     runtime = get_background_runtime()
     runtime.on_shutdown("maafw-process", maafw.stop, priority=-10)
+    # Every start begins disabled and marks unfinished runs from the previous
+    # process as interrupted before the API can accept a script.
+    execution = get_execution_service()
+    execution.initialize()
+    runtime.on_shutdown("execution", execution.shutdown, priority=60)
 
     try:
         _start_mitm_receiver(host=receiver_host, port=receiver_port, internal_token=internal_token)

@@ -15,6 +15,8 @@ DATA_DIRNAME = "data"
 LOG_DIRNAME = "logs"
 CACHE_DIRNAME = ".cache"
 DEBUG_DIRNAME = "debug"
+DIAGNOSTICS_DIRNAME = "diagnostics"
+EXECUTION_DIRNAME = "execution"
 ASSETS_DIRNAME = "assets"
 DEPS_DIRNAME = "deps"
 BIN_DIRNAME = "bin"
@@ -69,6 +71,14 @@ def cache_dir(root: Path | None = None) -> Path:
 
 def debug_dir(root: Path | None = None) -> Path:
     return _backend_root(root) / DEBUG_DIRNAME
+
+
+def diagnostics_dir(root: Path | None = None) -> Path:
+    return data_dir(root) / DIAGNOSTICS_DIRNAME
+
+
+def execution_dir(root: Path | None = None) -> Path:
+    return diagnostics_dir(root) / EXECUTION_DIRNAME
 
 
 def assets_dir(root: Path | None = None) -> Path:

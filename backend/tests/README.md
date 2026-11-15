@@ -69,6 +69,12 @@ Future callbacks, account-context isolation, and cleanup after partial startup.
 and startup-failure cleanup. Sync, card-sweep, updater and experiment suites exercise
 their domain-specific shutdown and persistence behavior through the same runtime.
 
+`test_execution_service.py` replaces the process spawn boundary and covers the
+remote-execution switch, restart token and generation checks, idempotent submission,
+single active run, cancellation, timeout, output truncation, restart interruption
+and bounded history. Its API case exercises the authenticated routes. It does not
+start a real interpreter or verify Windows Job Object cleanup of grandchildren.
+
 `test_update_idle.py` advances a controlled clock and uses real managed workers,
 queues and schedules with mocked installation I/O. It covers the 15-minute window,
 short intervening work, pending tasks, callback completion, immediate manual idle

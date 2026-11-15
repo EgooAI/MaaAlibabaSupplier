@@ -13,6 +13,7 @@ import { DataDirBanner } from "@/features/settings/DataDirBanner";
 import { SyncStatus } from "@/features/account/SyncStatus";
 import { WorkerStatus } from "./WorkerStatus";
 import { BackgroundTasks } from "./BackgroundTasks";
+import { ExecutionPanel } from "./ExecutionPanel";
 
 export function StatusPage() {
   const account = useAccount();
@@ -68,6 +69,7 @@ export function StatusPage() {
       </Card>
 
         </Space> },
+        { key: "execution", label: "远程执行", children: <ExecutionPanel /> },
       ]} />
     </Space>
   );

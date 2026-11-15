@@ -44,6 +44,7 @@ _FIELDS = frozenset({
     "complete", "disconnected", "send_failed", "entry", "exception_type", "signal", "component",
     "sid", "key_kind", "unresolved", "resolved", "navigated", "body_bytes",
     "targets", "visited", "enriched", "failed", "seen", "matched", "apid", "source",
+    "execution_id",
 })
 _RUNTIME_MESSAGES = (
     "Queued task failed", "request failed", "translation query failed", "translation chunk failed",

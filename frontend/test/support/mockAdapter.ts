@@ -19,6 +19,7 @@ import type { OutboxTask, TranslationJobSnapshot } from "@/types/chatOperations"
 import { canCancel, canRetry } from "@/features/chat/outbox/outboxModel";
 import type { SelfInfo } from "@/types/home";
 import type { AliIdList, DataDirCandidates, DataDirStatus, KeyStatus, NetworkStatus, NodeTestResult, SystemStatusSnapshot, TaskSnapshot } from "@/types/status";
+import type { ExecutionRunDetail, ExecutionRunSummary, ExecutionState } from "@/types/execution";
 import type { OperationsBackend } from "@/services/interfaces";
 import type { SuggestionRun } from "@/types/suggestions";
 import { connectionSnapshot } from "@/mock/connectionData";
@@ -83,6 +84,23 @@ let receiverStatusStore: NetworkStatus = structuredClone(initialState.receiverSt
 let nodeResultStore: NodeTestResult = structuredClone(initialState.nodeResult);
 let dataDirStatusStore: DataDirStatus = structuredClone(initialState.dataDirStatus);
 let taskSnapshotStore: TaskSnapshot[] = structuredClone(initialState.taskSnapshots);
+let executionRunStore: ExecutionRunDetail[] = [];
+const executionLimits = {
+  max_script_bytes: 65536, max_output_chars: 1048576, min_timeout_s: 1,
+  default_timeout_s: 60, max_timeout_s: 300, max_runs: 20, max_age_s: 86400,
+};
+const executionSummary = (run: ExecutionRunDetail): ExecutionRunSummary => ({
+  id: run.id, status: run.status, created_at: run.created_at, started_at: run.started_at,
+  finished_at: run.finished_at, timeout_s: run.timeout_s, exit_code: run.exit_code,
+  cancel_requested: run.cancel_requested, script_bytes: run.script_bytes, error: run.error,
+  stdout_chars: run.stdout_chars, stderr_chars: run.stderr_chars,
+  stdout_truncated: run.stdout_truncated, stderr_truncated: run.stderr_truncated,
+});
+let executionStateStore: ExecutionState = {
+  enabled: false, generation: 1, start_token: "0".repeat(32),
+  interpreter: "backend\\python\\python.exe", interpreter_available: true, cwd: ".",
+  active_run_id: null, limits: executionLimits, runs: [],
+};
 let consoleStore: AgentConsoleState = structuredClone(initialState.console);
 let agentPresetStore: AgentPreset[] = structuredClone(initialState.agentPresets);
 let revisionStore: AgentPresetRevision[] = [];
@@ -215,6 +233,8 @@ export const mockBackend: OperationsBackend = {
     nodeResultStore = structuredClone(initialState.nodeResult);
     dataDirStatusStore = structuredClone(initialState.dataDirStatus);
     taskSnapshotStore = structuredClone(initialState.taskSnapshots);
+    executionRunStore = [];
+    executionStateStore = { ...executionStateStore, enabled: false, generation: executionStateStore.generation + 1, runs: [] };
     agentPresetStore = structuredClone(initialState.agentPresets);
     revisionStore = [];
     revisionSeq = 0;
@@ -658,6 +678,57 @@ export const mockBackend: OperationsBackend = {
   },
 
   listTaskSnapshots: () => delay(structuredClone(taskSnapshotStore)),
+
+  getExecutionState: () => delay(structuredClone({ ...executionStateStore, runs: executionRunStore.map(executionSummary) })),
+
+  setExecutionEnabled: async (enabled, generation) => {
+    if (generation !== executionStateStore.generation) throw new Error("执行开关已变化，请刷新后重试。");
+    executionStateStore = { ...executionStateStore, enabled, generation: generation + 1 };
+    return delay(structuredClone({ ...executionStateStore, runs: executionRunStore.map(executionSummary) }));
+  },
+
+  submitExecutionRun: async (input) => {
+    if (!executionStateStore.enabled) throw new Error("远程执行尚未开启。");
+    if (input.start_token !== executionStateStore.start_token || input.generation !== executionStateStore.generation) {
+      throw new Error("程序已重启或执行开关已变化，请刷新页面后重试。");
+    }
+    const now = Math.floor(Date.now() / 1000);
+    const stdout = "# mock output\n";
+    const detail: ExecutionRunDetail = {
+      id: input.id, status: "succeeded", created_at: now, started_at: now, finished_at: now,
+      timeout_s: input.timeout_s, exit_code: 0, cancel_requested: false,
+      script_bytes: new TextEncoder().encode(input.script).length, error: null,
+      stdout_chars: stdout.length, stderr_chars: 0, stdout_truncated: false, stderr_truncated: false,
+      script: input.script, stdout, stderr: "",
+      stdout_offset: stdout.length, stderr_offset: 0, stdout_total: stdout.length, stderr_total: 0,
+    };
+    executionRunStore = [detail, ...executionRunStore].slice(0, executionLimits.max_runs);
+    return delay(structuredClone(detail));
+  },
+
+  listExecutionRuns: (limit = executionLimits.max_runs) => delay(executionRunStore.slice(0, limit).map(executionSummary)),
+
+  getExecutionRun: (id, offsets) => {
+    const run = executionRunStore.find((item) => item.id === id);
+    if (!run) throw new Error("执行记录不存在。");
+    const stdoutOffset = Math.max(0, Math.min(offsets?.stdoutOffset ?? 0, run.stdout.length));
+    const stderrOffset = Math.max(0, Math.min(offsets?.stderrOffset ?? 0, run.stderr.length));
+    return delay(structuredClone({
+      ...run,
+      stdout: run.stdout.slice(stdoutOffset), stderr: run.stderr.slice(stderrOffset),
+      stdout_offset: stdoutOffset, stderr_offset: stderrOffset,
+    }));
+  },
+
+  cancelExecutionRun: async (id) => {
+    const run = executionRunStore.find((item) => item.id === id);
+    if (!run) throw new Error("执行记录不存在。");
+    if (run.status === "running" || run.status === "queued") {
+      run.status = "cancelled";
+      run.cancel_requested = true;
+    }
+    return delay(executionSummary(run));
+  },
 
   getSystemStatus: () => delay(structuredClone(statusStore)),
 

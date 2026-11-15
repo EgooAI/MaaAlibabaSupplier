@@ -10,6 +10,7 @@ import type { AliIdList, CreateTestTaskInput, DataDirCandidates, DataDirStatus, 
 import type { CreateExperimentInput, Experiment, ExperimentSummary, ExperimentVariantInput, RunSnapshot, UpdateExperimentInput } from "@/types/experiment";
 import type { SuggestionCatalog, SuggestionRun, SuggestionRunInput } from "@/types/suggestions";
 import type { AssistantSuggestion } from "@/types/chatCanonical";
+import type { ExecutionRunDetail, ExecutionRunInput, ExecutionRunSummary, ExecutionState } from "@/types/execution";
 
 export interface OperationsBackend {
   createRemoteSession(): Promise<{ session_id: string; expires_in: number }>;
@@ -71,6 +72,13 @@ export interface OperationsBackend {
   listTaskSnapshots(): Promise<TaskSnapshot[]>;
   getSystemStatus(): Promise<SystemStatusSnapshot>;
   createTestTask(input: CreateTestTaskInput): Promise<TaskItem>;
+
+  getExecutionState(): Promise<ExecutionState>;
+  setExecutionEnabled(enabled: boolean, generation: number): Promise<ExecutionState>;
+  submitExecutionRun(input: ExecutionRunInput): Promise<ExecutionRunDetail>;
+  listExecutionRuns(limit?: number): Promise<ExecutionRunSummary[]>;
+  getExecutionRun(id: string, offsets?: { stdoutOffset?: number; stderrOffset?: number }): Promise<ExecutionRunDetail>;
+  cancelExecutionRun(id: string): Promise<ExecutionRunSummary>;
 
   getDataDirStatus(): Promise<DataDirStatus>;
   saveDataDirPath(path: string, epoch: AccountEpoch): Promise<DataDirStatus>;

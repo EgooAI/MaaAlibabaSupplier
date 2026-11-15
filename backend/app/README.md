@@ -197,6 +197,8 @@ UI/业务以 `app.shared.crm` 为稳定入口：
 
 开发机可经 `GET /api/app/diagnostics/download` 使用现有 Bearer token 拉取近期诊断 ZIP。接口覆盖固定关键日志来源、构建信息和被动运行摘要，不绑定所选卖家、不触发 GUI 或同步；文件经过脱敏且有读取、输出和并发上限。`manifest.json` 说明缺失、截断和省略，`runtime.json` 提供 worker 及原生日志状态。使用 `tools/pull_diagnostics.py` 下载并验证完整 ZIP，详见 [诊断接口说明](api/DIAGNOSTICS.md)。
 
+系统状态页的“远程执行”提供实例级 Python 脚本执行，用于在账号、同步或 GUI 之外读取本机状态。每次后端启动恢复关闭，关闭或超时终止进程树。接口、限制与存储见 [远程执行说明](api/EXECUTION.md)。
+
 ## 应用认证
 
 启动前必须配置固定密钥的 SHA-256 摘要。登录只传输摘要，成功后签发永久 Bearer 令牌；浏览器将令牌保存在 `localStorage`，后端只在独立 `backend/data/auth.sqlite` 中保存令牌哈希。全部业务 API 都要求认证，静态登录页面公开；API 文档入口默认关闭。更换密钥并重启会撤销旧令牌，退出登录撤销当前令牌。
