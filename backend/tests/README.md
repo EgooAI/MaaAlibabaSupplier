@@ -109,7 +109,9 @@ the desktop or establish that a production native task saved its error image.
 - `test_clipboard_input.py` simulates Win32 clipboard memory, focus, keyboard events
   and a controlled clock. It checks whole-text replacement, Unicode/blank-line
   preservation, fresh copied evidence, clipboard contention, partial injection
-  cleanup and focus changes. The isolation fixture blocks native clipboard access.
+  cleanup and focus changes. Closing a writer advances the simulated sequence;
+  external ownership/sequence changes around the post-close baseline must prevent
+  input. The isolation fixture blocks native clipboard access.
 - Its native Maa tests use a custom controller with synthetic images built from
   repository button templates. They verify enabled/disabled/missing send buttons,
   action failure, repeated send/input/send operations and read-only diagnostics.

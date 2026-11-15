@@ -16,6 +16,7 @@ def desktop(monkeypatch):
         editor="Previous unsent draft", selection=False, pressed=set(), events=[],
         buffers={}, transferred=[], freed=[], destroyed=[], clipboard=0, owner=0, sequence=1,
         foreground=42, focus=43, fault=None, clock=0.0, pending_copy=None, selects=0,
+        clipboard_dirty=False,
     )
 
     def alloc(flags, size):
@@ -41,6 +42,7 @@ def desktop(monkeypatch):
         state.clipboard = 0
         state.owner = 77
         state.sequence += 1
+        state.clipboard_dirty = True
         return True
 
     def set_data(format, handle):
@@ -51,6 +53,19 @@ def desktop(monkeypatch):
         state.transferred.append(handle)
         state.sequence += 1
         return handle
+
+    def close():
+        modified, state.clipboard_dirty = state.clipboard_dirty, False
+        if modified:
+            # Windows publishes synthesized text formats when the writer closes.
+            state.sequence += 3
+        if ((modified and state.fault == "external_before_baseline")
+                or (not modified and state.owner == 77 and state.fault == "external_after_baseline")):
+            state.owner = 999
+            state.sequence += 1
+        if modified and state.fault == "focus_before_paste":
+            state.focus = 44
+        return True
 
     def clipboard_text():
         return state.buffers[state.clipboard].raw.decode("utf-16-le").split("\0", 1)[0]
@@ -116,7 +131,7 @@ def desktop(monkeypatch):
         "CreateWindowExW": lambda *args: 77,
         "DestroyWindow": lambda hwnd: state.destroyed.append(hwnd) or True,
         "OpenClipboard": lambda owner: state.fault != "busy",
-        "CloseClipboard": lambda: True,
+        "CloseClipboard": close,
         "EmptyClipboard": empty,
         "SetClipboardData": set_data,
         "GetClipboardData": lambda format: state.clipboard,
@@ -177,6 +192,17 @@ def test_partial_key_injection_releases_keys_and_does_not_replay(desktop):
     assert all(up for _, up in desktop.events[1])
     assert not desktop.pressed
     assert desktop.destroyed == [77]
+
+
+@pytest.mark.parametrize("fault", ["external_before_baseline", "external_after_baseline", "focus_before_paste"])
+def test_changes_around_closed_clipboard_baseline_prevent_input(desktop, fault):
+    desktop.fault = fault
+    with pytest.raises(clip.ClipboardInputError, match="focus_or_clipboard_changed_before_paste"):
+        clip.replace_text(42, "new draft")
+    assert desktop.editor == "Previous unsent draft"
+    assert desktop.events == []
+    assert desktop.destroyed == [77]
+    assert not desktop.freed  # The clipboard owns the successfully transferred allocation.
 
 
 @pytest.mark.parametrize("fault", ["write", "busy", "modifier_held", "background"])

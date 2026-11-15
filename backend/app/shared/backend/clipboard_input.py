@@ -131,6 +131,11 @@ class _Desktop:
                 if not self.empty_clipboard() or not self.set_clipboard(CF_UNICODETEXT, handle):
                     raise ClipboardInputError("clipboard_write_failed")
                 handle = None
+            # Closing the writer can synthesize formats and advance the sequence.
+            # Reopens to capture the published baseline while ownership is stable.
+            with self.clipboard(owner):
+                if self.clipboard_owner() != owner:
+                    raise ClipboardInputError("focus_or_clipboard_changed_before_paste")
                 return self.sequence()
         finally:
             if handle:
