@@ -2,6 +2,7 @@
 
 import ctypes
 import json
+from threading import get_ident
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -16,7 +17,7 @@ def desktop(monkeypatch):
         editor="Previous unsent draft", selection=False, pressed=set(), events=[],
         buffers={}, transferred=[], freed=[], destroyed=[], clipboard=0, owner=0, sequence=1,
         foreground=42, focus=43, fault=None, clock=0.0, pending_copy=None, selects=0,
-        clipboard_dirty=False,
+        clipboard_dirty=False, handoff_replied=False, owner_thread=None,
     )
 
     def alloc(flags, size):
@@ -79,6 +80,20 @@ def desktop(monkeypatch):
         state.owner = 999 if state.fault == "external_copy" else 42
         state.sequence += 1
 
+    def create_window(*args):
+        state.owner_thread = get_ident()
+        return 77
+
+    def peek_message(pointer, hwnd, minimum, maximum, flags):
+        assert hwnd == 77 and get_ident() == state.owner_thread
+        # PeekMessage dispatches sent WM_DESTROYCLIPBOARD even when no queued
+        # message is returned. The other process cannot publish until it replies.
+        if state.pending_copy:
+            state.handoff_replied = True
+            if state.fault == "focus_changed_in_handoff":
+                state.focus = 44
+        return False
+
     def process(key, up):
         if up:
             state.pressed.discard(key)
@@ -101,6 +116,7 @@ def desktop(monkeypatch):
         elif key == clip.VK_C and clip.VK_CONTROL in state.pressed and state.selection:
             if state.fault != "copy_missing":
                 state.pending_copy = copy
+                state.handoff_replied = False
         elif key == clip.VK_RIGHT:
             state.selection = False
 
@@ -117,7 +133,7 @@ def desktop(monkeypatch):
 
     def sleep(duration):
         state.clock += duration
-        if state.pending_copy:
+        if state.pending_copy and state.handoff_replied:
             callback, state.pending_copy = state.pending_copy, None
             callback()
 
@@ -128,15 +144,17 @@ def desktop(monkeypatch):
         "GetGUIThreadInfo": gui_info,
         "GetAsyncKeyState": lambda key: 0x8000 if state.fault == "modifier_held" else 0,
         "SendInput": send,
-        "CreateWindowExW": lambda *args: 77,
+        "CreateWindowExW": create_window,
         "DestroyWindow": lambda hwnd: state.destroyed.append(hwnd) or True,
-        "OpenClipboard": lambda owner: state.fault != "busy",
+        "OpenClipboard": lambda owner: state.fault != "busy" and state.pending_copy is None,
         "CloseClipboard": close,
         "EmptyClipboard": empty,
         "SetClipboardData": set_data,
         "GetClipboardData": lambda format: state.clipboard,
         "GetClipboardOwner": lambda: state.owner,
         "GetClipboardSequenceNumber": lambda: state.sequence,
+        "PeekMessageW": peek_message,
+        "DispatchMessageW": lambda pointer: 0,
     }.items()})
     kernel = SimpleNamespace(**{name: Mock(side_effect=fn) for name, fn in {
         "GlobalAlloc": alloc, "GlobalLock": lambda handle: handle,
@@ -173,6 +191,7 @@ def test_replaces_old_draft_preserving_text_and_blank_lines(desktop, text, copy_
     ("copy_missing", "copied_text_not_published"), ("external_copy", "clipboard_owner_mismatch"),
     ("lost_newlines", "pasted_text_mismatch"), ("select_ignored", "pasted_text_mismatch"),
     ("focus_changed", "focus_changed_during_paste"),
+    ("focus_changed_in_handoff", "focus_changed_during_paste"),
 ])
 def test_failed_paste_or_copy_cannot_report_success(desktop, fault, reason):
     desktop.fault = fault
@@ -181,6 +200,20 @@ def test_failed_paste_or_copy_cannot_report_success(desktop, fault, reason):
     assert len(desktop.events) == 1  # No retry or caret movement after failure.
     assert desktop.destroyed == [77]
     assert not desktop.pressed
+
+
+def test_clipboard_read_waits_for_owner_notification_before_reopening(desktop):
+    api = clip._Desktop()
+    owner = api.create_window()
+    api.write(owner, "original\0".encode("utf-16-le"))
+    desktop.editor = "copied text"
+    desktop.selection = True
+    api.keys(clip._chord(clip.VK_C))
+
+    assert api.copied_text(owner, 100, 4096) == "copied text"
+    assert desktop.owner == 42
+    assert desktop.pending_copy is None
+    assert 0 < desktop.clock < 1.0
 
 
 def test_partial_key_injection_releases_keys_and_does_not_replay(desktop):

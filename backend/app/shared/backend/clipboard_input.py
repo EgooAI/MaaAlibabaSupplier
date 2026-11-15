@@ -80,6 +80,9 @@ class _Desktop:
             wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID,
         )
         self.destroy_window = _bind(user, "DestroyWindow", wintypes.BOOL, wintypes.HWND)
+        self.peek_message = _bind(user, "PeekMessageW", wintypes.BOOL, ctypes.POINTER(wintypes.MSG),
+                                  wintypes.HWND, wintypes.UINT, wintypes.UINT, wintypes.UINT)
+        self.dispatch_message = _bind(user, "DispatchMessageW", ctypes.c_ssize_t, ctypes.POINTER(wintypes.MSG))
         self.open_clipboard = _bind(user, "OpenClipboard", wintypes.BOOL, wintypes.HWND)
         self.close_clipboard = _bind(user, "CloseClipboard", wintypes.BOOL)
         self.empty_clipboard = _bind(user, "EmptyClipboard", wintypes.BOOL)
@@ -103,12 +106,23 @@ class _Desktop:
             raise ClipboardInputError("client_focus_unavailable")
         return pid.value, info.focus
 
+    def pump_messages(self, owner) -> None:
+        """Services the clipboard owner on its creating thread without waiting."""
+        message = wintypes.MSG()
+        # PeekMessage also dispatches sent WM_DESTROYCLIPBOARD notifications,
+        # allowing the client to finish copying before its sequence can advance.
+        for _ in range(32):  # Bounds queued work between focus/deadline checks.
+            if not self.peek_message(ctypes.byref(message), owner, 0, 0, 0x0001):  # PM_REMOVE
+                break
+            self.dispatch_message(ctypes.byref(message))
+
     @contextmanager
     def clipboard(self, owner):
         deadline = time.monotonic() + 1.0
         while not self.open_clipboard(owner):
             if time.monotonic() >= deadline:
                 raise ClipboardInputError("clipboard_busy")
+            self.pump_messages(owner)
             time.sleep(0.01)
         try:
             yield
@@ -205,6 +219,7 @@ def replace_text(hwnd: int, text: str) -> None:
                      + _chord(VK_A) + _chord(VK_C))
         deadline = time.monotonic() + 2.0
         while True:
+            desktop.pump_messages(owner)
             if desktop.focus(hwnd) != target:
                 raise ClipboardInputError("focus_changed_during_paste")
             if desktop.sequence() != sequence:

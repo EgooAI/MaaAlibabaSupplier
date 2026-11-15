@@ -111,7 +111,10 @@ the desktop or establish that a production native task saved its error image.
   preservation, fresh copied evidence, clipboard contention, partial injection
   cleanup and focus changes. Closing a writer advances the simulated sequence;
   external ownership/sequence changes around the post-close baseline must prevent
-  input. The isolation fixture blocks native clipboard access.
+  input. Cross-process copy publication waits for the owning thread to process
+  its synchronous clipboard notification, including during clipboard contention;
+  focus changes during that handoff still abort the operation. The isolation
+  fixture blocks native clipboard access.
 - Its native Maa tests use a custom controller with synthetic images built from
   repository button templates. They verify enabled/disabled/missing send buttons,
   action failure, repeated send/input/send operations and read-only diagnostics.
