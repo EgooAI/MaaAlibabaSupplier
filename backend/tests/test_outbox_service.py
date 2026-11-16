@@ -104,6 +104,29 @@ def test_observers_do_not_initialize_store_or_queue(env):
     assert env.queue.jobs == []
 
 
+def test_html_submissions_are_rejected_before_persistence_or_gui(env):
+    with pytest.raises(AppError) as error:
+        submit(env, content="<b>body</b>", content_format="html")
+    assert error.value.status_code == 422
+    assert not env.service.store.database_path.exists()
+    assert env.queue.jobs == env.calls == []
+
+
+def test_legacy_html_retry_preserves_history_without_replaying_as_text(env):
+    env.service.start()
+    scope = {"seller": env.context.self_ali_id, "data_dir": env.context.data_dir}
+    record, _ = env.service.store.create(
+        **scope, conversation_id=1, contact_ali_id="buyer", login_id="buyer-login",
+        content="<b>body</b>", content_format="html", action="send", idempotency_key="legacy",
+    )
+    failed = env.service.store.transition(record["id"], "queued", record["version"], **scope, status="failed")
+    with pytest.raises(AppError) as error:
+        env.service.retry(env.context, record["id"], version=failed["version"])
+    assert error.value.status_code == 422
+    assert env.service.get(env.context, record["id"]) == failed
+    assert env.queue.jobs == env.calls == []
+
+
 @pytest.mark.parametrize("action,success", [("send", True), ("send", False), ("test", True)])
 def test_live_activity_tracks_only_scoped_gui_send_until_execution_finishes(env, monkeypatch, action, success):
     monkeypatch.setattr(module, "_service", env.service)

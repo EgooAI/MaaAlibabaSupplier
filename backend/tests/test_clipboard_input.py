@@ -10,7 +10,7 @@ import pytest
 
 from backend.app.shared.backend import clipboard_input as clip, paste_text_action
 from backend.app.shared.backend import clipboard_transport as transport
-from backend.app.shared.clipboard_payload import CF_UNICODETEXT, clipboard_html, read_clipboard_html, read_unicode
+from backend.app.shared.clipboard_payload import CF_UNICODETEXT, read_unicode
 
 
 @pytest.fixture
@@ -18,7 +18,7 @@ def desktop(monkeypatch):
     state = SimpleNamespace(
         editor="Previous unsent draft", selection=False, pressed=set(), events=[],
         buffers={}, formats={}, transferred=[], freed=[], destroyed=[], clipboard=0, owner=0, sequence=1,
-        editor_html=None, copy_html=True, published={},
+        published={},
         foreground=42, focus=43, fault=None, clock=0.0, pending_copy=None, selects=0,
         clipboard_dirty=False, handoff_replied=False, owner_thread=None,
     )
@@ -79,20 +79,14 @@ def desktop(monkeypatch):
     def copy():
         text = state.editor.replace("\r\n", "\n") if state.fault == "copy_lf" else state.editor
         data = (text + "\0").encode("utf-16-le") + b"\x00\xd8"  # Allocator padding may not be valid UTF-16.
+        if state.fault == "copy_invalid":
+            data = b"a"
+        if state.fault == "copy_oversized":
+            data += b" " * 65537
         handle = alloc(2, len(data))
         ctypes.memmove(handle, data, len(data))
         state.clipboard = handle
         state.formats = {CF_UNICODETEXT: handle}
-        if state.editor_html is not None and state.copy_html:
-            copied = state.editor_html.replace("<b>", "<strong>").replace("</b>", "</strong>") if state.fault == "html_changed" else state.editor_html
-            html = clipboard_html(copied)
-            if state.fault == "html_invalid":
-                html = b"invalid CF_HTML\0"
-            if state.fault == "html_oversized":
-                html += b" " * 65537
-            handle = alloc(2, len(html))
-            ctypes.memmove(handle, html, len(html))
-            state.formats[49152] = handle
         if state.fault == "copy_formats_missing":
             state.formats.clear()
         state.owner = 999 if state.fault == "external_copy" else 42
@@ -122,12 +116,9 @@ def desktop(monkeypatch):
             state.selection = not (state.fault == "select_ignored" and state.selects == 1)
         elif key == clip.VK_BACK:
             state.editor = "" if state.selection else state.editor[:-1]
-            state.editor_html = None
             state.selection = False
         elif key == clip.VK_V and transport.VK_CONTROL in state.pressed:
             state.published = {format: state.buffers[handle].raw for format, handle in state.formats.items()}
-            if 49152 in state.formats:
-                state.editor_html = read_clipboard_html(state.published[49152])
             value = clipboard_text()
             if state.fault == "lost_newlines":
                 value = value.replace("\r", "").replace("\n", "")
@@ -173,7 +164,7 @@ def desktop(monkeypatch):
         "EmptyClipboard": empty,
         "SetClipboardData": set_data,
         "IsClipboardFormatAvailable": lambda format: format in state.formats,
-        "GetClipboardData": lambda format: 0 if format == 49152 and state.fault == "html_unreadable" else state.formats.get(format, 0),
+        "GetClipboardData": lambda format: 0 if state.fault == "copy_unreadable" else state.formats.get(format, 0),
         "RegisterClipboardFormatW": lambda name: 49152,
         "GetClipboardOwner": lambda: state.owner,
         "GetClipboardSequenceNumber": lambda: state.sequence,
@@ -216,16 +207,16 @@ def test_replaces_old_draft_preserving_text_and_blank_lines(desktop, text, copy_
 @pytest.mark.parametrize("fault,reason", [
     ("copy_missing", "copied_text_not_published"), ("external_copy", "clipboard_owner_mismatch"),
     ("copy_formats_missing", "copied_format_missing"),
+    ("copy_unreadable", "copied_format_unavailable"), ("copy_invalid", "copied_content_invalid"),
+    ("copy_oversized", "copied_text_invalid_size"),
     ("lost_newlines", "pasted_text_mismatch"), ("select_ignored", "pasted_text_mismatch"),
     ("focus_changed", "focus_changed_during_paste"),
     ("focus_changed_in_handoff", "focus_changed_during_paste"),
 ])
-@pytest.mark.parametrize("content_format", ["text", "html"])
-def test_failed_paste_or_copy_cannot_report_success(desktop, fault, reason, content_format):
+def test_failed_paste_or_copy_cannot_report_success(desktop, fault, reason):
     desktop.fault = fault
-    desktop.copy_html = False
     with pytest.raises(RuntimeError, match=reason):
-        clip.replace_text(42, "First\n\n第二段" if content_format == "text" else "<b>First</b><br><br>第二段", content_format)
+        clip.replace_text(42, "First\n\n第二段")
     assert len(desktop.events) == 1  # No retry or caret movement after failure.
     assert desktop.destroyed == [77]
     assert not desktop.pressed
@@ -284,12 +275,15 @@ def test_unavailable_clipboard_or_window_prevents_keyboard_input(desktop, fault)
         assert desktop.kernel.GlobalAlloc.call_count == 0
 
 
-@pytest.mark.parametrize("hwnd,text", [(0, "text"), (True, "text"), (42, ""), (42, "a\0b"), (42, 1)])
-def test_invalid_payload_is_rejected_before_native_access(monkeypatch, hwnd, text):
+@pytest.mark.parametrize("hwnd,text,format", [
+    (0, "text", "text"), (True, "text", "text"), (42, "", "text"),
+    (42, "a\0b", "text"), (42, 1, "text"), (42, "<b>text</b>", "html"),
+])
+def test_invalid_payload_is_rejected_before_native_access(monkeypatch, hwnd, text, format):
     load = Mock(side_effect=AssertionError("Unexpected native access"))
     monkeypatch.setattr(transport, "_load_win32", load)
     with pytest.raises(ValueError):
-        clip.replace_text(hwnd, text)
+        clip.replace_text(hwnd, text, format)
     load.assert_not_called()
 
 
@@ -312,64 +306,26 @@ def test_action_uses_its_controller_and_reports_failed_verification(desktop):
     assert desktop.editor == "onetwo"
 
 
-@pytest.mark.parametrize("content_format", ["text", "html"])
-def test_html_literal_or_rendered_paste_uses_selected_format(desktop, content_format):
-    content = "<b>中文 🙂</b><br>Next &amp; last"
-    argv = SimpleNamespace(custom_action_param=json.dumps({"text": content, "content_format": content_format}),
+@pytest.mark.parametrize("content", [
+    "<b>Bold test</b>", "<b>Bold test</b>\n<li>List test</li>",
+    "<b>中文 🙂</b><br>Next &amp; last", '<img src="example.png">',
+])
+def test_html_looking_text_is_pasted_literally_and_only_as_unicode(desktop, content):
+    argv = SimpleNamespace(custom_action_param=json.dumps({"text": content, "content_format": "text"}),
                            node_name="ChatInput_PasteText", task_detail=SimpleNamespace(task_id=42))
     context = SimpleNamespace(tasker=SimpleNamespace(controller=SimpleNamespace(info={"type": "win32", "hwnd": 42})))
     assert paste_text_action.PasteChatText().run(context, argv)
-    if content_format == "html":
-        assert desktop.editor_html == content
-        assert desktop.editor == "中文 🙂\r\nNext & last"
-        assert set(desktop.published) == {CF_UNICODETEXT, 49152}
-    else:
-        assert desktop.editor_html is None and desktop.editor == content
-        assert set(desktop.published) == {CF_UNICODETEXT}
-    assert not desktop.freed and desktop.destroyed == [77]
-
-
-@pytest.mark.parametrize("content,expected", [
-    ("<b>Bold test</b>", "Bold test"),
-    ("<b>Bold test</b>\n<li>List test</li>", "Bold test\r\nList test"),
-    ("<p>中文 🙂 &amp; &lt;b&gt;</p><p>next<br><br>line</p>", "中文 🙂 & <b>\r\nnext\r\n\r\nline"),
-])
-def test_html_paste_accepts_text_only_client_copy_and_clears_selection(desktop, content, expected):
-    desktop.copy_html = False
-    clip.replace_text(42, content, "html")
-    assert desktop.editor_html == content and desktop.editor == expected
-    assert set(desktop.published) == {CF_UNICODETEXT, 49152}
-    assert read_clipboard_html(desktop.published[49152]) == content
-    assert desktop.owner == 42 and desktop.clock > 0
+    assert desktop.editor == content.replace("\n", "\r\n")
+    assert set(desktop.published) == {CF_UNICODETEXT}
     assert not desktop.selection and not desktop.pressed
-    assert len(desktop.events) == 2 and desktop.destroyed == [77]
-
-
-@pytest.mark.parametrize("fault,reason", [
-    ("html_changed", "pasted_text_mismatch"), ("html_invalid", "copied_content_invalid"),
-    ("html_unreadable", "copied_format_unavailable"), ("html_oversized", "copied_text_invalid_size"),
-    ("external_copy", "clipboard_owner_mismatch"), ("focus_changed", "focus_changed_during_paste"),
-])
-def test_advertised_html_readback_cannot_fall_back_to_matching_text(desktop, fault, reason):
-    desktop.fault = fault
-    with pytest.raises(clip.ClipboardInputError, match=reason):
-        clip.replace_text(42, "<b>same words</b>", "html")
-    assert len(desktop.events) == 1
-    assert desktop.destroyed == [77]
-
-
-def test_empty_plain_text_is_not_evidence_of_html_only_content(desktop):
-    desktop.copy_html = False
-    with pytest.raises(clip.ClipboardInputError, match="copied_format_missing"):
-        clip.replace_text(42, '<img src="example.png">', "html")
-    assert desktop.editor == ""
-    assert len(desktop.events) == 1 and desktop.destroyed == [77]
+    assert not desktop.freed and desktop.destroyed == [77]
 
 
 def test_partial_multiformat_publication_frees_only_untransferred_memory(desktop):
     desktop.fault = "second_format_write"
+    api = transport.Desktop()
     with pytest.raises(clip.ClipboardInputError, match="clipboard_write_failed"):
-        clip.replace_text(42, "<b>body</b>", "html")
+        api.write(77, (("Test Format", b"opaque data"), (CF_UNICODETEXT, "body\0".encode("utf-16-le"))))
     assert len(desktop.transferred) == len(desktop.freed) == 1
     assert set(desktop.transferred).isdisjoint(desktop.freed)
     assert desktop.events == []

@@ -38,7 +38,7 @@ export type MessageFormat = "text" | "html";
 export interface SendMessageInput {
   conversationId: string;
   content: string;
-  content_format?: MessageFormat;
+  content_format?: "text";
   action: "test" | "send";
   idempotency_key: string;
   /** The reply intent this submission accepts; ignored when the text was edited. */

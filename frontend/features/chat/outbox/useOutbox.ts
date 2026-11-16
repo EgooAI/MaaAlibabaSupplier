@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAccount, useAccountBackend, AccountChangedError } from "@/features/account/AccountProvider";
-import type { MessageFormat, OutboxTask } from "@/types/chatOperations";
+import type { OutboxTask } from "@/types/chatOperations";
 import { intentKey, loadIntents, persistIntents, type PendingIntent } from "./intentStorage";
 import { canCancel, canRetry, isTerminal } from "./outboxModel";
 import { captureAccount } from "@/services/accountSession";
@@ -111,7 +111,7 @@ export function useOutbox(sid: string) {
     return () => { clearInterval(timer); document.removeEventListener("visibilitychange", visibleRefresh); };
   }, [refresh]);
 
-  async function submit(content: string, action: PendingIntent["action"], draftId: string, intentId?: string, fixedIntent?: PendingIntent, contentFormat: MessageFormat = "text") {
+  async function submit(content: string, action: PendingIntent["action"], draftId: string, intentId?: string, fixedIntent?: PendingIntent) {
     if (locked.current || blocked || !snapshot?.capabilities.operate_client || !content.trim()) return false;
     locked.current = true;
     setBusy(true);
@@ -121,9 +121,10 @@ export function useOutbox(sid: string) {
       const saved = readStorage();
       const prior = fixedIntent ?? saved.findLast((item) => item.draftId === draftId && item.action === action);
       const intent: PendingIntent = prior ?? {
-        key: crypto.randomUUID(), content, action, contentFormat, draftId, ...(intentId ? { intentId } : {}),
+        key: crypto.randomUUID(), content, action, contentFormat: "text", draftId, ...(intentId ? { intentId } : {}),
       };
-      if (intent.content !== content || intent.action !== action || (intent.contentFormat ?? "text") !== contentFormat) throw new Error("提交内容或格式与原意图不匹配，请恢复原提交");
+      if (intent.content !== content || intent.action !== action) throw new Error("提交内容与原意图不匹配，请恢复原提交");
+      const contentFormat = intent.contentFormat ?? "text";
       try {
         setIntents(persistIntents(localStorage, storageKey, [intent]));
         setStorageError(false);
@@ -146,6 +147,10 @@ export function useOutbox(sid: string) {
       if (existing) {
         if (existing.content !== content || existing.action !== action || (existing.content_format ?? "text") !== contentFormat) throw new Error("任务响应不匹配");
         accept([existing], true); setError(undefined); return existing;
+      }
+      if (contentFormat !== "text") {
+        setError("旧 HTML 提交仅支持核对已有任务，不能恢复发送。请编辑草稿后以纯文本重新提交。");
+        return false;
       }
       const result = await backend.sendMessage({
         conversationId: sid, content: intent.content, action: intent.action,

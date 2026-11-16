@@ -378,15 +378,15 @@ describe("http adapter contract", () => {
     await expect(httpBackend.getSelfInfo()).rejects.toThrow("账号状态已变化");
   });
 
-  it.each(["text", "html"] as const)("submits the immutable %s format and idempotency key and returns the outbox receipt", async (format) => {
+  it("submits literal markup as text with its idempotency key and returns the outbox receipt", async () => {
     const outbox = { id: "task-1", status: "queued", idempotency_key: "key" };
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: { outbox } })));
     globalThis.fetch = fetchMock;
 
-    const input = { conversationId: "42", content: "<b>hello</b>", content_format: format, action: "send" as const, idempotency_key: "key" };
+    const input = { conversationId: "42", content: "<b>hello</b>", content_format: "text" as const, action: "send" as const, idempotency_key: "key" };
     const result = await httpBackend.sendMessage(input);
     expect(result).toEqual({ outbox });
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ content: "<b>hello</b>", content_format: format, action: "send", idempotency_key: "key" });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ content: "<b>hello</b>", content_format: "text", action: "send", idempotency_key: "key" });
   });
 
   it.each([undefined, "ChatInput_GoToInput", "ContactSearch_GoToSearch"] as const)("submits node entry %s and preserves the asynchronous receipt", async (entry) => {

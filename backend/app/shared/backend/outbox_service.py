@@ -172,6 +172,8 @@ class OutboxService:
 
     def retry(self, context: AccountContext, task_id: str, *, version: int | None = None) -> dict:
         self.start()
+        if self._require(context, task_id)["content_format"] != "text":
+            raise AppError("暂不支持 HTML 格式发送，请编辑草稿后以纯文本重新提交。", status_code=422)
         token = self._capture_token(context)
         with self._condition:
             self._accepting()
@@ -289,6 +291,7 @@ class OutboxService:
             self._active[task_id] = current
         failure = "gui_execution_interrupted"
         try:
+            validate_content(queued["content"], queued["content_format"])
             baseline = None
             if queued["action"] == "send":
                 from backend.app.shared.backend.source_messages import read_source_messages

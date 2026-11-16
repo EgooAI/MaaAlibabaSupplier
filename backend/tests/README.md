@@ -123,20 +123,21 @@ the desktop or establish that a production native task saved its error image.
   its synchronous clipboard notification, including during clipboard contention;
   focus changes during that handoff still abort the operation. The isolation
   fixture blocks native clipboard access.
-- `test_clipboard_payload.py` checks CF_HTML byte offsets with Chinese/emoji and
-  rejects malformed fragment ranges. Clipboard tests cover both selected formats,
-  text-only HTML readback with the production test messages, unchanged HTML
-  publication, and selection cleanup. Missing all permitted formats, changed or
-  unreadable advertised HTML, malformed/oversized data, empty text for nontext HTML,
-  and stale/wrong-owner or mismatched text cannot bypass verification. Tests also
-  cover partial multi-format memory transfer. Outbox
+- `test_clipboard_payload.py` checks literal Unicode wire bytes with tags, entities,
+  Chinese/emoji and blank lines, and rejects malformed Unicode data. Clipboard
+  tests preserve the production markup samples as literal text, publish only
+  Unicode, clear selection after successful readback, and reject HTML-format input
+  before native access. Missing/unreadable formats, malformed/oversized data, and
+  stale/wrong-owner or mismatched text cannot bypass verification. Generic transport
+  tests retain partial multi-format memory-transfer coverage. Outbox
   API tests carry format selection through durable tasks, native parameters and
   source reconciliation; store tests cover legacy text defaults and format-bound
   idempotency/retry. Matching tests include the production escaped-text samples,
-  exact HTML and cross-format ambiguity. Frontend workflow tests cover the format
-  dialog, cancellation, frozen drafts, account changes and reload recovery. These
-  use simulated clipboard I/O and temporary databases; actual client HTML rendering
-  and copy serialization still require real-client acceptance.
+  historical HTML and cross-format ambiguity. API/service tests reject new HTML
+  sends and historical HTML retries. Frontend workflow tests cover the warning,
+  cancellation, frozen drafts, account changes, reload recovery and lookup-only
+  recovery of legacy HTML intents. These use simulated clipboard I/O and temporary
+  databases; actual client paste and copy behavior still require real-client acceptance.
 - Its native Maa tests use a custom controller with synthetic images built from
   repository button templates. They verify enabled/disabled/missing send buttons,
   action failure, repeated send/input/send operations and read-only diagnostics.

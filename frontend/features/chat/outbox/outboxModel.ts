@@ -10,7 +10,7 @@ export const outboxLabels: Record<OutboxStatus, string> = {
 const TERMINAL: OutboxStatus[] = ["observed", "filled", "failed", "unknown", "cancelled"];
 export const isTerminal = (task: OutboxTask) => TERMINAL.includes(task.status);
 export const canCancel = (task: OutboxTask) => task.status === "queued";
-export const canRetry = (task: OutboxTask) => task.status === "failed" && !task.may_have_sent;
+export const canRetry = (task: OutboxTask) => task.status === "failed" && !task.may_have_sent && task.content_format !== "html";
 
 export function pendingBubbles(tasks: OutboxTask[], messages: ChatMessage[], seller: string, sid: string) {
   const synced = new Set(messages.map((message) => message.externalMid));

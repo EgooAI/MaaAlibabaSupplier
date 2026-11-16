@@ -166,8 +166,8 @@ the submitting request's context, so correlate the native job with `maa.submitte
 `copied_format_missing` means none of the permitted readback formats was advertised;
 `copied_format_unavailable` means an advertised format could not be retrieved.
 `copied_text_invalid_size` means retrieved data has zero size or exceeds its bound.
-HTML input permits exact Unicode readback only when HTML is not advertised and the
-plain-text companion is nonempty. This does not establish retained HTML formatting.
+Chat input publishes and verifies literal Unicode text only. HTML-format input is
+no longer accepted; markup in text is preserved as literal characters.
 Older free-form clipboard failures were already replaced with `Log message omitted`
 in the runtime file; their specific reasons cannot be recovered by exporting again.
 

@@ -35,7 +35,7 @@ vi.mock("antd", () => {
     Select: () => null,
     Empty: Object.assign(({ description }: { description: string }) => <div>{description}</div>, { PRESENTED_IMAGE_SIMPLE: null }),
     Drawer: ({ open, children }: { open: boolean; children: ReactNode }) => open ? <aside>{children}</aside> : null,
-    Modal: ({ title, open, children, footer, onCancel }: { title: string; open: boolean; children: ReactNode; footer: ReactNode; onCancel: () => void }) => open ? <div role="dialog"><h2>{title}</h2>{children}{footer}<button onClick={onCancel}>关闭格式选择</button></div> : null,
+    Modal: ({ title, open, children, footer, onCancel }: { title: string; open: boolean; children: ReactNode; footer: ReactNode; onCancel: () => void }) => open ? <div role="dialog"><h2>{title}</h2>{children}{footer}<button onClick={onCancel}>关闭提示</button></div> : null,
     Alert: ({ title, action }: { title: ReactNode; action: ReactNode }) => <div role="alert">{title}{action}</div>,
   };
 });
@@ -123,41 +123,43 @@ afterEach(async () => {
 });
 
 describe("inline outbox workflow", () => {
-  it("keeps suggestion provenance when HTML format selection is cancelled", async () => {
+  it("keeps suggestion provenance when the HTML warning is cancelled", async () => {
     await start();
     await act(async () => chat.insertSuggestion({ id: "html-intent", intentId: "html-intent", content: "<b>Offer</b>", zh: "报价", tone: "friendly", status: "requested" }));
     await click("发送");
-    await click("关闭格式选择");
+    await click("取消");
     await click("发送");
-    await click("以 HTML 发送");
-    expect(mocks.backend.sendMessage.mock.calls[0][0]).toMatchObject({ intent_id: "html-intent", content_format: "html" });
+    await click("仍要发送");
+    expect(mocks.backend.sendMessage.mock.calls[0][0]).toMatchObject({ intent_id: "html-intent", content_format: "text", content: "<b>Offer</b>" });
   });
 
-  it.each(["text", "html"] as const)("asks about HTML and freezes the %s choice before submission", async (format) => {
+  it.each(["send", "test"] as const)("warns about HTML and freezes the literal text before %s", async (action) => {
     await start();
     await edit("<b>bold test</b>");
-    await act(async () => { button("发送")!.click(); button("发送")!.click(); });
+    const label = action === "send" ? "发送" : "仅填入客户端";
+    await act(async () => { button(label)!.click(); button(label)!.click(); });
     expect(container.querySelectorAll('[role="dialog"]')).toHaveLength(1);
     expect(container.textContent).toContain("检测到 HTML 元素");
-    expect(container.textContent).toContain("是否按照 HTML 格式发送？");
+    expect(container.textContent).toContain(`HTML 文本可能不支持展示，是否仍要${action === "send" ? "发送" : "填入"}？`);
+    expect(button("以 HTML 发送")).toBeUndefined();
     expect(mocks.backend.sendMessage).not.toHaveBeenCalled();
     expect(intents()).toHaveLength(0);
-    await edit("new draft during format selection");
-    await click(format === "html" ? "以 HTML 发送" : "以纯文本发送");
+    await edit("new draft during confirmation");
+    await click(action === "send" ? "仍要发送" : "仍要填入");
     expect(mocks.backend.sendMessage).toHaveBeenCalledOnce();
-    expect(mocks.backend.sendMessage.mock.calls[0][0]).toMatchObject({ content: "<b>bold test</b>", content_format: format });
-    expect(intents()[0].contentFormat).toBe(format);
-    expect(chat.draft).toBe("new draft during format selection");
+    expect(mocks.backend.sendMessage.mock.calls[0][0]).toMatchObject({ content: "<b>bold test</b>", content_format: "text", action });
+    expect(intents()[0].contentFormat).toBe("text");
+    expect(chat.draft).toBe("new draft during confirmation");
   });
 
-  it.each(["send", "test"] as const)("recovers an HTML %s timeout with the same format and key after reload", async (action) => {
+  it.each(["send", "test"] as const)("recovers a confirmed markup-containing %s with the same text and key after reload", async (action) => {
     await start();
     await edit("<p>First</p><p>第二段 🙂</p>");
     mocks.backend.sendMessage.mockRejectedValueOnce(new Error("timeout"));
     await click(action === "send" ? "发送" : "仅填入客户端");
-    await click("以 HTML 发送");
+    await click(action === "send" ? "仍要发送" : "仍要填入");
     const original = mocks.backend.sendMessage.mock.calls[0][0];
-    expect(original).toMatchObject({ action, content_format: "html" });
+    expect(original).toMatchObject({ action, content_format: "text", content: "<p>First</p><p>第二段 🙂</p>" });
     await reload();
     await click("恢复原提交");
     expect(container.querySelector('[role="dialog"]')).toBeNull();
@@ -165,20 +167,40 @@ describe("inline outbox workflow", () => {
     expect(chat.draft).toBe("");
   });
 
-  it.each(["cancel", "conversation", "account"])("abandons an unsubmitted HTML choice after %s", async (change) => {
+  it.each(["cancel", "close", "conversation", "account"])("abandons an unconfirmed HTML warning after %s", async (change) => {
     await start();
     await edit("<b>pending</b>");
     await click("发送");
-    if (change === "cancel") await click("关闭格式选择");
+    if (change === "cancel") await click("取消");
+    if (change === "close") await click("关闭提示");
     if (change === "conversation") await act(async () => chat.selectConversation("43"));
     if (change === "account") await act(async () => accountSession.accept({ ...ready(), account: { ...connectionSnapshot.account, epoch: "other" } }));
     expect(container.querySelector('[role="dialog"]')).toBeNull();
     expect(mocks.backend.sendMessage).not.toHaveBeenCalled();
     expect(intents()).toHaveLength(0);
-    if (change === "cancel") expect(chat.draft).toBe("<b>pending</b>");
+    if (change === "cancel" || change === "close") expect(chat.draft).toBe("<b>pending</b>");
   });
 
-  it.each(["price < 5 & quantity > 2", "&lt;b&gt;literal&lt;/b&gt;", "<!-- comment -->plain"])("sends element-free text without a format dialog: %s", async (content) => {
+  it.each([false, true])("only reconciles a legacy HTML intent without resubmitting or retrying it (exists=%s)", async (exists) => {
+    await start();
+    const legacy = { key: "legacy-html", content: "<b>old</b>", contentFormat: "html", action: "send" };
+    localStorage.setItem(intentKey(connectionSnapshot.account, "42"), JSON.stringify([legacy]));
+    await reload();
+    if (exists) store.push(outboxTask({ id: "legacy-html", idempotency_key: legacy.key, content: legacy.content, content_format: "html", status: "failed" }));
+    await click("恢复原提交");
+    expect(mocks.backend.sendMessage).not.toHaveBeenCalled();
+    expect(mocks.backend.retryOutbox).not.toHaveBeenCalled();
+    expect(intents()[0]).toMatchObject(legacy);
+    expect(chat.draft).toBe("submitted text");
+    if (exists) {
+      expect(taskBubble("legacy-html")).not.toBeNull();
+      expect(button("重试")).toBeUndefined();
+    } else {
+      expect(container.textContent).toContain("旧 HTML 提交仅支持核对已有任务，不能恢复发送");
+    }
+  });
+
+  it.each(["price < 5 & quantity > 2", "&lt;b&gt;literal&lt;/b&gt;", "<!-- comment -->plain"])("sends element-free text without a warning: %s", async (content) => {
     await start();
     await edit(content);
     await click("发送");

@@ -103,7 +103,7 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
     };
   }
 
-  /** Reads provenance without consuming a draft whose format choice can be cancelled. */
+  /** Reads provenance without consuming a draft whose HTML warning can be cancelled. */
   const getPendingIntent = useCallback((content: string) => {
     const pending = pendingIntentRef.current;
     if (!pending || pending.content !== content) return undefined;

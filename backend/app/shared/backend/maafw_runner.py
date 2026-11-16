@@ -24,6 +24,7 @@ from backend.app.shared.backend.account_context import account_lock
 from backend.app.shared.backend.gui_evidence import ClientFrame, frame_from_image
 from backend.app.shared.backend.maafw_nodes import DIAGNOSTIC_NODE_NAMES
 from backend.app.shared.backend.paste_text_action import PasteChatText
+from backend.app.shared.message_content import validate_content
 from backend.app.shared.utils import paths
 from backend.app.shared.utils.log_context import log_event
 from backend.app.shared.utils.native_logs import NativeLogSessions, NATIVE_MAX_BYTES
@@ -320,6 +321,7 @@ def goto_contact(contact_ref: str) -> tuple[bool, str]:
 
 def chat_input_override(text: str, *, send: bool, content_format: str = "text") -> dict:
     """Specify both branches on every call, including nested Agent tasks."""
+    validate_content(text, content_format)
     return {
         "ChatInput_PasteText": {
             "action": {

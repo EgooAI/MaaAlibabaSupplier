@@ -80,20 +80,17 @@ def test_single_submission_contract_and_immutable_content(client, outbox, sdk, a
     assert "private-source" not in str(result)
 
 
-@pytest.mark.parametrize("format,source", [
-    ("text", "&lt;b&gt;bold&nbsp;test&lt;/b&gt;"), ("html", "<b>bold test</b>"),
-])
-def test_selected_format_survives_api_queue_and_local_verification(client, outbox, sdk, format, source):
-    task = prepared(client, outbox, content="<b>bold test</b>", content_format=format)
-    assert task["content_format"] == format and task["may_have_sent"]
+def test_html_looking_text_survives_api_queue_and_literal_verification(client, outbox, sdk):
+    task = prepared(client, outbox, content="<b>bold test</b>")
+    assert task["content_format"] == "text" and task["may_have_sent"]
     assert sdk.calls[1][1]["ChatInput_PasteText"]["action"]["param"]["custom_action_param"] == {
-        "text": "<b>bold test</b>", "content_format": format,
+        "text": "<b>bold test</b>", "content_format": "text",
     }
-    assert submit(client, content="<b>bold test</b>", content_format="html" if format == "text" else "text").status_code == 409
+    assert submit(client, content="<b>bold test</b>", content_format="html").status_code == 422
     context = account_context.get_account_context()
     outbox.source.update(checked_at=time.time(), messages=[{
         "id": "selected-format-message", "sender_id": self_sender_id(context.self_ali_id),
-        "cid": f"{context.self_ali_id}-buyer", "type": 0, "text": source,
+        "cid": f"{context.self_ali_id}-buyer", "type": 0, "text": "&lt;b&gt;bold&nbsp;test&lt;/b&gt;",
         "created_at": time.time(), "is_system": False, "is_auto_reply": False, "extension_valid": True,
     }])
     assert len(outbox.service.reconcile_once()) == 1
@@ -157,6 +154,7 @@ def test_lost_receipt_can_recover_an_already_accepted_reply_intent(client, outbo
     {"content": "hello", "action": "send", "idempotency_key": " "},
     {"content": "hello", "action": "send", "idempotency_key": "x" * 129},
     {"content": "hello", "action": "send", "idempotency_key": "key", "content_format": "invalid"},
+    {"content": "<b>hello</b>", "action": "send", "idempotency_key": "key", "content_format": "html"},
 ])
 def test_submit_validation_never_queues(client, outbox, payload):
     response = client.post("/api/conversations/1/messages", json=payload)

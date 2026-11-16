@@ -173,7 +173,7 @@ class GotoContactInput(BaseModel):
 
 class SendMessageInput(BaseModel):
     content: str = Field(min_length=1)
-    content_format: Literal["text", "html"] = "text"
+    content_format: Literal["text"] = "text"
     action: Literal["send", "test"]
     idempotency_key: str = Field(min_length=1, max_length=128, pattern=r"\S")
     # The reply intent this submission accepts; optional for hand-typed messages.
