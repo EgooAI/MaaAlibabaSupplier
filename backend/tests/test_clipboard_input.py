@@ -18,7 +18,7 @@ def desktop(monkeypatch):
     state = SimpleNamespace(
         editor="Previous unsent draft", selection=False, pressed=set(), events=[],
         buffers={}, formats={}, transferred=[], freed=[], destroyed=[], clipboard=0, owner=0, sequence=1,
-        editor_html=None, published={},
+        editor_html=None, copy_html=True, published={},
         foreground=42, focus=43, fault=None, clock=0.0, pending_copy=None, selects=0,
         clipboard_dirty=False, handoff_replied=False, owner_thread=None,
     )
@@ -83,12 +83,18 @@ def desktop(monkeypatch):
         ctypes.memmove(handle, data, len(data))
         state.clipboard = handle
         state.formats = {CF_UNICODETEXT: handle}
-        if state.editor_html is not None and state.fault != "html_missing":
+        if state.editor_html is not None and state.copy_html:
             copied = state.editor_html.replace("<b>", "<strong>").replace("</b>", "</strong>") if state.fault == "html_changed" else state.editor_html
             html = clipboard_html(copied)
+            if state.fault == "html_invalid":
+                html = b"invalid CF_HTML\0"
+            if state.fault == "html_oversized":
+                html += b" " * 65537
             handle = alloc(2, len(html))
             ctypes.memmove(handle, html, len(html))
             state.formats[49152] = handle
+        if state.fault == "copy_formats_missing":
+            state.formats.clear()
         state.owner = 999 if state.fault == "external_copy" else 42
         state.sequence += 1
 
@@ -166,7 +172,8 @@ def desktop(monkeypatch):
         "CloseClipboard": close,
         "EmptyClipboard": empty,
         "SetClipboardData": set_data,
-        "GetClipboardData": lambda format: state.formats.get(format, 0),
+        "IsClipboardFormatAvailable": lambda format: format in state.formats,
+        "GetClipboardData": lambda format: 0 if format == 49152 and state.fault == "html_unreadable" else state.formats.get(format, 0),
         "RegisterClipboardFormatW": lambda name: 49152,
         "GetClipboardOwner": lambda: state.owner,
         "GetClipboardSequenceNumber": lambda: state.sequence,
@@ -208,14 +215,17 @@ def test_replaces_old_draft_preserving_text_and_blank_lines(desktop, text, copy_
 
 @pytest.mark.parametrize("fault,reason", [
     ("copy_missing", "copied_text_not_published"), ("external_copy", "clipboard_owner_mismatch"),
+    ("copy_formats_missing", "copied_format_missing"),
     ("lost_newlines", "pasted_text_mismatch"), ("select_ignored", "pasted_text_mismatch"),
     ("focus_changed", "focus_changed_during_paste"),
     ("focus_changed_in_handoff", "focus_changed_during_paste"),
 ])
-def test_failed_paste_or_copy_cannot_report_success(desktop, fault, reason):
+@pytest.mark.parametrize("content_format", ["text", "html"])
+def test_failed_paste_or_copy_cannot_report_success(desktop, fault, reason, content_format):
     desktop.fault = fault
+    desktop.copy_html = False
     with pytest.raises(RuntimeError, match=reason):
-        clip.replace_text(42, "First\n\n第二段")
+        clip.replace_text(42, "First\n\n第二段" if content_format == "text" else "<b>First</b><br><br>第二段", content_format)
     assert len(desktop.events) == 1  # No retry or caret movement after failure.
     assert desktop.destroyed == [77]
     assert not desktop.pressed
@@ -229,7 +239,8 @@ def test_clipboard_read_waits_for_owner_notification_before_reopening(desktop):
     desktop.selection = True
     api.keys(transport._chord(clip.VK_C))
 
-    assert read_unicode(api.copied_data(owner, 100, CF_UNICODETEXT, 4096)) == "copied text"
+    _, data = api.copied_data(owner, 100, ((CF_UNICODETEXT, 4096),))
+    assert read_unicode(data) == "copied text"
     assert desktop.owner == 42
     assert desktop.pending_copy is None
     assert 0 < desktop.clock < 1.0
@@ -318,13 +329,41 @@ def test_html_literal_or_rendered_paste_uses_selected_format(desktop, content_fo
     assert not desktop.freed and desktop.destroyed == [77]
 
 
-@pytest.mark.parametrize("fault", ["html_missing", "html_changed", "external_copy", "focus_changed"])
-def test_html_readback_requires_fresh_matching_html_not_just_plain_text(desktop, fault):
+@pytest.mark.parametrize("content,expected", [
+    ("<b>Bold test</b>", "Bold test"),
+    ("<b>Bold test</b>\n<li>List test</li>", "Bold test\r\nList test"),
+    ("<p>中文 🙂 &amp; &lt;b&gt;</p><p>next<br><br>line</p>", "中文 🙂 & <b>\r\nnext\r\n\r\nline"),
+])
+def test_html_paste_accepts_text_only_client_copy_and_clears_selection(desktop, content, expected):
+    desktop.copy_html = False
+    clip.replace_text(42, content, "html")
+    assert desktop.editor_html == content and desktop.editor == expected
+    assert set(desktop.published) == {CF_UNICODETEXT, 49152}
+    assert read_clipboard_html(desktop.published[49152]) == content
+    assert desktop.owner == 42 and desktop.clock > 0
+    assert not desktop.selection and not desktop.pressed
+    assert len(desktop.events) == 2 and desktop.destroyed == [77]
+
+
+@pytest.mark.parametrize("fault,reason", [
+    ("html_changed", "pasted_text_mismatch"), ("html_invalid", "copied_content_invalid"),
+    ("html_unreadable", "copied_format_unavailable"), ("html_oversized", "copied_text_invalid_size"),
+    ("external_copy", "clipboard_owner_mismatch"), ("focus_changed", "focus_changed_during_paste"),
+])
+def test_advertised_html_readback_cannot_fall_back_to_matching_text(desktop, fault, reason):
     desktop.fault = fault
-    with pytest.raises(clip.ClipboardInputError):
+    with pytest.raises(clip.ClipboardInputError, match=reason):
         clip.replace_text(42, "<b>same words</b>", "html")
     assert len(desktop.events) == 1
     assert desktop.destroyed == [77]
+
+
+def test_empty_plain_text_is_not_evidence_of_html_only_content(desktop):
+    desktop.copy_html = False
+    with pytest.raises(clip.ClipboardInputError, match="copied_format_missing"):
+        clip.replace_text(42, '<img src="example.png">', "html")
+    assert desktop.editor == ""
+    assert len(desktop.events) == 1 and desktop.destroyed == [77]
 
 
 def test_partial_multiformat_publication_frees_only_untransferred_memory(desktop):

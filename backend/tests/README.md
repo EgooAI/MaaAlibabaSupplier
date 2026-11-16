@@ -125,7 +125,11 @@ the desktop or establish that a production native task saved its error image.
   fixture blocks native clipboard access.
 - `test_clipboard_payload.py` checks CF_HTML byte offsets with Chinese/emoji and
   rejects malformed fragment ranges. Clipboard tests cover both selected formats,
-  missing/changed HTML readback and partial multi-format memory transfer. Outbox
+  text-only HTML readback with the production test messages, unchanged HTML
+  publication, and selection cleanup. Missing all permitted formats, changed or
+  unreadable advertised HTML, malformed/oversized data, empty text for nontext HTML,
+  and stale/wrong-owner or mismatched text cannot bypass verification. Tests also
+  cover partial multi-format memory transfer. Outbox
   API tests carry format selection through durable tasks, native parameters and
   source reconciliation; store tests cover legacy text defaults and format-bound
   idempotency/retry. Matching tests include the production escaped-text samples,

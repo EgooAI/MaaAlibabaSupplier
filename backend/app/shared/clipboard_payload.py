@@ -12,11 +12,16 @@ HTML_FORMAT = "HTML Format"
 
 
 @dataclass(frozen=True)
+class ClipboardReadback:
+    format: int | str
+    max_bytes: int
+    matches: Callable[[bytes], bool]
+
+
+@dataclass(frozen=True)
 class ClipboardPayload:
     formats: tuple[tuple[int | str, bytes], ...]
-    readback_format: int | str
-    max_readback_bytes: int
-    matches: Callable[[bytes], bool]
+    readbacks: tuple[ClipboardReadback, ...]
 
 
 def clipboard_html(fragment: str) -> bytes:
@@ -58,14 +63,19 @@ def read_unicode(data: bytes) -> str:
 
 
 def text_payload(content: str, content_format: str = "text") -> ClipboardPayload:
-    """Packages text or HTML with format-specific, exact readback verification."""
+    """Packages content with ordered readback contracts for advertised formats."""
     validate_content(content, content_format)
     expected = newlines(content)
     plain = html_plain_text(expected) if content_format == "html" else expected
     data = (plain.replace("\n", "\r\n") + "\0").encode("utf-16-le")
+    text_readback = ClipboardReadback(CF_UNICODETEXT, len(data) + 4096,
+                                      lambda raw: newlines(read_unicode(raw)) == plain)
     if content_format == "text":
-        return ClipboardPayload(((CF_UNICODETEXT, data),), CF_UNICODETEXT, len(data) + 4096,
-                                lambda raw: newlines(read_unicode(raw)) == expected)
+        return ClipboardPayload(((CF_UNICODETEXT, data),), (text_readback,))
     html_data = clipboard_html(expected)
-    return ClipboardPayload(((HTML_FORMAT, html_data), (CF_UNICODETEXT, data)), HTML_FORMAT, len(html_data) + 65536,
-                            lambda raw: newlines(read_clipboard_html(raw)) == expected)
+    html_readback = ClipboardReadback(HTML_FORMAT, len(html_data) + 65536,
+                                      lambda raw: newlines(read_clipboard_html(raw)) == expected)
+    # Text-only copy verifies entered words, not retained HTML formatting. Empty
+    # text cannot establish that nontext content, such as an image, was pasted.
+    readbacks = (html_readback, text_readback) if plain.strip() else (html_readback,)
+    return ClipboardPayload(((HTML_FORMAT, html_data), (CF_UNICODETEXT, data)), readbacks)

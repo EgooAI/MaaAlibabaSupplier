@@ -19,9 +19,9 @@ def test_html_offsets_and_plain_flavor_preserve_multibyte_content():
     assert context == b"<html><body><!--StartFragment-->" + fragment + b"<!--EndFragment--></body></html>"
     assert raw[offsets["EndHTML"]:] == b"\0"
     assert formats[13].decode("utf-16-le") == "中文 🙂 & <b>\r\nnext\0"
-    assert payload.readback_format == HTML_FORMAT
-    assert payload.matches(raw)
-    assert not payload.matches(raw.replace(b"<b>next</b>", b"<i>next</i>"))
+    assert payload.readbacks[0].format == HTML_FORMAT
+    assert payload.readbacks[0].matches(raw)
+    assert not payload.readbacks[0].matches(raw.replace(b"<b>next</b>", b"<i>next</i>"))
 
 
 @pytest.mark.parametrize("header", [

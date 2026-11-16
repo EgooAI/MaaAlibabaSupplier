@@ -81,6 +81,7 @@ class Desktop:
         self.empty_clipboard = _bind(user, "EmptyClipboard", wintypes.BOOL)
         self.set_clipboard = _bind(user, "SetClipboardData", wintypes.HANDLE, wintypes.UINT, wintypes.HANDLE)
         self.register_format = _bind(user, "RegisterClipboardFormatW", wintypes.UINT, wintypes.LPCWSTR)
+        self.format_available = _bind(user, "IsClipboardFormatAvailable", wintypes.BOOL, wintypes.UINT)
         self.get_clipboard = _bind(user, "GetClipboardData", wintypes.HANDLE, wintypes.UINT)
         self.clipboard_owner = _bind(user, "GetClipboardOwner", wintypes.HWND)
         self.sequence = _bind(user, "GetClipboardSequenceNumber", wintypes.DWORD)
@@ -186,21 +187,31 @@ class Desktop:
             self.send(len(release), release, ctypes.sizeof(_Input))
             raise ClipboardInputError("keyboard_input_incomplete")
 
-    def copied_data(self, owner, pid: int, format: int | str, max_bytes: int) -> bytes:
+    def copied_data(self, owner, pid: int, formats: tuple[tuple[int | str, int], ...]) -> tuple[int, bytes]:
+        """Reads the first advertised format and its index under one clipboard lock."""
         with self.clipboard(owner):
             source_pid = wintypes.DWORD()
             source = self.clipboard_owner()
             if not source or not self.thread(source, ctypes.byref(source_pid)) or source_pid.value != pid:
                 raise ClipboardInputError("clipboard_owner_mismatch")
-            handle = self.get_clipboard(self.format_id(format))
-            size = self.size(handle) if handle else 0
-            if not size or size > max_bytes:
-                raise ClipboardInputError("copied_text_invalid_size")
-            pointer = self.lock(handle)
-            if not pointer:
-                raise ClipboardInputError("copied_text_memory_unavailable")
-            try:
-                data = ctypes.string_at(pointer, size)
-            finally:
-                self.unlock(handle)
-            return data
+            for index, (format, max_bytes) in enumerate(formats):
+                identifier = self.format_id(format)
+                if not self.format_available(identifier):
+                    continue
+                # An advertised format that fails to render is an I/O failure,
+                # not permission to accept a weaker representation.
+                handle = self.get_clipboard(identifier)
+                if not handle:
+                    raise ClipboardInputError("copied_format_unavailable")
+                size = self.size(handle)
+                if not size or size > max_bytes:
+                    raise ClipboardInputError("copied_text_invalid_size")
+                pointer = self.lock(handle)
+                if not pointer:
+                    raise ClipboardInputError("copied_text_memory_unavailable")
+                try:
+                    data = ctypes.string_at(pointer, size)
+                finally:
+                    self.unlock(handle)
+                return index, data
+            raise ClipboardInputError("copied_format_missing")

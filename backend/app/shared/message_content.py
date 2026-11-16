@@ -39,7 +39,7 @@ class _Fragment(HTMLParser):
 
 
 def html_plain_text(value: str) -> str:
-    """Provides the companion text flavor; never used to verify an HTML send."""
+    """Provides companion text for clipboard input checks, not post-send matching."""
     parser = _Fragment()
     parser.feed(newlines(value).strip())
     parser.close()

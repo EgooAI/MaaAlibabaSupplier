@@ -163,6 +163,11 @@ the pipeline `node` and `native_job_id` from the custom-action callback. Excepti
 types and source frames survive runtime sanitization and ZIP export; exception
 values, action parameters and clipboard text do not. Callback threads do not inherit
 the submitting request's context, so correlate the native job with `maa.submitted`.
+`copied_format_missing` means none of the permitted readback formats was advertised;
+`copied_format_unavailable` means an advertised format could not be retrieved.
+`copied_text_invalid_size` means retrieved data has zero size or exceeds its bound.
+HTML input permits exact Unicode readback only when HTML is not advertised and the
+plain-text companion is nonempty. This does not establish retained HTML formatting.
 Older free-form clipboard failures were already replaced with `Log message omitted`
 in the runtime file; their specific reasons cannot be recovered by exporting again.
 

@@ -40,9 +40,11 @@ def replace_text(hwnd: int, text: str, content_format: str = "text") -> None:
             if desktop.focus(hwnd) != target:
                 raise ClipboardInputError("focus_changed_during_paste")
             if desktop.sequence() != sequence:
-                data = desktop.copied_data(owner, target[0], payload.readback_format, payload.max_readback_bytes)
+                index, data = desktop.copied_data(owner, target[0], tuple(
+                    (readback.format, readback.max_bytes) for readback in payload.readbacks
+                ))
                 try:
-                    matches = payload.matches(data)
+                    matches = payload.readbacks[index].matches(data)
                 except ValueError as exc:
                     raise ClipboardInputError("copied_content_invalid") from exc
                 if not matches:
