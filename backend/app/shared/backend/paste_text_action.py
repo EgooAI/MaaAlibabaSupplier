@@ -13,12 +13,12 @@ class PasteChatText(CustomAction):
         """Uses the originating controller without acquiring the caller's locks."""
         try:
             params = json.loads(argv.custom_action_param)
-            if not isinstance(params, dict) or set(params) != {"text"}:
+            if not isinstance(params, dict) or "text" not in params or set(params) - {"text", "content_format"}:
                 raise ValueError("Invalid clipboard action parameters")
             controller = context.tasker.controller.info
             if controller.get("type") != "win32":
                 raise ValueError("Clipboard input requires a Win32 controller")
-            replace_text(controller.get("hwnd"), params["text"])
+            replace_text(controller.get("hwnd"), params["text"], content_format=params.get("content_format", "text"))
             return True
         except Exception as exc:
             # Keeps codes and safe stack metadata through both log sanitizers.

@@ -35,6 +35,7 @@ vi.mock("antd", () => {
     Select: () => null,
     Empty: Object.assign(({ description }: { description: string }) => <div>{description}</div>, { PRESENTED_IMAGE_SIMPLE: null }),
     Drawer: ({ open, children }: { open: boolean; children: ReactNode }) => open ? <aside>{children}</aside> : null,
+    Modal: ({ title, open, children, footer, onCancel }: { title: string; open: boolean; children: ReactNode; footer: ReactNode; onCancel: () => void }) => open ? <div role="dialog"><h2>{title}</h2>{children}{footer}<button onClick={onCancel}>关闭格式选择</button></div> : null,
     Alert: ({ title, action }: { title: ReactNode; action: ReactNode }) => <div role="alert">{title}{action}</div>,
   };
 });
@@ -95,7 +96,7 @@ beforeEach(async () => {
   mocks.backend.getOutbox.mockImplementation(async (id: string) => structuredClone(store.find((task) => task.id === id)!));
   mocks.backend.sendMessage.mockImplementation(async (input: SendMessageInput) => {
     const existing = store.find((task) => task.idempotency_key === input.idempotency_key);
-    const task = existing ?? outboxTask({ id: input.idempotency_key, conversation_id: Number(input.conversationId), content: input.content, action: input.action, idempotency_key: input.idempotency_key });
+    const task = existing ?? outboxTask({ id: input.idempotency_key, conversation_id: Number(input.conversationId), content: input.content, content_format: input.content_format, action: input.action, idempotency_key: input.idempotency_key });
     if (!existing) store.push(task);
     return { outbox: structuredClone(task) };
   });
@@ -122,6 +123,69 @@ afterEach(async () => {
 });
 
 describe("inline outbox workflow", () => {
+  it("keeps suggestion provenance when HTML format selection is cancelled", async () => {
+    await start();
+    await act(async () => chat.insertSuggestion({ id: "html-intent", intentId: "html-intent", content: "<b>Offer</b>", zh: "报价", tone: "friendly", status: "requested" }));
+    await click("发送");
+    await click("关闭格式选择");
+    await click("发送");
+    await click("以 HTML 发送");
+    expect(mocks.backend.sendMessage.mock.calls[0][0]).toMatchObject({ intent_id: "html-intent", content_format: "html" });
+  });
+
+  it.each(["text", "html"] as const)("asks about HTML and freezes the %s choice before submission", async (format) => {
+    await start();
+    await edit("<b>bold test</b>");
+    await act(async () => { button("发送")!.click(); button("发送")!.click(); });
+    expect(container.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+    expect(container.textContent).toContain("检测到 HTML 元素");
+    expect(container.textContent).toContain("是否按照 HTML 格式发送？");
+    expect(mocks.backend.sendMessage).not.toHaveBeenCalled();
+    expect(intents()).toHaveLength(0);
+    await edit("new draft during format selection");
+    await click(format === "html" ? "以 HTML 发送" : "以纯文本发送");
+    expect(mocks.backend.sendMessage).toHaveBeenCalledOnce();
+    expect(mocks.backend.sendMessage.mock.calls[0][0]).toMatchObject({ content: "<b>bold test</b>", content_format: format });
+    expect(intents()[0].contentFormat).toBe(format);
+    expect(chat.draft).toBe("new draft during format selection");
+  });
+
+  it.each(["send", "test"] as const)("recovers an HTML %s timeout with the same format and key after reload", async (action) => {
+    await start();
+    await edit("<p>First</p><p>第二段 🙂</p>");
+    mocks.backend.sendMessage.mockRejectedValueOnce(new Error("timeout"));
+    await click(action === "send" ? "发送" : "仅填入客户端");
+    await click("以 HTML 发送");
+    const original = mocks.backend.sendMessage.mock.calls[0][0];
+    expect(original).toMatchObject({ action, content_format: "html" });
+    await reload();
+    await click("恢复原提交");
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(mocks.backend.sendMessage.mock.calls[1][0]).toEqual(original);
+    expect(chat.draft).toBe("");
+  });
+
+  it.each(["cancel", "conversation", "account"])("abandons an unsubmitted HTML choice after %s", async (change) => {
+    await start();
+    await edit("<b>pending</b>");
+    await click("发送");
+    if (change === "cancel") await click("关闭格式选择");
+    if (change === "conversation") await act(async () => chat.selectConversation("43"));
+    if (change === "account") await act(async () => accountSession.accept({ ...ready(), account: { ...connectionSnapshot.account, epoch: "other" } }));
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(mocks.backend.sendMessage).not.toHaveBeenCalled();
+    expect(intents()).toHaveLength(0);
+    if (change === "cancel") expect(chat.draft).toBe("<b>pending</b>");
+  });
+
+  it.each(["price < 5 & quantity > 2", "&lt;b&gt;literal&lt;/b&gt;", "<!-- comment -->plain"])("sends element-free text without a format dialog: %s", async (content) => {
+    await start();
+    await edit(content);
+    await click("发送");
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(mocks.backend.sendMessage.mock.calls[0][0]).toMatchObject({ content, content_format: "text" });
+  });
+
   it.each([false, true])("carries adopted reply provenance only while the inserted reply is unchanged (edited=%s)", async (edited) => {
     await start();
     await act(async () => chat.insertSuggestion({ id: "preview-intent", intentId: "preview-intent", content: "When do you need them?", zh: "您何时需要？", tone: "friendly", status: "requested" }));

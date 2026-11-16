@@ -77,7 +77,7 @@ def test_file_stderr_export_keep_events_without_payloads_or_exception_values(log
 ])
 def test_clipboard_failure_survives_runtime_and_zip_without_text(logs, desktop, monkeypatch, fault, reason, function):
     from backend.app import diagnostics
-    from backend.app.shared.backend import clipboard_input, paste_text_action
+    from backend.app.shared.backend import clipboard_transport, paste_text_action
     from backend.tests.test_diagnostics import unpack
 
     desktop.fault = fault
@@ -86,7 +86,7 @@ def test_clipboard_failure_survives_runtime_and_zip_without_text(logs, desktop, 
     if fault == "unexpected":
         def load():
             raise ValueError("PRIVATE_EXCEPTION_VALUE")
-        monkeypatch.setattr(clipboard_input, "_load_win32", load)
+        monkeypatch.setattr(clipboard_transport, "_load_win32", load)
     context = SimpleNamespace(tasker=SimpleNamespace(controller=SimpleNamespace(info={"type": "win32", "hwnd": 42})))
     argv = SimpleNamespace(custom_action_param=json.dumps({"text": "PRIVATE_BODY\n\nPRIVATE_CLIPBOARD"}),
                            node_name="ChatInput_PasteText", task_detail=SimpleNamespace(task_id=200000006))

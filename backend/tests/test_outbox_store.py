@@ -207,7 +207,7 @@ def test_concurrent_idempotency_across_store_instances(store, scope):
 
 @pytest.mark.parametrize("changes", [
     {"content": "exact\r\nsubmitted \u5185\u5bb9"}, {"conversation_id": 2},
-    {"contact_ali_id": "buyer-2"}, {"login_id": "new-login"}, {"action": "test"},
+    {"contact_ali_id": "buyer-2"}, {"login_id": "new-login"}, {"action": "test"}, {"content_format": "html"},
 ])
 def test_payload_mismatch_is_409_without_mutation(store, scope, changes):
     task, _ = create(store, scope)
@@ -223,6 +223,23 @@ def test_concurrent_different_payload_cannot_reuse_key(store, scope):
     results = race(lambda: create(store, scope, content="first"), lambda: create(store, scope, content="second"))
     assert sum(isinstance(result, OutboxConflict) for result in results) == 1
     assert len(store.list(1, **scope)) == 1
+
+
+def test_format_migration_preserves_legacy_rows_and_html_retry_identity(store, scope):
+    old, _ = create(store, scope)
+    history = store.events(old["id"], **scope)
+    with closing(sqlite3.connect(store.database_path)) as conn, conn:
+        conn.execute("ALTER TABLE app_outbox DROP COLUMN content_format")
+    before = store.database_path.read_bytes()
+    assert store.get(old["id"], **scope)["content_format"] == "text"
+    assert store.database_path.read_bytes() == before
+    store.initialize()
+    assert store.get(old["id"], **scope) == old
+    assert store.events(old["id"], **scope) == history
+    rich, _ = create(store, scope, key="html", content="<b>body</b>", content_format="html")
+    failed = move(store, scope, rich, "failed")
+    retried = OutboxStore(store.database_path).retry(rich["id"], failed["version"], **scope)
+    assert retried["content_format"] == "html" and retried["content"] == "<b>body</b>"
 
 
 @pytest.mark.parametrize("changed_scope", ["seller", "data_dir"])

@@ -217,7 +217,7 @@ def test_native_paste_callback_retains_outer_guard_without_reacquiring_locks(nat
     caller = get_ident()
     copied = []
 
-    def paste(hwnd, text):
+    def paste(hwnd, text, content_format="text"):
         assert get_ident() != caller
         assert hwnd == 42
         for lock in (account_context.account_lock, runner._run_lock):

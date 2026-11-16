@@ -60,7 +60,7 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(module.gui_session, "run_guarded", guard)
     monkeypatch.setattr(module.runner, "goto_contact", lambda target: (state.calls.append("goto") is None, "located"))
     monkeypatch.setattr(module.runner, "capture_client_frame", lambda: pytest.fail("Sending must not capture confirmation screenshots"))
-    monkeypatch.setattr(module.runner, "chat_input", lambda text: (state.calls.append("input") is None, "filled"))
+    monkeypatch.setattr(module.runner, "chat_input", lambda text, **kwargs: (state.calls.append("input") is None, "filled"))
     monkeypatch.setattr(module.runner, "submit_send", lambda: state.calls.append("click") or state.send_job)
     monkeypatch.setattr(module.runner, "wait_send", lambda job: (True, "clicked"))
     monkeypatch.setattr(source_messages, "read_source_messages", lambda context, contact: state.calls.append("baseline") or state.source)
@@ -113,7 +113,7 @@ def test_live_activity_tracks_only_scoped_gui_send_until_execution_finishes(env,
     assert not module.observe_active_send(env.context)
     observed = []
 
-    def observe(*args):
+    def observe(*args, **kwargs):
         observed.append(module.observe_active_send(env.context))
         assert not module.observe_active_send(replace(env.context, epoch="other"))
         assert not module.observe_active_send(replace(env.context, self_ali_id="other"))
@@ -134,7 +134,7 @@ def test_attempt_context_retains_origin_and_changes_on_explicit_retry(env, monke
 
     contexts = []
     monkeypatch.setattr(module.runner, "goto_contact", lambda target: contexts.append(capture_log_context()) or (True, "located"))
-    monkeypatch.setattr(module.runner, "chat_input", lambda text: contexts.append(capture_log_context()) or (True, "filled"))
+    monkeypatch.setattr(module.runner, "chat_input", lambda text, **kwargs: contexts.append(capture_log_context()) or (True, "filled"))
     with bind_log_context(request_id="submit-request"):
         task = prepared(env, action="test")
     assert task["origin_request_id"] == "submit-request"
@@ -161,7 +161,7 @@ def test_single_guard_navigation_input_and_durable_send_barrier(env, monkeypatch
     assert task["may_have_sent"] is False
     assert env.calls == []
 
-    def input_text(text):
+    def input_text(text, **kwargs):
         running = env.service.get(env.context, task["id"])
         assert running["status"] == "running"
         assert not running["may_have_sent"]
@@ -214,7 +214,7 @@ def test_running_cannot_be_cancelled_and_has_no_second_send(env, monkeypatch):
     task = submit(env)
     entered, release = Event(), Event()
 
-    def input_text(text):
+    def input_text(text, **kwargs):
         entered.set()
         assert release.wait(5)
         return True, "filled"
@@ -331,7 +331,7 @@ def test_preinput_failures_are_safe_and_retry_requires_fresh_token(env, monkeypa
 
 @pytest.mark.parametrize("stage,raises", [(stage, raises) for stage in ("navigation", "input", "click") for raises in (False, True)])
 def test_gui_failure_is_unknown_without_automatic_retry(env, monkeypatch, stage, raises):
-    def fail(*args):
+    def fail(*args, **kwargs):
         if raises:
             raise RuntimeError("uncertain failure")
         return False, "uncertain failure"
@@ -409,7 +409,7 @@ def test_unknown_postclick_can_be_observed_but_test_or_preclick_cannot(env, monk
     env.queue.run()
     assert env.service.get(env.context, task["id"])["status"] == "unknown"
     test = submit(env, action="test", idempotency_key="test")
-    monkeypatch.setattr(module.runner, "chat_input", lambda text: (False, "uncertain"))
+    monkeypatch.setattr(module.runner, "chat_input", lambda text, **kwargs: (False, "uncertain"))
     env.queue.run()
 
     def matches(record, snapshot, pending):
@@ -530,7 +530,7 @@ def test_shutdown_timeout_marks_running_unknown_and_prevents_later_click(env, mo
     task = submit(env)
     entered, release = Event(), Event()
 
-    def input_text(text):
+    def input_text(text, **kwargs):
         entered.set()
         assert release.wait(5)
         return True, "filled"
@@ -745,7 +745,7 @@ def test_completed_snapshot_survives_failure_to_read_database_after_click(env, m
 def test_terminal_compensation_cannot_overwrite_newer_version_or_attempt(env, monkeypatch, superseded):
     task = submit(env)
     if superseded == "version":
-        monkeypatch.setattr(module.runner, "chat_input", lambda text: (False, "input uncertain"))
+        monkeypatch.setattr(module.runner, "chat_input", lambda text, **kwargs: (False, "input uncertain"))
     else:
         env.token = replace(env.token, window_generation="revoked")
     transition = env.service.store.transition

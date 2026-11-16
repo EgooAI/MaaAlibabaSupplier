@@ -38,6 +38,7 @@ export function OutboxTaskStatus({ task, outbox }: Props) {
     {canRetry(task) ? <Button type="text" size="small" disabled={!canOperate} loading={outbox.busy} onClick={() => void outbox.mutate(task, "retry")}>重试</Button> : null}
     <Popover trigger="click" placement="topRight" content={<div className="max-w-80 space-y-2 text-xs">
       <div>第 {task.attempt} 次尝试</div>
+      <div>发送格式：{task.content_format === "html" ? "HTML" : "纯文本"}</div>
       <TimeText value={task.created_at} />
       {task.action === "test" ? <div className="max-h-40 overflow-auto whitespace-pre-wrap break-words">{task.content}</div> : null}
       {task.reason ? <p>{reasons[task.reason] ?? task.reason}</p> : null}

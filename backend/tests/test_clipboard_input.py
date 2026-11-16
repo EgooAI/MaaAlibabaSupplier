@@ -9,13 +9,16 @@ from unittest.mock import Mock
 import pytest
 
 from backend.app.shared.backend import clipboard_input as clip, paste_text_action
+from backend.app.shared.backend import clipboard_transport as transport
+from backend.app.shared.clipboard_payload import CF_UNICODETEXT, clipboard_html, read_clipboard_html, read_unicode
 
 
 @pytest.fixture
 def desktop(monkeypatch):
     state = SimpleNamespace(
         editor="Previous unsent draft", selection=False, pressed=set(), events=[],
-        buffers={}, transferred=[], freed=[], destroyed=[], clipboard=0, owner=0, sequence=1,
+        buffers={}, formats={}, transferred=[], freed=[], destroyed=[], clipboard=0, owner=0, sequence=1,
+        editor_html=None, published={},
         foreground=42, focus=43, fault=None, clock=0.0, pending_copy=None, selects=0,
         clipboard_dirty=False, handoff_replied=False, owner_thread=None,
     )
@@ -31,26 +34,28 @@ def desktop(monkeypatch):
         del state.buffers[handle]
 
     def window_thread(hwnd, pid):
-        ctypes.cast(pid, ctypes.POINTER(clip.wintypes.DWORD)).contents.value = 200 if hwnd == 999 else 100
+        ctypes.cast(pid, ctypes.POINTER(transport.wintypes.DWORD)).contents.value = 200 if hwnd == 999 else 100
         return 1
 
     def gui_info(thread, pointer):
-        info = ctypes.cast(pointer, ctypes.POINTER(clip._GuiThreadInfo)).contents
+        info = ctypes.cast(pointer, ctypes.POINTER(transport._GuiThreadInfo)).contents
         info.active, info.focus = 42, state.focus
         return True
 
     def empty():
         state.clipboard = 0
+        state.formats.clear()
         state.owner = 77
         state.sequence += 1
         state.clipboard_dirty = True
         return True
 
     def set_data(format, handle):
-        assert format == clip.CF_UNICODETEXT
-        if state.fault == "write":
+        if state.fault == "write" or (state.fault == "second_format_write" and format == CF_UNICODETEXT):
             return 0
-        state.clipboard = handle
+        state.formats[format] = handle
+        if format == CF_UNICODETEXT:
+            state.clipboard = handle
         state.transferred.append(handle)
         state.sequence += 1
         return handle
@@ -77,6 +82,13 @@ def desktop(monkeypatch):
         handle = alloc(2, len(data))
         ctypes.memmove(handle, data, len(data))
         state.clipboard = handle
+        state.formats = {CF_UNICODETEXT: handle}
+        if state.editor_html is not None and state.fault != "html_missing":
+            copied = state.editor_html.replace("<b>", "<strong>").replace("</b>", "</strong>") if state.fault == "html_changed" else state.editor_html
+            html = clipboard_html(copied)
+            handle = alloc(2, len(html))
+            ctypes.memmove(handle, html, len(html))
+            state.formats[49152] = handle
         state.owner = 999 if state.fault == "external_copy" else 42
         state.sequence += 1
 
@@ -99,13 +111,17 @@ def desktop(monkeypatch):
             state.pressed.discard(key)
             return
         state.pressed.add(key)
-        if key == clip.VK_A and clip.VK_CONTROL in state.pressed:
+        if key == clip.VK_A and transport.VK_CONTROL in state.pressed:
             state.selects += 1
             state.selection = not (state.fault == "select_ignored" and state.selects == 1)
         elif key == clip.VK_BACK:
             state.editor = "" if state.selection else state.editor[:-1]
+            state.editor_html = None
             state.selection = False
-        elif key == clip.VK_V and clip.VK_CONTROL in state.pressed:
+        elif key == clip.VK_V and transport.VK_CONTROL in state.pressed:
+            state.published = {format: state.buffers[handle].raw for format, handle in state.formats.items()}
+            if 49152 in state.formats:
+                state.editor_html = read_clipboard_html(state.published[49152])
             value = clipboard_text()
             if state.fault == "lost_newlines":
                 value = value.replace("\r", "").replace("\n", "")
@@ -113,7 +129,7 @@ def desktop(monkeypatch):
             state.selection = False
             if state.fault == "focus_changed":
                 state.focus = 44
-        elif key == clip.VK_C and clip.VK_CONTROL in state.pressed and state.selection:
+        elif key == clip.VK_C and transport.VK_CONTROL in state.pressed and state.selection:
             if state.fault != "copy_missing":
                 state.pending_copy = copy
                 state.handoff_replied = False
@@ -122,7 +138,7 @@ def desktop(monkeypatch):
 
     def send(count, inputs, size):
         assert size == (40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28)
-        events = [(item.value.keyboard.vk, bool(item.value.keyboard.flags & clip.KEYEVENTF_KEYUP))
+        events = [(item.value.keyboard.vk, bool(item.value.keyboard.flags & transport.KEYEVENTF_KEYUP))
                   for item in inputs]
         assert all(item.type == 1 for item in inputs)
         written = 2 if state.fault == "partial" and not state.events else count
@@ -150,7 +166,8 @@ def desktop(monkeypatch):
         "CloseClipboard": close,
         "EmptyClipboard": empty,
         "SetClipboardData": set_data,
-        "GetClipboardData": lambda format: state.clipboard,
+        "GetClipboardData": lambda format: state.formats.get(format, 0),
+        "RegisterClipboardFormatW": lambda name: 49152,
         "GetClipboardOwner": lambda: state.owner,
         "GetClipboardSequenceNumber": lambda: state.sequence,
         "PeekMessageW": peek_message,
@@ -162,8 +179,10 @@ def desktop(monkeypatch):
         "GlobalSize": lambda handle: ctypes.sizeof(state.buffers[handle]),
     }.items()})
     state.user, state.kernel = user, kernel
-    monkeypatch.setattr(clip, "_load_win32", lambda: (user, kernel))
-    monkeypatch.setattr(clip, "time", SimpleNamespace(monotonic=lambda: state.clock, sleep=sleep))
+    monkeypatch.setattr(transport, "_load_win32", lambda: (user, kernel))
+    clock = SimpleNamespace(monotonic=lambda: state.clock, sleep=sleep)
+    monkeypatch.setattr(clip, "time", clock)
+    monkeypatch.setattr(transport, "time", clock)
     return state
 
 
@@ -203,14 +222,14 @@ def test_failed_paste_or_copy_cannot_report_success(desktop, fault, reason):
 
 
 def test_clipboard_read_waits_for_owner_notification_before_reopening(desktop):
-    api = clip._Desktop()
+    api = transport.Desktop()
     owner = api.create_window()
-    api.write(owner, "original\0".encode("utf-16-le"))
+    api.write(owner, ((CF_UNICODETEXT, "original\0".encode("utf-16-le")),))
     desktop.editor = "copied text"
     desktop.selection = True
-    api.keys(clip._chord(clip.VK_C))
+    api.keys(transport._chord(clip.VK_C))
 
-    assert api.copied_text(owner, 100, 4096) == "copied text"
+    assert read_unicode(api.copied_data(owner, 100, CF_UNICODETEXT, 4096)) == "copied text"
     assert desktop.owner == 42
     assert desktop.pending_copy is None
     assert 0 < desktop.clock < 1.0
@@ -257,7 +276,7 @@ def test_unavailable_clipboard_or_window_prevents_keyboard_input(desktop, fault)
 @pytest.mark.parametrize("hwnd,text", [(0, "text"), (True, "text"), (42, ""), (42, "a\0b"), (42, 1)])
 def test_invalid_payload_is_rejected_before_native_access(monkeypatch, hwnd, text):
     load = Mock(side_effect=AssertionError("Unexpected native access"))
-    monkeypatch.setattr(clip, "_load_win32", load)
+    monkeypatch.setattr(transport, "_load_win32", load)
     with pytest.raises(ValueError):
         clip.replace_text(hwnd, text)
     load.assert_not_called()
@@ -280,3 +299,38 @@ def test_action_uses_its_controller_and_reports_failed_verification(desktop):
     desktop.fault = "lost_newlines"
     assert not action.run(context, argv)
     assert desktop.editor == "onetwo"
+
+
+@pytest.mark.parametrize("content_format", ["text", "html"])
+def test_html_literal_or_rendered_paste_uses_selected_format(desktop, content_format):
+    content = "<b>中文 🙂</b><br>Next &amp; last"
+    argv = SimpleNamespace(custom_action_param=json.dumps({"text": content, "content_format": content_format}),
+                           node_name="ChatInput_PasteText", task_detail=SimpleNamespace(task_id=42))
+    context = SimpleNamespace(tasker=SimpleNamespace(controller=SimpleNamespace(info={"type": "win32", "hwnd": 42})))
+    assert paste_text_action.PasteChatText().run(context, argv)
+    if content_format == "html":
+        assert desktop.editor_html == content
+        assert desktop.editor == "中文 🙂\r\nNext & last"
+        assert set(desktop.published) == {CF_UNICODETEXT, 49152}
+    else:
+        assert desktop.editor_html is None and desktop.editor == content
+        assert set(desktop.published) == {CF_UNICODETEXT}
+    assert not desktop.freed and desktop.destroyed == [77]
+
+
+@pytest.mark.parametrize("fault", ["html_missing", "html_changed", "external_copy", "focus_changed"])
+def test_html_readback_requires_fresh_matching_html_not_just_plain_text(desktop, fault):
+    desktop.fault = fault
+    with pytest.raises(clip.ClipboardInputError):
+        clip.replace_text(42, "<b>same words</b>", "html")
+    assert len(desktop.events) == 1
+    assert desktop.destroyed == [77]
+
+
+def test_partial_multiformat_publication_frees_only_untransferred_memory(desktop):
+    desktop.fault = "second_format_write"
+    with pytest.raises(clip.ClipboardInputError, match="clipboard_write_failed"):
+        clip.replace_text(42, "<b>body</b>", "html")
+    assert len(desktop.transferred) == len(desktop.freed) == 1
+    assert set(desktop.transferred).isdisjoint(desktop.freed)
+    assert desktop.events == []

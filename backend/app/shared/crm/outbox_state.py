@@ -24,7 +24,7 @@ TRANSITIONS = {
 EDITABLE_FIELDS = frozenset({
     "may_have_sent", "reason", "baseline", "evidence",
 })
-PAYLOAD_FIELDS = ("conversation_id", "contact_ali_id", "login_id", "content", "action")
+PAYLOAD_FIELDS = ("conversation_id", "contact_ali_id", "login_id", "content", "action", "content_format")
 
 # Reasons the API may leak verbatim; everything else is replaced by a generic code.
 REASON_CODES = frozenset({

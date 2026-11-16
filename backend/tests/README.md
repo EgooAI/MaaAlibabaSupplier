@@ -123,6 +123,16 @@ the desktop or establish that a production native task saved its error image.
   its synchronous clipboard notification, including during clipboard contention;
   focus changes during that handoff still abort the operation. The isolation
   fixture blocks native clipboard access.
+- `test_clipboard_payload.py` checks CF_HTML byte offsets with Chinese/emoji and
+  rejects malformed fragment ranges. Clipboard tests cover both selected formats,
+  missing/changed HTML readback and partial multi-format memory transfer. Outbox
+  API tests carry format selection through durable tasks, native parameters and
+  source reconciliation; store tests cover legacy text defaults and format-bound
+  idempotency/retry. Matching tests include the production escaped-text samples,
+  exact HTML and cross-format ambiguity. Frontend workflow tests cover the format
+  dialog, cancellation, frozen drafts, account changes and reload recovery. These
+  use simulated clipboard I/O and temporary databases; actual client HTML rendering
+  and copy serialization still require real-client acceptance.
 - Its native Maa tests use a custom controller with synthetic images built from
   repository button templates. They verify enabled/disabled/missing send buttons,
   action failure, repeated send/input/send operations and read-only diagnostics.

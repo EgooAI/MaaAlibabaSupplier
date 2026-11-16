@@ -173,6 +173,7 @@ class GotoContactInput(BaseModel):
 
 class SendMessageInput(BaseModel):
     content: str = Field(min_length=1)
+    content_format: Literal["text", "html"] = "text"
     action: Literal["send", "test"]
     idempotency_key: str = Field(min_length=1, max_length=128, pattern=r"\S")
     # The reply intent this submission accepts; optional for hand-typed messages.
@@ -635,6 +636,7 @@ def send_message(conversation_id: int, body: SendMessageInput) -> dict:
         context, conversation_id, conv.contact_ali_id, login_id,
         content, body.action, body.idempotency_key,
         intent_id=intent["id"] if intent is not None else None,
+        content_format=body.content_format,
     )
     # The outbox row exists now; accepting the intent is a separate, atomic mark.
     if intent is not None:

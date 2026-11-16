@@ -318,13 +318,13 @@ def goto_contact(contact_ref: str) -> tuple[bool, str]:
     return run_node("ContactSearch", override)
 
 
-def chat_input_override(text: str, *, send: bool) -> dict:
+def chat_input_override(text: str, *, send: bool, content_format: str = "text") -> dict:
     """Specify both branches on every call, including nested Agent tasks."""
     return {
         "ChatInput_PasteText": {
             "action": {
                 "param": {
-                    "custom_action_param": {"text": text}
+                    "custom_action_param": {"text": text, "content_format": content_format}
                 }
             },
             "next": ["ChatInput_SendMessage"] if send else [],
@@ -333,9 +333,9 @@ def chat_input_override(text: str, *, send: bool) -> dict:
     }
 
 
-def chat_input(text: str) -> tuple[bool, str]:
+def chat_input(text: str, *, content_format: str = "text") -> tuple[bool, str]:
     """Replaces chat text through the clipboard and verifies it without sending."""
-    return run_node("ChatInput", chat_input_override(text, send=False))
+    return run_node("ChatInput", chat_input_override(text, send=False, content_format=content_format))
 
 
 def submit_send() -> TaskJob:

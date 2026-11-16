@@ -103,11 +103,10 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
     };
   }
 
-  /** Read-and-clear the intent tied to the current draft, if it still matches. */
-  const takePendingIntent = useCallback((content: string) => {
+  /** Reads provenance without consuming a draft whose format choice can be cancelled. */
+  const getPendingIntent = useCallback((content: string) => {
     const pending = pendingIntentRef.current;
     if (!pending || pending.content !== content) return undefined;
-    pendingIntentRef.current = null;
     return pending.intentId;
   }, []);
 
@@ -295,7 +294,7 @@ export function useChatWorkbench(initialQuery: ConversationQuery = {}, initialCo
     addPortraitTag,
     reloadPortraitTags,
     insertSuggestion,
-    takePendingIntent,
+    getPendingIntent,
     analysisOpen,
     setAnalysisOpen,
     analysisLoading: analysisState.loading,

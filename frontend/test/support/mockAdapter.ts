@@ -408,18 +408,18 @@ export const mockBackend: OperationsBackend = {
     return delay({ translation: `[EN] ${text.trim()}` });
   },
 
-  sendMessage: async ({ conversationId, content, action, idempotency_key }) => {
+  sendMessage: async ({ conversationId, content, action, idempotency_key, content_format = "text" }) => {
     requireMockClient();
     const conversation = buildConversationDetail(conversationId);
     if (!idempotency_key || !content.trim()) throw new Error("缺少提交内容或幂等键");
     const existing = [...outboxStore.values()].find((record) => record.scope === outboxScope() && record.task.idempotency_key === idempotency_key)?.task;
     if (existing) {
-      if (existing.content !== content || existing.action !== action || String(existing.conversation_id) !== conversationId) throw new Error("幂等键冲突");
+      if (existing.content !== content || existing.action !== action || (existing.content_format ?? "text") !== content_format || String(existing.conversation_id) !== conversationId) throw new Error("幂等键冲突");
       return delay({ outbox: structuredClone(existing) });
     }
     const task: OutboxTask = {
       id: crypto.randomUUID(), conversation_id: Number(conversationId), contact_ali_id: conversation.customer.aliId ?? "",
-      login_id: conversation.customer.loginId ?? "", content, action, idempotency_key, status: "queued", version: 1,
+      login_id: conversation.customer.loginId ?? "", content, content_format, action, idempotency_key, status: "queued", version: 1,
       attempt: 1, may_have_sent: false, reason: null, created_at: Date.now() / 1000, updated_at: Date.now() / 1000,
       matched_message_id: null,
     };

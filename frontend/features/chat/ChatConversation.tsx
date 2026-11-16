@@ -59,7 +59,7 @@ export function ChatConversation({ active, workbench, onFork, onAnalysis }: {
     </aside> : null}
     <div className="row-start-3 min-w-0 border-t border-slate-100 px-3 pb-3 sm:px-4 2xl:col-start-1 2xl:row-start-2">
       <OutboxWorkspace conversation={active} outbox={outbox} value={workbench.draft} onChange={workbench.setDraft}
-        captureDraft={workbench.captureDraft} takePendingIntent={workbench.takePendingIntent}
+        captureDraft={workbench.captureDraft} getPendingIntent={workbench.getPendingIntent}
         onOpenSuggestions={() => void suggestions.show(true)} onOpenIntentAnalysis={() => onAnalysis("intent")}
         suggestionAgent={<SuggestionAgentSelect workspace={suggestions} disabled={blocked || suggestions.saving} />}
         onOpenStageAnalysis={() => onAnalysis("stage")} />

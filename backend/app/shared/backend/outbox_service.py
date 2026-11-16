@@ -26,6 +26,7 @@ from backend.app.shared.crm.outbox_state import (
     is_gui_risk,
 )
 from backend.app.task_queue import get_task_queue
+from backend.app.shared.message_content import validate_content
 from backend.app.shared.utils.log_context import bind_log_context, capture_log_context, failure_report_due, log_event
 
 
@@ -132,14 +133,19 @@ class OutboxService:
     def submit(
         self, context: AccountContext, conversation_id: int, contact_ali_id: str,
         login_id: str, content: str, action: str, idempotency_key: str,
-        *, intent_id: str | None = None,
+        *, intent_id: str | None = None, content_format: str = "text",
     ) -> dict:
+        try:
+            validate_content(content, content_format)
+        except ValueError as exc:
+            raise AppError("消息内容或发送格式无效。", status_code=422) from exc
         self.start()
         with self._condition:
             self._accepting()
             record, created = self.store.create(
                 **self._scope(context), conversation_id=conversation_id, contact_ali_id=contact_ali_id,
                 login_id=login_id, content=content, action=action, idempotency_key=idempotency_key,
+                content_format=content_format,
                 origin_request_id=intent_id or capture_log_context().get("request_id"),
                 origin_account_epoch=context.epoch,
             )
@@ -312,7 +318,7 @@ class OutboxService:
                         baseline["send_started_at"] = time.time()
                         baseline["sent_at"] = baseline["send_started_at"]
                     record = self._move(record, "running", baseline=baseline)
-                ok, reason = runner.chat_input(record["content"])
+                ok, reason = runner.chat_input(record["content"], content_format=record["content_format"])
                 if not ok:
                     raise RuntimeError(reason)
                 with self._condition:

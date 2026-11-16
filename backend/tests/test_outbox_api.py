@@ -62,7 +62,7 @@ def test_single_submission_contract_and_immutable_content(client, outbox, sdk, a
     assert set(task) == {
         "id", "conversation_id", "contact_ali_id", "login_id", "content", "action",
         "idempotency_key", "status", "version", "attempt", "may_have_sent",
-        "reason", "created_at", "updated_at",
+        "reason", "created_at", "updated_at", "content_format",
         "matched_message_id", "evidence",
     }
     assert sdk.calls == []
@@ -78,6 +78,28 @@ def test_single_submission_contract_and_immutable_content(client, outbox, sdk, a
     assert sdk.calls[1][1]["ChatInput_SendMessage"]["enabled"] is False
     assert "private-baseline-id" not in str(result)
     assert "private-source" not in str(result)
+
+
+@pytest.mark.parametrize("format,source", [
+    ("text", "&lt;b&gt;bold&nbsp;test&lt;/b&gt;"), ("html", "<b>bold test</b>"),
+])
+def test_selected_format_survives_api_queue_and_local_verification(client, outbox, sdk, format, source):
+    task = prepared(client, outbox, content="<b>bold test</b>", content_format=format)
+    assert task["content_format"] == format and task["may_have_sent"]
+    assert sdk.calls[1][1]["ChatInput_PasteText"]["action"]["param"]["custom_action_param"] == {
+        "text": "<b>bold test</b>", "content_format": format,
+    }
+    assert submit(client, content="<b>bold test</b>", content_format="html" if format == "text" else "text").status_code == 409
+    context = account_context.get_account_context()
+    outbox.source.update(checked_at=time.time(), messages=[{
+        "id": "selected-format-message", "sender_id": self_sender_id(context.self_ali_id),
+        "cid": f"{context.self_ali_id}-buyer", "type": 0, "text": source,
+        "created_at": time.time(), "is_system": False, "is_auto_reply": False, "extension_valid": True,
+    }])
+    assert len(outbox.service.reconcile_once()) == 1
+    observed = client.get(f"/api/outbox/{task['id']}").json()["data"]
+    assert observed["status"] == "observed" and observed["matched_message_id"] == "selected-format-message"
+    assert outbox.queue.jobs == []
 
 
 def test_reconnect_same_window_invalidates_queued_session(client, outbox, sdk):
@@ -134,6 +156,7 @@ def test_lost_receipt_can_recover_an_already_accepted_reply_intent(client, outbo
     {"content": " ", "action": "send", "idempotency_key": "key"},
     {"content": "hello", "action": "send", "idempotency_key": " "},
     {"content": "hello", "action": "send", "idempotency_key": "x" * 129},
+    {"content": "hello", "action": "send", "idempotency_key": "key", "content_format": "invalid"},
 ])
 def test_submit_validation_never_queues(client, outbox, payload):
     response = client.post("/api/conversations/1/messages", json=payload)
@@ -248,7 +271,7 @@ def test_busy_outbox_write_rejects_before_release_and_never_executes_later(clien
     running = submit(client, idempotency_key="active").json()["data"]["outbox"]
     entered, release = Event(), Event()
 
-    def input_text(text):
+    def input_text(text, **kwargs):
         entered.set()
         assert release.wait(10)
         return True, "filled"
@@ -310,7 +333,7 @@ def test_get_and_cancel_remain_responsive_during_real_gui_guard(client, outbox, 
     queued = submit(client, idempotency_key="cancel-me").json()["data"]["outbox"]
     entered, release = Event(), Event()
 
-    def input_text(text):
+    def input_text(text, **kwargs):
         entered.set()
         assert release.wait(10)
         return True, "filled"

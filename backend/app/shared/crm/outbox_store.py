@@ -59,6 +59,7 @@ def _record(row: sqlite3.Row) -> dict:
         result.pop(name, None)
     result.setdefault("origin_request_id", None)
     result.setdefault("origin_account_epoch", None)
+    result.setdefault("content_format", "text")
     result["may_have_sent"] = bool(result["may_have_sent"])
     for name in ("baseline", "evidence"):
         result[name] = json.loads(result[name]) if result[name] is not None else None
@@ -106,6 +107,7 @@ class OutboxStore:
                     contact_ali_id TEXT NOT NULL,
                     login_id TEXT NOT NULL,
                     content TEXT NOT NULL,
+                    content_format TEXT NOT NULL DEFAULT 'text' CHECK(content_format IN ('text','html')),
                     action TEXT NOT NULL CHECK(action IN ('send','test')),
                     idempotency_key TEXT NOT NULL,
                     status TEXT NOT NULL CHECK(status IN ({statuses})),
@@ -125,6 +127,8 @@ class OutboxStore:
                 )
             """)
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(app_outbox)")}
+            if "content_format" not in columns:
+                conn.execute("ALTER TABLE app_outbox ADD COLUMN content_format TEXT NOT NULL DEFAULT 'text' CHECK(content_format IN ('text','html'))")
             for name in ("origin_request_id", "origin_account_epoch"):
                 if name not in columns:
                     conn.execute(f"ALTER TABLE app_outbox ADD COLUMN {name} TEXT")
@@ -163,6 +167,7 @@ class OutboxStore:
         contact_ali_id: str, login_id: str, content: str, action: str,
         idempotency_key: str,
         origin_request_id: str | None = None, origin_account_epoch: str | None = None,
+        content_format: str = "text",
     ) -> tuple[dict, bool]:
         seller, directory = _scope(seller, data_dir)
         if action not in ("send", "test"):
@@ -172,7 +177,9 @@ class OutboxStore:
         for value in (contact_ali_id, login_id, content, idempotency_key):
             if not isinstance(value, str) or not value.strip():
                 raise ValueError("Recipient, content and idempotency key must be nonempty strings")
-        payload = dict(zip(PAYLOAD_FIELDS, (conversation_id, contact_ali_id, login_id, content, action)))
+        if content_format not in ("text", "html"):
+            raise ValueError("Unsupported message format")
+        payload = dict(zip(PAYLOAD_FIELDS, (conversation_id, contact_ali_id, login_id, content, action, content_format)))
         self.initialize()
         with self._connection(write=True) as conn:
             existing = conn.execute(

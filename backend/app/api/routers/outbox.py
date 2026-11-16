@@ -16,7 +16,7 @@ observations = APIRouter(route_class=OutboxObservationRoute)
 
 _PUBLIC_FIELDS = (
     "id", "conversation_id", "contact_ali_id", "login_id", "content", "action",
-    "idempotency_key", "status", "version", "attempt", "may_have_sent",
+    "idempotency_key", "status", "version", "attempt", "may_have_sent", "content_format",
     "created_at", "updated_at", "matched_message_id",
 )
 

@@ -33,9 +33,12 @@ export interface ComposeTranslationResult {
   translation: string;
 }
 
+export type MessageFormat = "text" | "html";
+
 export interface SendMessageInput {
   conversationId: string;
   content: string;
+  content_format?: MessageFormat;
   action: "test" | "send";
   idempotency_key: string;
   /** The reply intent this submission accepts; ignored when the text was edited. */
@@ -48,6 +51,7 @@ export interface OutboxTask {
   contact_ali_id: string;
   login_id: string;
   content: string;
+  content_format?: MessageFormat;
   action: "send" | "test";
   status: OutboxStatus;
   version: number;

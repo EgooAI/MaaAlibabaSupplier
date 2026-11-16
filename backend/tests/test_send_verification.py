@@ -182,3 +182,37 @@ def test_non_send_or_unstarted_task_never_observed(case, changes):
     record, snapshot = case
     record.update(changes)
     assert match_outbox(record, snapshot, [])["reason"] == "task_not_verifiable"
+
+
+@pytest.mark.parametrize("content,format,source,observed", [
+    ("plain\n\n中文 🙂", "text", "plain\n\n中文 🙂", True),
+    ("<b>bold test</b>", "text", "&lt;b&gt;bold&nbsp;test&lt;/b&gt;", True),
+    ('symbol test\n`~!@#$%^&*()_+[]{};\':"\\|<>,./?', "text",
+     'symbol&nbsp;test<br>`~!@#$%^&amp;*()_+[]{};\':&quot;\\|&lt;&gt;,./?', True),
+    ("<b>bold test</b>", "html", "<b>bold test</b>", True),
+    ("<b>bold test</b>", "text", "<b>bold test</b>", False),
+    ("<b>bold test</b>", "html", "&lt;b&gt;bold&nbsp;test&lt;/b&gt;", False),
+    ("<b>bold test</b>", "html", "bold test", False),
+    ("<b>bold test</b>", "html", "<strong>bold test</strong>", False),
+    ("<b>bold test</b>", "html", "<b>bold  test</b>", False),
+    ("a &amp; b", "text", "a&nbsp;&amp;amp;&nbsp;b", True),
+    ("a &amp; b", "text", "a&nbsp;&amp;&nbsp;b", False),
+])
+def test_format_specific_matching_preserves_literal_text_and_html_structure(case, content, format, source, observed):
+    record, snapshot = case
+    record.update(content=content, content_format=format)
+    snapshot["messages"][0]["text"] = source
+    result = match_outbox(record, snapshot, [])
+    assert (result["status"] == "observed") is observed
+    if observed:
+        assert result["evidence"]["message"]["text"] == source
+
+
+def test_competing_formats_are_checked_against_the_actual_candidate(case):
+    record, snapshot = case
+    record.update(content="<b>body</b>", content_format="text")
+    snapshot["messages"][0]["text"] = "&lt;b&gt;body&lt;/b&gt;"
+    other = {**deepcopy(record), "id": "html-send", "content_format": "html"}
+    assert match_outbox(record, snapshot, [other])["status"] == "observed"
+    other["content"] = "&lt;b&gt;body&lt;/b&gt;"
+    assert match_outbox(record, snapshot, [other])["reason"] == "ambiguous_send_attempts"

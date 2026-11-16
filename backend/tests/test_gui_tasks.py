@@ -21,7 +21,7 @@ def send_setup(outbox, monkeypatch):
     calls = []
     outbox.service._queue = TaskQueue()
     monkeypatch.setattr(outbox_service.runner, "goto_contact", lambda target: (calls.append(("goto", target)) is None, "located"))
-    monkeypatch.setattr(outbox_service.runner, "chat_input", lambda text: (calls.append(("input", text)) is None, "filled"))
+    monkeypatch.setattr(outbox_service.runner, "chat_input", lambda text, **kwargs: (calls.append(("input", text)) is None, "filled"))
     monkeypatch.setattr(outbox_service.runner, "submit_send", lambda: calls.append(("send", None)))
     monkeypatch.setattr(outbox_service.runner, "wait_send", lambda job: (True, "clicked"))
     return calls

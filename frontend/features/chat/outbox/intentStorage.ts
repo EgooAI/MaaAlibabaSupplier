@@ -1,6 +1,7 @@
 import type { ConnectionSnapshot } from "@/types/connection";
+import type { MessageFormat } from "@/types/chatOperations";
 
-export type PendingIntent = { key: string; content: string; action: "send" | "test"; taskId?: string; draftId?: string; intentId?: string };
+export type PendingIntent = { key: string; content: string; action: "send" | "test"; contentFormat?: MessageFormat; taskId?: string; draftId?: string; intentId?: string };
 
 export function intentKey(account: ConnectionSnapshot["account"], sid: string) {
   return `maa:outbox-intents:${JSON.stringify([account.data_dir, account.self_ali_id, sid])}`;
@@ -13,6 +14,7 @@ export function loadIntents(storage: Storage, key: string): PendingIntent[] {
   if (!Array.isArray(items) || items.some((item) => !item || typeof item.key !== "string" || !item.key || typeof item.content !== "string" || !["send", "test"].includes(item.action) || ["taskId", "draftId", "intentId"].some((field) => item[field] !== undefined && (typeof item[field] !== "string" || !item[field])))) {
     throw new Error("提交记录损坏");
   }
+  if (items.some((item) => item.contentFormat !== undefined && !["text", "html"].includes(item.contentFormat))) throw new Error("提交格式记录损坏");
   return items;
 }
 
@@ -24,7 +26,7 @@ export function persistIntents(storage: Storage, key: string, incoming: PendingI
     if (index < 0) items.push(intent);
     else {
       const old = items[index];
-      if (old.content !== intent.content || old.action !== intent.action || (old.taskId && intent.taskId && old.taskId !== intent.taskId)) throw new Error("提交记录不匹配");
+      if (old.content !== intent.content || old.action !== intent.action || (old.contentFormat ?? "text") !== (intent.contentFormat ?? "text") || (old.taskId && intent.taskId && old.taskId !== intent.taskId)) throw new Error("提交记录不匹配");
       items[index] = { ...old, ...intent };
     }
   }

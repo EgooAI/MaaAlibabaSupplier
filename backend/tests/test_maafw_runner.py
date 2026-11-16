@@ -236,7 +236,7 @@ def assert_chat_calls(calls):
     for (entry, override), text, send in zip(calls, ("first", "test", "last"), (True, False, True)):
         assert entry == "ChatInput"
         node = override["ChatInput_PasteText"]
-        assert node["action"]["param"]["custom_action_param"] == {"text": text}
+        assert node["action"]["param"]["custom_action_param"] == {"text": text, "content_format": "text"}
         assert node["next"] == (["ChatInput_SendMessage"] if send else [])
         assert override["ChatInput_SendMessage"]["enabled"] is send
 
@@ -524,7 +524,7 @@ def native_pipeline(tmp_path, monkeypatch):
     # only the OS input boundary is replaced, never the pipeline or action adapter.
     monkeypatch.setattr(Controller, "info", property(lambda self: {"type": "win32", "hwnd": 42}))
 
-    def paste(hwnd, text):
+    def paste(hwnd, text, content_format="text"):
         assert hwnd == 42
         controller.pastes.append(text)
         if not controller.paste_ok:

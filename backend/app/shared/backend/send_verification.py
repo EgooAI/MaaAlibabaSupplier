@@ -17,9 +17,11 @@ Persist observed through the store's atomic transition/unique message claim.
 Missing/invalid baselines remain unknown and must not be automatically retried.
 GUI authorization belongs to the sending service.
 
-Text comparison strips only boundary whitespace, as submission does. Internal
-whitespace and case remain significant. Candidate and competing-task checks use
-the same comparison; evidence retains the unmodified source text and message ID.
+Comparison uses the immutable content_format. Text uses the client's literal-text
+storage representations; HTML must retain its original markup. Line endings and
+boundary whitespace are normalized, but internal spacing, case and HTML tags stay
+significant. Candidates and competing tasks use the same comparison. Evidence
+retains the unmodified source text and message ID.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ import math
 from collections.abc import Iterable
 
 from backend.app.shared.crm.identities import canonical_ali_id, sender_matches
+from backend.app.shared.message_content import content_matches
 
 
 def _timestamp(value: object) -> bool:
@@ -63,7 +66,6 @@ def _text_key(value: object) -> str:
 
 def _candidates(record: dict, baseline: dict, messages: list[dict]) -> list[dict]:
     old_ids = set(baseline["ids"])
-    content = _text_key(record.get("content"))
     seller, contact = record.get("seller"), record.get("contact_ali_id")
     cids = {
         f"{canonical_ali_id(seller)}-{canonical_ali_id(contact)}",
@@ -75,7 +77,7 @@ def _candidates(record: dict, baseline: dict, messages: list[dict]) -> list[dict
         and message["id"] not in old_ids
         and sender_matches(message.get("sender_id"), seller)
         and type(message.get("type")) is int and message["type"] == 0
-        and _text_key(message.get("text")) == content
+        and content_matches(record.get("content"), record.get("content_format", "text"), message.get("text"))
         and message.get("is_system") is False and message.get("is_auto_reply") is False
         and message.get("extension_valid") is True
         and isinstance(message.get("cid"), str) and _cid_key(message["cid"]) in cids
@@ -134,7 +136,7 @@ def match_outbox(record: dict, snapshot: dict, other_records: Iterable[dict]) ->
             result["reason"] = "message_already_claimed"
             return result
         if (other.get("action") != "send" or other.get("may_have_sent") is not True
-                or _text_key(other.get("content")) != _text_key(record["content"])
+                or not content_matches(other.get("content"), other.get("content_format", "text"), candidate.get("text"))
                 or other.get("contact_ali_id") != record["contact_ali_id"]):
             continue
         other_baseline = _baseline(other)
