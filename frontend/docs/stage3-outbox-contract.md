@@ -59,7 +59,11 @@ Visible workspaces poll every two seconds. The recent list is capped at 100, so 
 
 图片 Blob 和草稿版本存入 IndexedDB，提交身份写入现有 localStorage。图片键固定为 `image:{attachment_id}:{action}`。上传、预览和发送的异步续接检查原账号票据与草稿版本，旧回包不能修改新草稿。超时恢复先查询原回执，不产生新发送身份。
 
-附件 BLOB 与元数据原子保存到 `app_image_attachment`。上传时惰性清理超过 24 小时且未引用的 BLOB，保留不可变身份。被任务引用的附件继续保留。
+附件通过 CRM SDK 的 `resource` / `resource_reference` 引用统一文件对象，回执增加 `resource_id=sha256:<摘要>`。默认目录为数据库旁的 `crm.sqlite.resources/`。上传保留 24 小时临时引用，Outbox 建立时在同一事务中转为长期引用。后台每小时分批清理无有效引用对象，保留身份和摘要。迁移旧 BLOB 时保留原附件 ID 与发送摘要。
+
+`GET /api/images/{resource_id}` 通过认证和当前账号作用域返回图片，网页使用相同账号票据获取 Blob。知道资源哈希不能代替消息或附件访问权限。现有附件和消息图片 URL 继续提供业务归属校验。
+
+客户端新消息在 CRM 提交后自动归档图片。每个工作区首次成功同步建立历史基线，历史图片首次查看时补存。图片归档进度独立于聊天同步版本，在状态页“图片归档”中显示。平台下载保留原始编码，已归档内容本地优先；临时网络故障退避重试。发送核验复用归档资源与像素摘要，仍保留原有证据边界。
 
 `PasteChatImage` 发布 PNG/DIBV5，最多等待 10 秒取得新版本的精确像素读回，同时要求同版本 Unicode 恰好为一个 `U+FFFC` 图片对象。缺少结构证据、残留文字或多个对象都会中止发送。文字/图片使用独立流水线节点，每次重设输入分支，避免覆写残留。
 

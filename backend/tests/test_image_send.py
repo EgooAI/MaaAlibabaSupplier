@@ -14,7 +14,7 @@ from PIL import Image
 from backend.app.api.envelope import AppError
 from backend.app.api.routers import conversations
 from backend.app.shared import image_content
-from backend.app.shared.backend import account_context, image_verification
+from backend.app.shared.backend import account_context, image_verification, image_archive
 from backend.app.shared.backend.send_verification import match_outbox
 from backend.app.shared.crm.image_attachment_store import ImageAttachmentStore
 from backend.app.shared.image_clipboard import image_payload, dib_identity, CF_DIBV5
@@ -116,6 +116,9 @@ def test_attachment_conflict_scope_expiry_and_atomic_binding(env):
     attach(env, identifier="b" * 32)
     with attachments.store._connection(write=True) as conn:
         conn.execute("UPDATE app_image_attachment SET created_at=0")
+        from backend.app.shared.crm.image_resources import image_namespace
+        attachments.resources.link("sha256:" + metadata["sha256"], namespace=image_namespace(scope["seller"], scope["data_dir"]),
+            owner_type="attachment", owner_id="b" * 32, expires_at=0, transaction=conn)
         attachments.expire(conn)
     assert attachments.get("a" * 32, **scope)["sha256"] == metadata["sha256"]
     with pytest.raises(AppError) as expired:
@@ -154,8 +157,8 @@ def test_image_task_checks_barrier_and_recovers_without_replaying(env, monkeypat
 def test_missing_image_prevents_gui_but_does_not_destroy_lost_receipt(env):
     attachments, _, _ = attach(env)
     task = env.service.submit(env.context, 1, "buyer", "buyer-login", "", "send", "image-key", message_kind="image", attachment_id="a" * 32)
-    with attachments.store._connection(write=True) as conn:
-        conn.execute("UPDATE app_image_attachment SET data=NULL")
+    metadata = env.service.get(env.context, task["id"])["image"]
+    attachments.resources.path("sha256:" + metadata["sha256"]).unlink()
     assert env.service.submit(env.context, 1, "buyer", "buyer-login", "", "send", "image-key", message_kind="image", attachment_id="a" * 32)["id"] == task["id"]
     assert not env.queue.run()[0] and env.calls == []
     result = env.service.get(env.context, task["id"])
@@ -199,8 +202,8 @@ def test_reencoded_pixels_match_after_transient_download_failure_and_are_cached(
         calls.append(url)
         if len(calls) == 1:
             raise image_verification.ImageFetchError("status_502")
-        return SimpleNamespace(body=png)
-    monkeypatch.setattr(image_verification, "fetch_image", fetch)
+        return SimpleNamespace(body=png, content_type="image/png")
+    monkeypatch.setattr(image_archive, "fetch_image", fetch)
     verifier = image_verification.ImageVerifier()
     verifier.enrich(snapshot, [record])
     assert match_outbox(record, snapshot, [])["status"] == "verifying"
@@ -303,8 +306,8 @@ def test_reconciliation_rechecks_account_after_slow_image_download(env, monkeypa
                 with env.service._condition:
                     env.context = replace(before, self_ali_id="other", epoch="new")
             pool.submit(unlocked).result(5)
-        return SimpleNamespace(body=picture())
-    monkeypatch.setattr(image_verification, "fetch_image", fetch)
+        return SimpleNamespace(body=picture(), content_type="image/png")
+    monkeypatch.setattr(image_archive, "fetch_image", fetch)
     assert env.service.reconcile_once() == []
     assert env.service.get(before, task["id"])["status"] == "verifying"
     assert env.queue.jobs == []

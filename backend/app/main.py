@@ -42,6 +42,7 @@ from backend.app.shared.backend.card_sweep_service import start_card_sweep_servi
 from backend.app.shared.backend.execution_service import get_execution_service
 from backend.app.shared.backend.sync_coordinator import start_sync_service
 from backend.app.shared.backend.outbox_service import start_outbox_service
+from backend.app.shared.backend.image_archive import start_image_archive
 from backend.app.updater import register_update_runtime
 
 
@@ -220,6 +221,7 @@ def _main() -> None:
         )
         start_sync_service()
         start_outbox_service()
+        start_image_archive()
         start_card_sweep_service()
         run_api()
     except MaaFWProcessError:

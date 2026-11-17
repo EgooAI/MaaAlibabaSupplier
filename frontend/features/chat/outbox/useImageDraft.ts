@@ -41,7 +41,8 @@ export function useImageDraft(sid: string) {
       if (!await saveImageDraft(key, next, value.id)) throw new Error("图片草稿已在其他页面变化，请重新选择");
       ticket.assertCurrent();
       if (!valid()) return;
-      const blob = await backend.getImageAttachmentPreview(sid, value.id);
+      const blob = attachment.resource_id ? await backend.getImageResource(attachment.resource_id)
+        : await backend.getImageAttachmentPreview(sid, value.id);
       ticket.assertCurrent();
       if (!valid()) return;
       current.current = next; setDraft(next); setPreview(blob);

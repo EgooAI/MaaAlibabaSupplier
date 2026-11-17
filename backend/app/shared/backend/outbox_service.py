@@ -56,7 +56,7 @@ class OutboxService:
         self._thread: Worker | None = None
         self._verification_failures = 0
         self._reconcile_lock = RLock()
-        self._images = ImageVerifier()
+        self._images = ImageVerifier(self.store.database_path)
         self._observation_lock = RLock()
         self._observation = {
             "started_at": None, "heartbeat_at": None, "last_progress_at": None,

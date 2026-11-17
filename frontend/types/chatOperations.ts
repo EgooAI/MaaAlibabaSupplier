@@ -37,6 +37,7 @@ export type MessageFormat = "text" | "html";
 
 export interface ImageAttachment {
   id: string;
+  resource_id?: string;
   width: number;
   height: number;
   bytes: number;

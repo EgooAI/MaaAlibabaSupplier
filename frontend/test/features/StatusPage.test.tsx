@@ -115,6 +115,7 @@ it("keeps queue completion, cooperative cancellation and local Outbox evidence s
       { id: "unknown-send", status: "unknown", action: "send", conversationId: 2, createdAt: 100, updatedAt: 150, mayHaveSent: true },
       { id: "filled-test", status: "filled", action: "test", conversationId: 3, createdAt: 100, updatedAt: 150, mayHaveSent: false },
     ] },
+    imageArchive: { counts: { ready: 3, pending: 2, remote: 7, retry_wait: 1 } },
   }) });
   await act(async () => root.render(<BackgroundTasks snapshot={snapshot} />));
   const taskRows = [...container.querySelectorAll("tbody tr")].filter((row) => row.textContent?.includes("shared-id"));
@@ -137,6 +138,11 @@ it("keeps queue completion, cooperative cancellation and local Outbox evidence s
   expect(uncertain.textContent).toContain("任务可能失败");
   expect(uncertain.textContent).toContain("可能已发送，勿直接重发");
   expect(container.textContent).toContain("仅填入，未发送");
+  await click("图片归档", "[role=tab]");
+  expect(container.textContent).toContain("已保存：3");
+  expect(container.textContent).toContain("待归档：2");
+  expect(container.textContent).toContain("历史待查看：7");
+  expect(container.textContent).toContain("等待重试：1");
 });
 
 it("shows partial read failures instead of empty success, while retaining available queue tasks", async () => {

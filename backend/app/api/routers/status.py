@@ -26,6 +26,7 @@ from backend.app.task_queue import (
 from backend.app.background import get_background_runtime
 from backend.app.shared.agent.experiment_runs import runs
 from backend.app.shared.crm.outbox_store import OutboxStore
+from backend.app.shared.crm.message_image_store import MessageImageStore
 from backend.app.updater import observe_updater
 
 router = APIRouter(route_class=AccountRoute)
@@ -100,10 +101,15 @@ def _background_snapshot(context) -> dict:
     except Exception as exc:
         errors["update"] = type(exc).__name__
         update = None
+    try:
+        image_archive = MessageImageStore().observation(context)
+    except Exception as exc:
+        errors["imageArchive"] = type(exc).__name__
+        image_archive = {"counts": {}}
     return {"runtime": runtime, "queueTasks": tasks,
             "queueCounts": {name: observation["counts"] for name, observation in observations.items()},
             "experiments": runs.observations(context),
-            "outbox": outbox, "update": update, "errors": errors}
+            "outbox": outbox, "imageArchive": image_archive, "update": update, "errors": errors}
 
 
 def _scoped_workers(context) -> dict:

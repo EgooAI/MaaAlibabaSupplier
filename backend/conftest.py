@@ -73,6 +73,9 @@ def pytest_configure(config):
 
 
 def _cleanup_runtime():
+    images = sys.modules.get("backend.app.shared.backend.image_archive")
+    if images is not None:
+        images.stop_image_archives()
     execution = sys.modules.get("backend.app.shared.backend.execution_service")
     if execution is not None:
         if execution._INSTANCE is not None:

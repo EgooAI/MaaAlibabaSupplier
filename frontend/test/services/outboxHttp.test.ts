@@ -47,13 +47,16 @@ describe("outbox HTTP contract and account isolation", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("fetches actual PNG bytes with an epoch header and no-store, without exposing a direct image URL", async () => {
+  it.each([
+    ["/api/conversations/42/messages/message%2Fid/image", () => httpBackend.getMessageImage("42", "message/id")],
+    ["/api/images/sha256%3Aabc", () => httpBackend.getImageResource("sha256:abc")],
+  ] as const)("fetches actual PNG bytes through scoped route %s", async (path, load) => {
     const png = screenshotPng();
     const fetch = vi.fn().mockResolvedValue(new Response(png, { headers: { "Content-Type": "image/png", "X-Account-Epoch": "mock-1", "Cache-Control": "no-store" } }));
     vi.stubGlobal("fetch", fetch);
-    const result = await httpBackend.getMessageImage("42", "message/id");
+    const result = await load();
     expect(new Uint8Array(await result.arrayBuffer())).toEqual(new Uint8Array(await png.arrayBuffer()));
-    expect(fetch.mock.calls[0][0]).toBe("/api/conversations/42/messages/message%2Fid/image");
+    expect(fetch.mock.calls[0][0]).toBe(path);
     expect(fetch.mock.calls[0][1].cache).toBe("no-store");
     expect(new Headers(fetch.mock.calls[0][1].headers).get("X-Account-Epoch")).toBe("mock-1");
   });
@@ -70,10 +73,13 @@ describe("outbox HTTP contract and account isolation", () => {
     await expect(httpBackend.getMessageImage("42", "message")).rejects.toThrow("图片格式无效");
   });
 
-  it("rechecks account scope after the PNG body finishes reading", async () => {
+  it.each([
+    () => httpBackend.getMessageImage("42", "message"),
+    () => httpBackend.getImageResource("sha256:abc"),
+  ])("rechecks account scope after image body completion", async (load) => {
     let finish!: (blob: Blob) => void;
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, headers: new Headers({ "Content-Type": "image/png", "X-Account-Epoch": "mock-1" }), blob: () => new Promise<Blob>((resolve) => { finish = resolve; }) }));
-    const pending = httpBackend.getMessageImage("42", "message");
+    const pending = load();
     await Promise.resolve();
     accountSession.invalidate();
     finish(screenshotPng());

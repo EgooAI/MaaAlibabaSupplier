@@ -411,6 +411,7 @@ export const mockBackend: OperationsBackend = {
   uploadImageAttachment: async () => { throw new Error("Mock 不提供图片上传，请连接真实后端"); },
   getImageAttachment: async () => { throw new Error("Mock 不提供图片附件"); },
   getImageAttachmentPreview: async () => { throw new Error("Mock 不提供图片附件"); },
+  getImageResource: async () => { throw new Error("Mock 不提供图片资源"); },
   sendMessage: async ({ conversationId, content, action, idempotency_key, content_format = "text", message_kind = "text" }) => {
     if (message_kind === "image") throw new Error("Mock 不执行图片发送");
     requireMockClient();

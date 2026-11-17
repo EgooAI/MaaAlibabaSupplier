@@ -95,7 +95,7 @@ def _image(response: Response) -> FetchedImage:
     content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
     # A rejected signature answers 200 with an empty body and no content type.
     if not response.body:
-        raise ImageUnavailable("empty")
+        raise ImageFetchError("empty")
     if content_type not in IMAGE_TYPES:
         raise ImageFetchError("not_an_image")
     if len(response.body) > MAX_BYTES:

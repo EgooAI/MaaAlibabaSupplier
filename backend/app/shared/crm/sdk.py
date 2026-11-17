@@ -17,6 +17,7 @@ def ensure_sdk_path() -> None:
 ensure_sdk_path()
 
 from core.base import BaseManager  # noqa: E402
+from core.resource import sqlite_connection  # noqa: E402
 from utils.common import (  # noqa: E402
     bootstrap_engine,
     get_database_lock,
@@ -62,6 +63,10 @@ AgentPresetRevisionManager = core.AgentPresetRevisionManager
 Experiment = models.Experiment
 ExperimentManager = core.ExperimentManager
 MAX_VARIANTS_PER_EXPERIMENT = core.experiment.MAX_VARIANTS_PER_EXPERIMENT
+Resource = models.Resource
+ResourceReference = models.ResourceReference
+ResourceManager = core.ResourceManager
+ResourceUnavailable = core.ResourceUnavailable
 
 __all__ = [
     "Account",
@@ -94,6 +99,11 @@ __all__ = [
     "Translate",
     "TranslateManager",
     "bootstrap_engine",
+    "Resource",
+    "ResourceReference",
+    "ResourceManager",
+    "ResourceUnavailable",
+    "sqlite_connection",
     "ensure_sdk_path",
     "get_database_lock",
     "utc_now",

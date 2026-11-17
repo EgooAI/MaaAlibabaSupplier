@@ -1,15 +1,12 @@
 "use client";
 
 import { Image, Spin } from "antd";
-import { useEffect, useRef, useState } from "react";
-import { AccountChangedError } from "@/services/accountSession";
-import { ApiError } from "@/services/httpAdapter";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useImageBlob } from "../hooks/useImageBlob";
 import type { ChatMessage } from "@/types/chatCanonical";
 
 const MAX_WIDTH = 240;
 const FALLBACK_SIZE = 160;
-
-type LoadState = { phase: "idle" | "loading" } | { phase: "ready"; url: string } | { phase: "failed"; text: string };
 
 export function MessageImage({ conversationId, message, load }: {
   conversationId: string;
@@ -18,9 +15,9 @@ export function MessageImage({ conversationId, message, load }: {
 }) {
   const holder = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(typeof IntersectionObserver === "undefined");
-  const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<LoadState>({ phase: "idle" });
   const externalMid = message.externalMid ?? message.id;
+  const fetchImage = useCallback(() => load(conversationId, externalMid), [load, conversationId, externalMid]);
+  const { state, retry } = useImageBlob(fetchImage, visible);
 
   useEffect(() => {
     const node = holder.current;
@@ -31,27 +28,6 @@ export function MessageImage({ conversationId, message, load }: {
     observer.observe(node);
     return () => observer.disconnect();
   }, [visible]);
-
-  useEffect(() => {
-    if (!visible) return;
-    let disposed = false;
-    let url: string | undefined;
-    load(conversationId, externalMid).then(
-      (blob) => {
-        if (disposed) return;
-        url = URL.createObjectURL(blob);
-        setState({ phase: "ready", url });
-      },
-      (error: unknown) => {
-        if (disposed || error instanceof AccountChangedError) return;
-        setState({ phase: "failed", text: error instanceof ApiError && error.status === 404 ? "图片已失效" : "图片加载失败" });
-      },
-    );
-    return () => {
-      disposed = true;
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [visible, attempt, conversationId, externalMid, load]);
 
   const width = message.image?.width || FALLBACK_SIZE;
   const height = message.image?.height || FALLBACK_SIZE;
@@ -66,7 +42,7 @@ export function MessageImage({ conversationId, message, load }: {
         <div className="flex h-full flex-col items-center justify-center gap-1 p-2 text-xs text-slate-500" role="alert">
           <span>{state.text}</span>
           {state.text === "图片加载失败" ? (
-            <button type="button" className="text-blue-500 underline-offset-2 hover:underline" onClick={() => { setState({ phase: "loading" }); setAttempt((value) => value + 1); }}>重试</button>
+            <button type="button" className="text-blue-500 underline-offset-2 hover:underline" onClick={retry}>重试</button>
           ) : null}
         </div>
       ) : (

@@ -182,8 +182,16 @@ class CRMAdapter:
             # Preserve the pre-sync archive/scope boundary for inbox upgrades.
             write_inbox(session, self_info.ali_id, data_dir, messages)
             counts = upsert_messages(session, messages)
+            from backend.app.shared.crm.message_image_store import write_message_images
+            write_message_images(session, self_info.ali_id, data_dir, messages)
             result = write_sync_state(session, self_info.ali_id, data_dir, source_revision, counts)
             session.commit()
+            from backend.app.shared.backend.image_archive import trigger_image_archive
+            try:
+                trigger_image_archive()
+            except RuntimeError:
+                # Durable work remains discoverable after shutdown or admission closes.
+                pass
             return result
 
     def _upsert_account(

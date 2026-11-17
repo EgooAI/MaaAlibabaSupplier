@@ -165,7 +165,7 @@ function prepareAccountRequest(path: string, init?: RequestInit) {
     if (!new Headers(init?.headers).get("X-Account-Epoch")) throw new AccountChangedError();
     return { init };
   }
-  const scoped = path === "/api/settings/connection/retry" || /^\/api\/(agent(?:\/|$)|inbox(?:\/|$)|outbox(?:\/|$)|conversations(?:\/|$)|portraits(?:\/|$)|messages(?:\/|$)|self-info(?:\/|$)|cache\/reset(?:\/|$)|status\/(?:node-test|test-tasks)(?:\/|$)|cards(?:\/|$)|remote(?:\/|$))/.test(path);
+  const scoped = path === "/api/settings/connection/retry" || /^\/api\/(agent(?:\/|$)|inbox(?:\/|$)|outbox(?:\/|$)|conversations(?:\/|$)|portraits(?:\/|$)|messages(?:\/|$)|images(?:\/|$)|self-info(?:\/|$)|cache\/reset(?:\/|$)|status\/(?:node-test|test-tasks)(?:\/|$)|cards(?:\/|$)|remote(?:\/|$))/.test(path);
   if (!scoped) return { init };
   const ticket = captureAccount();
   const { capabilities, client } = accountSession.get().snapshot!;
@@ -266,6 +266,7 @@ export const httpBackend: OperationsBackend = {
   }, 60000),
   getImageAttachment: (sid, id) => requestJson(`/api/conversations/${encodeURIComponent(sid)}/image-attachments/${encodeURIComponent(id)}`),
   getImageAttachmentPreview: (sid, id) => request(`/api/conversations/${encodeURIComponent(sid)}/image-attachments/${encodeURIComponent(id)}/image`, "image"),
+  getImageResource: (resourceId) => request(`/api/images/${encodeURIComponent(resourceId)}`, "image", undefined, IMAGE_TIMEOUT_MS),
   listOutbox: (id) => requestJson(`/api/conversations/${encodeURIComponent(id)}/outbox`, { cache: "no-store" }),
   getOutbox: (id) => requestJson(`/api/outbox/${encodeURIComponent(id)}`, { cache: "no-store" }),
   cancelOutbox: (id, version) => requestJson(`/api/outbox/${encodeURIComponent(id)}/cancel`, { method: "POST", body: JSON.stringify({ version }) }),

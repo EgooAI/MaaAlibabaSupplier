@@ -21,7 +21,9 @@ from backend.app.shared import contract
 from backend.app.shared.backend.account_context import AccountContext, get_account_context, changing_account
 from backend.app.shared.image_content import MAX_IMAGE_BYTES, prepare_image
 from backend.app.shared.crm.image_attachment_store import ImageAttachmentStore
-from backend.app.shared.backend.image_fetch import ImageFetchError, ImageUnavailable, fetch_image
+from backend.app.shared.backend.image_fetch import ImageFetchError, ImageUnavailable
+from backend.app.shared.backend.image_archive import get_image_archive
+from backend.app.shared.crm.image_resources import read_authorized_image
 from backend.app.shared.backend.outbox_service import get_outbox_service
 from backend.app.shared.backend.gui_session import capture_gui_session, run_guarded
 from backend.app.shared.agent.inputs import build_analysis_input, build_compose_translation_input
@@ -839,18 +841,28 @@ def get_message_image(conversation_id: int, external_mid: str) -> Response:
     context = outbox_context.get()
     if not message_in_scope(InboxStore(), context.self_ali_id, context.data_dir, conversation_id, external_mid):
         raise AppError("图片不存在", status_code=404)
-    message = CRMAdapter().get_message(context.self_ali_id, conversation_id, external_mid)
-    image = parse_image(message) if message is not None else None
-    if image is None:
-        raise AppError("图片不存在", status_code=404)
+    archive = get_image_archive()
+    record = archive.store.get(context, external_mid)
+    if record is None:
+        message = CRMAdapter().get_message(context.self_ali_id, conversation_id, external_mid)
+        image = parse_image(message) if message is not None else None
+        record = archive.store.adopt_legacy(context, conversation_id, external_mid, image) if image else None
+    if record is None or record["sid"] != conversation_id:
+        raise AppError("图片不存在或缺少可确认的来源。", status_code=404)
     try:
-        fetched = fetch_image(image.url)
+        resource, data = archive.load(context, external_mid)
     except ImageUnavailable:
         raise AppError("图片已失效或已被平台删除", status_code=404) from None
     except ImageFetchError as exc:
         log_event("image.fetch_failed", reason=str(exc))
         raise AppError("图片获取失败，请稍后重试", status_code=502) from None
-    return Response(fetched.body, media_type=fetched.content_type)
+    return Response(data, media_type=resource.media_type, headers={"X-Resource-ID": resource.resource_id})
+
+
+@images.get("/api/images/{resource_id}")
+def get_stored_image(resource_id: str) -> Response:
+    resource, data = read_authorized_image(resource_id, outbox_context.get())
+    return Response(data, media_type=resource.media_type, headers={"X-Resource-ID": resource.resource_id})
 
 
 def _image_store():

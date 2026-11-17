@@ -51,6 +51,7 @@ export interface OperationsBackend {
   uploadImageAttachment(sid: string, id: string, file: Blob): Promise<ImageAttachment>;
   getImageAttachment(sid: string, id: string): Promise<ImageAttachment>;
   getImageAttachmentPreview(sid: string, id: string): Promise<Blob>;
+  getImageResource(resourceId: string): Promise<Blob>;
   listOutbox(conversationId: string): Promise<OutboxTask[]>;
   getOutbox(id: string): Promise<OutboxTask>;
   cancelOutbox(id: string, version: number): Promise<OutboxTask>;

@@ -98,6 +98,8 @@ class OutboxStore:
 
     def initialize(self) -> None:
         """Create only app-owned tables; construction and reads never initialize."""
+        from backend.app.shared.crm.sdk import ResourceManager
+        ResourceManager(self.database_path).initialize()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         statuses = ",".join(f"'{status}'" for status in STATUSES)
         with self._connection(write=True, create=True) as conn:
@@ -141,6 +143,8 @@ class OutboxStore:
                 id TEXT PRIMARY KEY, seller TEXT NOT NULL, data_dir TEXT NOT NULL,
                 conversation_id INTEGER NOT NULL, metadata TEXT NOT NULL, data BLOB, created_at REAL NOT NULL
             )""")
+            if "resource_ref_id" not in {row["name"] for row in conn.execute("PRAGMA table_info(app_image_attachment)")}:
+                conn.execute("ALTER TABLE app_image_attachment ADD COLUMN resource_ref_id TEXT")
             for name in ("origin_request_id", "origin_account_epoch"):
                 if name not in columns:
                     conn.execute(f"ALTER TABLE app_outbox ADD COLUMN {name} TEXT")
@@ -210,11 +214,10 @@ class OutboxStore:
                 return record, False
             image = None
             if message_kind == "image":
-                attachment = conn.execute("SELECT metadata, data FROM app_image_attachment WHERE id=? AND seller=? AND data_dir=? AND conversation_id=?",
-                                          (attachment_id, seller, directory, conversation_id)).fetchone()
-                if attachment is None or attachment["data"] is None:
-                    raise AppError("图片附件不存在或已过期，请重新上传。", status_code=422)
-                image = json.loads(attachment["metadata"])
+                from backend.app.shared.crm.image_attachment_store import ImageAttachmentStore
+                image = ImageAttachmentStore(self.database_path).pin(
+                    attachment_id, seller=seller, data_dir=directory, conversation_id=conversation_id, conn=conn,
+                )
             now = time.time()
             record = {
                 "id": uuid4().hex, "seller": seller, "data_dir": directory, **payload,

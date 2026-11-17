@@ -17,6 +17,7 @@ const outboxEvidenceLabels: Record<string, string> = {
   filled: "仅填入，未发送",
 };
 const queueLabels: Record<string, string> = { maafw: "GUI", translation: "翻译" };
+const archiveLabels: Record<string, string> = { remote: "历史待查看", pending: "待归档", fetching: "下载中", ready: "已保存", retry_wait: "等待重试", unavailable: "来源不可用" };
 
 function OutboxStatus({ status }: { status: string }) {
   return <Tag color={outboxStatusColors[status] ?? "default"}>{outboxLabels[status as OutboxTask["status"]] ?? `未知状态：${status}`}</Tag>;
@@ -36,7 +37,16 @@ export function BackgroundTasks({ snapshot }: { snapshot: SystemStatusSnapshot }
   const empty = (provided: boolean, label: string) => provided ? label : "当前快照未提供此数据";
   return (
     <Card title="近期业务任务">
-      <Tabs items={[
+      <Tabs defaultActiveKey="queues" items={[
+        {
+          key: "image-archive", label: "图片归档",
+          children: <Space orientation="vertical">
+            <Typography.Text type="secondary">当前卖家与数据目录的图片保存状态。新消息自动归档，历史图片首次查看时保存。</Typography.Text>
+            {background?.errors.imageArchive ? <Alert type="warning" title="图片归档状态读取失败" /> : background?.imageArchive ?
+              <Space wrap>{Object.entries(background.imageArchive.counts).map(([status, count]) => <Tag key={status}>{archiveLabels[status] ?? status}：{count}</Tag>)}</Space>
+              : <Typography.Text>当前快照未提供图片归档数据</Typography.Text>}
+          </Space>,
+        },
         {
           key: "queues", label: "GUI / 翻译任务",
           children: <Space orientation="vertical" size="middle" className="w-full">

@@ -161,8 +161,9 @@ export interface BackgroundStatus {
   queueCounts?: Record<"maafw" | "translation", Record<string, number>>;
   experiments: BackgroundExperimentRun[];
   outbox: { counts: Record<string, number>; recent: BackgroundOutboxItem[] };
+  imageArchive?: { counts: Record<string, number> };
   update: BackgroundUpdateStatus | null;
-  errors: Partial<Record<"outbox" | "update", string>>;
+  errors: Partial<Record<"outbox" | "update" | "imageArchive", string>>;
 }
 
 export interface SystemStatusSnapshot {

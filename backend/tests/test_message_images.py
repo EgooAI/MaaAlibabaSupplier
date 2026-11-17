@@ -1,9 +1,11 @@
 import json
+from io import BytesIO
+from PIL import Image
 
 import pytest
 
 from backend.app.api.routers import conversations
-from backend.app.shared.backend import image_fetch
+from backend.app.shared.backend import image_fetch, image_archive
 from backend.app.shared.backend.image_fetch import ImageFetchError, ImageUnavailable, Response, fetch_image
 from backend.app.shared.backend.im_chat_db import MessageRow
 from backend.app.shared.crm.identities import message_external_id
@@ -14,7 +16,9 @@ from backend.tests.test_inbox_api import archive, data, row  # noqa: F401
 
 SIGNED_URL = "https://clouddisk.alibaba.com/file/redirectFileUrl.htm?id=1&secOperateAliId=SECRET"
 CDN_URL = "https://s.alicdn.com/@chat-files/hz/chat/a.jpg?Expires=1&Signature=x"
-PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 16
+with BytesIO() as stream:
+    Image.new("RGB", (3, 2), "red").save(stream, format="PNG")
+    PNG = stream.getvalue()
 
 
 def blob(payload: dict) -> bytes:
@@ -77,7 +81,7 @@ def test_fetch_follows_signed_redirect_to_image():
 
 @pytest.mark.parametrize("responses, error", [
     ([redirect("https://hz-icbuim-file.oss-cn-beijing.aliyuncs.com/expiredFile.png?x=1")], ImageUnavailable),
-    ([Response(200, {}, b"")], ImageUnavailable),
+    ([Response(200, {}, b"")], ImageFetchError),
     ([redirect("https://evil.example/a.png")], ImageFetchError),
     ([redirect("http://s.alicdn.com/a.png")], ImageFetchError),
     ([redirect(CDN_URL), Response(200, {"content-type": "text/html"}, b"<html>")], ImageFetchError),
@@ -125,7 +129,7 @@ def test_image_endpoint_serves_bytes_from_the_stored_url(client, archive, monkey
         seen.append(url)
         return image_fetch.FetchedImage("image/png", PNG)
 
-    monkeypatch.setattr(conversations, "fetch_image", fake)
+    monkeypatch.setattr(image_archive, "fetch_image", fake)
     response = client.get(image_url(client, sid, message_external_id("seller-a", "messages", "2")))
     assert (response.status_code, response.headers["content-type"], response.content) == (200, "image/png", PNG)
     assert seen == [SIGNED_URL]
@@ -140,7 +144,7 @@ def test_image_endpoint_maps_upstream_failures(client, archive, monkeypatch, fai
     def fake(url):
         raise failure
 
-    monkeypatch.setattr(conversations, "fetch_image", fake)
+    monkeypatch.setattr(image_archive, "fetch_image", fake)
     response = client.get(image_url(client, sid, message_external_id("seller-a", "messages", "2")))
     assert response.status_code == status
     assert "SECRET" not in response.text
@@ -151,7 +155,7 @@ def test_image_endpoint_is_scoped_to_conversation_and_message_kind(client, archi
     apply(("buyer", [row(1), image_row(2)]), ("other", [image_row(3)]))
     sids = {item["name"].rsplit(":", 1)[-1]: item["sid"] for item in data(client)["items"]}
     assert set(sids) == {"buyer", "other"}
-    monkeypatch.setattr(conversations, "fetch_image", lambda url: pytest.fail("must not fetch"))
+    monkeypatch.setattr(image_archive, "fetch_image", lambda url: pytest.fail("must not fetch"))
     text = client.get(image_url(client, sids["buyer"], message_external_id("seller-a", "messages", "1")))
     unknown = client.get(image_url(client, sids["buyer"], "alibaba_icbu:seller-a:messages:999"))
     crossed = client.get(image_url(client, sids["other"], message_external_id("seller-a", "messages", "2")))

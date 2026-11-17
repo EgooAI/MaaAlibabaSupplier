@@ -155,6 +155,12 @@ the desktop or establish that a production native task saved its error image.
   controlled responses for paste/file selection, reload recovery, replacement and
   account races. These do not establish real Qt image paste/copy compatibility.
 
+### 统一资源与图片归档
+
+`test_image_archive.py` 使用临时 CRM 和受控网络响应验证新消息归档、首次历史基线、事务回滚、重复下载合并、账号及来源版本变化、GIF/超发送尺寸图片、共享引用清理、附件迁移和备份恢复。`crm_sdk/tests/test_resource_manager.py` 验证通用二进制去重、独立 Manager 并发、SQLModel/SQLAlchemy/sqlite3 外部事务、引用保留及损坏检测。前端 `ImagePreview.test.tsx` 检查切换图片时释放 Blob URL、丢弃旧回包和失败重试。
+
+SDK 独立检查入口为 `tools/verify_crm_sdk_standalone.py`，它把 SDK 复制到独立临时目录并阻止宿主导入。宿主及 SDK 常规测试仍须从仓库根使用 `-c pytest.ini`。这些测试不会访问真实平台或发送真实客户端消息。
+
 ## Stage 0 Contract
 
 Node diagnostics return an initial `pending` task snapshot with `success: null`.
