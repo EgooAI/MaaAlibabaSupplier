@@ -20,6 +20,7 @@ from backend.app.shared.backend.account_context import AccountContext
 from backend.app.shared.backend.im_chat_db import list_msg_tables, open_readonly
 from backend.app.shared.backend.im_db_middleware import get_im_db_middleware
 from backend.app.shared.utils.crm_time import coerce_epoch
+from backend.app.shared.images import parse_image_blob
 
 
 def _extension_flags(raw: object) -> tuple[bool, bool, bool]:
@@ -91,7 +92,7 @@ def read_source_messages(context: AccountContext, contact_ali_id: str) -> dict:
                     quoted = '"' + table.replace('"', '""') + '"'
                     # substr is literal (unlike LIKE's %/_), and includes # suffixes.
                     rows = conn.execute(
-                        f"SELECT mid, sender_id, cid, created_at, user_content_type, content_label, extension "
+                        f"SELECT mid, sender_id, cid, created_at, user_content_type, content_label, extension, content "
                         f"FROM {quoted} WHERE cid IN ({placeholders}) "
                         f"OR substr(cid, 1, instr(cid, '#') - 1) IN ({placeholders})",
                         (*cids, *cids),
@@ -111,6 +112,10 @@ def read_source_messages(context: AccountContext, contact_ali_id: str) -> dict:
                             "text": row["content_label"] if isinstance(row["content_label"], str) else "",
                             "is_system": system, "is_auto_reply": auto, "extension_valid": valid,
                         })
+                        if row["user_content_type"] == 7:
+                            image = parse_image_blob(row["content"])
+                            if image is not None:
+                                messages[-1].update(image=image.identity(), _image_url=image.url)
             after = mw._capture_source(source)
             if after is None or after != captured:
                 result["reason"] = "source_unreadable" if after is None else "source_stale"

@@ -60,8 +60,11 @@ def _record(row: sqlite3.Row) -> dict:
     result.setdefault("origin_request_id", None)
     result.setdefault("origin_account_epoch", None)
     result.setdefault("content_format", "text")
+    result.setdefault("message_kind", "text")
+    result.setdefault("attachment_id", None)
+    result.setdefault("image", None)
     result["may_have_sent"] = bool(result["may_have_sent"])
-    for name in ("baseline", "evidence"):
+    for name in ("baseline", "evidence", "image"):
         result[name] = json.loads(result[name]) if result[name] is not None else None
     return result
 
@@ -129,6 +132,15 @@ class OutboxStore:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(app_outbox)")}
             if "content_format" not in columns:
                 conn.execute("ALTER TABLE app_outbox ADD COLUMN content_format TEXT NOT NULL DEFAULT 'text' CHECK(content_format IN ('text','html'))")
+            if "message_kind" not in columns:
+                conn.execute("ALTER TABLE app_outbox ADD COLUMN message_kind TEXT NOT NULL DEFAULT 'text' CHECK(message_kind IN ('text','image'))")
+            for name in ("attachment_id", "image"):
+                if name not in columns:
+                    conn.execute(f"ALTER TABLE app_outbox ADD COLUMN {name} TEXT")
+            conn.execute("""CREATE TABLE IF NOT EXISTS app_image_attachment (
+                id TEXT PRIMARY KEY, seller TEXT NOT NULL, data_dir TEXT NOT NULL,
+                conversation_id INTEGER NOT NULL, metadata TEXT NOT NULL, data BLOB, created_at REAL NOT NULL
+            )""")
             for name in ("origin_request_id", "origin_account_epoch"):
                 if name not in columns:
                     conn.execute(f"ALTER TABLE app_outbox ADD COLUMN {name} TEXT")
@@ -168,18 +180,23 @@ class OutboxStore:
         idempotency_key: str,
         origin_request_id: str | None = None, origin_account_epoch: str | None = None,
         content_format: str = "text",
+        message_kind: str = "text", attachment_id: str | None = None,
     ) -> tuple[dict, bool]:
         seller, directory = _scope(seller, data_dir)
         if action not in ("send", "test"):
             raise ValueError("action must be send or test")
         if type(conversation_id) is not int or conversation_id < 1:
             raise ValueError("conversation_id must be a positive integer")
-        for value in (contact_ali_id, login_id, content, idempotency_key):
+        for value in (contact_ali_id, login_id, idempotency_key):
             if not isinstance(value, str) or not value.strip():
                 raise ValueError("Recipient, content and idempotency key must be nonempty strings")
         if content_format not in ("text", "html"):
             raise ValueError("Unsupported message format")
-        payload = dict(zip(PAYLOAD_FIELDS, (conversation_id, contact_ali_id, login_id, content, action, content_format)))
+        if (message_kind == "text" and (not isinstance(content, str) or not content.strip() or attachment_id is not None)
+                or message_kind == "image" and (content != "" or not attachment_id or content_format != "text")
+                or message_kind not in ("text", "image")):
+            raise ValueError("Invalid message payload")
+        payload = dict(zip(PAYLOAD_FIELDS, (conversation_id, contact_ali_id, login_id, content, action, content_format, message_kind, attachment_id)))
         self.initialize()
         with self._connection(write=True) as conn:
             existing = conn.execute(
@@ -191,6 +208,13 @@ class OutboxStore:
                 if any(record[name] != payload[name] for name in PAYLOAD_FIELDS):
                     raise OutboxConflict("Idempotency key already belongs to a different payload")
                 return record, False
+            image = None
+            if message_kind == "image":
+                attachment = conn.execute("SELECT metadata, data FROM app_image_attachment WHERE id=? AND seller=? AND data_dir=? AND conversation_id=?",
+                                          (attachment_id, seller, directory, conversation_id)).fetchone()
+                if attachment is None or attachment["data"] is None:
+                    raise AppError("图片附件不存在或已过期，请重新上传。", status_code=422)
+                image = json.loads(attachment["metadata"])
             now = time.time()
             record = {
                 "id": uuid4().hex, "seller": seller, "data_dir": directory, **payload,
@@ -199,10 +223,11 @@ class OutboxStore:
                 "created_at": now, "updated_at": now, "baseline": None,
                 "evidence": None, "matched_message_id": None,
                 "origin_request_id": origin_request_id, "origin_account_epoch": origin_account_epoch,
+                "image": image,
             }
             conn.execute(
                 f"INSERT INTO app_outbox ({','.join(record)}) VALUES ({','.join('?' for _ in record)})",
-                tuple(record.values()),
+                tuple(_json(value) if name == "image" and value is not None else value for name, value in record.items()),
             )
             self._event(conn, None, record, "create")
             return record, True

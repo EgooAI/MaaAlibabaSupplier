@@ -35,6 +35,7 @@ def source(mw, submissions):
             ("group", "10001@icbu", "10001-20002-30003", 1700000005, 0, "hello", "{}"),
             ("other", "10001@icbu", "10001-30003", 1700000006, 0, "hello", "{}"),
         ])
+        conn.execute('ALTER TABLE "msg_odd""table" ADD COLUMN content BLOB')
         conn.commit()
     path.write_bytes(AES.new(KEY, AES.MODE_ECB).encrypt(path.read_bytes()))
     save_key("10001", KEY, "manual")
@@ -88,6 +89,7 @@ def test_instance_profile_cids_are_visible_to_the_reader(mw, submissions):
             ("one", "10001@icbu_1", "10001@icbu_1-20002", 1700000000, 0, "hello", "{}"),
             ("two", "20002@icbu", "20002-10001@icbu_1", 1700000001, 0, "reply", "{}"),
         ])
+        conn.execute("ALTER TABLE msg_table ADD COLUMN content BLOB")
         conn.commit()
     path.write_bytes(AES.new(KEY, AES.MODE_ECB).encrypt(path.read_bytes()))
     save_key("10001", KEY, "manual")
@@ -219,6 +221,21 @@ def test_sql_failure_never_becomes_empty_baseline(source, mw, monkeypatch):
     result = module.read_source_messages(get_account_context(), "99999")
     assert not result["valid"] and result["reason"] == "source_read_failed"
     assert not mw._reader_pins
+
+
+def test_image_source_preserves_file_identity_without_text_coercion(source, mw):
+    payload = {"url": "https://clouddisk.alibaba.com/file/redirectFileUrl.htm?secret=internal", "md5": "A" * 32,
+               "width": 5000, "height": 4000, "size": 132997}
+    with closing(sqlite3.connect(mw._cached_db_path)) as conn:
+        conn.execute('UPDATE "msg_odd""table" SET user_content_type=7, content_label=NULL, content=? WHERE mid=?',
+                     (b"\x01" + json.dumps(payload).encode() + b"\0", "one"))
+        conn.commit()
+    result = module.read_source_messages(get_account_context(), "20002")
+    assert result["valid"]
+    image = next(message for message in result["messages"] if message["id"].endswith(":one"))
+    assert image["type"] == 7 and image["text"] == ""
+    assert image["image"] == {"width": 5000, "height": 4000, "bytes": 132997, "md5": "a" * 32}
+    assert image["_image_url"] == payload["url"]
 
 
 def test_nullable_source_fields_keep_ids_without_manufacturing_text_evidence(source, mw):

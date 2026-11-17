@@ -72,7 +72,7 @@ def test_file_stderr_export_keep_events_without_payloads_or_exception_values(log
     ("background", "client_not_foreground", "focus"),
     ("busy", "clipboard_busy", "clipboard"),
     ("partial", "keyboard_input_incomplete", "keys"),
-    ("lost_newlines", "pasted_text_mismatch", "replace_text"),
+    ("lost_newlines", "pasted_text_mismatch", "_replace"),
     ("unexpected", "unexpected_exception", "load"),
 ])
 def test_clipboard_failure_survives_runtime_and_zip_without_text(logs, desktop, monkeypatch, fault, reason, function):

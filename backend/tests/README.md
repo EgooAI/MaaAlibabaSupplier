@@ -145,6 +145,15 @@ the desktop or establish that a production native task saved its error image.
   callback tests also verify that the outer account/window locks remain held.
   They never discover or control a real desktop window. Native tests explicitly
   skip if the Maa library is unavailable; a skip is not GUI validation.
+- `test_image_send.py` covers 10 MB input limits, separate pixel/side limits,
+  EXIF orientation, PNG/DIBV5 transparency, atomic scoped attachments, expiry and
+  reference retention, upload/account races, image task barriers and recovery,
+  file-identity and reencoded-pixel matching, conflicting same-pixel sends, and
+  transient image fetches. Source tests preserve type-7 metadata. Clipboard tests
+  require one object marker and reject residual text/multiple objects or missing
+  structure. Frontend `ImageOutbox.test.tsx` uses fake-indexeddb transactions and
+  controlled responses for paste/file selection, reload recovery, replacement and
+  account races. These do not establish real Qt image paste/copy compatibility.
 
 ## Stage 0 Contract
 

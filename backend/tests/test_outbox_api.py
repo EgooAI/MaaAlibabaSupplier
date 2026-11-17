@@ -63,7 +63,7 @@ def test_single_submission_contract_and_immutable_content(client, outbox, sdk, a
         "id", "conversation_id", "contact_ali_id", "login_id", "content", "action",
         "idempotency_key", "status", "version", "attempt", "may_have_sent",
         "reason", "created_at", "updated_at", "content_format",
-        "matched_message_id", "evidence",
+        "matched_message_id", "evidence", "message_kind", "attachment_id", "image",
     }
     assert sdk.calls == []
     assert outbox.queue.run()[0]

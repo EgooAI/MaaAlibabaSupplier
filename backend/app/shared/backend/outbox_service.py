@@ -19,6 +19,8 @@ from backend.app.api.envelope import AppError
 from backend.app.shared.backend import gui_session, maafw_runner as runner
 from backend.app.shared.backend.account_context import AccountContext, get_account_context
 from backend.app.shared.crm.outbox_store import OutboxConflict, OutboxStore
+from backend.app.shared.crm.image_attachment_store import ImageAttachmentStore
+from backend.app.shared.backend.image_verification import ImageVerifier
 from backend.app.shared.crm.outbox_state import (
     ACTIVE_COMPENSATABLE_STATUSES,
     NON_EXECUTING_STATUSES,
@@ -54,6 +56,7 @@ class OutboxService:
         self._thread: Worker | None = None
         self._verification_failures = 0
         self._reconcile_lock = RLock()
+        self._images = ImageVerifier()
         self._observation_lock = RLock()
         self._observation = {
             "started_at": None, "heartbeat_at": None, "last_progress_at": None,
@@ -134,9 +137,17 @@ class OutboxService:
         self, context: AccountContext, conversation_id: int, contact_ali_id: str,
         login_id: str, content: str, action: str, idempotency_key: str,
         *, intent_id: str | None = None, content_format: str = "text",
+        message_kind: str = "text", attachment_id: str | None = None,
     ) -> dict:
         try:
-            validate_content(content, content_format)
+            if message_kind == "image":
+                ImageAttachmentStore.validate_id(attachment_id)
+                if content or intent_id or content_format != "text":
+                    raise ValueError("Invalid image submission")
+            elif message_kind == "text" and attachment_id is None:
+                validate_content(content, content_format)
+            else:
+                raise ValueError("Invalid message kind")
         except ValueError as exc:
             raise AppError("消息内容或发送格式无效。", status_code=422) from exc
         self.start()
@@ -146,6 +157,7 @@ class OutboxService:
                 **self._scope(context), conversation_id=conversation_id, contact_ali_id=contact_ali_id,
                 login_id=login_id, content=content, action=action, idempotency_key=idempotency_key,
                 content_format=content_format,
+                message_kind=message_kind, attachment_id=attachment_id,
                 origin_request_id=intent_id or capture_log_context().get("request_id"),
                 origin_account_epoch=context.epoch,
             )
@@ -291,7 +303,13 @@ class OutboxService:
             self._active[task_id] = current
         failure = "gui_execution_interrupted"
         try:
-            validate_content(queued["content"], queued["content_format"])
+            if queued.get("message_kind") == "image":
+                metadata = ImageAttachmentStore(self.store.database_path).get(queued["attachment_id"],
+                    **self._scope(context), conversation_id=queued["conversation_id"])
+                if metadata["sha256"] != queued["image"]["sha256"]:
+                    raise ValueError("Image attachment changed")
+            else:
+                validate_content(queued["content"], queued["content_format"])
             baseline = None
             if queued["action"] == "send":
                 from backend.app.shared.backend.source_messages import read_source_messages
@@ -321,7 +339,8 @@ class OutboxService:
                         baseline["send_started_at"] = time.time()
                         baseline["sent_at"] = baseline["send_started_at"]
                     record = self._move(record, "running", baseline=baseline)
-                ok, reason = runner.chat_input(record["content"], content_format=record["content_format"])
+                ok, reason = (runner.chat_image(record) if record.get("message_kind") == "image"
+                              else runner.chat_input(record["content"], content_format=record["content_format"]))
                 if not ok:
                     raise RuntimeError(reason)
                 with self._condition:
@@ -384,6 +403,7 @@ class OutboxService:
             observed = []
             for contact in {record["contact_ali_id"] for record in pending}:
                 snapshot = read_source_messages(context, contact)
+                self._images.enrich(snapshot, [record for record in pending if record["contact_ali_id"] == contact])
                 with self._condition:
                     if self._stopping.is_set() or get_account_context() != context:
                         return observed

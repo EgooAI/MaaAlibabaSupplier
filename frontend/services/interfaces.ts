@@ -11,6 +11,7 @@ import type { CreateExperimentInput, Experiment, ExperimentSummary, ExperimentVa
 import type { SuggestionCatalog, SuggestionRun, SuggestionRunInput } from "@/types/suggestions";
 import type { AssistantSuggestion } from "@/types/chatCanonical";
 import type { ExecutionRunDetail, ExecutionRunInput, ExecutionRunSummary, ExecutionState } from "@/types/execution";
+import type { ImageAttachment } from "@/types/chatOperations";
 
 export interface OperationsBackend {
   getRemoteActivity(): Promise<{ sending: boolean; navigating: boolean }>;
@@ -47,6 +48,9 @@ export interface OperationsBackend {
   analyzeConversation(conversationId: string): Promise<ConversationAnalysis>;
   composeTranslation(conversationId: string, text: string): Promise<ComposeTranslationResult>;
   sendMessage(input: SendMessageInput): Promise<SendMessageResult>;
+  uploadImageAttachment(sid: string, id: string, file: Blob): Promise<ImageAttachment>;
+  getImageAttachment(sid: string, id: string): Promise<ImageAttachment>;
+  getImageAttachmentPreview(sid: string, id: string): Promise<Blob>;
   listOutbox(conversationId: string): Promise<OutboxTask[]>;
   getOutbox(id: string): Promise<OutboxTask>;
   cancelOutbox(id: string, version: number): Promise<OutboxTask>;

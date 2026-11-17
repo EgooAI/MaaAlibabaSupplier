@@ -121,7 +121,7 @@ def test_reads_do_not_create_database_directories_or_schema(tmp_path, scope):
     existing.initialize()
     with closing(sqlite3.connect(existing.database_path)) as conn:
         assert {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")} == {
-            "crm_sentinel", "app_outbox", "app_outbox_events",
+            "crm_sentinel", "app_outbox", "app_outbox_events", "app_image_attachment",
         }
         assert conn.execute("SELECT * FROM crm_sentinel").fetchall() == [("preserved",)]
 

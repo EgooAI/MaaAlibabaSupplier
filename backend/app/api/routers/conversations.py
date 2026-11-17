@@ -6,18 +6,21 @@ from base64 import b64encode
 from dataclasses import replace
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, Query, Response, Request
+from starlette.concurrency import run_in_threadpool
 from loguru import logger
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 from typing import Literal
 from sqlmodel import Session, select
 
 from backend.app.api.envelope import AppError, api_error, ok, user_message
-from backend.app.api.account_scope import AccountRoute, OutboxObservationRoute, outbox_context, request_epoch
+from backend.app.api.account_scope import AccountRoute, OutboxObservationRoute, outbox_context, request_epoch, require_epoch
 from backend.app.api.connection import _INTERNAL_SOURCE_FIELDS, safe_has_selected_archive
 from backend.app.api.routers.outbox import public_task
 from backend.app.shared import contract
-from backend.app.shared.backend.account_context import AccountContext, get_account_context
+from backend.app.shared.backend.account_context import AccountContext, get_account_context, changing_account
+from backend.app.shared.image_content import MAX_IMAGE_BYTES, prepare_image
+from backend.app.shared.crm.image_attachment_store import ImageAttachmentStore
 from backend.app.shared.backend.image_fetch import ImageFetchError, ImageUnavailable, fetch_image
 from backend.app.shared.backend.outbox_service import get_outbox_service
 from backend.app.shared.backend.gui_session import capture_gui_session, run_guarded
@@ -69,6 +72,7 @@ from backend.app.task_queue import TaskStatus, get_task_queue
 router = APIRouter(route_class=AccountRoute)
 # Image fetches are slow network reads: they must not hold the account lock.
 images = APIRouter(route_class=OutboxObservationRoute)
+image_uploads = APIRouter()
 
 _STAGE_TASK = "分析客户当前所处成交阶段，并给出下一步推进建议。"
 _SCORE_RE = re.compile(r"(\d+(?:\.\d+)?)")
@@ -172,12 +176,24 @@ class GotoContactInput(BaseModel):
 
 
 class SendMessageInput(BaseModel):
-    content: str = Field(min_length=1)
+    model_config = ConfigDict(extra="forbid")
+    content: str = ""
     content_format: Literal["text"] = "text"
+    message_kind: Literal["text", "image"] = "text"
+    attachment_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     action: Literal["send", "test"]
     idempotency_key: str = Field(min_length=1, max_length=128, pattern=r"\S")
     # The reply intent this submission accepts; optional for hand-typed messages.
     intent_id: str | None = Field(default=None, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_payload(self):
+        if self.message_kind == "image":
+            if not self.attachment_id or self.content or self.intent_id:
+                raise ValueError("图片提交必须仅包含单个附件。")
+        elif not self.content.strip() or self.attachment_id is not None:
+            raise ValueError("文字提交必须包含正文且不能附带图片。")
+        return self
 
 
 class ExportConversationsInput(BaseModel):
@@ -605,7 +621,7 @@ def mark_conversation_read(conversation_id: int, body: ReadConversationInput) ->
 @router.post("/api/conversations/{conversation_id}/messages")
 def send_message(conversation_id: int, body: SendMessageInput) -> dict:
     content = body.content.strip()
-    if not content:
+    if body.message_kind == "text" and not content:
         raise AppError("消息内容不能为空", status_code=422)
     self_ali_id = _ready()
     context = get_account_context()
@@ -637,6 +653,7 @@ def send_message(conversation_id: int, body: SendMessageInput) -> dict:
         content, body.action, body.idempotency_key,
         intent_id=intent["id"] if intent is not None else None,
         content_format=body.content_format,
+        message_kind=body.message_kind, attachment_id=body.attachment_id,
     )
     # The outbox row exists now; accepting the intent is a separate, atomic mark.
     if intent is not None:
@@ -836,4 +853,56 @@ def get_message_image(conversation_id: int, external_mid: str) -> Response:
     return Response(fetched.body, media_type=fetched.content_type)
 
 
+def _image_store():
+    return ImageAttachmentStore(get_outbox_service().store.database_path)
+
+
+@image_uploads.put("/api/conversations/{conversation_id}/image-attachments/{attachment_id}")
+async def upload_image_attachment(conversation_id: int, attachment_id: str, request: Request) -> dict:
+    expected = request_epoch.get()
+    require_epoch(expected)
+    context = get_account_context()
+    ImageAttachmentStore.validate_id(attachment_id)
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > MAX_IMAGE_BYTES:
+            raise AppError("图片文件不能超过 10 MB（10,000,000 字节）。", status_code=413)
+        data.extend(chunk)
+    try:
+        png, metadata = await run_in_threadpool(prepare_image, bytes(data))
+    except ValueError as exc:
+        raise AppError(str(exc), status_code=422) from exc
+
+    def publish():
+        # Checks and writes run on the same worker under a short account guard.
+        with changing_account():
+            require_epoch(expected)
+            if get_account_context() != context or not context.self_ali_id or not context.data_dir:
+                raise AppError("账号已变化，请重新选择图片。", status_code=409)
+            if CRMAdapter().get_conversation_detail(context.self_ali_id, conversation_id) is None:
+                raise AppError("会话不存在", status_code=404)
+            return _image_store().put(attachment_id, seller=context.self_ali_id, data_dir=context.data_dir,
+                                      conversation_id=conversation_id, data=png, metadata=metadata)
+
+    result = await run_in_threadpool(publish)
+    require_epoch(expected)
+    return ok(result)
+
+
+@images.get("/api/conversations/{conversation_id}/image-attachments/{attachment_id}")
+def get_image_attachment(conversation_id: int, attachment_id: str) -> dict:
+    context = outbox_context.get()
+    return ok(_image_store().get(attachment_id, seller=context.self_ali_id, data_dir=context.data_dir,
+                                conversation_id=conversation_id))
+
+
+@images.get("/api/conversations/{conversation_id}/image-attachments/{attachment_id}/image")
+def preview_image_attachment(conversation_id: int, attachment_id: str) -> Response:
+    context = outbox_context.get()
+    metadata, data = _image_store().get(attachment_id, seller=context.self_ali_id, data_dir=context.data_dir,
+                                       conversation_id=conversation_id, include_data=True)
+    return Response(data, media_type=metadata["mime_type"])
+
+
 router.include_router(images)
+router.include_router(image_uploads)

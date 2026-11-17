@@ -189,6 +189,11 @@ class Desktop:
 
     def copied_data(self, owner, pid: int, formats: tuple[tuple[int | str, int], ...]) -> tuple[int, bytes]:
         """Reads the first advertised format and its index under one clipboard lock."""
+        index, data, _ = self.copied_bundle(owner, pid, formats)
+        return index, data
+
+    def copied_bundle(self, owner, pid, formats, companions=()):
+        """Reads a preferred format and required companions from one clipboard version."""
         with self.clipboard(owner):
             source_pid = wintypes.DWORD()
             source = self.clipboard_owner()
@@ -200,18 +205,27 @@ class Desktop:
                     continue
                 # An advertised format that fails to render is an I/O failure,
                 # not permission to accept a weaker representation.
-                handle = self.get_clipboard(identifier)
-                if not handle:
-                    raise ClipboardInputError("copied_format_unavailable")
-                size = self.size(handle)
-                if not size or size > max_bytes:
-                    raise ClipboardInputError("copied_text_invalid_size")
-                pointer = self.lock(handle)
-                if not pointer:
-                    raise ClipboardInputError("copied_text_memory_unavailable")
-                try:
-                    data = ctypes.string_at(pointer, size)
-                finally:
-                    self.unlock(handle)
-                return index, data
+                data = self._read_bytes(identifier, max_bytes)
+                extra = []
+                for companion, limit in companions:
+                    companion_id = self.format_id(companion)
+                    if not self.format_available(companion_id):
+                        raise ClipboardInputError("copied_companion_missing")
+                    extra.append(self._read_bytes(companion_id, limit))
+                return index, data, tuple(extra)
             raise ClipboardInputError("copied_format_missing")
+
+    def _read_bytes(self, identifier, max_bytes):
+        handle = self.get_clipboard(identifier)
+        if not handle:
+            raise ClipboardInputError("copied_format_unavailable")
+        size = self.size(handle)
+        if not size or size > max_bytes:
+            raise ClipboardInputError("copied_text_invalid_size")
+        pointer = self.lock(handle)
+        if not pointer:
+            raise ClipboardInputError("copied_text_memory_unavailable")
+        try:
+            return ctypes.string_at(pointer, size)
+        finally:
+            self.unlock(handle)

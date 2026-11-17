@@ -21,6 +21,8 @@ export type ChatComposerProps = {
   onSend: () => void;
   onFill?: () => void;
   sendDisabled?: boolean;
+  hasAttachment?: boolean;
+  imageTools?: ReactNode;
 };
 
 export function ChatComposer({
@@ -35,6 +37,8 @@ export function ChatComposer({
   onSend,
   onFill,
   sendDisabled,
+  hasAttachment,
+  imageTools,
 }: ChatComposerProps) {
   const { snapshot, blocked } = useAccount();
   const canOperate = !blocked && Boolean(snapshot?.capabilities.operate_client);
@@ -58,6 +62,7 @@ export function ChatComposer({
       <MessageComposer
         compact
         footer={<>
+          {imageTools}
           <Button type="text" size="small" icon={<BulbOutlined />} disabled={!canUseAi} onClick={onOpenSuggestions}>AI 建议</Button>
           {suggestionAgent}
           <Button type="text" size="small" aria-label="发信翻译" aria-pressed={translateOpen} icon={<TranslationOutlined />} disabled={!canUseAi} onClick={() => setTranslateOpen((open) => !open)}>翻译</Button>
@@ -66,6 +71,8 @@ export function ChatComposer({
         onChange={onChange}
         tools={tools.map((tool) => ({ ...tool, disabled: !canUseAi }))}
         sendDisabled={!canOperate || sendDisabled}
+        hasAttachment={hasAttachment}
+        sendLabel={hasAttachment ? "发送图片" : "发送"}
         onToolClick={handleToolClick}
         placeholder="输入卖家回复，或插入 AI 建议话术..."
         loading={loading}

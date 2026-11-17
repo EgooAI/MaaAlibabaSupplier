@@ -4,7 +4,7 @@ The chat workbench submits once and automatically navigates, fills and sends. JS
 
 | Request | Body | Result |
 | --- | --- | --- |
-| `POST /api/conversations/{sid}/messages` | `{ content, content_format?: 'text', action: 'send' | 'test', idempotency_key, intent_id? }` | `{ outbox: OutboxTask }` |
+| `POST /api/conversations/{sid}/messages` | text: `{ content, content_format?: 'text', action, idempotency_key, intent_id? }`; image: `{ message_kind: 'image', attachment_id, action, idempotency_key }` | `{ outbox: OutboxTask }` |
 | `GET /api/conversations/{sid}/outbox` | none | `OutboxTask[]` |
 | `GET /api/outbox/{id}` | none | `OutboxTask` |
 | `POST /api/outbox/{id}/cancel` | `{ version }` | `OutboxTask` |
@@ -22,7 +22,7 @@ Chat filling uses the `PasteChatText` custom action: native `SendInput` selects 
 
 For `send`, a valid source-message baseline is required before GUI operations. `test` does not require a baseline. Before posting the native send task, the service durably records `may_have_sent=true`. A failed or interrupted possible send is never automatically replayed. The verifier checks local-source evidence approximately every two seconds with the existing 120-second occurrence window. A local match is not platform delivery or read evidence.
 
-Local comparison uses immutable `content_format`, defaulting old requests/rows to `text`. All new requests must use text; HTML format requests return 422. Text matches the client's raw or exact escaped literal-text representation (`&lt;`, `&gt;`, `&amp;`, `&quot;`, spaces as `&nbsp;`, newlines as `<br>`). Text containing markup-sensitive characters requires the escaped representation, so literal `<b>…</b>` cannot claim a rendered HTML send. Historical HTML tasks retain original-markup comparison, without tag aliases, stripping or plain-text fallback. Both normalize line endings and boundary whitespace only. The same rules apply to candidates and competing sends, including historical formats. Evidence retains original source text and message ID. Existing uncertain sends remain eligible for reconciliation without another send.
+Local text comparison uses immutable `content_format`, defaulting old requests/rows to `text`. New text requests must use text; HTML format requests return 422. Text matches the client's raw or exact escaped literal-text representation (`&lt;`, `&gt;`, `&amp;`, `&quot;`, spaces as `&nbsp;`, newlines as `<br>`). Text containing markup-sensitive characters requires the escaped representation, so literal `<b>…</b>` cannot claim a rendered HTML send. Historical HTML tasks retain original-markup comparison, without tag aliases, stripping or plain-text fallback. Both normalize line endings and boundary whitespace only. The same rules apply to candidates and competing sends, including historical formats. Evidence retains original source text and message ID. Existing uncertain sends remain eligible for reconciliation without another send.
 
 Only `queued` is cancellable. Retry requires `failed && !may_have_sent` and captures a new account/window token. Restart invalidates unfinished work without replay. Old `awaiting_confirmation` and `queued_send` tasks become failed on recovery, or unknown if marked possibly sent. Legacy screenshot files, nullable database columns and audit events are retained; no new confirmation images are captured. Confirmation and screenshot API routes are retired.
 
@@ -48,6 +48,23 @@ Matching is scoped to the current account, directory and conversation. Never mer
 
 Visible workspaces poll every two seconds. The recent list is capped at 100, so known unfinished and unknown tasks outside it receive direct reads; persisted task IDs restore older records after reload. Results merge monotonically by version. Failures preserve existing state. Account suspension disables actions, and obsolete account responses are discarded. Navigating away leaves server tasks running.
 
-## Verification boundary
+## 单张图片
+
+输入区支持选择文件和粘贴单张图片，预览后独立发送，保留文字草稿。静态 PNG/JPEG/WebP 经后端应用 EXIF 方向并标准化为 RGB/RGBA PNG。原文件和发送 PNG 各不超过 10,000,000 字节，最长边 8192 像素，总像素 2400 万。超限及动画图片被拒绝，不自动缩小图片。
+
+- `PUT /api/conversations/{sid}/image-attachments/{id}` 接收二进制图片，同 ID/原文件幂等。
+- 同路径 GET 查询附件回执，后缀 `/image` 经认证返回预览 PNG。
+- 图片发送使用 `message_kind=image`、`attachment_id`，正文为空，不携带文字回复意图。`action` 仍为 `send|test`。
+- Outbox 返回 `message_kind`、`attachment_id` 和安全的 `image` 元数据。历史任务默认 `message_kind=text`。
+
+图片 Blob 和草稿版本存入 IndexedDB，提交身份写入现有 localStorage。图片键固定为 `image:{attachment_id}:{action}`。上传、预览和发送的异步续接检查原账号票据与草稿版本，旧回包不能修改新草稿。超时恢复先查询原回执，不产生新发送身份。
+
+附件 BLOB 与元数据原子保存到 `app_image_attachment`。上传时惰性清理超过 24 小时且未引用的 BLOB，保留不可变身份。被任务引用的附件继续保留。
+
+`PasteChatImage` 发布 PNG/DIBV5，最多等待 10 秒取得新版本的精确像素读回，同时要求同版本 Unicode 恰好为一个 `U+FFFC` 图片对象。缺少结构证据、残留文字或多个对象都会中止发送。文字/图片使用独立流水线节点，每次重设输入分支，避免覆写残留。
+
+发送后保留基线、来源、联系人、方向、时间和竞争任务约束。图片宽高一致且满足“MD5 + 字节数一致”或“精确 RGBA 像素 SHA-256 一致”才可匹配。取图在账号锁和 Outbox 锁外执行，返回后重新检查账号和竞争任务。取图失败不代表未发送，不触发重发。签名 URL 不进入公开证据。
+
+## 验证范围
 
 Regression tests use controlled responses, temporary databases and synthetic MaaFW frames. They do not send through a real client or establish browser layout, contact recognition or platform delivery.

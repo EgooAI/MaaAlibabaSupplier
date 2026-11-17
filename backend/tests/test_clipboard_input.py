@@ -2,6 +2,8 @@
 
 import ctypes
 import json
+from io import BytesIO
+from PIL import Image
 from threading import get_ident
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -18,7 +20,7 @@ def desktop(monkeypatch):
     state = SimpleNamespace(
         editor="Previous unsent draft", selection=False, pressed=set(), events=[],
         buffers={}, formats={}, transferred=[], freed=[], destroyed=[], clipboard=0, owner=0, sequence=1,
-        published={},
+        published={}, editor_image=None, image_copy_delay=0, copies=0,
         foreground=42, focus=43, fault=None, clock=0.0, pending_copy=None, selects=0,
         clipboard_dirty=False, handoff_replied=False, owner_thread=None,
     )
@@ -77,7 +79,12 @@ def desktop(monkeypatch):
         return state.buffers[state.clipboard].raw.decode("utf-16-le").split("\0", 1)[0]
 
     def copy():
+        state.copies += 1
         text = state.editor.replace("\r\n", "\n") if state.fault == "copy_lf" else state.editor
+        if state.editor_image and state.fault == "multiple_images":
+            text = "\ufffc\ufffc"
+        if state.editor_image and state.fault == "image_empty_text":
+            text = ""
         data = (text + "\0").encode("utf-16-le") + b"\x00\xd8"  # Allocator padding may not be valid UTF-16.
         if state.fault == "copy_invalid":
             data = b"a"
@@ -87,6 +94,19 @@ def desktop(monkeypatch):
         ctypes.memmove(handle, data, len(data))
         state.clipboard = handle
         state.formats = {CF_UNICODETEXT: handle}
+        if state.editor_image is not None and state.copies > state.image_copy_delay:
+            png = state.editor_image
+            if state.fault == "image_changed":
+                stream = BytesIO()
+                with Image.open(BytesIO(png)) as image:
+                    image.putpixel((0, 0), (1, 2, 3, 4))
+                    image.save(stream, format="PNG")
+                png = stream.getvalue()
+            image_handle = alloc(2, len(png))
+            ctypes.memmove(image_handle, png, len(png))
+            state.formats[49152] = image_handle
+            if state.fault == "image_no_text":
+                state.formats.pop(CF_UNICODETEXT)
         if state.fault == "copy_formats_missing":
             state.formats.clear()
         state.owner = 999 if state.fault == "external_copy" else 42
@@ -115,11 +135,17 @@ def desktop(monkeypatch):
             state.selects += 1
             state.selection = not (state.fault == "select_ignored" and state.selects == 1)
         elif key == clip.VK_BACK:
+            if state.selection:
+                state.editor_image = None
             state.editor = "" if state.selection else state.editor[:-1]
             state.selection = False
         elif key == clip.VK_V and transport.VK_CONTROL in state.pressed:
             state.published = {format: state.buffers[handle].raw for format, handle in state.formats.items()}
-            value = clipboard_text()
+            if 49152 in state.published:
+                state.editor_image = state.published[49152]
+                value = "\ufffc"
+            else:
+                value = clipboard_text()
             if state.fault == "lost_newlines":
                 value = value.replace("\r", "").replace("\n", "")
             state.editor = value if state.selection else state.editor + value
@@ -329,3 +355,23 @@ def test_partial_multiformat_publication_frees_only_untransferred_memory(desktop
     assert len(desktop.transferred) == len(desktop.freed) == 1
     assert set(desktop.transferred).isdisjoint(desktop.freed)
     assert desktop.events == []
+
+
+@pytest.mark.parametrize("fault", [None, "image_changed", "select_ignored", "external_copy", "focus_changed", "copy_missing", "multiple_images", "image_empty_text", "image_no_text"])
+def test_image_paste_verifies_pixels_and_excludes_residual_text(desktop, fault):
+    stream = BytesIO()
+    with Image.new("RGBA", (9, 5), (33, 44, 55, 128)) as image:
+        image.save(stream, format="PNG")
+    desktop.fault = fault
+    if fault is None:
+        desktop.image_copy_delay = 2
+        clip.replace_image(42, stream.getvalue())
+        assert desktop.editor == "\ufffc" and not desktop.selection
+        assert desktop.copies >= 3
+    else:
+        with pytest.raises(clip.ClipboardInputError):
+            clip.replace_image(42, stream.getvalue())
+    # Copy retries must not become paste retries or submit a send key.
+    assert sum(key == clip.VK_V and not up for batch in desktop.events for key, up in batch) == 1
+    assert not any(key == 13 for batch in desktop.events for key, _ in batch)
+    assert desktop.destroyed == [77] and not desktop.pressed

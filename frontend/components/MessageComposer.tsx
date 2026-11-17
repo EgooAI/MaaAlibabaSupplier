@@ -25,6 +25,7 @@ type MessageComposerProps = {
   onFill?: () => void;
   compact?: boolean;
   footer?: ReactNode;
+  hasAttachment?: boolean;
 };
 
 export function MessageComposer({
@@ -41,6 +42,7 @@ export function MessageComposer({
   onFill,
   compact = false,
   footer,
+  hasAttachment = false,
 }: MessageComposerProps) {
   const [expanded, setExpanded] = useState(false);
   const textareaRef = useRef<ComponentRef<typeof Input.TextArea>>(null);
@@ -49,7 +51,7 @@ export function MessageComposer({
     () => tools.map((tool) => ({ key: tool.key, label: tool.label, disabled: tool.disabled })),
     [tools],
   );
-  const canSend = !disabled && !sendDisabled && !loading && Boolean(value.trim());
+  const canSend = !disabled && !sendDisabled && !loading && (hasAttachment || Boolean(value.trim()));
 
   return (
     <div className="relative w-full">

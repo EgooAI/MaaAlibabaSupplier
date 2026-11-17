@@ -1,7 +1,7 @@
 import type { ConnectionSnapshot } from "@/types/connection";
-import type { MessageFormat } from "@/types/chatOperations";
+import type { MessageFormat, ImageAttachment } from "@/types/chatOperations";
 
-export type PendingIntent = { key: string; content: string; action: "send" | "test"; contentFormat?: MessageFormat; taskId?: string; draftId?: string; intentId?: string };
+export type PendingIntent = { key: string; content: string; action: "send" | "test"; contentFormat?: MessageFormat; taskId?: string; draftId?: string; intentId?: string; image?: ImageAttachment };
 
 export function intentKey(account: ConnectionSnapshot["account"], sid: string) {
   return `maa:outbox-intents:${JSON.stringify([account.data_dir, account.self_ali_id, sid])}`;
@@ -15,6 +15,7 @@ export function loadIntents(storage: Storage, key: string): PendingIntent[] {
     throw new Error("提交记录损坏");
   }
   if (items.some((item) => item.contentFormat !== undefined && !["text", "html"].includes(item.contentFormat))) throw new Error("提交格式记录损坏");
+  if (items.some((item) => item.image !== undefined && (!item.image || !/^[0-9a-f]{32}$/.test(item.image.id) || !/^[0-9a-f]{64}$/.test(item.image.sha256) || item.content !== "" || item.intentId || item.contentFormat === "html"))) throw new Error("图片提交记录损坏");
   return items;
 }
 
@@ -26,7 +27,7 @@ export function persistIntents(storage: Storage, key: string, incoming: PendingI
     if (index < 0) items.push(intent);
     else {
       const old = items[index];
-      if (old.content !== intent.content || old.action !== intent.action || (old.contentFormat ?? "text") !== (intent.contentFormat ?? "text") || (old.taskId && intent.taskId && old.taskId !== intent.taskId)) throw new Error("提交记录不匹配");
+      if (old.content !== intent.content || old.action !== intent.action || old.image?.id !== intent.image?.id || old.image?.sha256 !== intent.image?.sha256 || (old.contentFormat ?? "text") !== (intent.contentFormat ?? "text") || (old.taskId && intent.taskId && old.taskId !== intent.taskId)) throw new Error("提交记录不匹配");
       items[index] = { ...old, ...intent };
     }
   }

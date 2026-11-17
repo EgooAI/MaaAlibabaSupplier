@@ -61,6 +61,18 @@
             "ChatInput_SendMessage"
         ]
     },
+    "ChatInput_PasteImage": {
+        "desc": "粘贴单张图片并核对像素与编辑器对象数量",
+        "recognition": "DirectHit",
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "PasteChatImage",
+                "custom_action_param": {}
+            }
+        },
+        "next": []
+    },
     "ChatInput_SendMessage": {
         "desc": "仅点击可用的发送按钮，不代表平台已确认发送",
         "enabled": false,

@@ -389,6 +389,20 @@ describe("http adapter contract", () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ content: "<b>hello</b>", content_format: "text", action: "send", idempotency_key: "key" });
   });
 
+  it("uploads image bytes with authentication and the original account epoch", async () => {
+    const file = new Blob(["image bytes"], { type: "image/png" });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: { id: "attachment" } })));
+    globalThis.fetch = fetchMock;
+    await httpBackend.uploadImageAttachment("42", "attachment", file);
+    const [path, init] = fetchMock.mock.calls[0];
+    expect(path).toBe("/api/conversations/42/image-attachments/attachment");
+    expect(init.body).toBe(file);
+    const headers = new Headers(init.headers);
+    expect(headers.get("Content-Type")).toBe("image/png");
+    expect(headers.get("Authorization")).toMatch(/^Bearer /);
+    expect(headers.get("X-Account-Epoch")).toBe("mock-1");
+  });
+
   it.each([undefined, "ChatInput_GoToInput", "ContactSearch_GoToSearch"] as const)("submits node entry %s and preserves the asynchronous receipt", async (entry) => {
     const receipt = { success: null, message: "任务已提交", task_snapshot: { task_id: "node-1", description: "node", status: "pending", message: "queued", result: null, created_at: 0, started_at: null, completed_at: null } };
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, msg: "ok", data: receipt })));

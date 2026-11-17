@@ -24,6 +24,9 @@ _PUBLIC_FIELDS = (
 def public_task(record: dict) -> dict:
     """Never serialize source baselines, arbitrary failure details or GUI tokens."""
     result = {name: record[name] for name in _PUBLIC_FIELDS}
+    result.update(message_kind=record.get("message_kind", "text"), attachment_id=record.get("attachment_id"))
+    image = record.get("image")
+    result["image"] = {key: image[key] for key in ("width", "height", "bytes", "mime_type", "sha256")} if image else None
     reason = record.get("reason")
     result["reason"] = (
         reason if reason is None or reason in REASON_CODES else

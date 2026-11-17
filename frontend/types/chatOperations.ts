@@ -35,10 +35,21 @@ export interface ComposeTranslationResult {
 
 export type MessageFormat = "text" | "html";
 
+export interface ImageAttachment {
+  id: string;
+  width: number;
+  height: number;
+  bytes: number;
+  mime_type: string;
+  sha256: string;
+}
+
 export interface SendMessageInput {
   conversationId: string;
   content: string;
   content_format?: "text";
+  message_kind?: "text" | "image";
+  attachment_id?: string;
   action: "test" | "send";
   idempotency_key: string;
   /** The reply intent this submission accepts; ignored when the text was edited. */
@@ -52,6 +63,9 @@ export interface OutboxTask {
   login_id: string;
   content: string;
   content_format?: MessageFormat;
+  message_kind?: "text" | "image";
+  attachment_id?: string | null;
+  image?: Omit<ImageAttachment, "id"> | null;
   action: "send" | "test";
   status: OutboxStatus;
   version: number;

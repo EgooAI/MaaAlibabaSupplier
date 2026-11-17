@@ -408,7 +408,11 @@ export const mockBackend: OperationsBackend = {
     return delay({ translation: `[EN] ${text.trim()}` });
   },
 
-  sendMessage: async ({ conversationId, content, action, idempotency_key, content_format = "text" }) => {
+  uploadImageAttachment: async () => { throw new Error("Mock 不提供图片上传，请连接真实后端"); },
+  getImageAttachment: async () => { throw new Error("Mock 不提供图片附件"); },
+  getImageAttachmentPreview: async () => { throw new Error("Mock 不提供图片附件"); },
+  sendMessage: async ({ conversationId, content, action, idempotency_key, content_format = "text", message_kind = "text" }) => {
+    if (message_kind === "image") throw new Error("Mock 不执行图片发送");
     requireMockClient();
     const conversation = buildConversationDetail(conversationId);
     if (!idempotency_key || !content.trim()) throw new Error("缺少提交内容或幂等键");

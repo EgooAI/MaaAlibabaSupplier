@@ -64,7 +64,29 @@ def _text_key(value: object) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def _candidates(record: dict, baseline: dict, messages: list[dict]) -> list[dict]:
+def content_evidence(record: dict, message: dict) -> bool:
+    """Matches file metadata or exact decoded pixels, never dimensions alone."""
+    if record.get("message_kind", "text") == "text":
+        return message.get("type") == 0 and content_matches(record.get("content"), record.get("content_format", "text"), message.get("text"))
+    expected, actual = record.get("image"), message.get("image")
+    if message.get("type") != 7 or not isinstance(expected, dict) or not isinstance(actual, dict):
+        return False
+    if any(type(expected.get(key)) is not int or expected[key] <= 0 or actual.get(key) != expected[key] for key in ("width", "height")):
+        return False
+    return bool(
+        expected.get("md5") and actual.get("md5") == expected["md5"] and actual.get("bytes") == expected.get("bytes")
+        or expected.get("pixel_sha256") and actual.get("pixel_sha256") == expected["pixel_sha256"]
+    )
+
+
+def _same_image_pixels(first: dict, second: dict) -> bool:
+    left, right = first.get("image"), second.get("image")
+    return (first.get("message_kind") == second.get("message_kind") == "image"
+            and isinstance(left, dict) and isinstance(right, dict) and bool(left.get("pixel_sha256"))
+            and all(left.get(key) == right.get(key) for key in ("width", "height", "pixel_sha256")))
+
+
+def _candidates(record: dict, baseline: dict, messages: list[dict], *, match_content=True) -> list[dict]:
     old_ids = set(baseline["ids"])
     seller, contact = record.get("seller"), record.get("contact_ali_id")
     cids = {
@@ -76,8 +98,8 @@ def _candidates(record: dict, baseline: dict, messages: list[dict]) -> list[dict
         isinstance(message, dict) and isinstance(message.get("id"), str) and message["id"]
         and message["id"] not in old_ids
         and sender_matches(message.get("sender_id"), seller)
-        and type(message.get("type")) is int and message["type"] == 0
-        and content_matches(record.get("content"), record.get("content_format", "text"), message.get("text"))
+        and type(message.get("type")) is int and message["type"] == (7 if record.get("message_kind") == "image" else 0)
+        and (not match_content or content_evidence(record, message))
         and message.get("is_system") is False and message.get("is_auto_reply") is False
         and message.get("extension_valid") is True
         and isinstance(message.get("cid"), str) and _cid_key(message["cid"]) in cids
@@ -98,7 +120,7 @@ def match_outbox(record: dict, snapshot: dict, other_records: Iterable[dict]) ->
         return result
     if (record.get("action") != "send" or record.get("may_have_sent") is not True
             or record.get("status") not in ("running", "verifying", "unknown")
-            or not _text_key(record.get("content"))
+            or not (isinstance(record.get("image"), dict) if record.get("message_kind") == "image" else _text_key(record.get("content")))
             or not isinstance(record.get("contact_ali_id"), str) or not record["contact_ali_id"]):
         result["reason"] = "task_not_verifiable"
         return result
@@ -136,15 +158,15 @@ def match_outbox(record: dict, snapshot: dict, other_records: Iterable[dict]) ->
             result["reason"] = "message_already_claimed"
             return result
         if (other.get("action") != "send" or other.get("may_have_sent") is not True
-                or not content_matches(other.get("content"), other.get("content_format", "text"), candidate.get("text"))
+                or not (content_evidence(other, candidate) or _same_image_pixels(other, record))
                 or other.get("contact_ali_id") != record["contact_ali_id"]):
             continue
         other_baseline = _baseline(other)
         # A possible send with missing evidence cannot be excluded as the cause.
         if other_baseline is None or (other_baseline["origin"] == baseline["origin"]
-                                     and _candidates(other, other_baseline, [candidate])):
+                                     and _candidates(other, other_baseline, [candidate], match_content=False)):
             result["reason"] = "ambiguous_send_attempts"
             return result
     result.update(status="observed", reason="local_message_observed", matched_message_id=candidate["id"])
-    result["evidence"]["message"] = dict(candidate)
+    result["evidence"]["message"] = {key: value for key, value in candidate.items() if not key.startswith("_")}
     return result

@@ -261,6 +261,11 @@ export const httpBackend: OperationsBackend = {
     if (!input.idempotency_key?.trim()) throw new Error("提交消息必须提供已持久化的幂等键");
     return requestJson(`/api/conversations/${encodeURIComponent(conversationId)}/messages`, { method: "POST", body: JSON.stringify(input) });
   },
+  uploadImageAttachment: (sid, id, file) => request(`/api/conversations/${encodeURIComponent(sid)}/image-attachments/${encodeURIComponent(id)}`, "json", {
+    method: "PUT", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file,
+  }, 60000),
+  getImageAttachment: (sid, id) => requestJson(`/api/conversations/${encodeURIComponent(sid)}/image-attachments/${encodeURIComponent(id)}`),
+  getImageAttachmentPreview: (sid, id) => request(`/api/conversations/${encodeURIComponent(sid)}/image-attachments/${encodeURIComponent(id)}/image`, "image"),
   listOutbox: (id) => requestJson(`/api/conversations/${encodeURIComponent(id)}/outbox`, { cache: "no-store" }),
   getOutbox: (id) => requestJson(`/api/outbox/${encodeURIComponent(id)}`, { cache: "no-store" }),
   cancelOutbox: (id, version) => requestJson(`/api/outbox/${encodeURIComponent(id)}/cancel`, { method: "POST", body: JSON.stringify({ version }) }),

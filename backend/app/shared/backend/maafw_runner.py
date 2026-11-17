@@ -24,6 +24,7 @@ from backend.app.shared.backend.account_context import account_lock
 from backend.app.shared.backend.gui_evidence import ClientFrame, frame_from_image
 from backend.app.shared.backend.maafw_nodes import DIAGNOSTIC_NODE_NAMES
 from backend.app.shared.backend.paste_text_action import PasteChatText
+from backend.app.shared.backend.paste_image_action import PasteChatImage
 from backend.app.shared.message_content import validate_content
 from backend.app.shared.utils import paths
 from backend.app.shared.utils.log_context import log_event
@@ -216,6 +217,8 @@ def _ensure_init() -> tuple[Tasker | None, str | None]:
             raise RuntimeError("MaaFW 资源加载失败")
         if not resource.register_custom_action("PasteChatText", PasteChatText()):
             raise RuntimeError("MaaFW clipboard action registration failed")
+        if not resource.register_custom_action("PasteChatImage", PasteChatImage()):
+            raise RuntimeError("MaaFW image action registration failed")
 
         tasker = Tasker()
         if not tasker.bind(resource, controller) or not tasker.inited:
@@ -323,9 +326,11 @@ def chat_input_override(text: str, *, send: bool, content_format: str = "text") 
     """Specify both branches on every call, including nested Agent tasks."""
     validate_content(text, content_format)
     return {
+        "ChatInput_GoToInput": {"next": ["ChatInput_PasteText"]},
         "ChatInput_PasteText": {
             "action": {
                 "param": {
+                    "custom_action": "PasteChatText",
                     "custom_action_param": {"text": text, "content_format": content_format}
                 }
             },
@@ -338,6 +343,19 @@ def chat_input_override(text: str, *, send: bool, content_format: str = "text") 
 def chat_input(text: str, *, content_format: str = "text") -> tuple[bool, str]:
     """Replaces chat text through the clipboard and verifies it without sending."""
     return run_node("ChatInput", chat_input_override(text, send=False, content_format=content_format))
+
+
+def chat_image(record: dict) -> tuple[bool, str]:
+    """Fills a scoped image with the send branch disabled."""
+    params = {key: record[key] for key in ("attachment_id", "seller", "data_dir", "conversation_id")}
+    params["sha256"] = record["image"]["sha256"]
+    return run_node("ChatInput", {
+        "ChatInput_GoToInput": {"next": ["ChatInput_PasteImage"]},
+        "ChatInput_PasteImage": {"action": {"type": "Custom", "param": {
+            "custom_action": "PasteChatImage", "custom_action_param": params,
+        }}, "next": []},
+        "ChatInput_SendMessage": {"enabled": False},
+    })
 
 
 def submit_send() -> TaskJob:

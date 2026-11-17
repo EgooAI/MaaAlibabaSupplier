@@ -254,6 +254,20 @@ def test_send_test_send_overrides_both_branches(sdk):
     assert len(sdk.taskers) == 1
 
 
+def test_image_then_text_resets_native_action_and_never_inherits_send(sdk):
+    token = connected_token()
+    image = {"attachment_id": "a" * 32, "seller": "seller", "data_dir": "source", "conversation_id": 1, "image": {"sha256": "b" * 64}}
+    assert gui_session.run_guarded(token, lambda: runner.chat_image(image))[0]
+    assert gui_session.run_guarded(token, lambda: runner.chat_input("literal"))[0]
+    first, second = [override for _, override in sdk.calls]
+    assert first["ChatInput_PasteImage"]["action"]["param"]["custom_action"] == "PasteChatImage"
+    assert second["ChatInput_PasteText"]["action"]["param"]["custom_action"] == "PasteChatText"
+    for override, node in ((first, "ChatInput_PasteImage"), (second, "ChatInput_PasteText")):
+        assert override["ChatInput_GoToInput"]["next"] == [node]
+        assert override[node]["next"] == []
+        assert override["ChatInput_SendMessage"]["enabled"] is False
+
+
 def test_submit_send_validates_and_posts_without_waiting(sdk, monkeypatch):
     token = connected_token()
     calls = []

@@ -7,6 +7,7 @@ import { useAccount } from "@/features/account/AccountProvider";
 import type { OutboxTask } from "@/types/chatOperations";
 import type { useOutbox } from "./useOutbox";
 import { canCancel, canRetry, isTerminal, outboxLabels } from "./outboxModel";
+import { AttachmentPreview } from "./AttachmentPreview";
 
 type Props = { task: OutboxTask; outbox: Pick<ReturnType<typeof useOutbox>, "busy" | "mutate"> };
 
@@ -38,7 +39,7 @@ export function OutboxTaskStatus({ task, outbox }: Props) {
     {canRetry(task) ? <Button type="text" size="small" disabled={!canOperate} loading={outbox.busy} onClick={() => void outbox.mutate(task, "retry")}>重试</Button> : null}
     <Popover trigger="click" placement="topRight" content={<div className="max-w-80 space-y-2 text-xs">
       <div>第 {task.attempt} 次尝试</div>
-      <div>发送格式：{task.content_format === "html" ? "HTML" : "纯文本"}</div>
+      <div>发送格式：{task.message_kind === "image" ? "单张图片" : task.content_format === "html" ? "HTML" : "纯文本"}</div>
       <TimeText value={task.created_at} />
       {task.action === "test" ? <div className="max-h-40 overflow-auto whitespace-pre-wrap break-words">{task.content}</div> : null}
       {task.reason ? <p>{reasons[task.reason] ?? task.reason}</p> : null}
@@ -57,7 +58,7 @@ export function OutboxTaskBubble({ task, outbox }: Props) {
       <div className="hidden shrink-0 sm:block"><Avatar icon={<ShopOutlined />} style={{ backgroundColor: "#1677ff" }} /></div>
       <div className="min-w-0">
         <div className="mb-1.5 text-right text-[11px] text-slate-400"><TimeText value={task.created_at} /></div>
-        <div className="whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-blue-50 px-3 py-2.5 text-sm leading-relaxed [overflow-wrap:anywhere] sm:px-4">{task.content}</div>
+        <div className="whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-blue-50 px-3 py-2.5 text-sm leading-relaxed [overflow-wrap:anywhere] sm:px-4">{task.message_kind === "image" && task.attachment_id ? <AttachmentPreview sid={String(task.conversation_id)} id={task.attachment_id} /> : task.content}</div>
         <div className="mt-1"><OutboxTaskStatus task={task} outbox={outbox} /></div>
       </div>
     </div>

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any
+import re
 
 from backend.app.shared.crm.views import IMAGE_CONTENT_TYPE, CrmMessage
 
@@ -21,13 +22,25 @@ class ImagePayload:
     url: str
     width: int
     height: int
+    md5: str | None = None
+    size: int = 0
+
+    def identity(self) -> dict:
+        return {"width": self.width, "height": self.height, "md5": self.md5, "bytes": self.size}
 
 
 def parse_image(message: CrmMessage) -> ImagePayload | None:
     """Extract the embedded image JSON from a message blob, tolerating binary padding."""
     if message.user_content_type != IMAGE_CONTENT_TYPE or not message.content:
         return None
-    text = bytes(message.content).decode("latin1")
+    return parse_image_blob(message.content)
+
+
+def parse_image_blob(content: bytes | None) -> ImagePayload | None:
+    """Extracts internal image evidence without exposing signed URLs to the browser."""
+    if not content:
+        return None
+    text = bytes(content).decode("latin1")
     decoder = json.JSONDecoder()
     position = 0
     while True:
@@ -40,7 +53,10 @@ def parse_image(message: CrmMessage) -> ImagePayload | None:
             position = index + 1
             continue
         if isinstance(value, dict) and isinstance(value.get("url"), str) and value["url"]:
-            return ImagePayload(value["url"], _dimension(value.get("width")), _dimension(value.get("height")))
+            digest = value.get("md5")
+            digest = digest.lower() if isinstance(digest, str) and re.fullmatch(r"[a-fA-F0-9]{32}", digest) else None
+            return ImagePayload(value["url"], _dimension(value.get("width")), _dimension(value.get("height")),
+                                digest, _dimension(value.get("size")))
         position = end if isinstance(value, dict) else index + 1
 
 

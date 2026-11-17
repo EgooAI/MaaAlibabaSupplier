@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAccount, useAccountBackend, AccountChangedError } from "@/features/account/AccountProvider";
-import type { OutboxTask } from "@/types/chatOperations";
+import type { OutboxTask, ImageAttachment } from "@/types/chatOperations";
 import { intentKey, loadIntents, persistIntents, type PendingIntent } from "./intentStorage";
 import { canCancel, canRetry, isTerminal } from "./outboxModel";
 import { captureAccount } from "@/services/accountSession";
@@ -43,7 +43,7 @@ export function useOutbox(sid: string) {
       const updates: PendingIntent[] = [];
       for (const task of knownTasks.current.values()) {
         const intent = byKey.get(task.idempotency_key);
-        if (intent || explicit.has(task.id)) updates.push({ ...(intent ?? { key: task.idempotency_key, content: task.content, action: task.action, contentFormat: task.content_format ?? "text" }), taskId: task.id });
+        if (intent || explicit.has(task.id)) updates.push({ ...(intent ?? { key: task.idempotency_key, content: task.content, action: task.action, contentFormat: task.content_format ?? "text", ...(task.message_kind === "image" && task.image && task.attachment_id ? { image: { ...task.image, id: task.attachment_id } } : {}) }), taskId: task.id });
       }
       setIntents(updates.length ? persistIntents(localStorage, storageKey, updates) : saved);
     } catch { setStorageError(true); }
@@ -111,8 +111,9 @@ export function useOutbox(sid: string) {
     return () => { clearInterval(timer); document.removeEventListener("visibilitychange", visibleRefresh); };
   }, [refresh]);
 
-  async function submit(content: string, action: PendingIntent["action"], draftId: string, intentId?: string, fixedIntent?: PendingIntent) {
-    if (locked.current || blocked || !snapshot?.capabilities.operate_client || !content.trim()) return false;
+  async function submit(content: string, action: PendingIntent["action"], draftId: string, intentId?: string, fixedIntent?: PendingIntent, image?: ImageAttachment) {
+    image = fixedIntent?.image ?? image;
+    if (locked.current || blocked || !snapshot?.capabilities.operate_client || (!image && !content.trim())) return false;
     locked.current = true;
     setBusy(true);
     setNotice(undefined);
@@ -121,9 +122,9 @@ export function useOutbox(sid: string) {
       const saved = readStorage();
       const prior = fixedIntent ?? saved.findLast((item) => item.draftId === draftId && item.action === action);
       const intent: PendingIntent = prior ?? {
-        key: crypto.randomUUID(), content, action, contentFormat: "text", draftId, ...(intentId ? { intentId } : {}),
+        key: image ? `image:${image.id}:${action}` : crypto.randomUUID(), content, action, contentFormat: "text", draftId, ...(image ? { image } : intentId ? { intentId } : {}),
       };
-      if (intent.content !== content || intent.action !== action) throw new Error("提交内容与原意图不匹配，请恢复原提交");
+      if (intent.content !== content || intent.action !== action || intent.image?.id !== image?.id || intent.image?.sha256 !== image?.sha256) throw new Error("提交内容与原意图不匹配，请恢复原提交");
       const contentFormat = intent.contentFormat ?? "text";
       try {
         setIntents(persistIntents(localStorage, storageKey, [intent]));
@@ -145,7 +146,8 @@ export function useOutbox(sid: string) {
         accept([existing]);
       }
       if (existing) {
-        if (existing.content !== content || existing.action !== action || (existing.content_format ?? "text") !== contentFormat) throw new Error("任务响应不匹配");
+        if (existing.content !== content || existing.action !== action || (existing.content_format ?? "text") !== contentFormat
+          || (existing.message_kind === "image") !== Boolean(image) || (image && (existing.attachment_id !== image.id || existing.image?.sha256 !== image.sha256))) throw new Error("任务响应不匹配");
         accept([existing], true); setError(undefined); return existing;
       }
       if (contentFormat !== "text") {
@@ -156,12 +158,14 @@ export function useOutbox(sid: string) {
         conversationId: sid, content: intent.content, action: intent.action,
         idempotency_key: intent.key,
         content_format: contentFormat,
+        ...(image ? { message_kind: "image" as const, attachment_id: image.id } : {}),
         ...(intent.intentId ? { intent_id: intent.intentId } : {}),
       });
       if (!active.current) return false;
       if (result.outbox.idempotency_key !== intent.key || String(result.outbox.conversation_id) !== sid
         || result.outbox.content !== content || result.outbox.action !== action
-        || (result.outbox.content_format ?? "text") !== contentFormat) throw new Error("任务响应不匹配");
+        || (result.outbox.content_format ?? "text") !== contentFormat || (result.outbox.message_kind === "image") !== Boolean(image)
+        || (image && (result.outbox.attachment_id !== image.id || result.outbox.image?.sha256 !== image.sha256))) throw new Error("任务响应不匹配");
       accept([result.outbox], true);
       setError(undefined);
       return result.outbox;
