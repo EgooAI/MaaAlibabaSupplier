@@ -171,8 +171,14 @@ class OutboxService:
                 binding = self._bind_attempt(context, token, record)
                 self._attempts[record["id"]] = binding
                 self._enqueue(record, binding)
-        except Exception as exc:
+        except AppError as exc:
             self._fail_if_current(context, record, str(exc))
+        except Exception as exc:
+            # Persist a terminal state so the row is not left queued, but never
+            # disguise a programming error as an ordinary delivery failure.
+            self._fail_if_current(context, record, type(exc).__name__)
+            logger.exception("Outbox submission failed unexpectedly")
+            raise
         return self._require(context, record["id"])
 
     def cancel(self, context: AccountContext, task_id: str, *, version: int | None = None) -> dict:

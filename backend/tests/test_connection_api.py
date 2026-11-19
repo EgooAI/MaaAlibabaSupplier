@@ -745,6 +745,20 @@ def test_response_is_rejected_if_epoch_changes_after_endpoint(client, monkeypatc
     assert response.headers["X-Account-Epoch"] != client.headers["X-Account-Epoch"]
 
 
+def test_self_info_failure_is_not_reported_as_an_empty_profile(client, monkeypatch):
+    from backend.app.api.routers import self as self_router
+
+    class BrokenAdapter:
+        def get_self_info(self, ali_id):
+            raise RuntimeError("crm storage is unavailable")
+
+    monkeypatch.setattr(self_router, "CRMAdapter", BrokenAdapter)
+    response = client.get("/api/self-info")
+
+    assert response.status_code == 500
+    assert response.json() == {"code": 1, "msg": "服务器内部错误", "data": None}
+
+
 def test_connected_diagnostic_is_read_only(client, sdk):
     connect(client)
     response = client.post("/api/status/node-test", json={})

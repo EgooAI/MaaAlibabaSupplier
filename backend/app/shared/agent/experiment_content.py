@@ -10,9 +10,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from loguru import logger
 from pydantic import BaseModel, Field, ValidationError
 
 from backend.app.shared import contract
+from backend.app.shared.agent.content_errors import ContentSchemaError
 
 EXPERIMENT_SCHEMA_VERSION = 1
 MAX_STEPS = contract.EXPERIMENT_MAX_STEPS
@@ -44,7 +46,19 @@ class ExperimentContent(BaseModel):
     notes: str = ""
 
 
+def parse_experiment_content(raw: Any) -> ExperimentContent:
+    """Parse stored content for a write path; corrupted rows must not be rewritten."""
+    if not isinstance(raw, dict):
+        raise ContentSchemaError()
+    try:
+        return ExperimentContent.model_validate(raw)
+    except ValidationError as exc:
+        logger.opt(exception=exc).warning("Stored experiment content failed schema validation")
+        raise ContentSchemaError() from exc
+
+
 def load_experiment_content(raw: Any) -> ExperimentContent:
+    """Best-effort read for listings; writes must use :func:`parse_experiment_content`."""
     if not isinstance(raw, dict):
         return ExperimentContent()
     try:
@@ -62,7 +76,7 @@ def build_experiment_content(
     annotations: list[ExperimentAnnotation] | None = None,
     notes: str | None = None,
 ) -> dict[str, Any]:
-    current = load_experiment_content(existing)
+    current = parse_experiment_content(existing) if existing is not None else ExperimentContent()
     content = current.model_copy(update={
         "frozen_prefix": current.frozen_prefix if frozen_prefix is None else frozen_prefix,
         "source": current.source if source is None else source,
@@ -82,4 +96,5 @@ __all__ = [
     "ExperimentStep",
     "build_experiment_content",
     "load_experiment_content",
+    "parse_experiment_content",
 ]

@@ -35,10 +35,12 @@ from backend.app.shared.agent.chat_history_content import (
     build_history_content,
     history_messages,
     load_history_content,
+    parse_history_content,
 )
 from backend.app.shared.agent.experiment_content import (
     ExperimentAnnotation,
     load_experiment_content,
+    parse_experiment_content,
 )
 from backend.app.shared.agent.experiment_runs import (
     STATUS_CANCELLED,
@@ -335,7 +337,7 @@ def _source_and_messages(
             raise AppError("session 来源需要 sessionId", status_code=422)
         hist = _load_session(ChatHistoryManager(), source.sessionId)
         raw = hist.content if isinstance(hist.content, dict) else {}
-        content = load_history_content(raw)
+        content = parse_history_content(raw)
         if content.apid != agent_id:
             raise AppError("会话不属于该 Agent", status_code=400)
         session_source = content.source
@@ -436,7 +438,7 @@ def update_experiment_endpoint(experiment_id: str, body: UpdateExperimentInput) 
 def _parse_annotations(
     experiment: Experiment, rows: list[dict[str, Any]],
 ) -> list[ExperimentAnnotation]:
-    content = load_experiment_content(experiment.content)
+    content = parse_experiment_content(experiment.content)
     variant_ids = {
         str(hist.id) for hist in ExperimentManager().list_variants(experiment.id)
     }
@@ -514,7 +516,7 @@ def add_step_endpoint(experiment_id: str, body: StepInput) -> dict:
 @router.post("/api/agent/experiments/{experiment_id}/runs")
 def start_run_endpoint(experiment_id: str, body: RunInput) -> dict:
     experiment = _experiment_or_404(experiment_id)
-    content = load_experiment_content(experiment.content)
+    content = parse_experiment_content(experiment.content)
     if body.stepIndex >= len(content.steps):
         raise AppError("步骤不存在", status_code=404)
     variants = ExperimentManager().list_variants(experiment.id)
@@ -574,7 +576,7 @@ def _execute_run(
         if experiment is None:
             _fail_all(state, "实验不存在")
             return
-        content = load_experiment_content(experiment.content)
+        content = parse_experiment_content(experiment.content)
         if step_index >= len(content.steps):
             _fail_all(state, "步骤不存在")
             return
@@ -662,7 +664,7 @@ def _run_variant(
     if hist is None:
         raise AppError("变体不存在", status_code=404)
     raw = hist.content if isinstance(hist.content, dict) else {}
-    content = load_history_content(raw)
+    content = parse_history_content(raw)
     messages = history_messages(content)
     before = step_checkpoint(experiment, step.index, str(hist.id))
     if before is not None and before <= len(messages):
@@ -755,7 +757,7 @@ def _owned_run(run_id: str):
 def promote_variant_endpoint(experiment_id: str, body: PromoteInput) -> dict:
     experiment = _experiment_or_404(experiment_id)
     hist = _variant_of(experiment, body.variantId)
-    content = load_history_content(hist.content)
+    content = parse_history_content(hist.content)
     pinned = content.pinned
     if pinned is None or not pinned.prompt:
         raise AppError("该变体没有可保存的版本", status_code=422)

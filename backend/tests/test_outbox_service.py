@@ -104,6 +104,22 @@ def test_observers_do_not_initialize_store_or_queue(env):
     assert env.queue.jobs == []
 
 
+def test_unexpected_submission_error_fails_the_task_and_propagates(env, monkeypatch):
+    def boom(context):
+        raise RuntimeError("unexpected bug")
+
+    monkeypatch.setattr(env.service, "_capture_token", boom)
+
+    with pytest.raises(RuntimeError, match="unexpected bug"):
+        submit(env)
+
+    records = env.service.list(env.context, 1)
+    assert [(record["status"], record["reason"]) for record in records] == [
+        ("failed", "RuntimeError")
+    ]
+    assert env.queue.jobs == env.calls == []
+
+
 def test_html_submissions_are_rejected_before_persistence_or_gui(env):
     with pytest.raises(AppError) as error:
         submit(env, content="<b>body</b>", content_format="html")

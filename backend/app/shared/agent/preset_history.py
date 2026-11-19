@@ -7,13 +7,15 @@
 
 from __future__ import annotations
 
+from loguru import logger
+from sqlalchemy.exc import SQLAlchemyError
+
 from backend.app.shared.crm.sdk import (
     AgentPreset,
     AgentPresetRevision,
     AgentPresetRevisionManager,
 )
 from backend.app.shared.utils.log_context import log_event
-from loguru import logger
 
 REVISION_SOURCES = frozenset({"manual", "restore_default", "seed"})
 MAX_REVISIONS_PER_PRESET = 50
@@ -64,8 +66,10 @@ def record_preset_revision(
 def latest_revision(preset_id: str) -> AgentPresetRevision | None:
     try:
         return next(iter(AgentPresetRevisionManager().list_revisions(preset_id, limit=1)), None)
-    except Exception:
-        logger.exception("request failed")
+    except SQLAlchemyError:
+        logger.opt(exception=True).warning(
+            "Latest preset revision is unavailable for {}; showing no timestamp", preset_id
+        )
         return None
 
 

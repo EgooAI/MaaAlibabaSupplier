@@ -102,7 +102,7 @@ class PresetInput(BaseModel):
     name: str = ""
     description: str = ""
     prompt: str = ""
-    intelevel: int = 0
+    intelevel: int = Field(default=0, ge=0, le=LLM_MAX_LEVEL)
     tools: list[str] = []
     enabled: bool = True
     requires_tool: bool = False
@@ -115,7 +115,7 @@ class PresetInput(BaseModel):
 
 class DraftPresetInput(BaseModel):
     prompt: str = ""
-    level: int = 0
+    level: int = Field(default=0, ge=0, le=LLM_MAX_LEVEL)
     tools: list[str] = []
     requires_tool: bool | None = None
 
@@ -461,11 +461,8 @@ def save_preset(body: PresetInput) -> dict:
         current = AgentPresetManager().get_agent_preset(apid)
         if current is None or preset_fingerprint(current) != body.expected_fingerprint:
             raise AppError("Agent 已被修改，请重新读取配置后再保存；当前草稿仍可试用。", status_code=409)
-    try:
-        level = max(0, min(LLM_MAX_LEVEL, int(body.intelevel)))
-    except (TypeError, ValueError):
-        raise AppError(f"intelevel must be 0-{LLM_MAX_LEVEL}", status_code=422)
-    tools = [tool for tool in (body.tools or []) if isinstance(tool, str) and tool.strip()]
+    level = body.intelevel
+    tools = [tool for tool in body.tools if tool.strip()]
     unknown = unknown_tool_names(tools)
     if unknown:
         raise AppError(
@@ -667,14 +664,10 @@ def run_agent_test(body: AgentTestInput) -> dict:
     draft_snapshot: ChatHistoryDraft | None = None
     pinned = content_model.pinned
     if hist is None and body.draft is not None:
-        try:
-            draft_level = max(0, min(LLM_MAX_LEVEL, int(body.draft.level)))
-        except (TypeError, ValueError):
-            raise AppError(f"draft.level 必须是 0 到 {LLM_MAX_LEVEL} 的整数", status_code=422)
         candidate = ChatHistoryDraft(
             prompt=body.draft.prompt,
-            llm_level=draft_level,
-            tools=[tool for tool in (body.draft.tools or []) if isinstance(tool, str) and tool.strip()],
+            llm_level=body.draft.level,
+            tools=[tool for tool in body.draft.tools if tool.strip()],
             requires_tool=bool(body.draft.requires_tool),
         )
         if _draft_matches_preset(candidate, preset):

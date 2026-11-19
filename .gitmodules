@@ -1,9 +1,6 @@
 [submodule "assets/MaaCommonAssets"]
 	path = backend/assets/MaaCommonAssets
 	url = https://github.com/MaaXYZ/MaaCommonAssets
-[submodule ".claude/skills/using-yak/resources/yaklang.github.io"]
-	path = .agents/skills/using-yak/resources/yaklang.github.io
-	url = https://github.com/yaklang/yaklang.github.io
 [submodule "app/crm_sdk"]
 	path = backend/app/crm_sdk
 	url = https://github.com/EgooAI/Egooai-CRM-SDK-Py

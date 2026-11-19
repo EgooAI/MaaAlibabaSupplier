@@ -14,9 +14,11 @@ from __future__ import annotations
 import time
 from typing import Any, Literal
 
+from loguru import logger
 from pydantic import BaseModel, Field, ValidationError
 
 from backend.app.shared import contract
+from backend.app.shared.agent.content_errors import ContentSchemaError
 
 SCHEMA_VERSION = 3
 SESSION_TYPES = frozenset(contract.SESSION_TYPES)
@@ -199,7 +201,19 @@ def _message_payload(message: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def parse_history_content(raw: Any) -> ChatHistoryContent:
+    """Parse stored content for a write path; corrupted rows must not be rewritten."""
+    if not isinstance(raw, dict):
+        raise ContentSchemaError()
+    try:
+        return ChatHistoryContent.model_validate(raw)
+    except ValidationError as exc:
+        logger.opt(exception=exc).warning("Stored session content failed schema validation")
+        raise ContentSchemaError() from exc
+
+
 def load_history_content(raw: Any) -> ChatHistoryContent:
+    """Best-effort read for listings; writes must use :func:`parse_history_content`."""
     if not isinstance(raw, dict):
         return ChatHistoryContent(apid="")
     try:
@@ -252,4 +266,5 @@ __all__ = [
     "build_history_content",
     "history_messages",
     "load_history_content",
+    "parse_history_content",
 ]

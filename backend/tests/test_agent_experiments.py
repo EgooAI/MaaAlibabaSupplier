@@ -10,7 +10,14 @@ from backend.app.background import Worker, get_background_runtime
 from backend.app.api.routers import agent as agent_router
 from backend.app.shared.agent.experiment_runs import runs
 from backend.app.shared.agent.runner import ChatAgentTurn
-from backend.app.shared.crm.sdk import AgentPreset, AgentPresetManager, ChatHistoryManager
+from backend.app.shared.crm.sdk import (
+    AgentPreset,
+    AgentPresetManager,
+    ChatHistory,
+    ChatHistoryManager,
+    Experiment,
+    ExperimentManager,
+)
 
 AGENT = "agent-experiment-test"
 
@@ -169,6 +176,41 @@ def test_run_replays_one_step_against_each_pinned_version(client, monkeypatch):
     for variant, prompt in zip(detail["variants"], ("基准提示词", "草稿提示词")):
         assert variant["messages"][-1]["content"] == f"回答:{prompt}"
         assert variant["messages"][-2]["content"] == "买家：能便宜吗"
+
+
+def test_corrupt_experiment_content_blocks_writes_without_rewriting_it(client):
+    experiment = _create(client).json()["data"]
+    manager = ExperimentManager()
+    row = manager.get_experiment(int(experiment["id"]))
+    corrupted = {**row.content, "steps": "not-a-list"}
+    manager.edit_experiment(row.id, Experiment(agent_id=row.agent_id, name=row.name, content=corrupted))
+
+    response = client.post(f"/api/agent/experiments/{experiment['id']}/steps", json={
+        "mode": "buyer", "text": "买家：新问题",
+    })
+
+    assert response.status_code == 409
+    assert "损坏" in response.json()["msg"]
+    assert manager.get_experiment(row.id).content == corrupted
+
+
+def test_corrupt_variant_content_is_not_rewritten_by_a_run(client, monkeypatch):
+    experiment = _create(client).json()["data"]
+    client.post(f"/api/agent/experiments/{experiment['id']}/steps",
+                json={"mode": "buyer", "text": "第一句"})
+    variant_id = int(experiment["variants"][0]["id"])
+    manager = ChatHistoryManager()
+    hist = manager.get_chat_history(variant_id)
+    corrupted = {**hist.content, "messages": "not-a-list"}
+    manager.edit_chat_history(variant_id, ChatHistory(name=hist.name, content=corrupted))
+    calls = _captured_run(monkeypatch)
+
+    started = client.post(f"/api/agent/experiments/{experiment['id']}/runs", json={"stepIndex": 0})
+
+    assert started.status_code == 200, started.text
+    _wait_for_run(client, started.json()["data"]["runId"], expected="failed")
+    assert calls == []
+    assert manager.get_chat_history(variant_id).content == corrupted
 
 
 def test_run_conflict_returns_the_active_run_id_and_cancel_reaches_the_token(client, monkeypatch):

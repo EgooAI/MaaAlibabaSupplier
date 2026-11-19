@@ -11,7 +11,9 @@ from backend.app.shared.agent.chat_history_content import (
     build_history_content,
     history_messages,
     load_history_content,
+    parse_history_content,
 )
+from backend.app.shared.agent.content_errors import ContentSchemaError
 
 
 class ChatHistoryContentTestCase(unittest.TestCase):
@@ -96,6 +98,14 @@ class ChatHistoryContentTestCase(unittest.TestCase):
         loaded = load_history_content(raw)
 
         self.assertEqual(history_messages(loaded)[0]["toolCalls"][0]["name"], "t")
+
+    def test_write_parser_refuses_corrupted_content_instead_of_returning_an_empty_session(self) -> None:
+        corrupted = {"apid": "a", "messages": "not-a-list"}
+
+        with self.assertRaises(ContentSchemaError):
+            parse_history_content(corrupted)
+        # Read-only listings still skip the row rather than failing the whole page.
+        self.assertEqual(load_history_content(corrupted).messages, [])
 
     def test_a_missing_draft_argument_keeps_the_stored_snapshot(self) -> None:
         created = build_history_content(

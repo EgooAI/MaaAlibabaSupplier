@@ -132,6 +132,23 @@ class AgentConsoleTestCase(unittest.TestCase):
         guard = self.client.delete(f"/api/agent/presets/{TRANSLATION_APID}").json()
         self.assertEqual(guard["data"], False)
 
+    def test_preset_level_outside_the_llm_grid_is_rejected(self) -> None:
+        payload = {
+            "apid": "", "name": "N", "description": "D", "prompt": "P",
+            "tools": [], "enabled": True,
+        }
+        for level in (-1, 5):
+            with self.subTest(level=level):
+                response = self.client.post(
+                    "/api/agent/presets", json={**payload, "intelevel": level}
+                )
+                self.assertEqual(response.status_code, 422)
+        draft = self.client.post("/api/agent/test", json={
+            "agentId": TRANSLATION_APID, "content": "hi",
+            "draft": {"prompt": "p", "level": 9, "tools": []},
+        })
+        self.assertEqual(draft.status_code, 422)
+
     def test_tool_catalog_and_unregistered_tool_guards(self) -> None:
         tools = self.client.get("/api/agent/tools").json()["data"]
         by_name = {tool["name"]: tool for tool in tools}

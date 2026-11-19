@@ -87,3 +87,4 @@ backend/.env
 
 # Agent
 .opencode/
+.agents/skills/using-yak/resources/yaklang.github.io/

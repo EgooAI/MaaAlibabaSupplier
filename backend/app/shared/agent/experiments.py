@@ -22,6 +22,7 @@ from backend.app.shared.agent.chat_history_content import (
     ChatHistorySource,
     build_history_content,
     load_history_content,
+    parse_history_content,
 )
 from backend.app.shared.agent.experiment_content import (
     MAX_STEPS,
@@ -30,6 +31,7 @@ from backend.app.shared.agent.experiment_content import (
     ExperimentStep,
     build_experiment_content,
     load_experiment_content,
+    parse_experiment_content,
 )
 from backend.app.shared.agent.versions import (
     current_scope,
@@ -220,7 +222,7 @@ def variant_presets(
         raise AppError("Agent 不存在", status_code=404)
     resolved: dict[str, AgentPreset] = {}
     for variant in variants:
-        pinned = load_history_content(variant.content).pinned
+        pinned = parse_history_content(variant.content).pinned
         draft = pin_to_draft(pinned)
         override = draft_override(preset, draft) if draft is not None else pinned_override(preset, pinned)
         require_runnable_preset(override or preset)
@@ -253,7 +255,7 @@ def _save_content(
 def _adopt_owner(experiment: Experiment) -> dict[str, Any]:
     """Stamp ownership onto a record that predates it, on its first write."""
     raw = experiment.content if isinstance(experiment.content, dict) else {}
-    content = load_experiment_content(raw)
+    content = parse_experiment_content(raw)
     owner = content.source.get("owner")
     if isinstance(owner, dict) and _text(owner.get("seller")):
         return raw
@@ -308,7 +310,7 @@ def _lineage_messages(variants: list[ChatHistory]) -> list[dict[str, Any]]:
     """
     if not variants:
         return []
-    contents = [load_history_content(variant.content) for variant in variants]
+    contents = [parse_history_content(variant.content) for variant in variants]
     shared = min((content.messages for content in contents), key=len, default=[])
     common: list[dict[str, Any]] = []
     for index, message in enumerate(shared):
@@ -443,7 +445,7 @@ def record_step_progress(
     """
     with _PROGRESS_LOCK:
         raw = experiment.content if isinstance(experiment.content, dict) else {}
-        content = load_experiment_content(raw)
+        content = parse_experiment_content(raw)
         runs = dict(content.source.get("runs") or {})
         record = dict(runs.get(str(step_index)) or {})
         done = [str(item) for item in (record.get("variants") or [])]

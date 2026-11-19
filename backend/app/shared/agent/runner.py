@@ -99,7 +99,7 @@ def run_chat_agent(
     *,
     timeout_seconds: float = 60.0,
     preset_override: AgentPreset | None = None,
-    tool_context: Any = None,
+    tool_context: ToolContext | None = None,
     tool_choice: str = "auto",
     mode: str = "live",
     conversation_id: int | None = None,
@@ -133,7 +133,12 @@ def run_chat_agent(
         llm_config = _require_llm_registered(preset.llm_level)
         resolved_override = preset_override
 
-    context = tool_context if isinstance(tool_context, ToolContext) else ToolContext(mode=mode)
+    if tool_context is None:
+        context = ToolContext(mode=mode)
+    elif not isinstance(tool_context, ToolContext):
+        raise TypeError("tool_context must be a ToolContext")
+    else:
+        context = tool_context
     pipeline_input = AgentPipelineInput(
         user_input=user_input,
         apid=None if resolved_override is not None else apid,
@@ -206,7 +211,7 @@ def run_chat_tool_agent(
     *,
     timeout_seconds: float = 60.0,
     preset_override: AgentPreset | None = None,
-    tool_context: Any = None,
+    tool_context: ToolContext | None = None,
     tool_choice: str = "auto",
     mode: str = "live",
 ) -> str:
