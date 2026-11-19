@@ -88,11 +88,12 @@ def test_png_and_dibv5_roundtrip_retains_orientation_and_transparency():
     wire = dict(payload.formats)
     assert dib_identity(wire[CF_DIBV5])["pixel_sha256"] == identity["pixel_sha256"]
     assert payload.readbacks[0].matches(wire["PNG"])
-    assert payload.readbacks[1].matches(wire[CF_DIBV5])
+    assert payload.readbacks[1].matches(wire["PNG"])
+    assert payload.readbacks[2].matches(wire[CF_DIBV5])
     wrong = picture(color=(30, 20, 10, 125))
     assert not payload.readbacks[0].matches(wrong)
     corrupted = bytearray(wire[CF_DIBV5]); corrupted[-1] ^= 1
-    assert not payload.readbacks[1].matches(bytes(corrupted))
+    assert not payload.readbacks[2].matches(bytes(corrupted))
 
 
 def attach(env, *, identifier="a" * 32):

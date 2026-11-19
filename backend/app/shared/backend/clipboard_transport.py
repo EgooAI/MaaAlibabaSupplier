@@ -193,7 +193,7 @@ class Desktop:
         return index, data
 
     def copied_bundle(self, owner, pid, formats, companions=()):
-        """Reads a preferred format and required companions from one clipboard version."""
+        """Reads a preferred format and available companions under one clipboard lock."""
         with self.clipboard(owner):
             source_pid = wintypes.DWORD()
             source = self.clipboard_owner()
@@ -209,9 +209,8 @@ class Desktop:
                 extra = []
                 for companion, limit in companions:
                     companion_id = self.format_id(companion)
-                    if not self.format_available(companion_id):
-                        raise ClipboardInputError("copied_companion_missing")
-                    extra.append(self._read_bytes(companion_id, limit))
+                    extra.append(self._read_bytes(companion_id, limit)
+                                 if self.format_available(companion_id) else None)
                 return index, data, tuple(extra)
             raise ClipboardInputError("copied_format_missing")
 

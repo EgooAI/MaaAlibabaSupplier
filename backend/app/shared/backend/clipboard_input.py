@@ -6,8 +6,8 @@ import time
 from backend.app.shared.backend.clipboard_transport import (
     ClipboardInputError, Desktop, VK_A, VK_BACK, VK_C, VK_RIGHT, VK_V, _chord,
 )
-from backend.app.shared.clipboard_payload import text_payload, CF_UNICODETEXT, read_unicode
-from backend.app.shared.image_clipboard import image_payload
+from backend.app.shared.clipboard_payload import text_payload, CF_UNICODETEXT
+from backend.app.shared.image_clipboard import image_payload, single_image_selection, CF_HDROP
 
 
 _clipboard_lock = Lock()
@@ -55,7 +55,9 @@ def _replace(hwnd, payload, *, image=False):
                         (readback.format, readback.max_bytes) for readback in payload.readbacks
                     )
                     if image:
-                        index, data, companions = desktop.copied_bundle(owner, target[0], formats, ((CF_UNICODETEXT, 65536),))
+                        index, data, companions = desktop.copied_bundle(
+                            owner, target[0], formats, ((CF_UNICODETEXT, 65536), (CF_HDROP, 65536)),
+                        )
                     else:
                         index, data = desktop.copied_data(owner, target[0], formats)
                 except ClipboardInputError as exc:
@@ -70,15 +72,12 @@ def _replace(hwnd, payload, *, image=False):
                     continue
                 try:
                     matches = payload.readbacks[index].matches(data)
+                    if image and not single_image_selection(*companions):
+                        raise ClipboardInputError("image_editor_contains_other_content")
                 except ValueError as exc:
                     raise ClipboardInputError("copied_content_invalid") from exc
                 if not matches:
                     raise ClipboardInputError("pasted_text_mismatch")
-                if image:
-                    # PNG/DIB alone can expose only the first image of a mixed selection.
-                    # Requires the single Qt object marker from the same clipboard version.
-                    if read_unicode(companions[0]) != "\ufffc":
-                        raise ClipboardInputError("image_editor_contains_other_content")
                 if desktop.focus(hwnd) != target:
                     raise ClipboardInputError("focus_changed_after_paste")
                 desktop.keys([(VK_RIGHT, False), (VK_RIGHT, True)])

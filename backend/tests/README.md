@@ -150,10 +150,14 @@ the desktop or establish that a production native task saved its error image.
   reference retention, upload/account races, image task barriers and recovery,
   file-identity and reencoded-pixel matching, conflicting same-pixel sends, and
   transient image fetches. Source tests preserve type-7 metadata. Clipboard tests
-  require one object marker and reject residual text/multiple objects or missing
-  structure. Frontend `ImageOutbox.test.tsx` uses fake-indexeddb transactions and
+   require one object marker or a single Unicode file-drop entry, and reject
+   conflicting formats, residual text, multiple objects, malformed file lists and
+   missing or unreadable structure. Qt `image/png` and DIBV5 readbacks retain exact
+   alpha/pixel checks. Frontend `ImageOutbox.test.tsx` uses fake-indexeddb transactions and
   controlled responses for paste/file selection, reload recovery, replacement and
-  account races. These do not establish real Qt image paste/copy compatibility.
+   account races. These isolated tests do not establish real Qt compatibility.
+
+2026-11-19 的 Qt 5.15.2 真实客户端探查确认：单图复制提供一个 `CF_HDROP` 文件条目与图片字节，不提供 Unicode 文本；图文混合提供文字与文件列表；多图提供多个文件条目，但图片格式可只包含第一张。候选修复在临时诊断进程中验证了这些区别，完整图片“仅填入”流水线连续通过两次并取消全选。快速连续改变选区的探查中另出现过一次复制未发布超时，随后通过正常聚焦入口的完整流程验证成功。此次没有点击发送，未验证平台送达，正式后端需更新并重启后使用修复。
 
 ### 统一资源与图片归档
 

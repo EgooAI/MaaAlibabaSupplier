@@ -174,7 +174,7 @@ UI/业务以 `app.shared.crm` 为稳定入口：
 
 输入区支持选择文件和 Ctrl+V 粘贴单张图片，图片作为独立 Outbox 任务发送，保留文字草稿。接受静态 PNG/JPEG/WebP，后端应用 EXIF 方向并标准化为 RGB/RGBA PNG。原文件和发送 PNG 各不超过 10,000,000 字节，最长边 8192 像素，总像素 2400 万。附件通过宿主 `app_image_attachment` 关联 SDK 的 `ResourceReference`，图片字节保存到数据库旁的 `crm.sqlite.resources/objects/sha256/`，按实际字节的 `sha256:<摘要>` 去重。MD5 保存为辅助摘要，原文件摘要和标准化版本留在附件记录。临时引用 24 小时后过期，Outbox 创建时在同一数据库事务中提升为长期引用。浏览器通过 IndexedDB 保存图片草稿，localStorage 保存提交身份，图片键为 `image:{attachment_id}:{action}`。
 
-`PasteChatImage` 与文字输入共用剪贴板锁和底层传输，使用独立流水线节点，发布 PNG/DIBV5。最多等待 10 秒，只重复复制、不重复粘贴。成功须在同一剪贴板版本中获得精确像素和单个 `U+FFFC` 对象标记，残留文字、多对象或缺少结构证据均中止发送。发送沿用账号/窗口守卫和持久化 `may_have_sent` 屏障。类型 7 消息先检查来源、基线、方向、时间和宽高，再比较 MD5/字节数，必要时下载并比较完整 RGBA 像素摘要。网络访问位于账号、源读取和 Outbox 锁外，完成后复核账号和竞争任务；同像素不同编码的任务也参与歧义检查。手动发送的 7 张 PNG 已做真实数据核对，自动图片粘贴和对象标记读回仍待真实客户端验收。接口及恢复规则见 `frontend/docs/stage3-outbox-contract.md`，设计依据见 `docs/design/single-image-send.md`。
+`PasteChatImage` 与文字输入共用剪贴板锁和底层传输，使用独立流水线节点，发布 PNG/DIBV5。最多等待 10 秒，只重复复制、不重复粘贴。读回支持 PNG、Qt 的 `image/png` 及 DIB。成功须在同一剪贴板版本中获得精确像素，以及单个 `U+FFFC` 对象标记或只含一个文件条目的 Unicode `CF_HDROP`。已有文本格式必须恰好为单个对象标记，已有文件列表必须只含一个条目；缺少证据、格式冲突、残留文字或多对象均中止发送。文件列表只用于计数，不读取其中路径。发送沿用账号/窗口守卫和持久化 `may_have_sent` 屏障。类型 7 消息先检查来源、基线、方向、时间和宽高，再比较 MD5/字节数，必要时下载并比较完整 RGBA 像素摘要。网络访问位于账号、源读取和 Outbox 锁外，完成后复核账号和竞争任务；同像素不同编码的任务也参与歧义检查。2026-11-19 在 Qt 5.15.2 客户端验证了单图、混合文字和多图复制格式，候选代码的完整“仅填入”流程通过；自动发送点击和平台送达不在此次验收范围。接口及恢复规则见 `frontend/docs/stage3-outbox-contract.md`。
 
 联系人头像来自已拦截的 `contact.extinfo.get` 响应中的 `avatarUrl`，经 `UserInfo.avatar_url` 保存到 CRM `Account.avatar`，由列表与详情的 `customer_view.avatar_url` 提供给前端。新的非空头像更新旧值，缺少头像的资料或 IM 同步保留已保存值。会话列表、买家消息和批量客户列表直接加载头像 URL，缺失或加载失败时回退到原有字母占位。头像按客户端实际请求的联系人逐步补齐，手动刷新聊天数据可重读新资料。
 

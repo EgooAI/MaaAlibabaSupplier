@@ -2,6 +2,7 @@
 
 import ctypes
 import json
+import struct
 from io import BytesIO
 from PIL import Image
 from threading import get_ident
@@ -13,6 +14,11 @@ import pytest
 from backend.app.shared.backend import clipboard_input as clip, paste_text_action
 from backend.app.shared.backend import clipboard_transport as transport
 from backend.app.shared.clipboard_payload import CF_UNICODETEXT, read_unicode
+from backend.app.shared.image_clipboard import CF_HDROP, CF_DIBV5, image_payload, single_image_selection
+
+
+def file_drop(*names):
+    return struct.pack("<IiiII", 20, 0, 0, 0, 1) + ("\0".join(names) + "\0\0").encode("utf-16-le")
 
 
 @pytest.fixture
@@ -23,6 +29,7 @@ def desktop(monkeypatch):
         published={}, editor_image=None, image_copy_delay=0, copies=0,
         foreground=42, focus=43, fault=None, clock=0.0, pending_copy=None, selects=0,
         clipboard_dirty=False, handoff_replied=False, owner_thread=None,
+        image_readback="PNG", image_structure="marker", registered={"PNG": 49152},
     )
 
     def alloc(flags, size):
@@ -104,7 +111,19 @@ def desktop(monkeypatch):
                 png = stream.getvalue()
             image_handle = alloc(2, len(png))
             ctypes.memmove(image_handle, png, len(png))
-            state.formats[49152] = image_handle
+            if state.image_readback == CF_DIBV5:
+                dib = dict(image_payload(png).formats)[CF_DIBV5]
+                image_handle = alloc(2, len(dib))
+                ctypes.memmove(image_handle, dib, len(dib))
+            image_format = register(state.image_readback) if isinstance(state.image_readback, str) else state.image_readback
+            state.formats[image_format] = image_handle
+            if state.image_structure != "marker":
+                drop = file_drop(r"C:\client\image.png", r"C:\client\other.png") if state.fault == "multiple_images" else file_drop(r"C:\client\image.png")
+                drop_handle = alloc(2, len(drop))
+                ctypes.memmove(drop_handle, drop, len(drop))
+                state.formats[CF_HDROP] = drop_handle
+                if state.image_structure == "files" and text and not text.strip("\ufffc"):
+                    state.formats.pop(CF_UNICODETEXT)
             if state.fault == "image_no_text":
                 state.formats.pop(CF_UNICODETEXT)
         if state.fault == "copy_formats_missing":
@@ -176,6 +195,9 @@ def desktop(monkeypatch):
             callback, state.pending_copy = state.pending_copy, None
             callback()
 
+    def register(name):
+        return state.registered.setdefault(name, 49152 + len(state.registered))
+
     user = SimpleNamespace(**{name: Mock(side_effect=fn) for name, fn in {
         "IsWindow": lambda hwnd: hwnd == 42,
         "GetForegroundWindow": lambda: state.foreground,
@@ -190,8 +212,8 @@ def desktop(monkeypatch):
         "EmptyClipboard": empty,
         "SetClipboardData": set_data,
         "IsClipboardFormatAvailable": lambda format: format in state.formats,
-        "GetClipboardData": lambda format: 0 if state.fault == "copy_unreadable" else state.formats.get(format, 0),
-        "RegisterClipboardFormatW": lambda name: 49152,
+        "GetClipboardData": lambda format: 0 if state.fault == "copy_unreadable" or (state.fault == "files_unreadable" and format == CF_HDROP) else state.formats.get(format, 0),
+        "RegisterClipboardFormatW": register,
         "GetClipboardOwner": lambda: state.owner,
         "GetClipboardSequenceNumber": lambda: state.sequence,
         "PeekMessageW": peek_message,
@@ -375,3 +397,49 @@ def test_image_paste_verifies_pixels_and_excludes_residual_text(desktop, fault):
     assert sum(key == clip.VK_V and not up for batch in desktop.events for key, up in batch) == 1
     assert not any(key == 13 for batch in desktop.events for key, _ in batch)
     assert desktop.destroyed == [77] and not desktop.pressed
+
+
+@pytest.mark.parametrize("readback", ["image/png", CF_DIBV5])
+@pytest.mark.parametrize("fault", [None, "multiple_images", "select_ignored", "image_changed", "files_unreadable", "external_copy"])
+def test_qt_file_drop_readback_requires_exact_single_image(desktop, readback, fault):
+    stream = BytesIO()
+    with Image.new("RGBA", (9, 5), (33, 44, 55, 128)) as image:
+        image.save(stream, format="PNG")
+    desktop.image_readback, desktop.image_structure, desktop.fault = readback, "files", fault
+    if fault is None:
+        clip.replace_image(42, stream.getvalue())
+        assert not desktop.selection and CF_UNICODETEXT not in desktop.formats
+    else:
+        with pytest.raises(clip.ClipboardInputError):
+            clip.replace_image(42, stream.getvalue())
+        assert desktop.selection
+    assert sum(key == clip.VK_V and not up for batch in desktop.events for key, up in batch) == 1
+    assert not any(key == 13 for batch in desktop.events for key, _ in batch)
+    assert desktop.destroyed == [77] and not desktop.pressed
+
+
+@pytest.mark.parametrize("text,files,expected", [
+    (None, file_drop(r"C:\图片\one.png"), True),
+    ("\ufffc", file_drop(r"C:\one.png"), True),
+    ("\ufffc", None, True),
+    (None, None, False),
+    ("", file_drop(r"C:\one.png"), False),
+    ("caption", file_drop(r"C:\one.png"), False),
+    ("\ufffc", file_drop(r"C:\one.png", r"C:\two.png"), False),
+    (None, file_drop(), False),
+])
+def test_image_selection_rejects_missing_or_conflicting_evidence(text, files, expected):
+    raw = (text + "\0").encode("utf-16-le") if text is not None else None
+    assert single_image_selection(raw, files) is expected
+
+
+@pytest.mark.parametrize("files", [
+    b"", file_drop("x")[:-2], file_drop("x")[:20] + b"\x00\xd8\0\0\0\0",
+    struct.pack("<IiiII", 0, 0, 0, 0, 1) + b"\0" * 4,
+    struct.pack("<IiiII", 21, 0, 0, 0, 1) + b"\0" * 8,
+    struct.pack("<IiiII", 400, 0, 0, 0, 1) + b"\0" * 4,
+    struct.pack("<IiiII", 20, 0, 0, 0, 0) + b"x\0\0\0",
+])
+def test_malformed_file_drop_cannot_supply_structure_evidence(files):
+    with pytest.raises(ValueError):
+        single_image_selection(None, files)
