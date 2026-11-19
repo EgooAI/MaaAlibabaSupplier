@@ -24,6 +24,11 @@ from backend.tests.auth_client import authenticate
 from tools import pull_diagnostics as pull
 
 
+def _metadata_text(line: str, kind: str) -> str | None:
+    safe, _ = diag._metadata(line, kind)
+    return safe
+
+
 URL = "/api/app/diagnostics/download"
 NATIVE = "[2026-09-20 12:34:56.123][INF][P123][T456] token=private-token payload=private-body\n"
 APPLICATION = json.dumps({"schema": 1, "time": "2026-09-20T12:34:56", "level": "ERROR",
@@ -204,11 +209,11 @@ def test_export_keeps_audited_messages_and_parses_yak_traffic_tick():
     audited = json.dumps({"schema": 1, "time": "2026-09-20T12:00:00", "level": "INFO",
                           "event": "application.message", "message": "MITM receiver thread started",
                           "context": {}})
-    assert json.loads(diag._metadata(audited, "application"))["message"] == "MITM receiver thread started"
+    assert json.loads(_metadata_text(audited, "application"))["message"] == "MITM receiver thread started"
     stored = json.dumps({"schema": 1, "source": "yak", "event": "yak.traffic_tick",
                          "context": {"seen": 3, "matched": 1}})
-    assert json.loads(diag._metadata(stored, "yak"))["context"] == {"seen": 3, "matched": 1}
-    tick = json.loads(diag._metadata("[*] Yak MITM tick seen=17 matched=0", "yak"))
+    assert json.loads(_metadata_text(stored, "yak"))["context"] == {"seen": 3, "matched": 1}
+    tick = json.loads(_metadata_text("[*] Yak MITM tick seen=17 matched=0", "yak"))
     assert tick == {"event": "yak.traffic_tick", "context": {"seen": 17, "matched": 0}}
 
 
@@ -221,16 +226,16 @@ def test_unknown_bodies_oversized_lines_and_stack_locals_are_omitted():
     assert json.loads(data)["event"] == "native_record"
     assert b"private" not in data
     monkey_record = '{"status":"installed","message":"private-result"}'
-    assert "private" not in diag._metadata(monkey_record, "result")
+    assert "private" not in _metadata_text(monkey_record, "result")
 
 
 def test_interrupted_update_result_exports_status_and_safe_version():
-    record = json.loads(diag._metadata(
+    record = json.loads(_metadata_text(
         '{"status":"installing","message":"private-message","version":"v0.0.0-ci.260921-7f5bbc9"}', "result"))
     assert record == {"event": "update_result", "status": "installing", "version": "v0.0.0-ci.260921-7f5bbc9"}
-    assert "version" not in json.loads(diag._metadata(
+    assert "version" not in json.loads(_metadata_text(
         '{"status":"installing","message":"private-message","version":"../private/escape"}', "result"))
-    assert diag._metadata('{"status":"whatever","message":"private-message"}', "result") is None
+    assert _metadata_text('{"status":"whatever","message":"private-message"}', "result") is None
 
 
 def test_native_backup_names_and_actual_four_mib_tail():
@@ -312,7 +317,7 @@ def test_owned_native_sessions_include_active_snapshot_without_rotation(monkeypa
     ("yak", "[ERROR] 2026-09-20 12:34:56.123 [proxy.go:98][forward]"),
 ])
 def test_native_yak_correlation_stops_before_sensitive_body(kind, header):
-    record = json.loads(diag._metadata(header + ' [task_id=12][job_id=34][node_id=56][entry=ChatInput_SendOnly] '
+    record = json.loads(_metadata_text(header + ' [task_id=12][job_id=34][node_id=56][entry=ChatInput_SendOnly] '
                                      'recognition failed: OCR private-body node_id=999 [job_id=888]', kind))
     context = record["context"]
     assert context["task_id"] == 12 and context["job_id"] == 34 and context["node_id"] == 56
@@ -325,7 +330,7 @@ def test_native_yak_correlation_stops_before_sensitive_body(kind, header):
         assert context["pid"] == 123 and context["tid"] == 456
     for body in ('OCR text: task_id=987 [job_id=654]', 'payload={"entry":"ChatInput"}',
                  '[node=private-recipient] [body=private-body]', '[text=private-ocr] [task_id=987]'):
-        record = json.loads(diag._metadata(header + " " + body, kind))
+        record = json.loads(_metadata_text(header + " " + body, kind))
         assert not {"entry", "node", "task_id", "job_id"}.intersection(record["context"])
         assert "private" not in json.dumps(record)
 
@@ -335,7 +340,7 @@ def test_structured_native_numeric_ids_survive_without_nested_payloads():
         "task_id": 12, "job_id": "34", "node_id": 56, "entry": "ContactSearch",
         "file": "C:/private/Tasker.cpp", "function": "Tasker::run", "line": 78,
         "error_category": "timeout", "body": {"job_id": 999}, "ocr": "private-ocr"}}
-    context = json.loads(diag._metadata(json.dumps(raw), "native"))["context"]
+    context = json.loads(_metadata_text(json.dumps(raw), "native"))["context"]
     assert context["task_id"] == 12 and context["job_id"] == 34 and context["node_id"] == 56
     assert context["entry"] == "ContactSearch" and context["source_file"] == "Tasker.cpp"
     assert context["error_category"] == "timeout" and context["line"] == 78

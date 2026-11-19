@@ -418,13 +418,13 @@ def _open_checked(path: Path, expected):
             os.close(descriptor)
 
 
-def _metadata(line: str, kind: str) -> str | None:
+def _metadata(line: str, kind: str) -> tuple[str | None, dict | None]:
     if kind == "application" or kind in ("native", "yak") and line.lstrip().startswith("{"):
         from backend.app.shared.utils.logging import _RUNTIME_MESSAGES, sanitize_diagnostic_record
 
         safe = sanitize_diagnostic_record(line, source=kind)
         if safe is None:
-            return None
+            return None, None
         record = json.loads(safe)
         # Free-form legacy prose cannot be made safe by credential regexes alone;
         # only the audited operation literals are reproducible.
@@ -438,7 +438,7 @@ def _metadata(line: str, kind: str) -> str | None:
                         "entry", "node", "file", "source_file", "function", "error_category"):
                 record["context"].pop(key, None)
             record["context"].update(_correlation({**original, **(fields if isinstance(fields, dict) else {})}))
-        return json.dumps(record, ensure_ascii=True, separators=(",", ":"))
+        return json.dumps(record, ensure_ascii=True, separators=(",", ":")), record
     record = None
     if kind == "startup" and line.startswith("Backend startup failed:"):
         record = {"event": "startup_failed"}
@@ -446,7 +446,7 @@ def _metadata(line: str, kind: str) -> str | None:
         try:
             value = json.loads(line)
         except (ValueError, RecursionError):
-            return None
+            return None, None
         if isinstance(value, dict) and value.get("status") in ("installed", "reboot_required", "error",
                                                                "cancelled", "installing"):
             record = {"event": "update_result", "status": value["status"]}
@@ -480,15 +480,16 @@ def _metadata(line: str, kind: str) -> str | None:
                   "Installation process failed.": "installation_failed",
                   "Log closed.": "log_closed"}
         record = {"time": match[1], "event": events.get(match[2].strip(), "installer_record")}
-    return json.dumps(record, ensure_ascii=True, separators=(",", ":")) if record else None
+    if not record:
+        return None, None
+    return json.dumps(record, ensure_ascii=True, separators=(",", ":")), record
 
 
 _MAX_LEGACY_ORIGINS = 256
 
 
-def _legacy_origin(safe: str) -> tuple | None:
+def _legacy_origin(record: dict) -> tuple | None:
     """Dedupe key for pre-schema log lines whose text is never exported."""
-    record = json.loads(safe)
     if record.get("event") != "legacy.message":
         return None
     return record.get("level"), record.get("logger"), record.get("function"), record.get("line")
@@ -576,13 +577,13 @@ def _read_recent(path, info, kind, budget, deadline=None):
             reason = "incomplete_result"
         else:
             try:
-                safe = _metadata(line, kind)
+                safe, record = _metadata(line, kind)
             except (ValueError, TypeError, RecursionError):
-                safe = None
+                safe, record = None, None
             if safe is None:
                 reason = "unrecognized"
             elif kind == "application":
-                origin = _legacy_origin(safe)
+                origin = _legacy_origin(record) if record is not None else None
                 if origin is not None and origin in legacy_origins:
                     reason = "duplicate"
                 elif origin is not None and len(legacy_origins) < _MAX_LEGACY_ORIGINS:

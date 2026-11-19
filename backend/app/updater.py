@@ -196,6 +196,11 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class _Redirect(Exception):
+    def __init__(self, location: str) -> None:
+        self.location = location
+
+
 class GitHub:
     def __init__(self) -> None:
         self._token = os.environ.get("MAA_UPDATE_GITHUB_TOKEN", "")
@@ -223,16 +228,17 @@ class GitHub:
             if exc.code in (301, 302, 303, 307, 308):
                 location = exc.headers.get("Location")
                 exc.close()
-                return location
+                raise _Redirect(location) from None
             exc.close()
             raise UpdateError("GitHub request failed; check repository access and Actions availability.") from None
         except (OSError, ValueError):
             raise UpdateError("GitHub connection failed or timed out.") from None
 
     def json(self, path: str) -> dict:
-        response = self._open("https://api.github.com" + path, api=True)
-        if isinstance(response, str) or response is None:
-            raise UpdateError("Unexpected GitHub API redirect.")
+        try:
+            response = self._open("https://api.github.com" + path, api=True)
+        except _Redirect:
+            raise UpdateError("Unexpected GitHub API redirect.") from None
         raw = bytearray()
         deadline = time.monotonic() + 60
         with response:
@@ -247,13 +253,13 @@ class GitHub:
 
     def download(self, path: str, target: Path, progress) -> str:
         url = "https://api.github.com" + path
-        response = None
         for attempt in range(6):
-            response = self._open(url, api=attempt == 0)
-            if not isinstance(response, str):
+            try:
+                response = self._open(url, api=attempt == 0)
                 break
-            url = response
-        if response is None or isinstance(response, str):
+            except _Redirect as redirect:
+                url = redirect.location
+        else:
             raise UpdateError("Too many GitHub download redirects.")
         digest = hashlib.sha256()
         size = 0
@@ -675,12 +681,7 @@ class Updater:
             # The installable candidate stays visible until its replacement is verified.
             self.state.update(phase="downloading", downloaded_bytes=0, total_bytes=None, error=None)
         log_event("update.download", status="started", run_id=selected["run_id"])
-        try:
-            installer, prepared = self._download(selected)
-        except Exception as exc:
-            with self.lock:
-                self.state.update(phase="ready" if self.prepared is not None else "error", error=self._message(exc))
-            raise
+        installer, prepared = self._download(selected)
         with self.lock:
             self.prepared = (installer, prepared)
             self._ready_since = self._clock()

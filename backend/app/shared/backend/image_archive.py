@@ -1,6 +1,6 @@
 """Archives platform images through the generic CRM resource store."""
 
-from concurrent.futures import Future
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 import hashlib
 import json
 import sqlite3
@@ -45,7 +45,10 @@ class ImageArchive:
                 flights[key] = Future()
             future = flights[key]
         if not leader:
-            return future.result(timeout=90)
+            try:
+                return future.result(timeout=90)
+            except FutureTimeoutError as exc:
+                raise ImageFetchError("fetch_timeout") from exc
         try:
             result = operation()
             future.set_result(result)

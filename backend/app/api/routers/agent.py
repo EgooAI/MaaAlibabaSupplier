@@ -16,6 +16,7 @@ from backend.app.shared.agent.chat_history_content import (
     SCHEMA_VERSION,
     ChatHistoryContent,
     ChatHistoryDraft,
+    ChatHistoryMessage,
     ChatHistoryPin,
     ChatHistorySource,
     assistant_turn_payload,
@@ -260,25 +261,26 @@ def _public_source(source: ChatHistorySource | None) -> dict | None:
     }
 
 
-def _message_to_payload(message: Any, created: str) -> dict[str, Any]:
-    data = message if isinstance(message, dict) else message.model_dump()
-    role = data.get("role", "user")
+def _message_to_payload(message: ChatHistoryMessage, created: str) -> dict[str, Any]:
     payload = {
-        "role": role if role in ("user", "assistant") else "user",
-        "content": data.get("content") or "",
+        "role": message.role if message.role in ("user", "assistant") else "user",
+        "content": message.content,
         "createdAt": created,
-        "toolCalls": list(data.get("toolCalls") or []),
-        "intents": list(data.get("intents") or []),
-        "iterations": int(data.get("iterations") or 0),
-        "durationMs": float(data.get("durationMs") or 0.0),
-        "restricted": bool(data.get("restricted")),
-        # Older turn payloads warned the policy as ``intentMode``.
-        "mode": "simulated" if data.get("mode") == "simulated" or data.get("intentMode") == "simulated" else "live",
+        "toolCalls": [call.model_dump() for call in message.toolCalls],
+        "intents": [intent.model_dump() for intent in message.intents],
+        "iterations": message.iterations,
+        "durationMs": message.durationMs,
+        "restricted": message.restricted,
+        "mode": "simulated" if message.mode == "simulated" else "live",
     }
-    usage = data.get("usage")
-    if isinstance(usage, dict):
-        payload["usage"] = usage
+    if message.usage is not None:
+        payload["usage"] = message.usage.model_dump()
     return payload
+
+
+def _session_visible(hist: ChatHistory) -> bool:
+    content = load_history_content(hist.content)
+    return hist.id is not None and bool(content.apid) and _scope_allows(content)
 
 
 def _load_session(manager: ChatHistoryManager, session_id: str) -> ChatHistory:
@@ -287,9 +289,7 @@ def _load_session(manager: ChatHistoryManager, session_id: str) -> ChatHistory:
     except (TypeError, ValueError):
         raise AppError("会话不存在", status_code=404)
     hist = manager.get_chat_history(raw_id)
-    if hist is None:
-        raise AppError("会话不存在", status_code=404)
-    if _session_to_dict(hist) is None:
+    if hist is None or not _session_visible(hist):
         raise AppError("会话不存在", status_code=404)
     return hist
 

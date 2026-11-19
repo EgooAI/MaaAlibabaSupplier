@@ -414,6 +414,9 @@ def test_manual_retry_copy_failure_reports_phase_error_with_readable_archive(cli
     assert source["phase"] == "error" and source["stale"] and not source["ready"]
     assert source["error_code"] == "source_copy_error" and source["last_error"]
     assert source["retry_at"] is not None
+    # The merged view stays compatible while each state machine remains observable.
+    assert source["source"]["error_code"] == "source_copy_error"
+    assert source["sync"]["last_error"] == ""
     assert source["revision"] == committed["revision"]
     assert source["last_success"] == committed["last_success"]
     copy.assert_called_once()

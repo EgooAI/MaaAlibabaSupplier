@@ -456,7 +456,7 @@ class IMDBMiddleware:
             decrypted = AES.new(self._key, AES.MODE_ECB).decrypt(encrypted)
             dst.write_bytes(decrypted)
             return zlib.crc32(encrypted) & 0xFFFFFFFF
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             logger.opt(exception=True).error("DB decryption failed")
             return None
 
@@ -504,7 +504,7 @@ class IMDBMiddleware:
                 list_msg_tables(conn)
             finally:
                 conn.close()
-        except Exception as exc:
+        except (OSError, sqlite3.Error) as exc:
             logger.opt(exception=True).warning("Rebuilt IM cache validation failed; discarded")
             return False
         return True
@@ -880,7 +880,11 @@ class IMDBMiddleware:
             "retry_at": max(source["retry_at"] or 0, sync["retry_at"] or 0) or None,
             "wal_pipeline": self._wal_pipeline_enabled(),
             "phase": phase, "stale": stale, "ready": phase == "ready" and not stale,
-            "freshness": "stale" if stale and error else ("syncing" if syncing else ("stale" if stale else "fresh")),
+            "freshness": "stale" if error else ("syncing" if syncing else ("stale" if stale else "fresh")),
+            # The merged fields above are the compatibility view; these keep each
+            # state machine's own error and retry schedule observable.
+            "source": dict(source),
+            "sync": dict(sync),
         }
 
     # -- Public API ------------------------------------------------------------

@@ -190,7 +190,8 @@ def test_colored_native_error_survives_collection_and_export_without_payloads(tm
     assert record["level"] == "ERR" and record["source"] == "maafw_cli"
     assert record["context"] == expected
     assert json.loads(transport.sanitize_diagnostic_record(collected, "native"))["context"] == expected
-    assert json.loads(_metadata(collected, "native"))["context"] == expected
+    metadata, _ = _metadata(collected, "native")
+    assert json.loads(metadata)["context"] == expected
     assert "PRIVATE" not in collected and "\\u001b" not in collected and "\x1b" not in collected
 
 
