@@ -5,14 +5,12 @@ from __future__ import annotations
 import socket
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 
-from backend.app.shared.backend.im_db_middleware import IMDBMiddleware, get_im_db_middleware
+from backend.app.shared.backend.im_db_middleware import IMDBMiddleware
 from backend.app.shared.backend.im_layout import looks_like_data_dir
 from backend.app.shared.backend.account_context import get_account_context
-from backend.app.shared.utils.app_config import get_configured_self_ali_id
-from backend.app.shared.utils.env import get_env_int, get_env_str, load_workdir_env
+from backend.app.shared.utils.env import get_env_int, get_env_str
 from backend.app.shared.utils.settings import (
     MITM_PROXY_HOST_DEFAULT,
     MITM_PROXY_PORT_DEFAULT,
@@ -20,14 +18,6 @@ from backend.app.shared.utils.settings import (
     MITM_RECEIVER_PORT_DEFAULT,
     MITM_CHECK_TIMEOUT_S,
 )
-
-
-@dataclass(frozen=True)
-class KeyStatus:
-    has_key: bool
-    source: str  # "live" | "cached" | "none"
-    ali_id: str
-    db_exists: bool
 
 
 @dataclass(frozen=True)
@@ -42,20 +32,8 @@ class NetworkStatus:
     business_ready: bool | None = None
 
 
-def check_user_status() -> KeyStatus:
-    load_workdir_env()
-    ali_id = get_configured_self_ali_id()
-
-    mw = get_im_db_middleware()
-    has_key, source = mw.key_status()
-
-    db_exists = mw.resolve_encrypted_db_path(ali_id) is not None if ali_id else False
-
-    return KeyStatus(has_key=has_key, source=source, ali_id=ali_id, db_exists=db_exists)
-
-
 def check_data_dir_status() -> dict:
-    """Return the middleware data-dir status dict for the status snapshot."""
+    """Return the middleware data-dir status dict without initializing it."""
     middleware = IMDBMiddleware._instance
     if middleware is not None:
         return middleware.data_dir_status()
@@ -75,19 +53,6 @@ def observe_workers() -> dict:
         "im-source-check": observe_sync_service(),
         "outbox-verifier": observe_outbox_verifier(),
         "card-sweep": observe_card_sweep(),
-    }
-
-
-def check_im_sync_status() -> dict:
-    """Return the IM source freshness snapshot (revision, WAL frames, errors)."""
-    status = get_im_db_middleware().sync_status()
-    return {
-        **status,
-        "cache_time_text": (
-            datetime.fromtimestamp(status["cache_time"]).astimezone().strftime("%Y-%m-%d %H:%M:%S")
-            if status["cache_time"]
-            else ""
-        ),
     }
 
 

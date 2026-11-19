@@ -163,7 +163,7 @@ def preset_fingerprint_of(preset: AgentPreset) -> str:
             "prompt": preset.prompt,
             "llm_level": preset.llm_level,
             "tools": list(preset.tools or []),
-            "requires_tool": bool(getattr(preset, "requires_tool", False)),
+            "requires_tool": bool(preset.requires_tool),
         }
     )
 

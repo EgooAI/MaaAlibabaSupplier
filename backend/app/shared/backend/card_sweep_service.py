@@ -158,9 +158,8 @@ class CardSweepService:
         """Queue one manual sweep on the idle service thread."""
         worker = self._thread
         if worker is None:
-            self._wake.set()
-        else:
-            worker.trigger()
+            raise AppError("卡片扫描服务未启动，请稍后重试。", status_code=503)
+        worker.trigger()
 
     def stop(self, timeout: float = 5.0) -> None:
         with self._lifecycle_lock:
@@ -213,10 +212,7 @@ class CardSweepService:
                       targets=len(targets), visited=0, enriched=0, failed=0)
 
         def navigate(contact_ali_id: str) -> tuple[bool, str]:
-            result = gui_session.run_guarded(token, lambda: maafw_runner.goto_contact(contact_ali_id))
-            if isinstance(result, tuple) and len(result) == 2 and isinstance(result[0], bool):
-                return result
-            return False, "GUI guard returned no result"
+            return gui_session.run_guarded(token, lambda: maafw_runner.goto_contact(contact_ali_id))
 
         outcomes = run_targets(targets, navigate=navigate, resolved=self._resolved, sleep=self._sleep,
                                stop=self._stop)

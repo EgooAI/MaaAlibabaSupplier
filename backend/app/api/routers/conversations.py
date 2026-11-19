@@ -8,12 +8,11 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Response, Request
 from starlette.concurrency import run_in_threadpool
-from loguru import logger
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 from typing import Literal
 from sqlmodel import Session, select
 
-from backend.app.api.envelope import AppError, api_error, ok, user_message
+from backend.app.api.envelope import AppError, ok, user_message
 from backend.app.api.account_scope import AccountRoute, OutboxObservationRoute, outbox_context, request_epoch, require_epoch
 from backend.app.api.connection import _INTERNAL_SOURCE_FIELDS, safe_has_selected_archive
 from backend.app.api.routers.outbox import public_task
@@ -153,9 +152,12 @@ def _inbox_store() -> tuple[InboxStore, Any]:
     return store, context
 
 
-def _inbox_projection(filters: InboxFilters) -> dict:
+def _inbox_projection(filters: InboxFilters, *, exclude: set[str] = frozenset()) -> dict:
     store, context = _inbox_store()
-    return query_inbox(store, context.self_ali_id, context.data_dir, _summary_customer_view, filters.model_dump())
+    return query_inbox(
+        store, context.self_ali_id, context.data_dir, _summary_customer_view,
+        filters.model_dump(exclude=exclude),
+    )
 
 
 def _scoped_conversation(
@@ -534,7 +536,9 @@ def list_conversations(
     query: Annotated[InboxListQuery, Query()],
 ) -> dict:
     offset, limit, pagination_revision = query.offset, query.limit, query.pagination_revision
-    projection = _inbox_projection(InboxFilters.model_validate(query.model_dump()))
+    projection = _inbox_projection(
+        query, exclude={"offset", "limit", "pagination_revision"},
+    )
     if offset > 0 and pagination_revision != projection["pagination_revision"]:
         raise AppError("会话数据已变更或缺少分页版本，请返回第一页重新加载。", status_code=409)
     items = [
@@ -588,24 +592,12 @@ def get_conversation(conversation_id: int) -> dict:
         snapshot = store.snapshot(conversation_id, seller=self_ali_id, data_dir=context.data_dir, epoch=context.epoch)
     except ValueError:
         raise AppError("会话不存在", status_code=404)
-    try:
-        conv = _scoped_conversation(store, context, conversation_id, adapter)
-    except AppError:
-        raise
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    conv = _scoped_conversation(store, context, conversation_id, adapter)
     if conv is None:
         raise AppError("会话不存在", status_code=404)
-    try:
-        state = store.states(self_ali_id, context.data_dir, [conversation_id])[conversation_id]
-        return ok({**_build_aggregate(adapter, self_ali_id, conv, context.data_dir), **public_state(state),
-                   "read_snapshot": snapshot})
-    except AppError:
-        raise
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    state = store.states(self_ali_id, context.data_dir, [conversation_id])[conversation_id]
+    return ok({**_build_aggregate(adapter, self_ali_id, conv, context.data_dir), **public_state(state),
+               "read_snapshot": snapshot})
 
 
 @router.post("/api/conversations/{conversation_id}/read")
@@ -720,12 +712,7 @@ def compose_translation(conversation_id: int, body: ComposeTranslationInput) -> 
             build_compose_translation_input(transcript=transcript, text=text),
         )
     except AgentRunError as exc:
-        raise AppError(exc.message, status_code=exc.status_code)
-    except AppError:
-        raise
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+        raise AppError(exc.message, status_code=exc.status_code) from exc
     translation = (raw or "").strip()
     if not translation:
         raise AppError("翻译结果为空", status_code=502)
@@ -742,12 +729,7 @@ def analysis(conversation_id: int) -> dict:
         transcript = transcript_markdown(conv.messages, resolver=CrmResolver(context.self_ali_id), options=AGENT_OPTIONS)
         raw = run_chat_tool_agent(CHAT_CUSTOMER_STAGE_AGENT_APID, build_analysis_input(task=_STAGE_TASK, transcript=transcript))
     except AgentRunError as exc:
-        raise AppError(exc.message, status_code=exc.status_code)
-    except AppError:
-        raise
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+        raise AppError(exc.message, status_code=exc.status_code) from exc
     try:
         payload = json.loads(raw)
     except (json.JSONDecodeError, TypeError, ValueError):
@@ -784,26 +766,14 @@ def export_conversations(body: ExportConversationsInput) -> dict:
     missing: list[int] = []
     adapter = CRMAdapter()
     for sid in sids:
-        try:
-            conv = _scoped_conversation(store, context, sid, adapter)
-        except AppError:
-            raise
-        except Exception:
-            logger.exception("request failed")
-            return api_error("服务器内部错误", status_code=500)
+        conv = _scoped_conversation(store, context, sid, adapter)
         if conv is None:
             missing.append(sid)
             continue
         convs.append(conv)
     if not convs:
         raise AppError(f"会话不存在: {missing[0] if missing else ''}", status_code=404)
-    try:
-        payload, archive_name = build_export_zip(convs, CrmResolver(context.self_ali_id))
-    except AppError:
-        raise
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    payload, archive_name = build_export_zip(convs, CrmResolver(context.self_ali_id))
     data: dict = {
         "archive_name": archive_name,
         "content": b64encode(payload).decode("ascii"),

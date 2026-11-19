@@ -488,13 +488,13 @@ class CustomerPortraitStore:
                 if len(expected) != 1:
                     conflicts.append({"cid": cid, "reason": "target_version_mismatch"})
                     continue
-                current_version = current.get(cid, {}).get("version", 0)
+                current_version = current[cid]["version"]
                 if next(iter(expected)) != current_version:
                     conflicts.append({"cid": cid, "reason": "version_changed", "current_version": current_version})
 
             if normalized_changes["reason_set"] or normalized_changes["note_set"]:
                 for cid in sids_by_cid:
-                    stored = current.get(cid) or default_portrait_record()
+                    stored = current[cid]
                     stage = normalized_changes["stage"] if normalized_changes["stage_set"] else stored["stage"]
                     if stage != "lost":
                         raise ValueError("失败原因和备注仅在流失阶段维护")
@@ -524,7 +524,7 @@ class CustomerPortraitStore:
             # appear as their defaults so "before" always shows where it started.
             before = {}
             for cid in sorted(sids_by_cid):
-                record = current.get(cid) or default_portrait_record()
+                record = current[cid]
                 before[str(cid)] = {
                     "stage": record["stage"], "lost_reason": record["lost_reason"],
                     "lost_note": record["lost_note"], "lost_at": record["lost_at"],
@@ -534,7 +534,7 @@ class CustomerPortraitStore:
             changed: list[dict] = []
             unchanged: list[dict] = []
             for cid in sorted(sids_by_cid):
-                record = current.get(cid) or default_portrait_record()
+                record = current[cid]
                 old_tags = {tag["tag_id"] for tag in record["tags"]}
                 add_now = [tag_id for tag_id in normalized_changes["add_tag_ids"] if tag_id not in old_tags]
                 remove_now = [tag_id for tag_id in normalized_changes["remove_tag_ids"] if tag_id in old_tags]

@@ -50,7 +50,7 @@ def record_preset_revision(
             prompt=preset.prompt,
             llm_level=preset.llm_level,
             tools=list(preset.tools or []),
-            requires_tool=bool(getattr(preset, "requires_tool", False)),
+            requires_tool=bool(preset.requires_tool),
             source=normalize_revision_source(source),
             note=(note or "").strip()[:MAX_REVISION_NOTE_LENGTH],
         )
@@ -84,8 +84,8 @@ def _matches(revision: AgentPresetRevision, preset: AgentPreset) -> bool:
         and revision.prompt == preset.prompt
         and revision.llm_level == preset.llm_level
         and list(revision.tools or []) == list(preset.tools or [])
-        and bool(getattr(revision, "requires_tool", False))
-        == bool(getattr(preset, "requires_tool", False))
+        and bool(revision.requires_tool)
+        == bool(preset.requires_tool)
     )
 
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-from loguru import logger
 from pydantic import BaseModel, Field
 
 from backend.app.api.envelope import AppError, api_error, ok, user_message
@@ -52,13 +51,8 @@ def post_translations(body: RequestTranslationsInput) -> dict:
             expected_epoch=expected,
             conversation_id=body.conversationId,
         )
-    except AppError:
-        raise
     except OverflowError:
         return api_error("翻译任务队列已满，请稍后重试", status_code=429)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
     return ok(_job_payload(snapshot))
 
 
@@ -69,22 +63,14 @@ def query_translations(body: TranslationQueryInput) -> dict:
     null 表示尚未缓存（或 Agent 判定为非常规消息）；空串是 NO_NEED 哨兵
     （已缓存、无需翻译）。
     """
-    translations: dict[str, str | None] = {}
-    try:
-        texts: list[str] = []
-        seen: set[str] = set()
-        for raw in body.texts:
-            text = (raw or "").strip()
-            if text and text not in seen:
-                seen.add(text)
-                texts.append(text)
-        translations = get_translations(texts)
-    except AppError:
-        raise
-    except Exception:
-        logger.exception("translation query failed")
-        return api_error("服务器内部错误", status_code=500)
-    return ok({"translations": translations})
+    texts: list[str] = []
+    seen: set[str] = set()
+    for raw in body.texts:
+        text = (raw or "").strip()
+        if text and text not in seen:
+            seen.add(text)
+            texts.append(text)
+    return ok({"translations": get_translations(texts)})
 
 
 @router.get("/api/messages/translations/jobs/{task_id}")

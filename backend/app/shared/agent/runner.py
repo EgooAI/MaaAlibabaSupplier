@@ -156,8 +156,6 @@ def run_chat_agent(
             llm_client=OpenAICompatibleLLMClient(llm_config, timeout_seconds=timeout_seconds),
             manager=manager,
         ).run(pipeline_input)
-    except AgentRunError:
-        raise
     except Exception as exc:
         # A cancelled turn is not a failure: the caller decides how to report it.
         from agent_pipeline import RunCancelledError
@@ -182,11 +180,7 @@ def run_chat_agent(
         # Analysis agents must not present a partial answer as a success.
         raise AgentRunError(_limit_message(result), status_code=409, kind="tool_rounds_limited")
 
-    dispatched = _dispatch_intents(
-        result.intents, mode=mode, batch_id=batch_id, context=context,
-        apid=preset.apid, agent_name=preset.name, conversation_id=conversation_id,
-        revision_id=revision_id,
-    )
+    dispatched = _dispatch_intents(result.intents, mode=mode, batch_id=batch_id)
 
     return ChatAgentTurn(
         text=result.output_text,
@@ -235,25 +229,13 @@ def _limit_message(result) -> str:
 
 
 def _dispatch_intents(
-    intents: list[EffectIntent], *, mode: str, batch_id: str, context: Any,
-    apid: str, agent_name: str, conversation_id: int | None, revision_id: int | None,
+    intents: list[EffectIntent], *, mode: str, batch_id: str,
 ) -> list[Any]:
-    from dataclasses import replace
-
     from backend.app.shared.agent.effect_dispatch import IntentDispatcher
 
     if not intents:
         return []
-    # Tools attach their own host scope; fall back to the run context only for
-    # tools that emitted a bare payload.
-    scope = getattr(context, "scope", None)
-    prepared = []
-    for intent in intents:
-        content = dict(intent.content)
-        if scope is not None and "scope" not in content:
-            content["scope"] = scope
-        prepared.append(replace(intent, content=content))
-    return IntentDispatcher().dispatch(prepared, mode=mode, batch_id=batch_id).intents
+    return IntentDispatcher().dispatch(list(intents), mode=mode, batch_id=batch_id).intents
 
 
 def _record_payload(record) -> dict[str, Any]:

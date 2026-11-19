@@ -98,7 +98,7 @@ def pinned_from_preset(preset: AgentPreset) -> ChatHistoryPin:
         prompt=preset.prompt,
         llm_level=preset.llm_level,
         tools=list(preset.tools or []),
-        requires_tool=bool(getattr(preset, "requires_tool", False)),
+        requires_tool=bool(preset.requires_tool),
     )
 
 
@@ -130,7 +130,7 @@ def pinned_from_revision(revision: AgentPresetRevision) -> ChatHistoryPin:
         kind="preset", revision_id=revision.id, name=revision.name,
         prompt=revision.prompt, llm_level=revision.llm_level,
         tools=list(revision.tools or []),
-        requires_tool=bool(getattr(revision, "requires_tool", False)),
+        requires_tool=bool(revision.requires_tool),
     )
 
 
@@ -182,7 +182,7 @@ def draft_matches_preset(draft: ChatHistoryDraft, preset: AgentPreset) -> bool:
         draft.prompt == preset.prompt
         and draft.llm_level == preset.llm_level
         and list(draft.tools or []) == list(preset.tools or [])
-        and bool(draft.requires_tool) == bool(getattr(preset, "requires_tool", False))
+        and bool(draft.requires_tool) == bool(preset.requires_tool)
     )
 
 
@@ -195,7 +195,7 @@ def pinned_override(preset: AgentPreset, pinned: ChatHistoryPin | None) -> Agent
         and pinned.prompt == preset.prompt
         and pinned.llm_level == preset.llm_level
         and list(pinned.tools) == list(preset.tools or [])
-        and bool(pinned.requires_tool) == bool(getattr(preset, "requires_tool", False))
+        and bool(pinned.requires_tool) == bool(preset.requires_tool)
     ):
         return None
     return pinned_to_preset(preset, pinned)
@@ -211,7 +211,7 @@ def require_runnable_preset(preset: AgentPreset) -> None:
             f"该 Agent 挂载了未注册的工具：{'、'.join(unknown)}。请先在编辑器中移除后再运行。",
             status_code=409,
         )
-    if bool(getattr(preset, "requires_tool", False)) and not (preset.tools or []):
+    if bool(preset.requires_tool) and not (preset.tools or []):
         raise AppError(
             "该 Agent 要求必须调用工具，但没有挂载任何工具。请添加工具或关闭「必须调用工具」。",
             status_code=409,

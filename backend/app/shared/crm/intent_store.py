@@ -214,8 +214,6 @@ class IntentStore:
         self, intent_id: str, status: str, *, seller: str, data_dir: str | Path,
     ) -> dict:
         """Apply one legal edge; accepting also discards the rest of its batch."""
-        if status not in STATUSES:
-            raise ValueError("unknown intent status")
         self.initialize()
         scope = _scope(seller, data_dir)
         with self._connection(write=True) as conn:

@@ -74,7 +74,7 @@ def export_customer_portraits(store: InboxStore, *, seller: str, data_dir: str, 
         cid, account = resolved
         customer = customers.get(cid) or {}
         extra = account.get("extra") if isinstance(account.get("extra"), dict) else {}
-        portrait = portraits.get(cid) or {}
+        portrait = portraits[cid]
         fields = public_portrait_fields(cid, portrait)
         rows[cid] = {
             "cid": cid,

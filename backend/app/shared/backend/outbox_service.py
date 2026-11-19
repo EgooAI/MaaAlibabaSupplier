@@ -367,12 +367,12 @@ class OutboxService:
                     self._move(record, "verifying")
                 return True, "GUI send completed; awaiting local source evidence"
 
-            result = gui_session.run_guarded(binding.token, act)
-            if not isinstance(result, tuple) or not result[0]:
-                failure = str(result[1]) if isinstance(result, tuple) else "GUI guard returned no result"
-                return False, failure
+            ok, reason = gui_session.run_guarded(binding.token, act)
+            if not ok:
+                failure = reason
+                return False, reason
             failure = None
-            return result
+            return True, reason
         except Exception as exc:
             failure = str(exc)
             return False, failure

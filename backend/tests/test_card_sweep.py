@@ -56,6 +56,15 @@ def _adapter(tmp_path) -> CRMAdapter:
     return adapter
 
 
+def test_trigger_before_start_reports_unavailable_instead_of_faking_a_queue():
+    service = CardSweepService()
+
+    with pytest.raises(AppError) as error:
+        service.trigger()
+
+    assert error.value.status_code == 503
+
+
 def test_select_targets_only_unresolved_product_cards(tmp_path):
     adapter = _adapter(tmp_path)
     try:

@@ -3,10 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter
-from loguru import logger
 from pydantic import BaseModel, Field
 
-from backend.app.api.envelope import AppError, api_error, ok
+from backend.app.api.envelope import AppError, ok
 from backend.app.api.account_scope import SettingsRoute, require_epoch
 from backend.app.api.connection import connection_snapshot
 from backend.app.shared.backend.gui_session import connect_client
@@ -82,25 +81,13 @@ def save_data_dir(body: DataDirInput) -> dict:
         raise AppError(f"目录不存在: {raw}", status_code=422)
     if not looks_like_data_dir(candidate):
         raise AppError("目录下未找到 IMServiceDir/MessageSDK IM 数据库结构", status_code=422)
-    try:
-        get_im_db_middleware().set_data_dir(str(candidate))
-    except AppError:
-        raise
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    get_im_db_middleware().set_data_dir(str(candidate))
     return ok(get_im_db_middleware().data_dir_status())
 
 
 @router.get("/api/settings/alibaba-data-dir/candidates")
 def list_data_dir_candidates() -> dict:
-    try:
-        candidates = find_data_dir_candidates()
-    except AppError:
-        raise
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    candidates = find_data_dir_candidates()
     return ok({"candidates": candidates})
 
 
@@ -111,10 +98,10 @@ def _require_data_dir_ok() -> IMDBMiddleware:
     return mw
 
 
-def _ali_id_rows(mw: IMDBMiddleware) -> list[dict]:
+def _ali_id_rows(mw: IMDBMiddleware, accounts: list[dict] | None = None) -> list[dict]:
     selected = get_configured_self_ali_id()
     rows = []
-    for account in mw.scan_ali_ids():
+    for account in (mw.scan_ali_ids() if accounts is None else accounts):
         ali_id = account["ali_id"]
         record_hex = get_key_hex(ali_id)
         rows.append(
@@ -134,13 +121,7 @@ def _ali_id_rows(mw: IMDBMiddleware) -> list[dict]:
 @router.get("/api/settings/ali-ids")
 def list_ali_ids() -> dict:
     mw = _require_data_dir_ok()
-    try:
-        rows = _ali_id_rows(mw)
-    except AppError:
-        raise
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    rows = _ali_id_rows(mw)
     return ok({"accounts": rows, "selected": get_configured_self_ali_id()})
 
 
@@ -148,16 +129,11 @@ def list_ali_ids() -> dict:
 def save_ali_id(body: AliIdInput) -> dict:
     mw = _require_data_dir_ok()
     ali_id = (body.ali_id or "").strip()
-    if ali_id and ali_id not in {row["ali_id"] for row in mw.scan_ali_ids()}:
+    accounts = mw.scan_ali_ids()
+    if ali_id and ali_id not in {row["ali_id"] for row in accounts}:
         raise AppError(f"数据目录下未发现该账号: {ali_id}", status_code=422)
-    try:
-        mw.set_self_ali_id(ali_id)
-    except AppError:
-        raise
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
-    return ok({"accounts": _ali_id_rows(mw), "selected": ali_id})
+    mw.set_self_ali_id(ali_id)
+    return ok({"accounts": _ali_id_rows(mw, accounts), "selected": ali_id})
 
 
 @router.put("/api/settings/ali-keys")
@@ -171,28 +147,16 @@ def save_ali_key(body: AliKeyInput) -> dict:
         key = parse_and_verify_key(body.aes_key_hex, db_path)
     except KeyFormatError as exc:
         raise AppError(str(exc), status_code=422) from exc
-    try:
-        save_key(ali_id, key, "manual")
-        mw.drop_cached_key()
-    except AppError:
-        raise
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    save_key(ali_id, key, "manual")
+    mw.drop_cached_key()
     return ok({"accounts": _ali_id_rows(mw), "selected": get_configured_self_ali_id()})
 
 
 @router.delete("/api/settings/ali-keys/{ali_id}")
 def clear_ali_key(ali_id: str) -> dict:
     mw = _require_data_dir_ok()
-    try:
-        removed = delete_key(ali_id)
-        mw.drop_cached_key()
-    except AppError:
-        raise
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    removed = delete_key(ali_id)
+    mw.drop_cached_key()
     if not removed:
         raise AppError(f"该账号没有已存 Key: {ali_id}", status_code=422)
     return ok({"accounts": _ali_id_rows(mw), "selected": get_configured_self_ali_id()})

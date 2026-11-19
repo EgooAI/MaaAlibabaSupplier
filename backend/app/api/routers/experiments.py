@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from backend.app.background import get_background_runtime
 from backend.app.api.account_scope import AccountRoute
-from backend.app.api.envelope import AppError, api_error, ok
+from backend.app.api.envelope import AppError, ok
 from backend.app.api.routers.agent import (
     _db_preset_to_dict,
     _run_turn,
@@ -305,7 +305,7 @@ def _resolve_variant(
     return {
         "label": label,
         "pinned": pinned_from_preset(preset),
-        "requires_tool": bool(getattr(preset, "requires_tool", False)),
+        "requires_tool": bool(preset.requires_tool),
     }
 
 
@@ -374,21 +374,15 @@ def create_experiment_endpoint(body: CreateExperimentInput) -> dict:
         for index, variant in enumerate(body.variants)
     ]
     name = (body.name or "").strip() or f"{preset.name} 对比实验"
-    try:
-        experiment, created = create_experiment(
-            agent_id=agent_id,
-            name=name,
-            frozen_prefix=frozen,
-            source=source,
-            variants=variants,
-            requires_tool=bool(getattr(preset, "requires_tool", False)),
-            messages=messages,
-        )
-    except AppError:
-        raise
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    experiment, created = create_experiment(
+        agent_id=agent_id,
+        name=name,
+        frozen_prefix=frozen,
+        source=source,
+        variants=variants,
+        requires_tool=bool(preset.requires_tool),
+        messages=messages,
+    )
     log_event(
         "agent.experiment_created", experiment_id=experiment.id, agent_id=agent_id,
         source_kind=source.get("kind"), frozen_chars=len(frozen),
@@ -400,21 +394,17 @@ def create_experiment_endpoint(body: CreateExperimentInput) -> dict:
 @router.get("/api/agent/experiments")
 def list_experiments_endpoint(agentId: str | None = None) -> dict:
     agent_id = (agentId or "").strip() or None
-    try:
-        experiments = ExperimentManager().list_experiments(agent_id)
-        visible = []
-        # One name lookup per distinct agent, not per experiment.
-        agent_names: dict[str, str] = {}
-        for item in experiments:
-            try:
-                visible.append(_experiment_to_dict(owned(item), detail=False, agent_names=agent_names))
-            except AppError:
-                # Another account's experiment must not even be listed.
-                continue
-        return ok(visible)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    experiments = ExperimentManager().list_experiments(agent_id)
+    visible = []
+    # One name lookup per distinct agent, not per experiment.
+    agent_names: dict[str, str] = {}
+    for item in experiments:
+        try:
+            visible.append(_experiment_to_dict(owned(item), detail=False, agent_names=agent_names))
+        except AppError:
+            # Another account's experiment must not even be listed.
+            continue
+    return ok(visible)
 
 
 @router.get("/api/agent/experiments/{experiment_id}")
@@ -463,42 +453,26 @@ def add_variant_endpoint(experiment_id: str, body: VariantInput) -> dict:
     experiment = _experiment_or_404(experiment_id)
     preset = _agent_preset_or_404(experiment.agent_id)
     resolved = _resolve_variant(experiment.agent_id, preset, body, 0)
-    try:
-        add_variant(
-            experiment,
-            label=resolved["label"],
-            pinned=resolved["pinned"],
-            requires_tool=resolved["requires_tool"],
-        )
-    except AppError:
-        raise
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    add_variant(
+        experiment,
+        label=resolved["label"],
+        pinned=resolved["pinned"],
+        requires_tool=resolved["requires_tool"],
+    )
     return ok(_experiment_to_dict(experiment))
 
 
 @router.delete("/api/agent/experiments/{experiment_id}/variants/{session_id}")
 def delete_variant_endpoint(experiment_id: str, session_id: str) -> dict:
     experiment = _experiment_or_404(experiment_id)
-    try:
-        delete_variant(experiment, session_id)
-    except AppError:
-        raise
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    delete_variant(experiment, session_id)
     return ok(_experiment_to_dict(experiment))
 
 
 @router.delete("/api/agent/experiments/{experiment_id}")
 def delete_experiment_endpoint(experiment_id: str) -> dict:
     experiment = _experiment_or_404(experiment_id)
-    try:
-        delete_experiment(experiment.id)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    delete_experiment(experiment.id)
     return ok(None)
 
 
@@ -773,11 +747,7 @@ def promote_variant_endpoint(experiment_id: str, body: PromoteInput) -> dict:
         enabled=preset.enabled,
         requires_tool=bool(pinned.requires_tool),
     )
-    try:
-        AgentPresetManager().upsert_agent_preset(promoted)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    AgentPresetManager().upsert_agent_preset(promoted)
     record_preset_revision(
         promoted,
         source="manual",

@@ -66,17 +66,11 @@ def generate_reply_suggestions(
         revision_id=scope.revision_id,
         purpose="reply_suggestions",
     )
-    replies = [
-        item
-        for item in turn.intents
-        if item.get("kind") == "reply_customer" and str(item.get("reply") or "").strip()
-    ]
+    replies = [item for item in turn.intents if item.get("kind") == "reply_customer"]
     if not replies:
         raise NoReplyIntentError(
             "Agent 没有调用回复客户工具，无法生成建议。请检查工具配置或恢复默认提示词。"
         )
-    if len(replies) != 1:
-        raise NoReplyIntentError("Agent 返回了多个回复，违反单条建议协议。")
     item, = replies
     return ReplySuggestionResult(
         reply=ReplySuggestion(

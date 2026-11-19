@@ -47,7 +47,7 @@ _FIELDS = frozenset({
     "execution_id",
 })
 _RUNTIME_MESSAGES = (
-    "Queued task failed", "request failed", "translation query failed", "translation chunk failed",
+    "Queued task failed", "request failed", "translation chunk failed",
     "failed to load translation context", "Translation agent omitted an item",
     "Unhandled account API error", "Unhandled API error", "node diagnostic failed",
     "Outbox terminal write deferred", "Outbox local-source reconciliation failed",

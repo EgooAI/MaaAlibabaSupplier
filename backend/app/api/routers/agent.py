@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from agent_pipeline.tools import ToolContext
 
-from backend.app.api.envelope import AppError, api_error, ok
+from backend.app.api.envelope import AppError, ok
 from backend.app.api.account_scope import AccountRoute
 from backend.app.shared.contract import REASONING_EFFORTS
 from backend.app.shared.agent.chat_history_content import (
@@ -33,7 +33,7 @@ from backend.app.shared.agent.preset_history import (
     record_preset_revision,
 )
 from backend.app.shared.agent.reply_tool import ReplyScope
-from backend.app.shared.agent.runner import ChatAgentTurn, run_chat_agent
+from backend.app.shared.agent.runner import AgentRunError, ChatAgentTurn, run_chat_agent
 from backend.app.shared.agent.versions import (
     adopt_scope as _adopt_scope,
     current_scope as _current_scope,
@@ -173,7 +173,7 @@ def _db_preset_to_dict(preset: AgentPreset, *, updated_at: str = "") -> dict:
         "intelevel": preset.llm_level,
         "tools": list(preset.tools or []),
         "enabled": preset.enabled,
-        "requires_tool": bool(getattr(preset, "requires_tool", False)),
+        "requires_tool": bool(preset.requires_tool),
         "updated_at": updated_at,
         "category": category,
         "fingerprint": preset_fingerprint(preset),
@@ -189,7 +189,7 @@ def _revision_to_dict(revision: AgentPresetRevision) -> dict:
         "prompt": revision.prompt,
         "intelevel": revision.llm_level,
         "tools": list(revision.tools or []),
-        "requires_tool": bool(getattr(revision, "requires_tool", False)),
+        "requires_tool": bool(revision.requires_tool),
         "source": revision.source,
         "note": revision.note,
         "created_at": format_created_at(revision.created_time) or "",
@@ -358,39 +358,35 @@ def _llm_level_payloads() -> list[dict]:
 
 @router.get("/api/agent/console")
 def agent_console() -> dict:
-    try:
-        levels = _llm_level_payloads()
-        presets = AgentPresetManager().list_agent_preset()
-        updated_at_by_apid = {preset.apid: _updated_at_text(preset.apid) for preset in presets}
-        db_presets = [
-            _db_preset_to_dict(preset, updated_at=updated_at_by_apid[preset.apid])
-            for preset in presets
-        ]
-        agents = [
-            {
-                "id": preset.apid,
-                "name": preset.name,
-                "category": "system" if preset.apid in SYSTEM_AGENT_APIDS else "regular",
-                "enabled": preset.enabled,
-                "capabilities": list(preset.tools or []),
-                "description": preset.description,
-                "updatedAt": updated_at_by_apid[preset.apid],
-                "prompt": preset.prompt,
-                "level": preset.llm_level,
-                "apid": preset.apid,
-                "requiresTool": bool(getattr(preset, "requires_tool", False)),
-            }
-            for preset in presets
-        ]
-        history_manager = ChatHistoryManager()
-        history = []
-        for hist in history_manager.list_chat_history():
-            session = _session_to_dict(hist)
-            if session is not None:
-                history.append(session)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    levels = _llm_level_payloads()
+    presets = AgentPresetManager().list_agent_preset()
+    updated_at_by_apid = {preset.apid: _updated_at_text(preset.apid) for preset in presets}
+    db_presets = [
+        _db_preset_to_dict(preset, updated_at=updated_at_by_apid[preset.apid])
+        for preset in presets
+    ]
+    agents = [
+        {
+            "id": preset.apid,
+            "name": preset.name,
+            "category": "system" if preset.apid in SYSTEM_AGENT_APIDS else "regular",
+            "enabled": preset.enabled,
+            "capabilities": list(preset.tools or []),
+            "description": preset.description,
+            "updatedAt": updated_at_by_apid[preset.apid],
+            "prompt": preset.prompt,
+            "level": preset.llm_level,
+            "apid": preset.apid,
+            "requiresTool": bool(preset.requires_tool),
+        }
+        for preset in presets
+    ]
+    history_manager = ChatHistoryManager()
+    history = []
+    for hist in history_manager.list_chat_history():
+        session = _session_to_dict(hist)
+        if session is not None:
+            history.append(session)
     return ok({
         "llmLevels": levels,
         "agents": agents,
@@ -403,11 +399,7 @@ def agent_console() -> dict:
 @router.get("/api/agent/tools")
 def agent_tools() -> dict:
     """Tool catalog for the editor: name, 中文名, category, description, parameters."""
-    try:
-        return ok(list_registered_tools())
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    return ok(list_registered_tools())
 
 
 @router.put("/api/agent/llm-config")
@@ -421,22 +413,18 @@ def save_llm_config(body: LlmConfigInput) -> dict:
         raise AppError("API Key 不能为空", status_code=422)
     if not model_name:
         raise AppError("模型名称不能为空", status_code=422)
-    try:
-        config = LLMApiConfig(
-            level=int(body.level),
-            base_url=base_url,
-            api_key=api_key,
-            model_name=model_name,
-            system_prompt=body.system_prompt,
-            context=body.context,
-            reasoning_effort=body.reasoning_effort,
-            max_tool_rounds=body.max_tool_rounds,
-        )
-        LLMApiConfigManager().upsert_config(config)
-        saved = LLMApiConfigManager().get_config(config.level)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    config = LLMApiConfig(
+        level=int(body.level),
+        base_url=base_url,
+        api_key=api_key,
+        model_name=model_name,
+        system_prompt=body.system_prompt,
+        context=body.context,
+        reasoning_effort=body.reasoning_effort,
+        max_tool_rounds=body.max_tool_rounds,
+    )
+    LLMApiConfigManager().upsert_config(config)
+    saved = LLMApiConfigManager().get_config(config.level)
     _refresh_llm_runtime()
     if saved is None:
         raise AppError("LLM 配置保存失败", status_code=500)
@@ -483,11 +471,7 @@ def save_preset(body: PresetInput) -> dict:
         enabled=enabled,
         requires_tool=bool(body.requires_tool),
     )
-    try:
-        AgentPresetManager().upsert_agent_preset(preset)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    AgentPresetManager().upsert_agent_preset(preset)
     record_preset_revision(
         preset,
         source=normalize_revision_source(body.revision_source),
@@ -500,11 +484,7 @@ def save_preset(body: PresetInput) -> dict:
 def list_preset_revisions(preset_id: str, limit: int = MAX_REVISIONS_PER_PRESET) -> dict:
     if not 1 <= limit <= MAX_REVISIONS_PER_PRESET:
         raise AppError(f"limit must be 1-{MAX_REVISIONS_PER_PRESET}", status_code=422)
-    try:
-        revisions = load_preset_revisions(preset_id, limit=limit)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    revisions = load_preset_revisions(preset_id, limit=limit)
     return ok([_revision_to_dict(revision) for revision in revisions])
 
 
@@ -512,11 +492,7 @@ def list_preset_revisions(preset_id: str, limit: int = MAX_REVISIONS_PER_PRESET)
 def delete_preset(preset_id: str) -> dict:
     if preset_id in SYSTEM_AGENT_APIDS:
         return ok(False)
-    try:
-        AgentPresetManager().delete_agent_preset(preset_id)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    AgentPresetManager().delete_agent_preset(preset_id)
     return ok(True)
 
 
@@ -524,11 +500,7 @@ def delete_preset(preset_id: str) -> dict:
 def restore_system_agent(apid: str) -> dict:
     if find_system_agent_default(apid) is None:
         raise AppError("系统 Agent 默认配置不存在", status_code=404)
-    try:
-        preset = apply_system_agent_default(apid)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    preset = apply_system_agent_default(apid)
     if preset is None:
         raise AppError("系统 Agent 默认配置不存在", status_code=404)
     return ok(_db_preset_to_dict(preset, updated_at=_updated_at_text(apid)))
@@ -630,11 +602,7 @@ def run_agent_test(body: AgentTestInput) -> dict:
     if body.inputMode not in ("buyer", "agent"):
         raise AppError("inputMode must be buyer or agent", status_code=422)
     manager = AgentPresetManager()
-    try:
-        preset = manager.get_agent_preset(agent_id)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    preset = manager.get_agent_preset(agent_id)
     if preset is None:
         raise AppError("Agent 不存在", status_code=404)
     if preset.apid not in SYSTEM_AGENT_APIDS:
@@ -716,37 +684,31 @@ def run_agent_test(body: AgentTestInput) -> dict:
             revision_id=pinned.revision_id if pinned is not None else None,
             prior_replies=prior,
         )
-    except AppError:
-        raise
-    except Exception as exc:
-        return _agent_run_error(exc)
+    except AgentRunError as exc:
+        raise AppError(exc.message, status_code=exc.status_code) from exc
 
     messages.append(_turn_message(turn))
     title = hist.name if hist else (content[:40] if len(content) > 40 else content) or preset.name
     session_type = content_model.session_type if hist is not None else "test"
     scope = _current_scope()
-    try:
-        if hist is None:
-            fresh = ChatHistory(name=title, content=build_history_content(
+    if hist is None:
+        fresh = ChatHistory(name=title, content=build_history_content(
+            apid=agent_id, agent_name=preset.name, messages=messages,
+            draft=draft_snapshot, session_type=session_type, scope=scope,
+            pinned=pinned, requires_tool=bool(preset.requires_tool),
+        ))
+        history_manager.add_chat_history(fresh)
+        hist = fresh
+    else:
+        history_manager.edit_chat_history(hist.id, ChatHistory(
+            name=title,
+            content=build_history_content(
                 apid=agent_id, agent_name=preset.name, messages=messages,
-                draft=draft_snapshot, session_type=session_type, scope=scope,
-                pinned=pinned, requires_tool=bool(getattr(preset, "requires_tool", False)),
-            ))
-            history_manager.add_chat_history(fresh)
-            hist = fresh
-        else:
-            history_manager.edit_chat_history(hist.id, ChatHistory(
-                name=title,
-                content=build_history_content(
-                    apid=agent_id, agent_name=preset.name, messages=messages,
-                    existing=raw, draft=draft_snapshot,
-                    requires_tool=bool(getattr(preset, "requires_tool", False)),
-                ),
-            ))
-            hist = history_manager.get_chat_history(hist.id)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+                existing=raw, draft=draft_snapshot,
+                requires_tool=bool(preset.requires_tool),
+            ),
+        ))
+        hist = history_manager.get_chat_history(hist.id)
     session = _session_to_dict(hist) if hist else None
     if session is None:
         raise AppError("会话保存失败", status_code=500)
@@ -763,27 +725,13 @@ def _playground_draft(pinned: ChatHistoryPin | None) -> ChatHistoryDraft | None:
     return _pin_to_draft(pinned)
 
 
-def _agent_run_error(exc: Exception):
-    """Map SDK/runner failures to explicit status codes instead of a blanket 500."""
-    from backend.app.shared.agent.runner import AgentRunError
-
-    if isinstance(exc, AgentRunError):
-        return api_error(exc.message, status_code=exc.status_code)
-    logger.exception("request failed")
-    return api_error("服务器内部错误", status_code=500)
-
-
 @router.get("/api/agent/test-history")
 def list_history() -> dict:
-    try:
-        sessions = []
-        for hist in ChatHistoryManager().list_chat_history():
-            session = _session_to_dict(hist)
-            if session is not None:
-                sessions.append(session)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    sessions = []
+    for hist in ChatHistoryManager().list_chat_history():
+        session = _session_to_dict(hist)
+        if session is not None:
+            sessions.append(session)
     return ok(sessions)
 
 
@@ -797,17 +745,13 @@ def undo_session(session_id: str) -> dict:
     if len(messages) < 2 or messages[-2]["role"] != "user" or messages[-1]["role"] != "assistant":
         raise AppError("没有可撤销的轮次", status_code=400)
     # Dropping the pair also drops that turn's tool records and intents.
-    try:
-        manager.edit_chat_history(hist.id, ChatHistory(
-            name=hist.name,
-            content=build_history_content(
-                apid=content.apid, agent_name=content.agent_name,
-                messages=messages[:-2], existing=raw),
-        ))
-        updated = manager.get_chat_history(hist.id)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    manager.edit_chat_history(hist.id, ChatHistory(
+        name=hist.name,
+        content=build_history_content(
+            apid=content.apid, agent_name=content.agent_name,
+            messages=messages[:-2], existing=raw),
+    ))
+    updated = manager.get_chat_history(hist.id)
     session = _session_to_dict(updated) if updated else None
     if session is None:
         raise AppError("会话不存在", status_code=404)
@@ -845,19 +789,15 @@ def regenerate_session(session_id: str) -> dict:
             revision_id=content.pinned.revision_id if content.pinned else None,
             prior_replies=(),
         )
-    except Exception as exc:
-        return _agent_run_error(exc)
-    try:
-        manager.edit_chat_history(hist.id, ChatHistory(
-            name=hist.name,
-            content=build_history_content(
-                apid=content.apid, agent_name=content.agent_name,
-                messages=[*base, _turn_message(turn)], existing=raw),
-        ))
-        updated = manager.get_chat_history(hist.id)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    except AgentRunError as exc:
+        raise AppError(exc.message, status_code=exc.status_code) from exc
+    manager.edit_chat_history(hist.id, ChatHistory(
+        name=hist.name,
+        content=build_history_content(
+            apid=content.apid, agent_name=content.agent_name,
+            messages=[*base, _turn_message(turn)], existing=raw),
+    ))
+    updated = manager.get_chat_history(hist.id)
     session = _session_to_dict(updated) if updated else None
     if session is None:
         raise AppError("会话不存在", status_code=404)
@@ -868,11 +808,7 @@ def regenerate_session(session_id: str) -> dict:
 def delete_session(session_id: str) -> dict:
     manager = ChatHistoryManager()
     hist = _load_session(manager, session_id)
-    try:
-        manager.delete_chat_history(hist.id)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    manager.delete_chat_history(hist.id)
     return ok(None)
 
 
@@ -908,19 +844,15 @@ def branch_session(session_id: str, body: BranchInput | None = None) -> dict:
             raw = {**raw, "draft": None}
         else:
             raise AppError("versionKind must be preset or draft", status_code=422)
-    try:
-        branched = ChatHistory(
-            name=f"{hist.name}-分支",
-            content=build_history_content(
-                apid=content.apid, agent_name=content.agent_name,
-                messages=messages, existing=raw,
-                scope=_current_scope(), parent_id=str(hist.id),
-                pinned=pinned, draft=draft),
-        )
-        manager.add_chat_history(branched)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    branched = ChatHistory(
+        name=f"{hist.name}-分支",
+        content=build_history_content(
+            apid=content.apid, agent_name=content.agent_name,
+            messages=messages, existing=raw,
+            scope=_current_scope(), parent_id=str(hist.id),
+            pinned=pinned, draft=draft),
+    )
+    manager.add_chat_history(branched)
     session = _session_to_dict(branched)
     if session is None:
         raise AppError("会话创建失败", status_code=500)
@@ -981,19 +913,15 @@ def fork_from_message(body: ForkMessageInput) -> dict:
         frozen_input=frozen,
     )
     title = f"{preset.name} · 从消息 #{body.messageIndex + 1} 模拟"
-    try:
-        hist = ChatHistory(
-            name=title,
-            content=build_history_content(
-                apid=agent_id, agent_name=preset.name, messages=[],
-                session_type="fork", scope=_current_scope(), pinned=pinned,
-                source=source, requires_tool=bool(getattr(preset, "requires_tool", False)),
-            ),
-        )
-        ChatHistoryManager().add_chat_history(hist)
-    except Exception:
-        logger.exception("request failed")
-        return api_error("服务器内部错误", status_code=500)
+    hist = ChatHistory(
+        name=title,
+        content=build_history_content(
+            apid=agent_id, agent_name=preset.name, messages=[],
+            session_type="fork", scope=_current_scope(), pinned=pinned,
+            source=source, requires_tool=bool(preset.requires_tool),
+        ),
+    )
+    ChatHistoryManager().add_chat_history(hist)
     log_event("agent.fork_created", conversation_id=body.conversationId,
               message_index=body.messageIndex, frozen_chars=len(frozen),
               revision_id=revision_id, session_id=hist.id)
