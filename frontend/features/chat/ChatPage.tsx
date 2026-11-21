@@ -15,6 +15,7 @@ import { SessionListPanel } from "@/components/SessionListPanel";
 import { useSplitSessionMobile } from "@/components/SplitSessionLayout";
 import { ConversationList } from "./conversation/ConversationList";
 import { CustomerInfo } from "./conversation/CustomerInfo";
+import { CustomerQualityBadge } from "./customer/CustomerQuality";
 import { CustomerStageControl } from "./conversation/CustomerStageControl";
 import { useChatWorkbench } from "./hooks/useChatWorkbench";
 import { useLocalTime } from "./hooks/useLocalTime";
@@ -116,7 +117,12 @@ function ChatWorkspace() {
       title={<div className="flex min-w-0 items-center gap-2 py-3">
         {isMobile ? <Button type="text" aria-label="返回列表" icon={<ArrowLeftOutlined />} onClick={() => setMobileView("list")} /> : null}
         <div className="min-w-0">
-          <div className="truncate">{active?.customer.name || "消息时间线"}</div>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="min-w-0 truncate">{active?.customer.name || "消息时间线"}</span>
+            {active ? <button type="button" className="shrink-0 cursor-pointer rounded outline-offset-2 focus-visible:outline-blue-500" aria-label="查看客户质量指数" onClick={() => setCustomerInfoOpen(true)}>
+              <CustomerQualityBadge behavior={active.customer.d90} />
+            </button> : null}
+          </div>
           {active && (headerMeta || activeCountryCode) ? (
             <div className="truncate text-xs font-normal text-slate-500">
               <CountryFlag country={active.customer.country} showName />

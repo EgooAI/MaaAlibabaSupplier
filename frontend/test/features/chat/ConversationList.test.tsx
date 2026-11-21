@@ -75,6 +75,19 @@ const render = async (item: Conversation) => {
   await act(async () => root.render(<ConversationList conversations={[item]} />));
 };
 
+it("shows only the quality grade and clears it when the displayed customer has no metrics", async () => {
+  const item = conversation();
+  item.customer.d90 = { productViews: 1, validInquiries: 1, validRfqs: 1, loginDays: 1 };
+  await render(item);
+  const badge = container.querySelector<HTMLElement>('[aria-label^="客户质量指数："]')!;
+  expect(badge.textContent).toBe("S");
+  expect(badge.title).toBe("客户质量指数：S");
+  expect(badge.outerHTML).not.toContain("94");
+
+  await render(conversation());
+  expect(container.querySelector('[aria-label="客户质量指数：数据不足"]')?.textContent).toBe("—");
+});
+
 it("falls back to initials for missing or failed avatars and retries a changed URL", async () => {
   const item = conversation();
   await render(item);

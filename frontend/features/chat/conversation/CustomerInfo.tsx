@@ -6,6 +6,7 @@ import type { ConversationDetail } from "@/types/chatCanonical";
 import type { PortraitTag } from "@/types/portrait";
 import { useAccount } from "@/features/account/AccountProvider";
 import { PortraitEditor } from "./PortraitEditor";
+import { CustomerQualityDetails } from "../customer/CustomerQuality";
 
 export function CustomerInfo({ conversation, open, onClose, onGotoContact, onSaved, portraitTags, onTagCreated, onPortraitTagsChanged }: {
   conversation?: ConversationDetail;
@@ -44,10 +45,10 @@ function CustomerInfoContent({ conversation, onGotoContact, onSaved, portraitTag
   const { snapshot, blocked } = useAccount();
   const { customer } = conversation;
   const value = (text: string | number | undefined) => (text === undefined || text === null || String(text).trim() === "" ? "—" : String(text));
-  const d90 = customer.d90;
 
   return (
     <Space orientation="vertical" className="w-full" size="middle">
+      <CustomerQualityDetails behavior={customer.d90} />
       <PortraitEditor
         conversation={conversation}
         tags={portraitTags}
@@ -73,17 +74,6 @@ function CustomerInfoContent({ conversation, onGotoContact, onSaved, portraitTag
           { key: "mobile", label: "手机", children: value(customer.mobile) },
           { key: "phone", label: "电话", children: value(customer.phone) },
           { key: "availability", label: "在线时间", children: value(customer.availability) },
-        ]} />
-      </Card>
-      <Card title="近 90 天行为">
-        <Descriptions size="small" column={1} items={[
-          { key: "views", label: "浏览", children: value(d90?.productViews) },
-          { key: "inquiry", label: "有效询盘", children: value(d90?.validInquiries) },
-          { key: "replied", label: "已回复询盘", children: value(d90?.repliedInquiries) },
-          { key: "rfq", label: "有效 RFQ", children: value(d90?.validRfqs) },
-          { key: "login", label: "登录天数", children: value(d90?.loginDays) },
-          { key: "spam", label: "垃圾询盘", children: value(d90?.spamInquiries) },
-          { key: "black", label: "拉黑", children: value(d90?.blacklisted) },
         ]} />
       </Card>
       <Card title="标签与可用性">

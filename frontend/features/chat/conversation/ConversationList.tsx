@@ -8,6 +8,7 @@ import { CountryFlag } from "@/components/CountryFlag";
 import { TimeText } from "@/components/TimeText";
 import { portraitStageColor, portraitStageLabel } from "@/domain/portrait/portraitModel";
 import { InboxBadges } from "./InboxBadges";
+import { CustomerQualityBadge } from "../customer/CustomerQuality";
 import { EMPTY_TEXT } from "@/components/empty";
 import type { ConversationGroupMode } from "@/domain/chat/chatModel";
 import type { Conversation } from "@/types/chatCanonical";
@@ -97,6 +98,7 @@ export function ConversationList({
                         </div>
                       ) : null}
                       <div className="mt-1.5 flex flex-wrap items-center gap-1" data-testid="conversation-badges">
+                        <CustomerQualityBadge behavior={item.customer.d90} gradeOnly />
                         <InboxBadges conversation={item} compact={!selectable} />
                         {item.customer.businessStage !== "unknown" ? (
                           <Tag color={portraitStageColor(item.customer.businessStage)} className="!m-0 !text-[11px]">

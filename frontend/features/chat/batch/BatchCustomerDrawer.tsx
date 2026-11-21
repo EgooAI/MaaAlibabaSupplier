@@ -11,6 +11,7 @@ import { customerLabelOf, type CustomerGroup } from "@/domain/portrait/customerG
 import { lostReasonLabel, operationSummary, portraitStageColor, portraitStageLabel, portraitTagLabel, portraitTagOptions } from "@/domain/portrait/portraitModel";
 import { formatDateTime } from "@/domain/time";
 import { SessionRows } from "./SessionRows";
+import { CustomerQualityDetails } from "../customer/CustomerQuality";
 import type { PortraitOperationEntry, PortraitTag } from "@/types/portrait";
 
 /** 批量页只读客户详情：资料 + 画像 + 本页会话 + 操作历史（维护入口在配置面板）。
@@ -88,6 +89,8 @@ function CustomerDetail({ group, operations, portraitTags, onManageTags }: {
         <Typography.Title level={5} className="!mb-0">{customerLabelOf(group)}</Typography.Title>
         <Typography.Text type="secondary" className="!text-xs">{[customer.aliId, customer.company].filter(Boolean).join(" · ")}</Typography.Text>
       </div>
+
+      <CustomerQualityDetails behavior={customer.d90} />
 
       <Section title="客户资料">
         <Descriptions size="small" column={1} items={[

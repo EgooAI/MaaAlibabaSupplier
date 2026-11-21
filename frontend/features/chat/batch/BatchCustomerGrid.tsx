@@ -11,6 +11,7 @@ import { TimeText } from "@/components/TimeText";
 import { customerLabelOf, groupCustomers } from "@/domain/portrait/customerGroups";
 import { lostReasonLabel, portraitStageColor, portraitStageLabel, portraitTagLabel } from "@/domain/portrait/portraitModel";
 import { SessionRows } from "./SessionRows";
+import { CustomerQualityBadge } from "../customer/CustomerQuality";
 import type { CustomerGroup } from "@/domain/portrait/customerGroups";
 import type { Conversation } from "@/types/chatCanonical";
 
@@ -65,6 +66,12 @@ export function BatchCustomerGrid({ conversations, selectedIds, loading = false,
       width: 220,
       fixed: "left",
       render: (_, group) => <CustomerCell group={group} />,
+    },
+    {
+      title: "质量指数",
+      key: "quality",
+      width: 108,
+      render: (_, group) => <CustomerQualityBadge behavior={group.cid === null ? undefined : group.representative.customer.d90} />,
     },
     {
       title: "国家",
@@ -177,7 +184,7 @@ export function BatchCustomerGrid({ conversations, selectedIds, loading = false,
       dataSource={groups}
       columns={columns}
       pagination={false}
-      scroll={{ x: 1420 }}
+      scroll={{ x: 1528 }}
       locale={{ emptyText: "没有符合条件的客户" }}
       rowSelection={rowSelection}
       expandable={{

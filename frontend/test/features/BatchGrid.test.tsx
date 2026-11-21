@@ -98,6 +98,7 @@ describe("batch customer grid", () => {
   it("renders one row per customer, merges unresolved sessions and shows portrait state", async () => {
     const withAvatar = fixture.map((item) => ({ ...item, customer: {
       ...item.customer, avatarUrl: item.customer.cid === 1002 ? undefined : "https://img.example/buyer.png",
+      d90: item.customer.cid === 1001 ? { validRfqs: 1, loginDays: 1, blacklisted: 1 } : undefined,
     } }));
     await act(async () => root.render(
       <BatchCustomerGrid conversations={withAvatar} selectedIds={[]} onToggleSessions={vi.fn()} onToggleAll={vi.fn()} onOpenCustomer={vi.fn()} />,
@@ -111,9 +112,11 @@ describe("batch customer grid", () => {
     expect(rows[0].textContent).toContain("v3");
     expect(rows[0].textContent).toContain("未读 3");
     expect(rows[0].textContent).toContain("待回复 1");
+    expect(rows[0].querySelector('[aria-label^="客户质量指数："]')?.textContent).toBe("A · 80");
     expect(rows[1].textContent).toContain("Maria");
     expect(rows[1].querySelector(".ant-avatar")?.textContent).toBe("M");
     expect(rows[1].textContent).toContain("未维护");
+    expect(rows[1].querySelector('[aria-label^="客户质量指数："]')?.textContent).toBe("数据不足");
     expect(rows[2].textContent).toContain("未识别客户");
     expect(rows[2].querySelector(".ant-avatar img")).toBeNull();
     expect(rows[2].textContent).toContain("不可维护");
@@ -175,6 +178,9 @@ describe("batch customer drawer", () => {
       operations: [{ request_id: "req-1", kind: "batch", created_at: 1756720000, changes: { stage: "negotiating" }, targets: [{ cid: 1001, sids: [42], version: 4 }] }],
     });
     const group = groupCustomers([fixture[0]])[0];
+    group.representative = { ...group.representative, customer: {
+      ...group.representative.customer, d90: { validRfqs: 1, loginDays: 1, blacklisted: 1 },
+    } };
     await act(async () => root.render(<BatchCustomerDrawer group={group} open onClose={vi.fn()} portraitTags={portraitTags} />));
     await act(async () => {});
     expect(mocks.backend.listPortraitOperations).toHaveBeenCalledExactlyOnceWith(1001);
@@ -183,6 +189,8 @@ describe("batch customer drawer", () => {
     expect(document.body.textContent).toContain("长期合作");
     expect(document.body.textContent).toContain("会话 #42");
     expect(document.body.textContent).toContain("阶段→报价/洽谈");
+    expect(document.body.textContent).toContain("80 / 100");
+    expect(document.body.querySelector('[aria-label="客户质量指数：A"]')).not.toBeNull();
   });
 
   it("explains unresolved customers without fetching a history", async () => {
