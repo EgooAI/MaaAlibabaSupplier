@@ -13,6 +13,8 @@ from backend.app.shared.utils import settings
 from tools.validate_schema import load_jsonc
 
 
+# Do not add tests that merely restate constants, mock returns, or existing cases.
+# Each case must reject a concrete regression in the production call or action flow.
 ASSETS = Path(__file__).resolve().parents[1] / "assets"
 WINDOW_TITLE = "\u63a5\u5f85\u4e2d\u5fc3"
 
@@ -366,7 +368,7 @@ def test_submit_send_revalidates_session_inside_guard_before_native_post(sdk, mo
     assert sdk.calls == []
 
 
-@pytest.mark.parametrize("outcome", [True, False, None, RuntimeError("wait failed")])
+@pytest.mark.parametrize("outcome", [True, False, None, RuntimeError("result unavailable")])
 def test_wait_send_only_waits_for_original_job_without_reposting(sdk, outcome):
     token = connected_token()
     sdk.outcome = outcome
@@ -460,6 +462,9 @@ def test_agent_failure_stops_without_replay(actions, failed_entry):
 @pytest.fixture
 def native_pipeline(tmp_path, monkeypatch):
     """Use only repository button templates and in-memory synthetic frames."""
+    # Synthetic templates exercise pipeline actions, not real-client recognition.
+    # Do not add template self-match tests or derive frame positions from the tested ROI.
+    # Recognition accuracy requires independent screenshot samples.
     import numpy as np
     from PIL import Image
     from maa.controller import Controller, CustomController
@@ -556,28 +561,31 @@ def native_pipeline(tmp_path, monkeypatch):
         for name in ("ChatInput_GoToInput", "ContactSearch_ClearSearchBox", "ContactSearch_ClickSearchButton", "Common_DismissLowQualityDialog")
         for template in pipeline[name]["recognition"]["param"]["template"]
     )
-    images = []
     for name in templates:
         with Image.open(ASSETS / "resource" / "image" / name) as image:
             pixels = np.array(image.convert("RGB"))[:, :, ::-1].copy()
         assert resource.override_image(name, pixels)
-        images.append(pixels)
         templates[name] = pixels
     tasker = Tasker()
     assert tasker.bind(resource, controller)
     assert tasker.inited
     yield SimpleNamespace(
         controller=controller, resource=resource, tasker=tasker,
-        images=images, templates=templates, pipeline=pipeline,
+        templates=templates, pipeline=pipeline,
     )
     tasker.post_stop().wait()
 
 
-@pytest.mark.parametrize("dialog_position", [None, (490, 560), (560, 635)])
-def test_native_contact_search_dismisses_dialog_once_before_search(native_pipeline, monkeypatch, dialog_position):
+@pytest.mark.parametrize("search_template,dialog_position", [
+    ("Contact/联系人_搜索_1.png", None),
+    ("Contact/联系人_搜索_2.png", None),
+    ("Contact/联系人_搜索_1.png", (490, 560)),
+    ("Contact/联系人_搜索_1.png", (560, 635)),
+])
+def test_native_contact_search_dismisses_dialog_once_before_search(native_pipeline, monkeypatch, dialog_position, search_template):
     native = native_pipeline
     controller = native.controller
-    search = native.templates["Contact/联系人_搜索.png"]
+    search = native.templates[search_template]
     height, width = search.shape[:2]
     controller.frame[40:40 + height, 60:60 + width] = search
     expected_boxes = [(60, 40, width, height)]
@@ -616,31 +624,22 @@ def test_native_contact_search_dismisses_dialog_once_before_search(native_pipeli
         assert controller.keys == [("click", 13)]
 
 
-@pytest.mark.parametrize("button", ["enabled", "disabled", "missing", "click_failed"])
-def test_native_send_requires_enabled_button(native_pipeline, button):
+def test_native_input_propagates_missing_send_button(native_pipeline):
     native = native_pipeline
     controller = native.controller
-    if button != "missing":
-        pixels = native.images[0 if button == "disabled" else 1]
-        height, width = pixels.shape[:2]
-        controller.frame[620:620 + height, 650:650 + width] = pixels
-    controller.click_ok = button != "click_failed"
-    # Start just before recognition to isolate the send guard and its outcome.
+    # The full button-state matrix lives in test_gui_evidence; this covers the input entry's failure propagation.
     override = runner.chat_input_override("test", send=True)
     override["ChatInput_PasteText"]["timeout"] = 0
     detail = native.tasker.post_task("ChatInput_PasteText", override).wait().get()
-    assert detail is not None
-    assert detail.status.succeeded is (button == "enabled")
-    assert len(controller.clicks) == (1 if button in ("enabled", "click_failed") else 0)
-    for x, y in controller.clicks:
-        assert 650 <= x < 650 + width
-        assert 620 <= y < 620 + height
+    assert detail is not None and not detail.status.succeeded
+    assert controller.pastes == ["test"]
+    assert controller.clicks == controller.texts == controller.keys == []
 
 
 def test_native_send_test_send_with_persisted_overrides(native_pipeline):
     native = native_pipeline
     controller = native.controller
-    pixels = native.images[1]
+    pixels = native.templates["Chat/按钮_发送_可用.png"]
     height, width = pixels.shape[:2]
     controller.frame[620:620 + height, 650:650 + width] = pixels
     for text, send, count in (("first", True, 2), ("test", False, 3), ("last", True, 5)):
@@ -656,7 +655,7 @@ def test_native_send_test_send_with_persisted_overrides(native_pipeline):
 def test_native_paste_failure_stops_before_send_without_replay(native_pipeline):
     native = native_pipeline
     controller = native.controller
-    pixels = native.images[1]
+    pixels = native.templates["Chat/按钮_发送_可用.png"]
     height, width = pixels.shape[:2]
     controller.frame[620:620 + height, 650:650 + width] = pixels
     controller.paste_ok = False
@@ -668,42 +667,42 @@ def test_native_paste_failure_stops_before_send_without_replay(native_pipeline):
     assert controller.texts == controller.keys == []
 
 
-@pytest.mark.parametrize("entry,node,index", [
-    ("Diagnostics_ChatInput", "ChatInput_GoToInput", 0),
-    ("Diagnostics_ChatInput", "ChatInput_GoToInput", 1),
-    ("Diagnostics_ChatInput", None, 0),
-    ("Diagnostics_ContactSearch", "ContactSearch_ClearSearchBox", 0),
-    ("Diagnostics_ContactSearch", "ContactSearch_ClickSearchButton", 0),
-    ("Diagnostics_ContactSearch", None, 0),
-], ids=["chat-disabled", "chat-enabled", "chat-missing", "search-clear", "search-button", "search-missing"])
-def test_native_diagnostics_are_read_only_and_preserve_sending(native_pipeline, entry, node, index):
+@pytest.mark.parametrize("entry,controls", [
+    ("Diagnostics_ChatInput", [
+        ("Chat/按钮_发送_禁用.png", 650, 620),
+        ("Chat/按钮_发送_可用.png", 650, 620),
+    ]),
+    ("Diagnostics_ContactSearch", [
+        ("Contact/联系人_清除搜索.png", 240, 40),
+        ("Contact/联系人_搜索_1.png", 60, 40),
+        ("Contact/联系人_搜索_2.png", 60, 40),
+    ]),
+])
+def test_native_diagnostics_are_read_only_and_preserve_sending(native_pipeline, entry, controls):
     native = native_pipeline
     controller = native.controller
-    if node is not None:
-        params = native.pipeline[node]["recognition"]["param"]
-        pixels = native.templates[params["template"][index]]
-        x, y, _, _ = params["roi"]
-        height, width = pixels.shape[:2]
-        controller.frame[y:y + height, x:x + width] = pixels
-
     business_nodes = {
         name: native.resource.get_node_data(name)
         for name in native.pipeline
         if not name.startswith("Diagnostics_")
     }
-    # Only the diagnostic guard's recognition timeout is shortened.
-    detail = native.tasker.post_task(entry, {entry: {"timeout": 0}}).wait().get()
-    assert detail is not None
-    assert detail.status.succeeded is (node is not None)
-    assert controller.clicks == []
-    assert controller.texts == []
-    assert controller.keys == []
-    assert business_nodes == {
-        name: native.resource.get_node_data(name) for name in business_nodes
-    }
+    for template, x, y in [*controls, (None, 0, 0)]:
+        controller.frame.fill(0)
+        if template is not None:
+            pixels = native.templates[template]
+            height, width = pixels.shape[:2]
+            controller.frame[y:y + height, x:x + width] = pixels
+        # Only the diagnostic guard's recognition timeout is shortened.
+        detail = native.tasker.post_task(entry, {entry: {"timeout": 0}}).wait().get()
+        assert detail is not None
+        assert detail.status.succeeded is (template is not None), template
+        assert controller.clicks == controller.texts == controller.keys == []
+        assert business_nodes == {
+            name: native.resource.get_node_data(name) for name in business_nodes
+        }
 
     controller.frame.fill(0)
-    pixels = native.images[1]
+    pixels = native.templates["Chat/按钮_发送_可用.png"]
     height, width = pixels.shape[:2]
     controller.frame[620:620 + height, 650:650 + width] = pixels
     detail = native.tasker.post_task(

@@ -141,6 +141,8 @@ the desktop or establish that a production native task saved its error image.
 - Its native Maa tests use a custom controller with synthetic images built from
   repository button templates. They verify enabled/disabled/missing send buttons,
   action failure, repeated send/input/send operations and read-only diagnostics.
+  Frame positions are independent of the tested ROI. Template-derived frames test
+  pipeline behavior; recognition accuracy requires independent screenshot samples.
   The real custom-action adapter runs against a mocked OS input boundary; native
   callback tests also verify that the outer account/window locks remain held.
   They never discover or control a real desktop window. Native tests explicitly

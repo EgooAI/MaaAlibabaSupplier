@@ -31,7 +31,8 @@
             "type": "TemplateMatch",
             "param": {
                 "template": [
-                    "Contact/联系人_搜索.png"
+                    "Contact/联系人_搜索_1.png",
+                    "Contact/联系人_搜索_2.png"
                 ],
                 "roi": [
                     36,

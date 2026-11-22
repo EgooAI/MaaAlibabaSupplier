@@ -14,6 +14,11 @@ from backend.app.shared.backend.gui_evidence import ClientFrame, frame_from_imag
 from backend.tests.test_maafw_runner import connected_token, native_pipeline, sdk, window
 
 
+# Do not add tests that only check mock returns or template self-matching, or
+# duplicate the submission/wait failure matrices in test_maafw_runner.py.
+# Native tests must protect concrete screenshot, guard, or input-action contracts.
+
+
 @pytest.fixture
 def capture(sdk, monkeypatch):
     token = connected_token()
@@ -173,14 +178,6 @@ def test_continuous_guard_and_persistence_barrier(capture, sdk):
     assert capture.events == []
 
 
-@pytest.mark.parametrize("outcome", [False, None, RuntimeError("click outcome unavailable")])
-def test_send_only_failure_is_not_replayed(sdk, outcome):
-    token = connected_token()
-    sdk.outcome = outcome
-    assert gui_session.run_guarded(token, lambda: runner.wait_send(runner.submit_send()))[0] is False
-    assert sdk.calls == [("ChatInput_SendOnly", {"ChatInput_SendMessage": {"enabled": True}})]
-
-
 @pytest.fixture
 def native_binding(sdk, native_pipeline, monkeypatch):
     token = connected_token()
@@ -211,7 +208,7 @@ def test_native_paste_callback_retains_outer_guard_without_reacquiring_locks(nat
     from backend.app.shared.backend import paste_text_action
 
     token, native = native_binding
-    pixels = native.images[1]
+    pixels = native.templates["Chat/按钮_发送_可用.png"]
     height, width = pixels.shape[:2]
     native.controller.frame[620:620 + height, 650:650 + width] = pixels
     caller = get_ident()
@@ -239,7 +236,8 @@ def test_native_send_only_recognizes_button_without_typing(native_binding, butto
     token, native = native_binding
     controller = native.controller
     if button != "missing":
-        pixels = native.images[0 if button == "disabled" else 1]
+        template = "Chat/按钮_发送_禁用.png" if button == "disabled" else "Chat/按钮_发送_可用.png"
+        pixels = native.templates[template]
         height, width = pixels.shape[:2]
         controller.frame[620:620 + height, 650:650 + width] = pixels
     controller.click_ok = button != "click_failed"
@@ -257,7 +255,7 @@ def test_native_send_only_recognizes_button_without_typing(native_binding, butto
 
 def test_native_disabled_send_node_cannot_be_executed_as_entry_action(native_pipeline):
     native = native_pipeline
-    pixels = native.images[1]
+    pixels = native.templates["Chat/按钮_发送_可用.png"]
     height, width = pixels.shape[:2]
     native.controller.frame[620:620 + height, 650:650 + width] = pixels
     detail = native.tasker.post_task("ChatInput_SendOnly", {

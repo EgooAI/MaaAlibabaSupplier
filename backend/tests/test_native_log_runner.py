@@ -1,3 +1,6 @@
+# New cases must protect independent native-log lifecycle behavior.
+# Do not duplicate test_maafw_runner's sink-failure matrix or add mock-return self-tests.
+
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from types import SimpleNamespace
@@ -187,8 +190,8 @@ def test_uncertain_terminal_observation_does_not_skip_wait_and_defers_rotation(s
     assert runner.get_native_log_status()["outstanding_jobs"] == 1
 
 
-@pytest.mark.parametrize("failure", ["setter", "inventory", "event"])
-def test_policy_and_event_failure_cannot_skip_native_wait_or_replay(sdk, monkeypatch, failure):
+@pytest.mark.parametrize("failure", ["setter", "inventory"])
+def test_policy_failure_cannot_skip_native_wait_or_replay(sdk, monkeypatch, failure):
     token = connected_token()
     calls = []
 
@@ -212,12 +215,9 @@ def test_policy_and_event_failure_cannot_skip_native_wait_or_replay(sdk, monkeyp
         monkeypatch.setattr(runner, "_set_native_log_dir", fail)
     elif failure == "inventory":
         monkeypatch.setattr(runner._native_logs, "status", fail)
-    else:
-        monkeypatch.setattr(runner, "log_event", fail)
     assert gui_session.run_guarded(token, lambda: runner.wait_send(runner.submit_send()))[0]
     assert calls == ["post", "wait"]
-    if failure != "event":
-        assert "native_log_policy_unavailable" in runner.get_native_log_status()["warnings"]
+    assert "native_log_policy_unavailable" in runner.get_native_log_status()["warnings"]
 
 
 def test_status_is_noninitializing_and_never_waits_for_guard_or_scans(sdk, monkeypatch):
