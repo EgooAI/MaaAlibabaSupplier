@@ -17,17 +17,19 @@ it.each([
   expect(badge.style.color).toBe(color);
 });
 
-it("explains missing inputs alongside the score and retains the non-scoring inquiry metric", () => {
+it("shows six metrics in two rows of three without formula notation and distinguishes missing values from zero", () => {
   const container = document.createElement("div");
-  container.innerHTML = renderToStaticMarkup(<CustomerQualityDetails behavior={{ loginDays: 1, blacklisted: 1, repliedInquiries: 12 }} />);
+  container.innerHTML = renderToStaticMarkup(<CustomerQualityDetails behavior={{ validInquiries: 0, validRfqs: 0, loginDays: 1, spamInquiries: 0, blacklisted: 1, repliedInquiries: 12 }} />);
   expect(container.textContent).toContain("56 / 100");
-  const fields = [...container.querySelectorAll(".ant-descriptions-item")].map((item) => item.textContent);
-  expect(fields).toContain("A · 浏览—");
-  expect(fields).toContain("D · 登录天数1");
-  expect(fields).toContain("F · 拉黑1");
-  expect(fields).toContain("已回复询盘12");
-  expect(container.querySelector("details")?.open).toBe(false);
-  expect(container.querySelector("details")?.textContent).toContain("已回复询盘不参与计分");
+  const rows = [...container.querySelectorAll("table tbody tr")]
+    .map((row) => [...row.querySelectorAll("td")].map((cell) => cell.textContent));
+  expect(rows).toEqual([
+    ["浏览商品—", "有效询盘0", "有效 RFQ0"],
+    ["登录天数1", "垃圾询盘0", "被拉黑次数1"],
+  ]);
+  expect(container.textContent).toContain("已回复询盘：12");
+  expect(container.querySelector("details")).toBeNull();
+  expect(container.textContent).not.toMatch(/I′|log₂|计算与评级说明|缺失项按 0/);
 
   container.innerHTML = renderToStaticMarkup(<CustomerQualityDetails behavior={{ loginDays: 0 }} />);
   expect(container.querySelector(".ant-tag")?.textContent).toBe("数据不足");

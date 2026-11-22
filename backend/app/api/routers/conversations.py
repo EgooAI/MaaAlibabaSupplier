@@ -42,8 +42,8 @@ from backend.app.shared.crm.customer_portrait_store import (
     LOST_REASONS,
     PORTRAIT_STAGES,
     CustomerPortraitStore,
-    public_portrait_fields,
 )
+from backend.app.shared.crm.customer_view import customer_view
 from backend.app.shared.crm.identities import PLATFORM_PID, message_external_id
 from backend.app.shared.crm.inbox_store import InboxStore
 from backend.app.shared.crm.inbox_queries import (
@@ -61,10 +61,9 @@ from backend.app.shared.crm.views import (
     CrmConversationDigest,
     CrmResolver,
     format_created_at,
-    is_self_account,
     message_display_text,
     normalize_message_type,
-    resolve_contact_cid,
+    resolve_contact_account,
     resolve_role,
 )
 from backend.app.shared.export_zip import build_export_zip
@@ -155,7 +154,7 @@ def _inbox_store() -> tuple[InboxStore, Any]:
 def _inbox_projection(filters: InboxFilters, *, exclude: set[str] = frozenset()) -> dict:
     store, context = _inbox_store()
     return query_inbox(
-        store, context.self_ali_id, context.data_dir, _summary_customer_view,
+        store, context.self_ali_id, context.data_dir,
         filters.model_dump(exclude=exclude),
     )
 
@@ -294,7 +293,8 @@ def _build_aggregate(adapter: CRMAdapter, self_ali_id: str, conv: CrmConversatio
     last = message_dtos[-1] if message_dtos else None
     dialogue_count = sum(1 for message in conv.messages if not message.is_system)
     account_map = {account["aid"]: account for account in accounts if "aid" in account}
-    contact_cid = resolve_contact_cid(participants, account_map)
+    contact_account = resolve_contact_account(participants, account_map)
+    contact_cid = contact_account["cid"] if contact_account is not None else None
     portrait = None
     if contact_cid is not None and data_dir:
         portrait = CustomerPortraitStore().portrait_records(self_ali_id, data_dir, [contact_cid]).get(contact_cid)
@@ -307,9 +307,9 @@ def _build_aggregate(adapter: CRMAdapter, self_ali_id: str, conv: CrmConversatio
         "customers": customers,
         "platforms": platforms,
         "account_mappings": mappings,
-        "customer_view": _assemble_customer_view(
-            conv.contact_ali_id, accounts, customers, adapter.get_user_info(conv.contact_ali_id),
-            public_portrait_fields(contact_cid, portrait),
+        "customer_view": customer_view(
+            conv.contact_ali_id, contact_account,
+            next((customer for customer in customers if customer["cid"] == contact_cid), None), portrait,
         ),
         "latest": {
             "content": (last["message"]["content"] if isinstance(last["message"]["content"], str) else last["message"]["content"].get("label")) if last else None,
@@ -321,58 +321,7 @@ def _build_aggregate(adapter: CRMAdapter, self_ali_id: str, conv: CrmConversatio
     }
 
 
-def _minimal_customer_view(contact_ali_id: str) -> dict:
-    """Non-null fallback for contacts with zero data (same keys as the full view)."""
-    return {
-        "id": contact_ali_id,
-        "ali_id": None,
-        "login_id": None,
-        "encrypt_account_id": None,
-        "member_id": None,
-        "name": contact_ali_id,
-        "avatar_url": None,
-        "first_name": None,
-        "last_name": None,
-        "company": "",
-        "country": "",
-        "register_date": None,
-        "email": "",
-        "mobile": None,
-        "phone": "",
-        "stage": "unknown",
-        "tags": [],
-        "quality_tag": None,
-        "growth_level": None,
-        "industries": [],
-        "availability": "",
-        "joining_years": None,
-        "potential_score": None,
-        "recent_contact": None,
-        "email_validated": None,
-        "behavior": [],
-        "d90": {},
-        **public_portrait_fields(None, None),
-    }
-
-
-def _summary_customer_view(digest: CrmConversationDigest, preloaded: dict, portrait_fields: dict) -> dict:
-    participants = list(digest.participants or [])
-    accounts_map = preloaded["accounts"]
-    customers_map = preloaded["customers"]
-    accounts = [_dump(accounts_map[aid]) for aid in participants if aid in accounts_map]
-    customers = []
-    for account in accounts:
-        customer = customers_map.get(account.get("cid", 0))
-        if customer is not None:
-            customers.append(_dump(customer))
-    view = _assemble_customer_view(
-        digest.contact_ali_id, accounts, customers, preloaded["users"].get(digest.contact_ali_id),
-        portrait_fields,
-    )
-    return view if view is not None else _minimal_customer_view(digest.contact_ali_id)
-
-
-def _build_summary(digest: CrmConversationDigest, preloaded: dict, view: dict) -> dict:
+def _build_summary(digest: CrmConversationDigest, view: dict) -> dict:
     """Only assemble page DTOs; filtering uses the same customer view."""
     participants = list(digest.participants or [])
     if digest.latest_is_card:
@@ -396,102 +345,6 @@ def _build_summary(digest: CrmConversationDigest, preloaded: dict, view: dict) -
         "unread_count": 0,
         "dialogue_count": digest.dialogue_count,
         "business_cards": [],
-    }
-
-
-def _assemble_customer_view(
-    contact_ali_id: str, accounts: list[dict], customers: list[dict], user: Any, portrait_fields: dict,
-) -> dict | None:
-    account = next((a for a in accounts if not is_self_account(a)), None)
-    if account is None and accounts:
-        account = accounts[0]
-    customer = None
-    if account is not None:
-        customer = next((c for c in customers if c.get("cid") == account.get("cid")), None)
-    if customer is None and customers:
-        customer = customers[0]
-    if user is None and account is None:
-        return None
-    extra = (account.get("extra") or {}) if account else {}
-    name = ""
-    first_name = ""
-    last_name = ""
-    company = ""
-    country = ""
-    email = ""
-    mobile = ""
-    phone = ""
-    d90: dict = {}
-    quality_tag = ""
-    growth_level: list[str] = []
-    industries: list[str] = []
-    joining_years = None
-    potential_score = None
-    recent_contact = None
-    email_validated = None
-    available = ""
-    register_date = None
-    if user is not None:
-        first_name = user.first_name
-        last_name = user.last_name
-        name = f"{first_name} {last_name}".strip() or user.company_name or user.login_id or contact_ali_id
-        company = user.company_name
-        country = user.country_code
-        email = user.email
-        mobile = user.mobile_number
-        phone = user.phone_number
-        register_date = user.register_date or None
-        quality_tag = user.high_quality_level_tag
-        growth_level = [user.growth_level] if user.growth_level else []
-        industries = list(user.preferred_industries or [])
-        joining_years = user.joining_years or None
-        potential_score = user.potential_score or None
-        recent_contact = bool(user.recent_contact)
-        email_validated = bool(user.email_validated)
-        available = "可用" if user.available else "不可用"
-        d90 = {
-            "product_views": user.product_view_count,
-            "valid_inquiries": user.valid_inquiry_count,
-            "replied_inquiries": user.replied_inquiry_count,
-            "valid_rfqs": user.valid_rfq_count,
-            "login_days": user.login_days,
-            "spam_inquiries": user.spam_inquiry_count,
-            "blacklisted": user.blacklisted_count,
-        }
-    else:
-        name = str(extra.get("account") or account.get("nickname") or contact_ali_id)
-    # Resolve the contact explicitly; a missing buyer must not inherit the seller's avatar.
-    avatar = next((a.get("avatar") for a in accounts
-                   if str((a.get("extra") or {}).get("ali_id") or "") == contact_ali_id), None)
-    return {
-        "id": str((customer or {}).get("cid") or (account or {}).get("cid") or contact_ali_id),
-        "ali_id": (user.ali_id if user else None) or str(extra.get("ali_id") or "") or None,
-        "login_id": (user.login_id if user else None) or str(extra.get("login_id") or "") or None,
-        "encrypt_account_id": (user.encrypt_account_id if user else "") or None,
-        "member_id": (user.ali_member_id if user else "") or None,
-        "name": name,
-        "avatar_url": avatar or (user.avatar_url if user is not None else None) or None,
-        "first_name": first_name or None,
-        "last_name": last_name or None,
-        "company": company,
-        "country": country or str((customer or {}).get("region") or ""),
-        "register_date": format_created_at(register_date) if register_date else None,
-        "email": email,
-        "mobile": mobile or None,
-        "phone": phone,
-        "stage": "unknown",
-        "tags": [tag for tag in [quality_tag, *growth_level] if tag],
-        "quality_tag": quality_tag or None,
-        "growth_level": growth_level[0] if growth_level else None,
-        "industries": industries,
-        "availability": available,
-        "joining_years": joining_years,
-        "potential_score": potential_score,
-        "recent_contact": recent_contact,
-        "email_validated": email_validated,
-        "behavior": [],
-        "d90": d90,
-        **portrait_fields,
     }
 
 
@@ -542,7 +395,7 @@ def list_conversations(
     if offset > 0 and pagination_revision != projection["pagination_revision"]:
         raise AppError("会话数据已变更或缺少分页版本，请返回第一页重新加载。", status_code=409)
     items = [
-        {**_build_summary(digest, projection["preloaded"], projection["views"][digest.sid]),
+        {**_build_summary(digest, projection["views"][digest.sid]),
          **public_state(projection["states"][digest.sid])}
         for digest in projection["digests"][offset:offset + limit]
     ]
@@ -627,7 +480,7 @@ def send_message(conversation_id: int, body: SendMessageInput) -> dict:
         raise AppError("会话不存在", status_code=404)
     if not conv.contact_ali_id or not conv.contact_ali_id.strip():
         raise AppError("会话缺少联系人身份，无法安全跳转客户端", status_code=503)
-    user = adapter.get_user_info(conv.contact_ali_id)
+    user = adapter.get_conversation_user_info(conv)
     login_id = (user.login_id if user and user.login_id else "").strip()
     if not login_id:
         raise AppError("联系人缺少 login_id，无法安全跳转客户端", status_code=503)
@@ -791,7 +644,7 @@ def goto_contact_api(conversation_id: int, body: GotoContactInput) -> dict:
     conv = adapter.get_conversation_detail(self_ali_id, conversation_id)
     if conv is None:
         raise AppError("会话不存在", status_code=404)
-    user = adapter.get_user_info(conv.contact_ali_id)
+    user = adapter.get_conversation_user_info(conv)
     login_id = (user.login_id if user and user.login_id else "").strip()
     if not login_id:
         raise AppError("联系人缺少 login_id，无法安全跳转客户端", status_code=503)

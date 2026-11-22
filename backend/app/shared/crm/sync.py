@@ -39,9 +39,11 @@ from backend.app.shared.crm.views import (
     CrmMessage,
     is_self_account,
     message_display_text,
+    resolve_contact_account,
 )
 from backend.app.shared.crm.sync_store import canonical_source_dir, upsert_messages, write_sync_state
 from backend.app.shared.crm.inbox_store import _epoch, write_inbox
+from backend.app.shared.crm.customer_view import user_info_from_extra
 from backend.app.shared.crm.paths import default_crm_database_path
 from backend.app.shared.mitm.pool import SelfInfo, UserInfo, get_user_info_pool
 from backend.app.shared.utils.log_context import bind_log_context, capture_log_context, log_event
@@ -477,12 +479,14 @@ class CRMAdapter:
 
     def get_user_info(self, identifier: str) -> UserInfo | None:
         account = self._account_by_any_mapping(identifier)
-        if account is None or not isinstance(account.extra, dict):
-            return None
-        try:
-            return UserInfo.model_validate(account.extra)
-        except ValueError:
-            return None
+        return user_info_from_extra(account.extra if account is not None else None)
+
+    def get_conversation_user_info(self, conversation: CrmConversation) -> UserInfo | None:
+        """Reads the committed contact's profile without resolving aliases again."""
+        with Session(self.engine) as session:
+            accounts = session.exec(select(Account).where(Account.aid.in_(conversation.participants))).all()
+            contact = resolve_contact_account(list(conversation.participants), {account.aid: account for account in accounts})
+            return user_info_from_extra(contact.extra if contact is not None else None)
 
     def _account_by_any_mapping(self, key: str) -> Any | None:
         with Session(self.engine) as session:

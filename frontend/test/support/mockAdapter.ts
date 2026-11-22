@@ -23,7 +23,7 @@ import type { ExecutionRunDetail, ExecutionRunSummary, ExecutionState } from "@/
 import type { OperationsBackend } from "@/services/interfaces";
 import type { SuggestionRun } from "@/types/suggestions";
 import { connectionSnapshot } from "@/mock/connectionData";
-import { ApiError, ExperimentRunConflict } from "@/services/httpAdapter";
+import { ApiError, ExperimentRunConflict, PortraitTagConflict } from "@/services/httpAdapter";
 import { isRunFinished } from "@/types/experiment";
 import type {
   LostReason,
@@ -475,8 +475,12 @@ export const mockBackend: OperationsBackend = {
     const label = name.normalize("NFKC").trim();
     if (!label) throw invalid();
     const key = label.toLowerCase();
-    if ([...portraitTags.values()].some((tag) => tag.name.toLowerCase() === key)) {
-      throw new ApiError("同名标签已存在", "/api/portraits/tags", { status: 409 });
+    const existing = [...portraitTags.values()].find((tag) => tag.name.toLowerCase() === key);
+    if (existing) {
+      throw new PortraitTagConflict(
+        { ...existing, usage_count: portraitUsage(existing.tag_id) },
+        new ApiError("同名标签已存在", "/api/portraits/tags", { status: 409 }),
+      );
     }
     const now = Date.now() / 1000;
     const tag: PortraitTag = {

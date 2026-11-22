@@ -17,7 +17,9 @@ export function usePortraitTags(tagRevision?: number) {
     }
   }, [backend]);
   const add = useCallback((tag: PortraitTag) => {
-    setTags((current) => current.some((item) => item.tag_id === tag.tag_id) ? current : [...current, tag]);
+    setTags((current) => current.some((item) => item.tag_id === tag.tag_id)
+      ? current.map((item) => item.tag_id === tag.tag_id && tag.version >= item.version ? tag : item)
+      : [...current, tag]);
   }, []);
   useEffect(() => {
     // Tag definitions are external data; the setState happens after the request settles.

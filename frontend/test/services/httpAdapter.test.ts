@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ExperimentRunConflict, httpBackend } from "@/services/httpAdapter";
+import { ApiError, ExperimentRunConflict, PortraitTagConflict, httpBackend } from "@/services/httpAdapter";
 import type { ConversationAggregateDto } from "@/types/chatTransport";
 import type { ConversationQuery } from "@/types/inbox";
 import { accountSession } from "@/services/accountSession";
@@ -30,6 +30,26 @@ afterEach(() => {
 });
 
 describe("http adapter contract", () => {
+  it("preserves the server's duplicate tag and rejects unrecognized conflicts without retrying", async () => {
+    const tag = { tag_id: "tag-1", name: "Straße", description: "", archived: false, version: 2, created_at: 1, updated_at: 2, usage_count: 4 };
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock;
+    for (const data of [{ tag }, null, { tag: { tag_id: "invalid" } }]) {
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ code: 1, msg: "同名标签已存在", data }), {
+        status: 409, headers: { "X-Account-Epoch": "mock-1" },
+      }));
+      const error = await httpBackend.createPortraitTag({ name: "STRASSE" }).catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(ApiError);
+      if (data?.tag === tag) {
+        expect(error).toBeInstanceOf(PortraitTagConflict);
+        expect(error).toMatchObject({ tag, status: 409 });
+      } else {
+        expect(error).not.toBeInstanceOf(PortraitTagConflict);
+      }
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it.each([
     [503, "not json", "http"],
     [200, "not json", "protocol"],

@@ -1,6 +1,6 @@
 "use client";
 
-import { Card, Descriptions, Tag } from "antd";
+import { Card, Tag } from "antd";
 import type { CSSProperties } from "react";
 import { customerQualityOf, type CustomerQualityGrade } from "@/domain/chat/customerQuality";
 import type { CustomerD90Behavior } from "@/types/chatCanonical";
@@ -36,6 +36,18 @@ export function CustomerQualityBadge({ behavior, gradeOnly = false }: {
 export function CustomerQualityDetails({ behavior }: { behavior?: CustomerD90Behavior }) {
   const quality = customerQualityOf(behavior);
   const value = (number: number | undefined) => number ?? "—";
+  const rows = [
+    [
+      { label: "浏览商品", value: behavior?.productViews },
+      { label: "有效询盘", value: behavior?.validInquiries },
+      { label: "有效 RFQ", value: behavior?.validRfqs },
+    ],
+    [
+      { label: "登录天数", value: behavior?.loginDays },
+      { label: "垃圾询盘", value: behavior?.spamInquiries },
+      { label: "被拉黑次数", value: behavior?.blacklisted },
+    ],
+  ];
   return (
     <Card title="客户质量指数" size="small">
       <div className="flex flex-col gap-3">
@@ -43,25 +55,22 @@ export function CustomerQualityDetails({ behavior }: { behavior?: CustomerD90Beh
           <CustomerQualityBadge behavior={behavior} gradeOnly={quality !== null} />
           {quality !== null ? <span className="text-xl font-semibold tabular-nums">{quality.score} <span className="text-sm font-normal text-slate-400">/ 100</span></span> : null}
         </div>
-        <p className="text-xs text-slate-500">根据已采集行为数据计算，缺失项按 0 计入。六项均无正值时显示“数据不足”。</p>
-        <Descriptions title="近 90 天行为" size="small" column={1} items={[
-          { key: "a", label: "A · 浏览", children: value(behavior?.productViews) },
-          { key: "b", label: "B · 有效询盘", children: value(behavior?.validInquiries) },
-          { key: "c", label: "C · 有效 RFQ", children: value(behavior?.validRfqs) },
-          { key: "d", label: "D · 登录天数", children: value(behavior?.loginDays) },
-          { key: "e", label: "E · 垃圾询盘", children: value(behavior?.spamInquiries) },
-          { key: "f", label: "F · 拉黑", children: value(behavior?.blacklisted) },
-          { key: "replied", label: "已回复询盘", children: value(behavior?.repliedInquiries) },
-        ]} />
-        <details className="text-xs text-slate-500">
-          <summary className="cursor-pointer">计算与评级说明</summary>
-          <div className="mt-2 space-y-2">
-            <p className="break-words">I′ = round(clamp(2 × log₂(A + 2D + 4B + 8C + 1) × [1 + (4B + 8C + 1) / (A + 2D + 1)] − 8 × log₂(E + F + 1) + 60, 0, 100))</p>
-            <p>先将分数限制在 0–100，再四舍五入取整。已回复询盘不参与计分。</p>
-            <p>S：90–100，A：80–89，B：70–79，C：60–69，D：0–59。</p>
-            <p>行为数据为采集时保存的值，尚无独立采集时间，可能未反映最新变化。</p>
-          </div>
-        </details>
+        <table className="w-full table-fixed border-collapse text-center">
+          <caption className="pb-2 text-left text-xs text-slate-500">近 90 天行为</caption>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row[0].label} className="border-t border-slate-100">
+                {row.map((metric) => (
+                  <td key={metric.label} className="px-1 py-2 align-top">
+                    <div className="text-xs text-slate-500">{metric.label}</div>
+                    <div className="mt-1 text-sm font-medium tabular-nums">{value(metric.value)}</div>
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="text-xs text-slate-500">已回复询盘：{value(behavior?.repliedInquiries)}</p>
       </div>
     </Card>
   );

@@ -19,9 +19,9 @@ from backend.app.shared.crm.customer_portrait_store import (
     PortraitNotReady,
     inbox_scope_ready,
     load_portrait_bundle,
-    public_portrait_fields,
     resolve_scope_contacts,
 )
+from backend.app.shared.crm.customer_view import customer_view
 from backend.app.shared.crm.inbox_store import InboxStore
 from backend.app.shared.crm.sync_store import canonical_source_dir
 from backend.app.shared.crm.views import format_created_at
@@ -75,17 +75,17 @@ def export_customer_portraits(store: InboxStore, *, seller: str, data_dir: str, 
         customer = customers.get(cid) or {}
         extra = account.get("extra") if isinstance(account.get("extra"), dict) else {}
         portrait = portraits[cid]
-        fields = public_portrait_fields(cid, portrait)
+        view = customer_view(str(extra.get("ali_id") or account.get("account") or ""), account, customer, portrait)
         rows[cid] = {
             "cid": cid,
-            "ali_id": extra.get("ali_id") or account.get("account") or "",
-            "name": customer.get("name") or account.get("nickname") or "",
-            "company": extra.get("company_name") or "",
-            "country": extra.get("country_code") or customer.get("region") or "",
-            "stage": fields["business_stage"],
-            "business_tags": "; ".join(tag["name"] for tag in fields["business_tags"]),
-            "lost_reason": fields["lost_reason"] or "",
-            "lost_note": fields["lost_note"] or "",
+            "ali_id": view["ali_id"] or "",
+            "name": view["name"],
+            "company": view["company"],
+            "country": view["country"],
+            "stage": view["business_stage"],
+            "business_tags": "; ".join(tag["name"] for tag in view["business_tags"]),
+            "lost_reason": view["lost_reason"] or "",
+            "lost_note": view["lost_note"] or "",
             "updated_at": format_created_at(portrait.get("updated_at")),
         }
 

@@ -1,5 +1,8 @@
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
+import json
 import os
+import sqlite3
 import time
 from threading import Event
 from types import SimpleNamespace
@@ -9,10 +12,14 @@ import pytest
 
 from backend.app.api.routers import conversations
 from backend.app.shared.backend import account_context, outbox_service, source_messages
+from backend.app.shared.crm.sync import CRMAdapter
 from backend.app.shared.crm.outbox_store import OutboxStore
 from backend.app.shared.crm.identities import self_sender_id
+from backend.app.shared.mitm.pool import UserInfo
 from backend.app.shared.utils import app_config
+from backend.app.task_queue import TaskQueue
 from backend.tests.test_connection_api import chat, client, connect, sdk
+from backend.tests.test_inbox_api import archive, row
 from backend.tests.test_outbox_service import DeferredQueue
 
 
@@ -170,9 +177,56 @@ def test_missing_conversation_or_login_never_queues(client, outbox, monkeypatch)
     monkeypatch.setattr(adapter_cls, "get_conversation_detail", lambda *args: SimpleNamespace(contact_ali_id=""))
     assert submit(client).status_code == 503
     monkeypatch.setattr(adapter_cls, "get_conversation_detail", lambda *args: SimpleNamespace(contact_ali_id="buyer"))
-    monkeypatch.setattr(adapter_cls, "get_user_info", lambda *args: SimpleNamespace(login_id="", alias="unsafe"))
+    monkeypatch.setattr(adapter_cls, "get_conversation_user_info", lambda *args: SimpleNamespace(login_id="", alias="unsafe"))
     assert submit(client).status_code == 503
     assert outbox.queue.jobs == []
+
+
+@pytest.mark.parametrize("contact_state", ["resolved", "unmarked", "missing_account", "ambiguous", "invalid_profile", "missing_login"])
+def test_send_and_goto_use_committed_contact_instead_of_redirected_alias(client, outbox, archive, sdk, monkeypatch, contact_state):
+    adapter, apply = archive
+    apply(("buyer", [row(1)]))
+    buyer_aid = adapter.upsert_user_info(UserInfo(ali_id="buyer", login_id="buyer-login"))
+    wrong_aid = adapter.upsert_user_info(UserInfo(ali_id="other-person", login_id="wrong-login"))
+    seller = adapter._account_by_mapping("ali_id", "seller-a")
+    with closing(sqlite3.connect(adapter.accounts.database_path)) as conn:
+        conn.execute("UPDATE accountmapping SET aid=? WHERE type='ali_id' AND key='buyer'", (wrong_aid,))
+        if contact_state == "unmarked":
+            conn.execute("UPDATE account SET extra=json_remove(extra, '$.is_self')")
+        elif contact_state == "missing_account":
+            conn.execute("DELETE FROM account WHERE aid=?", (buyer_aid,))
+        elif contact_state == "ambiguous":
+            conn.execute("UPDATE session_meta SET participants=? WHERE sid=1", (json.dumps([seller.aid, buyer_aid, wrong_aid]),))
+        elif contact_state == "invalid_profile":
+            conn.execute("UPDATE account SET extra=json_set(extra, '$.preferred_industries', 42) WHERE aid=?", (buyer_aid,))
+        elif contact_state == "missing_login":
+            conn.execute("UPDATE account SET extra=json_set(extra, '$.login_id', '  ') WHERE aid=?", (buyer_aid,))
+        conn.commit()
+    monkeypatch.setattr(conversations, "CRMAdapter", CRMAdapter)
+    navigate = Mock(return_value=(True, "located"))
+    monkeypatch.setattr(conversations, "goto_contact", navigate)
+    queue = TaskQueue()
+    resolved = contact_state in {"resolved", "unmarked"}
+    try:
+        if resolved:
+            mismatch = client.post("/api/conversations/1/goto-contact", json={"login_id": "wrong-login"})
+            assert mismatch.status_code == 409, mismatch.text
+        response = client.post("/api/conversations/1/goto-contact", json={"login_id": "buyer-login"})
+        assert response.status_code == (200 if resolved else 503), response.text
+    finally:
+        queue.shutdown()
+
+    response = submit(client)
+    assert response.status_code == (200 if resolved else 503), response.text
+    if resolved:
+        navigate.assert_called_once_with("buyer-login")
+        assert response.json()["data"]["outbox"]["login_id"] == "buyer-login"
+        assert outbox.queue.run()[0]
+        assert sdk.calls[0][1]["ContactSearch_InputText"]["action"]["param"]["input_text"] == "buyer-login"
+    else:
+        navigate.assert_not_called()
+        assert outbox.queue.jobs == [] and not sdk.calls
+        assert not outbox.service.store.database_path.exists()
 
 
 @pytest.mark.parametrize("scope", ["seller", "directory"])

@@ -11,7 +11,8 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.api.account_scope import AccountRoute
 from backend.app.api.envelope import AppError, ok
@@ -27,6 +28,7 @@ from backend.app.shared.crm.customer_portrait_store import (
     PortraitConflict,
     PortraitNotFound,
     PortraitNotReady,
+    PortraitTagConflict,
 )
 from backend.app.shared.crm.inbox_store import InboxStore
 
@@ -36,23 +38,27 @@ _PORTRAIT_ERRORS = (PortraitConflict, PortraitNotFound, PortraitNotReady, ValueE
 
 
 class TagCreateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=TAG_NAME_MAX)
     description: str = Field(default="", max_length=TAG_DESCRIPTION_MAX)
 
 
 class TagUpdateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, min_length=1, max_length=TAG_NAME_MAX)
     description: str | None = Field(default=None, max_length=TAG_DESCRIPTION_MAX)
     archived: bool | None = None
 
 
 class PortraitTargetInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     sid: int = Field(ge=1)
     expected_cid: int = Field(ge=1)
     expected_version: int = Field(ge=0)
 
 
 class PortraitChangesInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     stage: str | None = None
     lost_reason: str | None = None
     lost_note: str | None = Field(default=None, max_length=LOST_NOTE_MAX)
@@ -61,6 +67,7 @@ class PortraitChangesInput(BaseModel):
 
 
 class PortraitBatchInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     request_id: str = Field(min_length=1, max_length=64, pattern=r"\S")
     targets: list[PortraitTargetInput] = Field(min_length=1, max_length=MAX_BATCH_TARGETS)
     changes: PortraitChangesInput
@@ -97,9 +104,14 @@ def list_portrait_tags() -> dict:
 
 @router.post("/api/portraits/tags")
 def create_portrait_tag(body: TagCreateInput) -> dict:
-    store, _, _ = _portrait_store()
+    store, seller, data_dir = _portrait_store()
     try:
-        tag = store.create_tag(name=body.name, description=body.description)
+        tag = store.create_tag(seller=seller, data_dir=data_dir, name=body.name, description=body.description)
+    except PortraitTagConflict as error:
+        return JSONResponse(
+            status_code=409,
+            content={"code": 1, "msg": str(error), "data": {"tag": error.tag}},
+        )
     except _PORTRAIT_ERRORS as error:
         raise _translate(error) from error
     return ok({"tag": tag})

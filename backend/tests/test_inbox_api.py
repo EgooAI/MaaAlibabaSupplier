@@ -1,9 +1,10 @@
+import csv
 import json
 import os
 import sqlite3
 from base64 import b64decode
 from contextlib import closing
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -163,6 +164,62 @@ def test_profile_resolution_country_priority_casefold_and_exact_tags(client, arc
         conn.commit()
     assert data(client, country="TR")["total"] == 0
     assert data(client, country="US")["total"] == 1
+
+
+@pytest.mark.parametrize("identity_state", ["enriched", "unmarked", "unmarked_shared_customer", "redirected_alias"])
+def test_customer_identity_and_enriched_name_agree_in_list_detail_and_csv(client, archive, monkeypatch, identity_state):
+    adapter, apply = archive
+    apply(("buyer", [row(1)]))
+    buyer = adapter._account_by_mapping("ali_id", "buyer")
+    adapter.upsert_user_info(UserInfo(
+        ali_id="buyer", login_id="alice-login", first_name="Alice", company_name="Alice Trading",
+        country_code="DE", avatar_url="https://img.example/alice.png",
+    ))
+    adapter.upsert_self_info(SelfInfo(ali_id="seller-a", login_id="seller-login", first_name="SELLER"))
+    sid = data(client)["items"][0]["sid"]
+    response = client.post("/api/portraits/batch", json={
+        "request_id": "profile-identity", "targets": [{"sid": sid, "expected_cid": buyer.cid, "expected_version": 0}],
+        "changes": {"stage": "following_up"},
+    })
+    assert response.status_code == 200, response.text
+    if identity_state in {"unmarked", "unmarked_shared_customer"}:
+        with closing(sqlite3.connect(InboxStore().database_path)) as conn:
+            conn.execute("UPDATE account SET extra=json_remove(extra, '$.is_self')")
+            if identity_state == "unmarked_shared_customer":
+                seller = adapter._account_by_mapping("ali_id", "seller-a")
+                conn.execute("UPDATE account SET cid=? WHERE aid=?", (buyer.cid, seller.aid))
+            conn.commit()
+        # Isolates legacy participant resolution from the selected-archive readiness check.
+        monkeypatch.setattr(conversations, "safe_has_selected_archive", lambda seller: seller == "seller-a")
+    elif identity_state == "redirected_alias":
+        wrong_aid = adapter.upsert_user_info(UserInfo(
+            ali_id="other-person", login_id="wrong-login", first_name="Wrong", last_name="Person",
+            country_code="US", avatar_url="https://img.example/wrong.png",
+        ))
+        with closing(sqlite3.connect(InboxStore().database_path)) as conn:
+            conn.execute("UPDATE accountmapping SET aid=? WHERE type='ali_id' AND key='buyer'", (wrong_aid,))
+            conn.commit()
+
+    expected = {
+        "id": str(buyer.cid), "cid": buyer.cid, "ali_id": "buyer", "login_id": "alice-login",
+        "name": "Alice", "company": "Alice Trading", "country": "DE",
+        "avatar_url": "https://img.example/alice.png", "business_stage": "following_up",
+    }
+    summary = data(client)["items"][0]
+    detail = data(client, f"/api/conversations/{sid}")
+    for item in (summary, detail):
+        assert {field: item["customer_view"][field] for field in expected} == expected
+    assert data(client, q="Alice", search_scope="customer")["total"] == 1
+    assert data(client, q="Wrong Person", search_scope="customer")["total"] == 0
+    response = client.post("/api/portraits/export", json={"conversationIds": [sid]})
+    assert response.status_code == 200, response.text
+    exported = response.json()["data"]
+    assert exported["exported"] == 1 and exported["missing"] == []
+    record, = csv.DictReader(StringIO(exported["content"].lstrip("\ufeff")))
+    assert {field: record[field] for field in ("cid", "ali_id", "name", "company", "country", "stage")} == {
+        "cid": str(buyer.cid), "ali_id": "buyer", "name": "Alice", "company": "Alice Trading",
+        "country": "DE", "stage": "following_up",
+    }
 
 
 def test_contact_avatars_reach_list_and_detail_and_survive_profile_and_im_updates(client, archive, monkeypatch):

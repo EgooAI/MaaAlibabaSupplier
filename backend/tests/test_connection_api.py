@@ -65,7 +65,7 @@ def chat(monkeypatch):
             return SimpleNamespace(contact_ali_id="buyer")
 
         @staticmethod
-        def get_user_info(*args):
+        def get_conversation_user_info(*args):
             return SimpleNamespace(login_id="buyer-login")
 
     monkeypatch.setattr(conversations, "CRMAdapter", FakeAdapter)
@@ -548,7 +548,7 @@ def test_send_rejects_missing_login_and_goto_rejects_unrelated_target(client, sd
     connect(client)
     response = client.post("/api/conversations/1/goto-contact", json={"login_id": "another-buyer"})
     assert response.status_code == 409
-    monkeypatch.setattr(conversations.CRMAdapter, "get_user_info", lambda *args: SimpleNamespace(login_id=""))
+    monkeypatch.setattr(conversations.CRMAdapter, "get_conversation_user_info", lambda *args: SimpleNamespace(login_id=""))
     response = client.post("/api/conversations/1/messages", json={"content": "hello", "action": "send", "idempotency_key": "key"})
     assert response.status_code == 503
     assert TaskQueue._instances.get(DEFAULT_QUEUE_NAME) is None

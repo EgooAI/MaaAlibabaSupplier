@@ -15,6 +15,10 @@ header, while reads tolerate a missing one.
   participants win only when they share one `cid`. Two-party conversations
   otherwise fall back to their second participant so synced rows keep working
   when `is_self` is missing. Anything else resolves to no customer.
+- List, detail and CSV profiles read the resolved account's stored profile through
+  `shared/crm/customer_view.py`. Client navigation and send-target validation use
+  the same contact account; they do not resolve its display alias to another
+  account. Enriched names are shared across the panel and export.
 - Portrait rows and tag relations are scoped by
   `(seller, canonical_data_dir, cid)`. Tag definitions are shared by the CRM
   database; relations, operation records and revisions stay workspace-scoped.
@@ -28,7 +32,7 @@ header, while reads tolerate a missing one.
 
 ## List and Detail Fields
 
-`customer_view` in list, overview and detail DTOs adds:
+`customer_view` in list and detail DTOs adds:
 
 ```ts
 {
@@ -46,16 +50,22 @@ header, while reads tolerate a missing one.
 `business_stage` is the current business judgement; it is not an order state
 machine and does not claim platform truth for `won`. Existing platform fields
 (`tags`, `quality_tag`, `growth_level`) remain read-only data collected from the
-platform. Session work state (unread, reply state, deadline) is unchanged.
+platform. Session work state (unread, reply state, pending-since time) is unchanged.
 
-`lost` maintenance requires `lost_reason` and optional `lost_note`; leaving the
-lost stage clears those fields. History remains available through operations.
+`lost_reason` and `lost_note` can be maintained while the effective stage is
+`lost`. Omitted fields retain their saved values; an empty note clears it.
+The stage editor supplies a reason when entering `lost`; the API permits an
+omitted reason. Leaving `lost` clears both fields.
+History remains available through operations.
 
 The chat header shows the current customer stage beside the customer-info button.
 Its popover edits the stage and optional failure details, with an explicit save.
 The customer-info drawer's portrait-tag card edits tag associations separately;
 each editor submits only its own changed fields with the displayed portrait version.
 Both refresh the detail and conversation list after a successful save or version conflict.
+The tag input supports selecting existing tags and creating new ones. Creating a
+tag updates the shared catalog; the customer association takes effect only after
+the user saves the tag selection.
 
 ## Endpoints
 
@@ -73,6 +83,13 @@ database (casefolded). Tags are archived instead of deleted; archived tags can
 be displayed and removed from customers but not added. Renaming a tag keeps all
 relations and bumps `tag_revision` for every workspace.
 
+Creating a duplicate name returns HTTP 409 with `data: {tag: PortraitTag}`.
+The tag is the existing record with the current workspace's usage count. Its
+name, description and revision are unchanged. The tag input uses this response
+to select the existing ID, including Unicode-equivalent names; it does not
+attempt to reproduce the database's casefold rules. Archived tags still cannot
+be added. Other conflicts do not imply a reusable tag.
+
 ## Batch Contract
 
 Request:
@@ -82,11 +99,11 @@ Request:
   "request_id": "one id per user action, <= 64 chars",
   "targets": [{"sid": 42, "expected_cid": 301, "expected_version": 3}],
   "changes": {
-    "stage": "following_up",
+    "stage": "lost",
     "lost_reason": "price",
     "lost_note": "free text",
-    "add_tag_ids": ["..."],
-    "remove_tag_ids": ["..."]
+    "add_tag_ids": ["new-tag-id"],
+    "remove_tag_ids": ["old-tag-id"]
   }
 }
 ```
@@ -109,6 +126,10 @@ Rules:
 - `request_id` is idempotent per workspace: an identical retry returns the
   stored receipt, while reusing the id with a different payload or from another
   workspace conflicts with 409.
+- A submitted empty `lost_note` is distinct from an omitted note in new
+  receipts. Older receipts stored both as null and cannot reliably identify a
+  clear operation. Retrying an explicit clear against such a receipt returns
+  409 without applying it again; other unchanged request encodings still replay.
 
 Response:
 
@@ -123,7 +144,7 @@ Response:
 ```
 
 Validation errors (unknown stage/reason, missing tag, mixed add/remove,
-malformed targets) return 422. Missing tags and archived-tag additions are
+malformed targets or unknown request fields) return 422. Missing tags and archived-tag additions are
 rejected before any write.
 
 ## Export

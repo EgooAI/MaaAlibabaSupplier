@@ -2,8 +2,8 @@
 
 The API explicitly initializes an existing archive before calling this module.
 Store-private transaction helpers are confined here until a shared read-session
-interface is available. Customer resolution is supplied by the API's existing
-validated view builder, so filtering and rendered profiles cannot disagree.
+interface is available. Filtering and rendered profiles share the same resolved
+contact account and customer projection.
 """
 
 from __future__ import annotations
@@ -16,14 +16,13 @@ from dataclasses import asdict
 from backend.app.shared.crm.customer_portrait_store import (
     load_portrait_bundle,
     load_portrait_revisions,
-    public_portrait_fields,
 )
+from backend.app.shared.crm.customer_view import customer_view
 from backend.app.shared.crm.identities import session_key_prefix
 from backend.app.shared.crm.inbox_store import InboxStore
 from backend.app.shared.crm.sdk import Account, Customer
 from backend.app.shared.crm.sync_store import canonical_source_dir
-from backend.app.shared.crm.views import CrmConversationDigest, coerce_epoch, resolve_contact_cid
-from backend.app.shared.mitm.pool import UserInfo
+from backend.app.shared.crm.views import CrmConversationDigest, coerce_epoch, resolve_contact_account
 
 
 STATE_FIELDS = (
@@ -74,7 +73,7 @@ def observe_inbox(store: InboxStore, seller: str, data_dir: str) -> dict:
         return {"inbox_revision": store._metadata(conn, key)["inbox_revision"]}
 
 
-def query_inbox(store: InboxStore, seller: str, data_dir: str, build_view, filters: dict) -> dict:
+def query_inbox(store: InboxStore, seller: str, data_dir: str, filters: dict) -> dict:
     key = {"seller": seller, "data_dir": canonical_source_dir(data_dir)}
     prefix = session_key_prefix(seller)
     now = time.time()
@@ -134,46 +133,26 @@ def query_inbox(store: InboxStore, seller: str, data_dir: str, build_view, filte
             ))
         digests.sort(key=lambda d: (coerce_epoch(d.latest_created_at), d.sid), reverse=True)
         aids = {aid for d in digests for aid in d.participants}
-        contacts = {d.contact_ali_id for d in digests}
-        mappings = conn.execute("""
-            SELECT key, aid, type FROM accountmapping
-            WHERE key IN (SELECT value FROM json_each(?))
-              AND type IN ('ali_id', 'login_id', 'encrypt_account_id')
-            ORDER BY CASE type WHEN 'ali_id' THEN 0 WHEN 'login_id' THEN 1 ELSE 2 END, aid, key
-        """, (json.dumps(sorted(contacts)),)).fetchall()
-        key_to_aid = {}
-        for row in mappings:
-            hash_row(dict(row))
-            key_to_aid.setdefault(row["key"], row["aid"])
-        aids.update(key_to_aid.values())
-        accounts, customers, users = {}, {}, {}
+        accounts, customers = {}, {}
         for row in conn.execute("SELECT * FROM account WHERE aid IN (SELECT value FROM json_each(?)) ORDER BY aid",
                                 (json.dumps(sorted(aids)),)):
             record = dict(row)
             hash_row(record)
             for field in ("extra", "sids"):
                 record[field] = json.loads(record[field]) if record[field] else None
-            accounts[row["aid"]] = Account.model_validate(record)
-        cids = sorted({account.cid for account in accounts.values()})
+            accounts[row["aid"]] = Account.model_validate(record).model_dump(mode="json")
+        cids = sorted({account["cid"] for account in accounts.values()})
         for row in conn.execute("SELECT * FROM customer WHERE cid IN (SELECT value FROM json_each(?)) ORDER BY cid",
                                 (json.dumps(cids),)):
             record = dict(row)
             hash_row(record)
             for field in ("extra", "image"):
                 record[field] = json.loads(record[field]) if record[field] else None
-            customers[row["cid"]] = Customer.model_validate(record)
-        for contact, aid in key_to_aid.items():
-            account = accounts.get(aid)
-            if account is not None and isinstance(account.extra, dict):
-                try:
-                    users[contact] = UserInfo.model_validate(account.extra)
-                except ValueError:
-                    pass
-        preloaded = {"accounts": accounts, "customers": customers, "users": users}
-        cid_by_sid = {
-            digest.sid: resolve_contact_cid(list(digest.participants), accounts) for digest in digests
+            customers[row["cid"]] = Customer.model_validate(record).model_dump(mode="json")
+        contacts = {
+            digest.sid: resolve_contact_account(list(digest.participants), accounts) for digest in digests
         }
-        portrait_cids = sorted({cid for cid in cid_by_sid.values() if cid is not None})
+        portrait_cids = sorted({account["cid"] for account in contacts.values() if account is not None})
         portraits = load_portrait_bundle(conn, key["seller"], key["data_dir"], portrait_cids)
         portrait_revisions = load_portrait_revisions(conn, key["seller"], key["data_dir"])
         hash_row(portrait_revisions)
@@ -184,9 +163,10 @@ def query_inbox(store: InboxStore, seller: str, data_dir: str, build_view, filte
         selected, views = [], {}
         for digest in digests:
             state = states[digest.sid]
-            cid = cid_by_sid.get(digest.sid)
+            account = contacts[digest.sid]
+            cid = account["cid"] if account is not None else None
             portrait = portraits.get(cid) if cid is not None else None
-            view = build_view(digest, preloaded, public_portrait_fields(cid, portrait))
+            view = customer_view(digest.contact_ali_id, account, customers.get(cid), portrait)
             views[digest.sid] = view
             hash_row([asdict(digest), view, state])
             q = filters.get("q", "").casefold()
@@ -229,7 +209,7 @@ def query_inbox(store: InboxStore, seller: str, data_dir: str, build_view, filte
             for name in ("unread", "needs_reply", "history_pending", "waiting_customer")
         }}
         return {
-            "digests": selected, "preloaded": preloaded, "views": views, "states": states,
+            "digests": selected, "views": views, "states": states,
             "total": len(selected), "counts": counts, "updated_at": now,
             "inbox_revision": metadata["inbox_revision"],
             "pagination_revision": fingerprint.hexdigest(), **portrait_revisions,

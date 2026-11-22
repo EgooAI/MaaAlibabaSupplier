@@ -25,7 +25,7 @@ from uuid import uuid4
 from backend.app.shared import contract
 from backend.app.shared.crm.paths import default_crm_database_path
 from backend.app.shared.crm.sync_store import canonical_source_dir
-from backend.app.shared.crm.views import is_self_account, resolve_contact_cid
+from backend.app.shared.crm.views import resolve_contact_account
 
 PORTRAIT_STAGES = contract.PORTRAIT_STAGES
 LOST_REASONS = contract.LOST_REASONS
@@ -42,6 +42,14 @@ class PortraitConflict(Exception):
     def __init__(self, message: str, items: list[dict] | None = None) -> None:
         super().__init__(message)
         self.items = items or []
+
+
+class PortraitTagConflict(PortraitConflict):
+    """A tag with the normalized name already exists."""
+
+    def __init__(self, tag: dict) -> None:
+        super().__init__("同名标签已存在")
+        self.tag = tag
 
 
 class PortraitNotFound(LookupError):
@@ -164,15 +172,10 @@ def resolve_scope_contacts(
     contacts: dict[int, tuple[int, dict]] = {}
     for sid in known:
         group = participants_by_sid[sid]
-        cid = resolve_contact_cid(group, accounts)
-        if cid is None:
+        account = resolve_contact_account(group, accounts)
+        if account is None:
             continue
-        account = next(
-            (accounts[aid] for aid in group
-             if aid in accounts and not is_self_account(accounts[aid]) and accounts[aid].get("cid") == cid),
-            {},
-        )
-        contacts[sid] = (cid, account)
+        contacts[sid] = (account["cid"], account)
     return known, contacts
 
 
@@ -296,12 +299,14 @@ def _normalize_changes(changes: dict) -> dict:
 
 
 def _canonical_payload(targets: list[dict], changes: dict) -> str:
+    # Legacy null notes lost the distinction between omission and clearing.
+    # Explicit clear retries against those receipts must conflict.
     return json.dumps({
         "targets": targets,
         "changes": {
             "stage": changes["stage"] if changes["stage_set"] else None,
             "lost_reason": changes["lost_reason"] if changes["reason_set"] else None,
-            "lost_note": changes["lost_note"] if changes["note_set"] else None,
+            "lost_note": (changes["lost_note"] or "") if changes["note_set"] else None,
             "add_tag_ids": changes["add_tag_ids"],
             "remove_tag_ids": changes["remove_tag_ids"],
         },
@@ -365,8 +370,6 @@ class CustomerPortraitStore:
         if not cids or not self.database_path.is_file():
             return {cid: default_portrait_record() for cid in cids}
         with self._connection() as conn:
-            if not _table_exists(conn, "app_customer_portrait"):
-                return {cid: default_portrait_record() for cid in cids}
             return load_portrait_bundle(conn, key["seller"], key["data_dir"], cids)
 
     def tag_catalog(self, seller: str, data_dir: str | Path) -> list[dict]:
@@ -392,8 +395,6 @@ class CustomerPortraitStore:
             return empty
         key = _scope(seller, data_dir)
         with self._connection() as conn:
-            if not _table_exists(conn, "app_customer_portrait"):
-                return empty
             return load_portrait_revisions(conn, key["seller"], key["data_dir"])
 
     def operations(self, seller: str, data_dir: str | Path, cid: int | None, limit: int = 20) -> list[dict]:
@@ -610,7 +611,8 @@ class CustomerPortraitStore:
             )
             return results
 
-    def create_tag(self, *, name: str, description: str = "") -> dict:
+    def create_tag(self, *, seller: str, data_dir: str | Path, name: str, description: str = "") -> dict:
+        scope = _scope(seller, data_dir)
         self._require_writable()
         label = normalize_tag_name(name)
         key = tag_key(label)
@@ -618,8 +620,14 @@ class CustomerPortraitStore:
         now = time.time()
         with self._connection(write=True) as conn:
             self._ensure_schema(conn)
-            if conn.execute("SELECT 1 FROM app_portrait_tag WHERE name_key=?", (key,)).fetchone():
-                raise PortraitConflict("同名标签已存在")
+            row = conn.execute("SELECT * FROM app_portrait_tag WHERE name_key=?", (key,)).fetchone()
+            if row is not None:
+                usage = conn.execute(
+                    "SELECT COUNT(*) FROM app_customer_portrait_tag "
+                    "WHERE seller=:seller AND data_dir=:data_dir AND tag_id=:tag_id",
+                    {**scope, "tag_id": row["tag_id"]},
+                ).fetchone()[0]
+                raise PortraitTagConflict(_tag_record(row, usage))
             tag_id = uuid4().hex
             conn.execute(
                 "INSERT INTO app_portrait_tag (tag_id, name, name_key, description, archived, version, created_at, updated_at) "
@@ -654,6 +662,7 @@ class CustomerPortraitStore:
                         "SELECT 1 FROM app_portrait_tag WHERE name_key=? AND tag_id != ?", (name_key, tag_id),
                     ).fetchone():
                         raise PortraitConflict("同名标签已存在")
+                if label != row["name"]:
                     updates["name"], updates["name_key"] = label, name_key
             if description is not None:
                 desc = normalize_tag_description(description)

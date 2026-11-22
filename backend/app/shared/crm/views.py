@@ -64,30 +64,41 @@ def is_self_account(account: Any) -> bool:
     return _extra_of(account).get("is_self") is True
 
 
-def resolve_contact_cid(participants: list[int], accounts: dict[int, Any]) -> int | None:
-    """Resolve the single contact customer for a conversation.
+def resolve_contact_account(participants: list[int], accounts: dict[int, Any]) -> Any | None:
+    """Resolves a contact account with the established customer identity rules.
 
     Accounts may be SDK models or JSON dicts. A lone non-self participant wins
     only when it is the positional contact of a two-party conversation; several
     non-self participants win only when they share one ``cid``. Otherwise a
     two-party conversation falls back to its second participant so synced rows
     keep working when ``is_self`` is missing. Anything else is ambiguous and
-    returns ``None`` so callers can disable customer maintenance.
+    returns ``None`` so callers can disable customer maintenance. Among accounts
+    sharing a CID, the positional contact wins for a two-party conversation.
     """
     resolved = {aid: accounts[aid] for aid in participants if aid in accounts}
     nonself = [account for account in resolved.values() if not is_self_account(account)]
     if len(nonself) == 1:
         if len(participants) != 2 or resolved.get(participants[1]) is nonself[0]:
-            return _cid_of(nonself[0])
+            return nonself[0] if _cid_of(nonself[0]) is not None else None
     elif len(nonself) > 1:
         cids = {cid for cid in (_cid_of(account) for account in nonself) if cid is not None}
         if len(cids) == 1:
-            return next(iter(cids))
+            cid = next(iter(cids))
+            if len(participants) == 2:
+                candidate = resolved.get(participants[1])
+                if _cid_of(candidate) == cid and not is_self_account(candidate):
+                    return candidate
+            return next(account for account in nonself if _cid_of(account) == cid)
     if len(participants) == 2:
         candidate = resolved.get(participants[1])
-        if candidate is not None and not is_self_account(candidate):
-            return _cid_of(candidate)
+        if candidate is not None and not is_self_account(candidate) and _cid_of(candidate) is not None:
+            return candidate
     return None
+
+
+def resolve_contact_cid(participants: list[int], accounts: dict[int, Any]) -> int | None:
+    """Returns the customer ID of the resolved contact account."""
+    return _cid_of(resolve_contact_account(participants, accounts))
 
 
 class CrmResolver:
@@ -148,6 +159,7 @@ __all__ = [
     "is_self_account",
     "message_display_text",
     "normalize_message_type",
+    "resolve_contact_account",
     "resolve_contact_cid",
     "resolve_role",
 ]

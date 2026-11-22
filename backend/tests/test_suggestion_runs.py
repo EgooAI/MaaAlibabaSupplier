@@ -343,7 +343,7 @@ def test_inserted_preview_submission_links_outbox_to_the_exact_run(client, previ
     monkeypatch.setattr(outbox_service.gui_session, "capture_gui_session", lambda epoch:
                         GuiSessionToken(context.self_ali_id, context.data_dir, context.epoch, "synthetic-window"))
     monkeypatch.setattr(conversations, "_ready", lambda: context.self_ali_id)
-    monkeypatch.setattr(conversations.CRMAdapter, "get_user_info", lambda *args: SimpleNamespace(login_id="buyer-login"))
+    monkeypatch.setattr(conversations.CRMAdapter, "get_conversation_user_info", lambda *args: SimpleNamespace(login_id="buyer-login"))
     payload = {"content": item["content"], "action": "send", "idempotency_key": "preview-send", "intent_id": item["intentId"]}
     try:
         response = client.post(f"/api/conversations/{preview.sid}/messages", json=payload)

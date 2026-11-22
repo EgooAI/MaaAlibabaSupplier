@@ -247,6 +247,54 @@ def test_lost_note_only_update_keeps_lost_stage(client, archive):
     batch(client, sid, cid, 3, {"lost_note": "重新写备注"}, request_id="bad-note", expect=422)
 
 
+def test_lost_note_clear_idempotency_and_ambiguous_legacy_receipts(client, archive):
+    _, apply = archive
+    apply(("buyer", [row(1)]))
+    item = listing_item(client)
+    sid, cid = item["sid"], item["customer_view"]["cid"]
+    batch(client, sid, cid, 0, {"stage": "lost", "lost_note": "keep"}, request_id="setup")
+    omitted = batch(client, sid, cid, 1, {"stage": "lost"}, request_id="omitted")
+    assert omitted["unchanged"] == [{"cid": cid, "sids": [sid], "version": 1}]
+    before = listing_item(client)["customer_view"]
+    operations = data(client, "/api/portraits/operations")["operations"]
+    clear = {"stage": "lost", "lost_note": ""}
+    batch(client, sid, cid, 1, clear, request_id="omitted", expect=409)
+    assert listing_item(client)["customer_view"] == before
+    assert data(client, "/api/portraits/operations")["operations"] == operations
+
+    cleared = batch(client, sid, cid, 1, clear, request_id="clear")
+    assert cleared["changed"] == [{"cid": cid, "sids": [sid], "version": 2}]
+    before = listing_item(client)["customer_view"]
+    assert before["lost_note"] is None and before["business_version"] == 2
+    operations = data(client, "/api/portraits/operations")["operations"]
+    assert batch(client, sid, cid, 1, clear, request_id="clear") == cleared
+    assert batch(client, sid, cid, 1, {"stage": "lost"}, request_id="omitted") == omitted
+    assert listing_item(client)["customer_view"] == before
+    assert data(client, "/api/portraits/operations")["operations"] == operations
+
+    store = CustomerPortraitStore()
+    context = account_context.get_account_context()
+    revisions = store.observe_revisions(context.self_ali_id, context.data_dir)
+    with closing(sqlite3.connect(store.database_path)) as conn:
+        payload = json.loads(conn.execute(
+            "SELECT payload FROM app_portrait_operation WHERE request_id='clear'",
+        ).fetchone()[0])
+        assert payload["changes"]["lost_note"] == ""
+        payload["changes"]["lost_note"] = None
+        conn.execute(
+            "UPDATE app_portrait_operation SET payload=? WHERE request_id='clear'",
+            (json.dumps(payload, sort_keys=True, ensure_ascii=True, separators=(",", ":")),),
+        )
+        conn.commit()
+        legacy = conn.execute("SELECT * FROM app_portrait_operation WHERE request_id='clear'").fetchone()
+
+    batch(client, sid, cid, 1, clear, request_id="clear", expect=409)
+    assert listing_item(client)["customer_view"] == before
+    assert store.observe_revisions(context.self_ali_id, context.data_dir) == revisions
+    with closing(sqlite3.connect(store.database_path)) as conn:
+        assert conn.execute("SELECT * FROM app_portrait_operation WHERE request_id='clear'").fetchone() == legacy
+
+
 def test_contact_resolver_refuses_ambiguous_or_self_only_participants():
     from backend.app.shared.crm.views import resolve_contact_cid
 
@@ -383,6 +431,108 @@ def test_shared_tag_definitions_per_workspace_relations(client, archive):
     batch(client, sid, cid, 1, {"add_tag_ids": [tag["tag_id"]]}, request_id="add-archived", expect=422)
     batch(client, sid, cid, 1, {"remove_tag_ids": [tag["tag_id"]]}, request_id="remove-archived")
     assert listing_item(client)["customer_view"]["business_tags"] == []
+
+
+@pytest.mark.parametrize("name", ["STRASSE", " ＳＴＲＡＳＳＥ "])
+@pytest.mark.parametrize("archived", [False, True])
+def test_tag_create_conflict_returns_existing_tag_with_workspace_usage(client, archive, tmp_path, name, archived):
+    _, apply = archive
+    context = account_context.get_account_context()
+    other_dir = str(tmp_path / "other-source")
+    apply(("buyer", [row(1)]))
+    apply(("buyer", [row(2)]), seller="seller-b")
+    apply(("buyer", [row(3)]), data_dir=other_dir)
+    tag = create_tag(client, "Straße", "Original description")
+    item = listing_item(client)
+    sid, cid = item["sid"], item["customer_view"]["cid"]
+    batch(client, sid, cid, 0, {"add_tag_ids": [tag["tag_id"]]})
+    store = CustomerPortraitStore()
+    store.apply(
+        seller="seller-a", data_dir=other_dir, request_id="other-directory",
+        targets=[{"sid": sid, "expected_cid": cid, "expected_version": 0}],
+        changes={"add_tag_ids": [tag["tag_id"]]},
+    )
+    if archived:
+        response = client.patch(f"/api/portraits/tags/{tag['tag_id']}", json={"archived": True})
+        assert response.status_code == 200, response.text
+        tag = response.json()["data"]["tag"]
+
+    for seller, usage in (("seller-a", 1), ("seller-b", 0)):
+        if account_context.get_account_context().self_ali_id != seller:
+            assert client.put("/api/settings/ali-id", json={"ali_id": seller}).status_code == 200
+            client.headers["X-Account-Epoch"] = account_context.get_account_context().epoch
+        before = store.observe_revisions(seller, context.data_dir)
+        response = client.post("/api/portraits/tags", json={"name": name, "description": "Must not replace"})
+        expected = {**tag, "usage_count": usage}
+        assert response.status_code == 409, response.text
+        assert response.json() == {"code": 1, "msg": "同名标签已存在", "data": {"tag": expected}}
+        assert response.headers["X-Account-Epoch"] == client.headers["X-Account-Epoch"]
+        assert data(client, "/api/portraits/tags")["tags"] == [expected]
+        assert store.observe_revisions(seller, context.data_dir) == before
+
+
+def test_tag_case_only_rename_updates_display_and_revision_without_changing_relations(client, archive):
+    _, apply = archive
+    apply(("buyer", [row(1)]))
+    tag = create_tag(client, "vip")
+    item = listing_item(client)
+    batch(client, item["sid"], item["customer_view"]["cid"], 0, {"add_tag_ids": [tag["tag_id"]]})
+    store = CustomerPortraitStore()
+    context = account_context.get_account_context()
+    before = store.observe_revisions(context.self_ali_id, context.data_dir)
+    response = client.patch(f"/api/portraits/tags/{tag['tag_id']}", json={"name": "VIP"})
+    assert response.status_code == 200, response.text
+    updated = response.json()["data"]["tag"]
+    assert updated["name"] == "VIP" and updated["version"] == tag["version"] + 1
+    assert updated["tag_id"] == tag["tag_id"] and updated["usage_count"] == 1
+    view = listing_item(client)["customer_view"]
+    assert view["business_tags"] == [{"tag_id": tag["tag_id"], "name": "VIP", "archived": False}]
+    assert view["business_version"] == 1
+    after = store.observe_revisions(context.self_ali_id, context.data_dir)
+    assert after == {**before, "tag_revision": before["tag_revision"] + 1}
+
+    response = client.patch(f"/api/portraits/tags/{tag['tag_id']}", json={"name": " ＶＩＰ "})
+    assert response.status_code == 200 and response.json()["data"]["tag"] == updated
+    assert store.observe_revisions(context.self_ali_id, context.data_dir) == after
+    other = create_tag(client, "Other")
+    before_conflict = store.observe_revisions(context.self_ali_id, context.data_dir)
+    response = client.patch(f"/api/portraits/tags/{other['tag_id']}", json={"name": "vIp"})
+    assert response.status_code == 409
+    assert response.json() == {"code": 1, "msg": "同名标签已存在", "data": None}
+    assert store.observe_revisions(context.self_ali_id, context.data_dir) == before_conflict
+    assert {entry["tag_id"]: entry for entry in data(client, "/api/portraits/tags")["tags"]} == {
+        tag["tag_id"]: updated, other["tag_id"]: other,
+    }
+
+
+@pytest.mark.parametrize("location", ["tag_create", "tag_update", "batch", "target", "changes"])
+def test_portrait_writes_reject_unknown_fields_without_partial_changes(client, archive, location):
+    _, apply = archive
+    apply(("buyer", [row(1)]))
+    item = listing_item(client)
+    tag = create_tag(client)
+    body = {
+        "request_id": "unknown-field",
+        "targets": [{"sid": item["sid"], "expected_cid": item["customer_view"]["cid"], "expected_version": 0}],
+        "changes": {"stage": "won"},
+    }
+    method, path = "POST", "/api/portraits/batch"
+    if location in ("tag_create", "tag_update"):
+        body = {"name": "Renamed", "archvied": True}
+        method = "PATCH" if location == "tag_update" else "POST"
+        path = f"/api/portraits/tags/{tag['tag_id']}" if location == "tag_update" else "/api/portraits/tags"
+    else:
+        target = {"batch": body, "target": body["targets"][0], "changes": body["changes"]}[location]
+        target["add_tags_ids"] = [tag["tag_id"]]
+    context = account_context.get_account_context()
+    store = CustomerPortraitStore()
+    before = store.observe_revisions(context.self_ali_id, context.data_dir)
+    response = client.request(method, path, json=body)
+    assert response.status_code == 422, response.text
+    assert listing_item(client)["customer_view"] == item["customer_view"]
+    assert data(client, "/api/portraits/tags")["tags"] == [tag]
+    assert data(client, "/api/portraits/operations")["operations"] == []
+    assert store.observe_revisions(context.self_ali_id, context.data_dir) == before
 
 
 def test_portrait_pagination_token_invalidates_after_edit(client, archive):

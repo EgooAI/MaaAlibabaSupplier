@@ -42,6 +42,16 @@ export class ApiError extends Error {
   }
 }
 
+export class PortraitTagConflict extends ApiError {
+  readonly tag: PortraitTag;
+
+  constructor(tag: PortraitTag, error: ApiError) {
+    super(error.message, error.path, error);
+    this.name = "PortraitTagConflict";
+    this.tag = tag;
+  }
+}
+
 /** A duplicate run start: the step already has a run, whose id travels in the 409 body. */
 export class ExperimentRunConflict extends ApiError {
   readonly runId: string;
@@ -277,7 +287,23 @@ export const httpBackend: OperationsBackend = {
   gotoContact: (conversationId, loginId) => requestJson(`/api/conversations/${encodeURIComponent(conversationId)}/goto-contact`, { method: "POST", body: JSON.stringify({ login_id: loginId }) }),
 
   listPortraitTags: () => requestJson<{ tags: PortraitTag[] }>("/api/portraits/tags", { cache: "no-store" }),
-  createPortraitTag: (input) => requestJson<{ tag: PortraitTag }>("/api/portraits/tags", { method: "POST", body: JSON.stringify(input) }),
+  createPortraitTag: async (input) => {
+    try {
+      return await requestJson<{ tag: PortraitTag }>("/api/portraits/tags", { method: "POST", body: JSON.stringify(input) });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409 && isPlainObject(error.details)) {
+        const tag = error.details.tag;
+        if (isPlainObject(tag)
+          && typeof tag.tag_id === "string" && tag.tag_id
+          && typeof tag.name === "string" && tag.name
+          && typeof tag.description === "string" && typeof tag.archived === "boolean"
+          && [tag.version, tag.created_at, tag.updated_at, tag.usage_count].every((value) => typeof value === "number" && Number.isFinite(value))) {
+          throw new PortraitTagConflict(tag as unknown as PortraitTag, error);
+        }
+      }
+      throw error;
+    }
+  },
   updatePortraitTag: (tagId, input) => requestJson<{ tag: PortraitTag }>(`/api/portraits/tags/${encodeURIComponent(tagId)}`, { method: "PATCH", body: JSON.stringify(input) }),
   savePortraitBatch: (input) => requestJson<PortraitBatchResult>("/api/portraits/batch", { method: "POST", body: JSON.stringify(input) }),
   exportPortraits: (input) => requestJson<PortraitExportResult>("/api/portraits/export", { method: "POST", body: JSON.stringify(input) }),

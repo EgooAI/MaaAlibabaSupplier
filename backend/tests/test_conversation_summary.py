@@ -1,21 +1,21 @@
+import json
 import os
+import sqlite3
 import unittest
+from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
 from backend.app.api.routers.conversations import (
-    _assemble_customer_view,
     _build_aggregate,
     _build_summary,
-    _minimal_customer_view,
-    _summary_customer_view,
 )
-from backend.app.shared.crm.customer_portrait_store import public_portrait_fields
 from backend.app.shared.backend.im_chat_db import ContactConv, MessageRow
 from backend.app.shared.crm.identities import self_sender_id
+from backend.app.shared.crm.inbox_queries import query_inbox
+from backend.app.shared.crm.inbox_store import InboxStore
 from backend.app.shared.crm.sync import CRMAdapter
-from backend.app.shared.crm.views import CrmConversationDigest
 from backend.app.shared.mitm.pool import SelfInfo, UserInfo
 from backend.tests.crm_helpers import conversations_for
 
@@ -64,32 +64,8 @@ class ConversationSummaryTestCase(unittest.TestCase):
             last_created_at=1756720002,
             last_content_label="system notice",
         )
-        self.adapter.sync_conversations([conv], self.self_info)
+        self.adapter.sync_conversations([conv], self.self_info, data_dir=self.temp_dir.name)
         self.conv = conversations_for(self.adapter, SELF_ALI_ID)[0]
-        self.digest = CrmConversationDigest(
-            contact_ali_id=self.conv.contact_ali_id,
-            sid=self.conv.sid,
-            key=self.conv.key,
-            participants=self.conv.participants,
-            latest_created_at=self.conv.last_created_at,
-            latest_content_label=self.conv.last_content_label,
-            latest_is_card=False,
-            dialogue_count=sum(1 for message in self.conv.messages if not message.is_system),
-        )
-        accounts: dict = {}
-        customers: dict = {}
-        for aid in self.conv.participants:
-            account = self.adapter.accounts.get_account(aid)
-            if account is None:
-                continue
-            accounts[aid] = account
-            customer = self.adapter.customers.get_customer(account.cid)
-            if customer is not None:
-                customers[account.cid] = customer
-        self.preloaded = {
-            "accounts": accounts, "customers": customers,
-            "users": {CONTACT_ALI_ID: get_user_info_pool().get(CONTACT_ALI_ID)},
-        }
 
     def tearDown(self) -> None:
         self.adapter.engine.dispose()
@@ -98,18 +74,13 @@ class ConversationSummaryTestCase(unittest.TestCase):
         UserInfoPool.reset_for_tests()
         self.temp_dir.cleanup()
 
-    def test_digest_carries_latest_pointer_and_counts(self) -> None:
-        self.assertEqual(self.digest.sid, self.conv.sid)
-        self.assertEqual(self.digest.key, self.conv.key)
-        self.assertEqual(self.digest.contact_ali_id, CONTACT_ALI_ID)
-        self.assertEqual(self.digest.latest_content_label, "system notice")
-        self.assertFalse(self.digest.latest_is_card)
-        self.assertEqual(self.digest.dialogue_count, 2)
-
     def test_summary_matches_aggregate_contract(self) -> None:
         full = _build_aggregate(self.adapter, SELF_ALI_ID, self.conv)
-        fields = public_portrait_fields(full["customer_view"]["cid"], None)
-        summary = _build_summary(self.digest, self.preloaded, _summary_customer_view(self.digest, self.preloaded, fields))
+        projection = query_inbox(InboxStore(self.db_path), SELF_ALI_ID, self.temp_dir.name, {})
+        digest, = projection["digests"]
+        summary = _build_summary(digest, projection["views"][digest.sid])
+        self.assertEqual(summary["latest"]["content"], "system notice")
+        self.assertEqual(summary["dialogue_count"], 2)
         self.assertEqual(summary["customer_view"]["login_id"], "buyer")
         self.assertEqual(set(summary), set(full))
         for key in ("sid", "name", "participants", "latest", "unread_count",
@@ -119,18 +90,26 @@ class ConversationSummaryTestCase(unittest.TestCase):
             self.assertEqual(summary[key], [], key)
         self.assertEqual(summary["platforms"], [{"pid": "alibaba_icbu", "name": "Alibaba"}])
 
-    def test_minimal_view_covers_full_key_set(self) -> None:
-        full = _build_aggregate(self.adapter, SELF_ALI_ID, self.conv)
-        assert full["customer_view"] is not None
-        self.assertEqual(set(_minimal_customer_view("ghost")), set(full["customer_view"]))
-        self.assertIsNone(_assemble_customer_view("ghost", [], [], None, public_portrait_fields(None, None)))
-
-    def test_missing_contact_does_not_inherit_a_seller_avatar(self) -> None:
-        view = _assemble_customer_view("ghost", [{
-            "aid": 1, "cid": 1, "avatar": "https://img.example/seller.png",
-            "extra": {"ali_id": SELF_ALI_ID, "is_self": True},
-        }], [], None, public_portrait_fields(None, None))
-        self.assertIsNone(view["avatar_url"])
+    def test_unresolved_contact_does_not_inherit_seller_or_alias_profiles(self) -> None:
+        original = _build_aggregate(self.adapter, SELF_ALI_ID, self.conv)["customer_view"]
+        self.adapter.upsert_self_info(SelfInfo(
+            ali_id=SELF_ALI_ID, first_name="SELLER", avatar_url="https://img.example/seller.png",
+        ))
+        seller_aid = self.conv.participants[0]
+        for participants in ([], [seller_aid], [seller_aid, 999999]):
+            with self.subTest(participants=participants), closing(sqlite3.connect(self.db_path)) as conn:
+                conn.execute("UPDATE session_meta SET participants=? WHERE sid=?", (json.dumps(participants), self.conv.sid))
+                conn.commit()
+                conv = self.adapter.get_conversation_detail(SELF_ALI_ID, self.conv.sid)
+                full = _build_aggregate(self.adapter, SELF_ALI_ID, conv)["customer_view"]
+                summary = query_inbox(InboxStore(self.db_path), SELF_ALI_ID, self.temp_dir.name, {})["views"][conv.sid]
+                self.assertEqual(full, summary)
+                self.assertEqual(set(full), set(original))
+                self.assertEqual(full["id"], CONTACT_ALI_ID)
+                self.assertEqual(full["name"], CONTACT_ALI_ID)
+                for field in ("cid", "ali_id", "login_id", "avatar_url"):
+                    self.assertIsNone(full[field], field)
+                self.assertFalse(full["portrait_editable"])
 
 
 if __name__ == "__main__":
